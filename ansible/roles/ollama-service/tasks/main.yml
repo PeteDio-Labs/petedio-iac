@@ -1,0 +1,181 @@
+# Ported from homelab-infra for the greenfield petedio-iac.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+# Both GPUs are exposed via ONE Ollama service on :11434 with NO
+# CUDA_VISIBLE_DEVICES pin — Ollama sees both cards and schedules across them.
+# (We deliberately do NOT run the old per-GPU second service on :11435; one
+# endpoint serves both GPUs. Set OLLAMA_SCHED_SPREAD=1 to force-split every model
+# across both.)
+# Installs: NVIDIA driver 550 + reboot-if-changed, official Ollama installer,
+#   OLLAMA_HOST systemd drop-in, UFW 11434 from 192.168.50.0/24,
+#   WoL .link file, no-sleep/no-suspend hardening. Asserts BOTH GPUs are visible.
+---
+- name: Ensure ethtool is installed (needed for WoL persistence)
+  ansible.builtin.apt:
+    name: ethtool
+    state: present
+    update_cache: false
+
+- name: Persist Wake-on-LAN via systemd-networkd override
+  ansible.builtin.copy:
+    dest: /etc/systemd/network/10-wol-{{ wol_interface | default('eth0') }}.link
+    content: |
+      [Match]
+      MACAddress={{ wol_mac | default('2c:f0:5d:a2:7f:4f') }}
+
+      [Link]
+      WakeOnLan=magic
+    mode: '0644'
+  when: wol_mac is defined
+  notify: Restart systemd-networkd
+
+# Belt-and-suspenders: prevent sleep/suspend regardless of desktop environment
+- name: Create systemd-logind drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d
+    state: directory
+    mode: '0755'
+
+- name: Disable sleep/suspend via systemd-logind
+  ansible.builtin.copy:
+    dest: /etc/systemd/logind.conf.d/no-sleep.conf
+    content: |
+      [Login]
+      HandleSuspendKey=ignore
+      HandleLidSwitch=ignore
+      HandleLidSwitchExternalPower=ignore
+      IdleAction=ignore
+      SuspendState=
+      HibernateState=
+    mode: '0644'
+  notify: Restart systemd-logind
+
+- name: Mask sleep-related systemd targets
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    masked: true
+    daemon_reload: false
+  loop:
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+
+# ── NVIDIA drivers ───────────────────────────────────────────────────────────
+- name: Install NVIDIA driver prerequisites
+  ansible.builtin.apt:
+    name:
+      - ubuntu-drivers-common
+      - pkg-config
+    state: present
+    update_cache: true
+
+- name: Check if nvidia-smi is present
+  ansible.builtin.stat:
+    path: /usr/bin/nvidia-smi
+  register: nvidia_smi_stat
+
+- name: Install NVIDIA driver 550 (supports RTX 3060 Ti)
+  ansible.builtin.apt:
+    name:
+      - nvidia-driver-550
+      - nvidia-utils-550
+    state: present
+  register: nvidia_installed
+  when: not nvidia_smi_stat.stat.exists
+
+- name: Reboot to load NVIDIA driver
+  ansible.builtin.reboot:
+    reboot_timeout: 600
+    msg: "Rebooting to load NVIDIA driver"
+  when: nvidia_installed is changed
+
+- name: Verify nvidia-smi sees the GPU
+  ansible.builtin.command: nvidia-smi --query-gpu=index,name,uuid --format=csv,noheader
+  register: nvidia_smi_out
+  changed_when: false
+
+- name: Assert both GPUs are detected
+  ansible.builtin.assert:
+    that: nvidia_smi_out.stdout_lines | length >= 2
+    fail_msg: "Expected 2 GPUs (GTX 1660 SUPER + RTX 3060 Ti), found {{ nvidia_smi_out.stdout_lines | length }}: {{ nvidia_smi_out.stdout }}"
+    success_msg: "Both GPUs detected:\n{{ nvidia_smi_out.stdout }}"
+
+# ── Ollama ────────────────────────────────────────────────────────────────────
+- name: Check current Ollama version
+  ansible.builtin.command: ollama --version
+  register: ollama_version_before
+  changed_when: false
+  failed_when: false
+
+- name: Download Ollama install script
+  ansible.builtin.get_url:
+    url: "{{ ollama_install_script_url }}"
+    dest: /tmp/ollama-install.sh
+    mode: '0755'
+  when: ollama_update_enabled | bool
+
+- name: Update Ollama via official installer
+  ansible.builtin.shell: /tmp/ollama-install.sh
+  args:
+    executable: /bin/sh
+  register: ollama_install_result
+  changed_when: true
+  when: ollama_update_enabled | bool
+
+- name: Create systemd drop-in directory for Ollama overrides
+  ansible.builtin.file:
+    path: /etc/systemd/system/ollama.service.d
+    state: directory
+    mode: '0755'
+
+- name: Set OLLAMA_HOST and extra env vars via systemd drop-in (survives installer updates)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ollama.service.d/override.conf
+    content: |
+      [Service]
+      Environment="OLLAMA_HOST={{ ollama_host_bind }}{% if ':' not in ollama_host_bind %}:{{ ollama_port }}{% endif %}"
+      {% for env_var in ollama_extra_env | default([]) %}
+      Environment="{{ env_var }}"
+      {% endfor %}
+    mode: '0644'
+  register: ollama_host_changed
+  notify: Restart ollama
+
+- name: Ensure Ollama service is enabled and running
+  ansible.builtin.service:
+    name: "{{ ollama_service_name }}"
+    enabled: true
+    state: started
+
+- name: Allow Ollama API from homelab LAN (UFW)
+  community.general.ufw:
+    rule: allow
+    port: "{{ ollama_port | string }}"
+    proto: tcp
+    from_ip: "{{ ollama_firewall_subnet }}"
+    comment: "Ollama API - homelab LAN"
+  when: ollama_firewall_enabled | bool
+
+- name: Check updated Ollama version
+  ansible.builtin.command: ollama --version
+  register: ollama_version_after
+  changed_when: false
+
+- name: Verify Ollama API version endpoint
+  ansible.builtin.uri:
+    url: "{{ ollama_api_url }}"
+    method: GET
+    return_content: true
+    status_code: 200
+  register: ollama_api_version
+
+- name: Report Ollama update status
+  ansible.builtin.debug:
+    msg: |
+      Ollama before: {{ ollama_version_before.stdout | default('not installed') }}
+      Ollama after: {{ ollama_version_after.stdout }}
+      API version: {{ ollama_api_version.json.version | default('unknown') }}
+      Host binding: {{ ollama_host_bind }}:{{ ollama_port }}
+      Firewall: {{ 'open for ' + ollama_firewall_subnet if ollama_firewall_enabled else 'not managed' }}
+  changed_when: >-
+    (ollama_version_before.stdout | default('')) != (ollama_version_after.stdout | default(''))

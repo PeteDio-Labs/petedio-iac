@@ -1,0 +1,14 @@
+# Ported from homelab-infra for the greenfield petedio-iac.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+---
+# Pull base Ollama models onto ollama-host (gemma4:e4b by default).
+# Custom Modelfiles were dropped in the port — this only runs `ollama pull`.
+#
+# Usage:
+#   ansible-playbook playbooks/ollama-models.yml
+
+- name: Deploy Ollama base models
+  hosts: ollama
+  become: true
+  roles:
+    - ollama-models
