@@ -1,0 +1,54 @@
+# Ported from homelab-infra for the greenfield petedio-iac.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+---
+# Wake ollama-host (192.168.50.240) via a Wake-on-LAN magic packet.
+# Run this from the Mac-local control node when the machine is powered off.
+#
+# Requirements:
+#   - WoL enabled in BIOS (Power Management -> Wake on LAN)
+#   - Control node on the same LAN segment (192.168.50.0/24)
+#   - wakeonlan tool installed on the control node
+#
+# Usage:
+#   ansible-playbook playbooks/wake-ollama-host.yml
+#   ansible-playbook playbooks/wake-ollama-host.yml --tags wait   # also wait until SSH is up
+
+- name: Wake ollama-host via WoL magic packet
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    target_mac: "2c:f0:5d:a2:7f:4f"
+    target_ip: "192.168.50.240"
+    broadcast_ip: "192.168.50.255"
+    ssh_timeout_seconds: 120
+
+  tasks:
+    - name: Ensure wakeonlan is installed
+      ansible.builtin.apt:
+        name: wakeonlan
+        state: present
+      become: true
+
+    - name: Send magic packet to {{ target_mac }}
+      ansible.builtin.command: wakeonlan -i {{ broadcast_ip }} {{ target_mac }}
+      changed_when: true
+
+    - name: Magic packet sent
+      ansible.builtin.debug:
+        msg: "Magic packet sent to {{ target_mac }} (broadcast {{ broadcast_ip }}). Give the machine ~30s to POST."
+
+    - name: Wait for ollama-host SSH to become available
+      ansible.builtin.wait_for:
+        host: "{{ target_ip }}"
+        port: 22
+        timeout: "{{ ssh_timeout_seconds }}"
+        delay: 10
+        state: started
+      tags: wait
+
+    - name: Confirm ollama-host is up
+      ansible.builtin.debug:
+        msg: "ollama-host ({{ target_ip }}) is online."
+      tags: wait

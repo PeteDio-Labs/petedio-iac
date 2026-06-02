@@ -1,0 +1,21 @@
+# Ported from homelab-infra for the greenfield petedio-iac.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240. One ollama service uses BOTH
+# (no CUDA_VISIBLE_DEVICES pin); the old per-GPU :11435 service is not used.
+---
+ollama_service_name: ollama
+ollama_install_script_url: https://ollama.com/install.sh
+ollama_update_enabled: true
+
+# Bind to all interfaces so LAN dev machines and the CI runner can reach Ollama.
+ollama_host_bind: "0.0.0.0"
+
+# Allow Ollama API from homelab LAN.
+ollama_firewall_enabled: true
+ollama_firewall_subnet: "192.168.50.0/24"
+ollama_port: 11434
+ollama_api_url: "http://127.0.0.1:{{ ollama_port }}/api/version"
+
+# Extra systemd Environment= lines for the ollama unit. No CUDA_VISIBLE_DEVICES
+# pin — the single service sees BOTH GPUs and schedules across them. Set
+# OLLAMA_SCHED_SPREAD=1 if you want every model split across both cards.
+ollama_extra_env: []

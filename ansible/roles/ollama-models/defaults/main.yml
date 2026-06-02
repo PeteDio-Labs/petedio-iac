@@ -1,0 +1,8 @@
+# Ported from homelab-infra for the greenfield petedio-iac.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+# The 5 custom petedio-* Modelfiles were dropped (stale k8s/Mission-Control
+# context) — this role now only pulls base models from the Ollama registry.
+---
+# Base models to pull from the Ollama registry (ollama pull).
+ollama_base_models:
+  - gemma4:e4b

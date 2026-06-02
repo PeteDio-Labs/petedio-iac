@@ -1,0 +1,189 @@
+# Ported from homelab-infra for the greenfield petedio-iac.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+---
+# One-time playbook: persist ollama-host on static 192.168.50.240.
+#
+# Ubuntu Server uses netplan on the wired NIC (eth0).
+#
+# This is a MANUAL, GATED step — never apply-on-merge. A bad netplan apply can
+# lock the box off the network, so this play installs an AUTO-REVERT safety
+# (see "RENUMBER SAFETY" below) that self-heals unless you cancel it after
+# confirming connectivity on the new IP.
+#
+# Run when the host is already reachable at its inventory IP:
+#   ansible-playbook playbooks/set-ollama-static-ip.yml
+#
+# Run from a temporary DHCP address (recovery):
+#   ansible-playbook playbooks/set-ollama-static-ip.yml -e current_ollama_host=192.168.50.X
+#
+# Override the auto-revert window:
+#   ansible-playbook playbooks/set-ollama-static-ip.yml -e netplan_revert_seconds=300
+#
+# Router reservation should match (update it as part of the renumber):
+#   MAC 2c:f0:5d:a2:7f:4f -> 192.168.50.240
+
+- name: Configure static IP on ollama-host via netplan
+  hosts: ollama-host
+  vars:
+    ansible_host: "{{ current_ollama_host | default(hostvars[inventory_hostname].ansible_host | default('192.168.50.59')) }}"
+    ansible_user: ansible
+    ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pedro
+    ansible_become: true
+    ollama_interface: "{{ ollama_network_interface | default(wol_interface | default('eth0')) }}"
+    # RENUMBER SAFETY: seconds before the host auto-reverts to its previous
+    # netplan and re-applies, UNLESS the revert is cancelled (see below).
+    netplan_revert_seconds: 180
+    netplan_config_path: /etc/netplan/99-ollama-static.yaml
+    netplan_revert_backup: /etc/netplan/99-ollama-static.yaml.revert-bak
+    netplan_revert_sentinel: /run/ollama-netplan-revert.pending
+    netplan_revert_script: /usr/local/sbin/ollama-netplan-revert.sh
+  gather_facts: false
+  tasks:
+    - name: Remove temporary DHCP netplan files from recovery
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/netplan/99-temp-dhcp.yaml
+        - /etc/netplan/99-temp-dcp.yaml
+
+    # ── RENUMBER SAFETY: auto-revert if the new IP locks us out ────────────────
+    # Back up whatever netplan config is live RIGHT NOW (before we overwrite it),
+    # so the background job below can restore a known-good network if the new
+    # address is unreachable. `force: false` means an existing backup from a
+    # prior aborted run is preserved rather than clobbered with a bad config.
+    - name: Back up current netplan config for auto-revert
+      ansible.builtin.copy:
+        src: "{{ netplan_config_path }}"
+        dest: "{{ netplan_revert_backup }}"
+        remote_src: true
+        mode: "0600"
+        force: false
+      failed_when: false
+
+    - name: Install auto-revert helper script
+      ansible.builtin.copy:
+        dest: "{{ netplan_revert_script }}"
+        mode: "0700"
+        content: |
+          #!/bin/sh
+          # Auto-revert guard for the ollama-host renumber.
+          # Sleeps for the timeout, then — if the sentinel still exists (i.e. the
+          # operator has NOT cancelled) — restores the previous netplan and
+          # re-applies, healing a bad apply that locked us off the network.
+          sleep "{{ netplan_revert_seconds }}"
+          if [ -f "{{ netplan_revert_sentinel }}" ]; then
+            logger -t ollama-netplan-revert "revert window expired, restoring previous netplan"
+            if [ -f "{{ netplan_revert_backup }}" ]; then
+              cp "{{ netplan_revert_backup }}" "{{ netplan_config_path }}"
+            fi
+            netplan apply
+            rm -f "{{ netplan_revert_sentinel }}"
+          else
+            logger -t ollama-netplan-revert "revert cancelled by operator, keeping new netplan"
+          fi
+
+    - name: Arm the auto-revert sentinel
+      ansible.builtin.copy:
+        dest: "{{ netplan_revert_sentinel }}"
+        mode: "0644"
+        content: |
+          Auto-revert armed at {{ ansible_date_time.iso8601 | default('(time n/a)') }}.
+          Reverts to {{ netplan_revert_backup }} in {{ netplan_revert_seconds }}s unless cancelled.
+
+    # Launch the guard fully detached so it survives the SSH drop from the apply.
+    # setsid + nohup + closed stdio = it keeps running after Ansible's connection
+    # dies. async/poll:0 ensures Ansible itself doesn't block on it.
+    - name: Launch detached auto-revert guard (survives SSH drop)
+      ansible.builtin.shell: |
+        setsid nohup {{ netplan_revert_script }} </dev/null >/var/log/ollama-netplan-revert.log 2>&1 &
+      args:
+        executable: /bin/sh
+      async: "{{ netplan_revert_seconds | int + 60 }}"
+      poll: 0
+      changed_when: true
+
+    # ── HOW TO CANCEL THE AUTO-REVERT ──────────────────────────────────────────
+    # After you have confirmed the host answers on the NEW IP (192.168.50.240) —
+    # e.g. `ssh ansible@192.168.50.240` and `curl http://192.168.50.240:11434/api/version` —
+    # cancel the pending revert so it does NOT undo the renumber. On the host:
+    #
+    #     sudo rm -f /run/ollama-netplan-revert.pending     # disarm the revert
+    #     sudo pkill -f ollama-netplan-revert.sh            # stop the timer now
+    #
+    # Removing the sentinel is sufficient: when the timer fires it sees no
+    # sentinel and keeps the new config. `pkill` just ends the wait early.
+    # The second play below does this automatically once it reconnects on .240.
+
+    - name: Write Ubuntu Server netplan static IP config
+      ansible.builtin.copy:
+        dest: "{{ netplan_config_path }}"
+        mode: "0600"
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              {{ ollama_interface }}:
+                dhcp4: false
+                addresses:
+                  - {{ ollama_static_ip }}/{{ ollama_prefix }}
+                routes:
+                  - to: default
+                    via: {{ ollama_gateway }}
+                nameservers:
+                  addresses:
+          {% for dns_server in ollama_dns %}
+                    - {{ dns_server }}
+          {% endfor %}
+
+    - name: Validate netplan configuration
+      ansible.builtin.command: netplan generate
+      changed_when: false
+
+    - name: Apply static IP (SSH may drop)
+      ansible.builtin.command: netplan apply
+      async: 5
+      poll: 0
+      changed_when: true
+      # Fire-and-forget: the apply intentionally drops our SSH session, so a
+      # connection error here is expected, not a failure.
+      failed_when: false
+
+- name: Verify Ollama host is reachable at static IP
+  hosts: ollama-host
+  vars:
+    ansible_host: "{{ ollama_static_ip }}"
+    ansible_user: ansible
+    ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pedro
+    ansible_become: true
+    ollama_interface: "{{ ollama_network_interface | default(wol_interface | default('eth0')) }}"
+    netplan_revert_sentinel: /run/ollama-netplan-revert.pending
+  gather_facts: false
+  tasks:
+    - name: Wait for host to come back on new IP
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 60
+
+    - name: Confirm IP address
+      ansible.builtin.command: ip -4 addr show "{{ ollama_interface }}"
+      register: ip_result
+      changed_when: false
+
+    - name: Show interface address
+      ansible.builtin.debug:
+        msg: "{{ ip_result.stdout_lines | select('match', '.*inet .*') | list }}"
+
+    # Reconnected on .240 -> the renumber worked. Cancel the armed auto-revert
+    # by removing the sentinel and killing the timer, so it cannot undo us.
+    - name: Cancel the auto-revert (reachable on new IP)
+      ansible.builtin.file:
+        path: "{{ netplan_revert_sentinel }}"
+        state: absent
+
+    - name: Stop the auto-revert timer process
+      ansible.builtin.command: pkill -f ollama-netplan-revert.sh
+      register: pkill_result
+      changed_when: pkill_result.rc == 0
+      failed_when: pkill_result.rc not in [0, 1]

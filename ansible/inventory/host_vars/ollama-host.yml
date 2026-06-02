@@ -1,0 +1,29 @@
+# Ported from homelab-infra for the greenfield petedio-iac.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+---
+# ollama-host — Ubuntu Server 24.04, MSI X570-A PRO, native Ollama (not Docker).
+# GPUs: GTX 1660 SUPER (6GB) + RTX 3060 Ti (8GB) — BOTH exposed via one Ollama
+# service (no CUDA_VISIBLE_DEVICES pin); Ollama sees and schedules across both.
+# NIC: eth0, MAC 2c:f0:5d:a2:7f:4f — WoL enabled (magic packet).
+wol_interface: eth0
+wol_mac: "2c:f0:5d:a2:7f:4f"
+ollama_network_interface: eth0
+ollama_static_ip: "192.168.50.240"   # renumbered from 192.168.50.59
+ollama_prefix: "24"
+ollama_gateway: "192.168.50.1"
+ollama_dns:
+  - "1.1.1.1"
+  - "8.8.8.8"
+
+# Connection (no secrets required for the ollama plays).
+ansible_user: ansible
+ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pedro
+
+# Base models to pull from the Ollama registry.
+ollama_base_models:
+  - gemma4:e4b
+
+# Both GPUs are visible to the single Ollama service (no CUDA_VISIBLE_DEVICES
+# pin): large models split across both cards, concurrent requests balance.
+# Set OLLAMA_SCHED_SPREAD=1 here to force every model across both GPUs.
+ollama_extra_env: []

@@ -1,0 +1,18 @@
+# Ported from homelab-infra for the greenfield petedio-iac.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+# Custom Modelfile tasks (copy / ollama create / verify / cleanup) were removed
+# along with the 5 petedio-* Modelfiles — this role just pulls base models.
+---
+- name: Pull base models from Ollama registry
+  ansible.builtin.command: "ollama pull {{ item }}"
+  loop: "{{ ollama_base_models }}"
+  loop_control:
+    label: "{{ item }}"
+  when: ollama_base_models | length > 0
+  register: pull_result
+  changed_when: "'pulled' in pull_result.stdout | lower or 'pulling' in pull_result.stdout | lower"
+  tags: pull
+
+- name: Report pulled models
+  ansible.builtin.debug:
+    msg: "Base models pulled: {{ ollama_base_models | join(', ') }}"
