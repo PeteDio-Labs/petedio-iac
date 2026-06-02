@@ -55,14 +55,22 @@ jobs:
           terraform plan -input=false -no-color -out=tfplan 2>&1 | tee plan.txt
 
       - name: Comment plan on PR
-        if: github.event_name == 'pull_request'
+        # Post the plan even when it FAILED — a bare `if:` implies success(), so
+        # without always() this is skipped on failure and the captured errors
+        # never reach the comment. The outcome guard skips it if Plan never ran
+        # (e.g. an earlier init/validate/fmt step failed).
+        if: ${{ always() && github.event_name == 'pull_request' && steps.plan.outcome != 'skipped' }}
         uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
             const plan = fs.readFileSync('environments/homelab/plan.txt', 'utf8');
             const truncated = plan.length > 60000 ? plan.slice(0, 60000) + '\n...(truncated)...' : plan;
-            const body = ['#### `terraform plan` — homelab', '```hcl', truncated, '```'].join('\n');
+            const failed = '${{ steps.plan.outcome }}' === 'failure';
+            const header = failed
+              ? '#### `terraform plan` — homelab ❌ **plan failed** (error below)'
+              : '#### `terraform plan` — homelab ✅';
+            const body = [header, '```hcl', truncated, '```'].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
