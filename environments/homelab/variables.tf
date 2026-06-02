@@ -36,18 +36,24 @@ variable "postgres_admin_password" {
     Password for postgres_admin_user. Sourced from Vault (PET-6) and passed as
     TF_VAR_postgres_admin_password in CI — never committed. Only consumed once
     var.postgres_ready = true (phase 2); the provider isn't contacted before then.
+    Defaults to null so phase-1 plan/apply needs no secret; REQUIRED when
+    postgres_ready = true.
   EOT
   type        = string
   sensitive   = true
+  default     = null
 }
 
 variable "poker_db_password" {
   description = <<-EOT
     Password for the `poker` DB owner role created by modules/postgres-db.
     Sourced from Vault (PET-6) / TF_VAR_poker_db_password in CI — never committed.
+    Defaults to null so phase-1 plan/apply needs no secret; REQUIRED when
+    postgres_ready = true.
   EOT
   type        = string
   sensitive   = true
+  default     = null
 }
 
 variable "postgres_ready" {
