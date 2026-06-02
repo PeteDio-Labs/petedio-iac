@@ -1,0 +1,7 @@
+---
+# Ansible Galaxy collections used by this repo. Install with:
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.general    # ufw (ollama-service firewall), misc modules
+  - name: ansible.posix        # authorized_key (provision-new-ollama-host)
+  - name: community.postgresql # configure-postgres.yml (postgres-rds, PET-19)
