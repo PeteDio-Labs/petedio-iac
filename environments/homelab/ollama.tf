@@ -1,5 +1,6 @@
-# ollama-host (compute/AI block — .240) — bare-metal RTX 3060 Ti GPU box running
-# Ollama (gemma4:e4b), brought under IaC the bare-metal way: Terraform DECLARES
+# ollama-host (compute/AI block — .240) — bare-metal dual-GPU box (GTX 1660 SUPER
+# + RTX 3060 Ti) running Ollama (gemma4:e4b), brought under IaC the bare-metal
+# way: Terraform DECLARES
 # the host (this file, via modules/baremetal-host); Ansible OWNS the OS/IP config
 # — netplan renumber .59 -> .240, NVIDIA driver 550, Ollama + model — in
 # ../../ansible (roles/ollama-service, roles/ollama-models, playbooks/).
@@ -22,7 +23,7 @@ module "ollama_host" {
   hostname     = "ollama-host"
   ipv4_address = "192.168.50.240"
   mac_address  = "2c:f0:5d:a2:7f:4f"
-  description  = "Bare-metal RTX 3060 Ti GPU host running Ollama (gemma4:e4b). OS/IP config by Ansible (../../ansible)."
+  description  = "Bare-metal dual-GPU host (GTX 1660 SUPER + RTX 3060 Ti) running Ollama (gemma4:e4b). OS/IP config by Ansible (../../ansible)."
 
   # run_ansible intentionally left at its default (false): the renumber + OS
   # config are run manually/gated. See the header and ../../ansible/README.md.
