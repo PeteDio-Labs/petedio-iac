@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars (gitignored) and fill in. CI passes these as TF_VAR_* env.
+#
+# proxmox_api_token: minted via pveum on pve01 —
+#   pveum user add petedio@pam; pveum acl modify / --users petedio@pam --roles PVEAdmin
+#   pveum user token add petedio@pam petedio --privsep 0
+proxmox_api_token = "petedio@pam!petedio=REPLACE_WITH_SECRET"
+
+# Endpoint of the node where resources live (pve01). bpg reads PVE version here.
+proxmox_endpoint = "https://192.168.50.10:8006/"
+target_node      = "pve01"
+
+# Public key installed for root inside each LXC (Ansible logs in with the pair).
+ssh_public_key = "ssh-ed25519 AAAA... you@host"

@@ -1,0 +1,20 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Real var files hold secrets / live values — never commit. Example is tracked.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Plan artifacts
+tfplan
+plan.txt
+
+# Secrets
+*.pem
+.secrets/
