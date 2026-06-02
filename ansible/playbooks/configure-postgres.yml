@@ -1,0 +1,95 @@
+---
+# configure-postgres.yml — provision the Postgres "RDS" on the LXC 231 host.
+#
+# Runs in the gap between phase 1 and phase 2 of the postgres.tf two-phase apply:
+# Terraform creates the bare LXC 231, this playbook makes it a reachable Postgres
+# server with an admin role, THEN you flip var.postgres_ready = true so Terraform
+# (cyrilgdn/postgresql) can create the `poker` database + grants.
+#
+# This playbook also owns the host-level container features that the bpg/proxmox
+# provider can't set via API token (root@pam gotcha — see docs/GOTCHAS.md):
+# nesting/keyctl are applied out-of-band on the Proxmox node, not here. (For a
+# pure-Postgres LXC, nesting is usually unnecessary; included as the standard
+# pattern hook — drop the pre_task if not needed.)
+#
+# Requires the `community.postgresql` collection on the controller:
+#   ansible-galaxy collection install community.postgresql
+#
+# Inventory: target the 231 host (e.g. a `postgres` group → 192.168.50.231),
+# connecting as root over the SSH key Terraform installed.
+
+- name: Configure Postgres RDS-equivalent (LXC 231)
+  hosts: postgres
+  become: true
+  vars:
+    postgres_listen_addresses: "*"
+    postgres_port: 5432
+    postgres_allowed_cidr: "192.168.50.0/24"
+    postgres_admin_user: "postgres"
+    # TODO(PET-6): source postgres_admin_password from Vault, NOT a plaintext var.
+    #   e.g. community.hashi_vault.vault_kv2_get → set_fact, or a vault lookup:
+    #   postgres_admin_password: "{{ lookup('community.hashi_vault.vault_kv2_get',
+    #     'petedio/postgres', engine_mount_point='secret').secret.admin_password }}"
+    #   This MUST match TF_VAR_postgres_admin_password used by the provider.
+    postgres_admin_password: "CHANGE_ME_FROM_VAULT" # placeholder — do NOT commit a real value
+
+  tasks:
+    - name: Install PostgreSQL server + psycopg (for community.postgresql modules)
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - python3-psycopg2
+        state: present
+        update_cache: true
+
+    - name: Discover the active PostgreSQL config directory
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          ls -d /etc/postgresql/*/main | sort -V | tail -n1
+        executable: /bin/bash
+      register: pg_conf_dir
+      changed_when: false
+
+    - name: Set listen_addresses so the host accepts LAN connections
+      ansible.builtin.lineinfile:
+        path: "{{ pg_conf_dir.stdout }}/postgresql.conf"
+        regexp: "^#?listen_addresses\\s*="
+        line: "listen_addresses = '{{ postgres_listen_addresses }}'"
+      notify: Restart postgresql
+
+    - name: Allow md5-authenticated connections from the homelab subnet (pg_hba)
+      ansible.builtin.lineinfile:
+        path: "{{ pg_conf_dir.stdout }}/pg_hba.conf"
+        line: "host    all    all    {{ postgres_allowed_cidr }}    md5"
+        insertafter: EOF
+      notify: Restart postgresql
+
+    - name: Ensure PostgreSQL is started and enabled
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true
+
+    # Create the admin/login role the cyrilgdn/postgresql provider connects as.
+    # On Debian the bootstrap `postgres` role is peer-auth/passwordless; give it a
+    # password so the provider can authenticate over TCP with md5.
+    - name: Create / update the Postgres admin role used by the Terraform provider
+      community.postgresql.postgresql_user:
+        name: "{{ postgres_admin_user }}"
+        password: "{{ postgres_admin_password }}" # TODO(PET-6): from Vault
+        role_attr_flags: "LOGIN,CREATEDB,CREATEROLE"
+        state: present
+      become_user: postgres
+      no_log: true
+
+    # NOTE: the `poker` database, its owner role, and grants are intentionally
+    # NOT created here — Terraform (modules/postgres-db) owns those in phase 2.
+    # The handler below restarts Postgres so config changes take effect before
+    # the provider connects.
+
+  handlers:
+    - name: Restart postgresql
+      ansible.builtin.service:
+        name: postgresql
+        state: restarted

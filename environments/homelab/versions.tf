@@ -6,5 +6,9 @@ terraform {
       source  = "bpg/proxmox"
       version = "~> 0.66"
     }
+    postgresql = {
+      source  = "cyrilgdn/postgresql"
+      version = "~> 1.0"
+    }
   }
 }
