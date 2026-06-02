@@ -1,7 +1,7 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
 ---
-# One-time playbook: persist ollama-host on static 192.168.50.240.
+# One-time playbook: persist ollama-host on static 192.168.50.12.
 #
 # Ubuntu Server uses netplan on the wired NIC (eth0).
 #
@@ -20,7 +20,7 @@
 #   ansible-playbook playbooks/set-ollama-static-ip.yml -e netplan_revert_seconds=300
 #
 # Router reservation should match (update it as part of the renumber):
-#   MAC 2c:f0:5d:a2:7f:4f -> 192.168.50.240
+#   MAC 2c:f0:5d:a2:7f:4f -> 192.168.50.12
 
 - name: Configure static IP on ollama-host via netplan
   hosts: ollama-host
@@ -46,6 +46,24 @@
       loop:
         - /etc/netplan/99-temp-dhcp.yaml
         - /etc/netplan/99-temp-dcp.yaml
+
+    # Cloud-init writes /etc/netplan/50-cloud-init.yaml for the NIC's predictable
+    # name (enp39s0) with its own default route. That conflicts with this play's
+    # eth0 config — "Conflicting default route declarations for IPv4 ... eth0 ...
+    # enp39s0" — so `netplan apply` rejects the change and the renumber silently
+    # no-ops. Disable cloud-init networking and drop its netplan so eth0 /
+    # 99-ollama-static is the sole config. (enp39s0 is inert for the live eth0
+    # NIC, so removing its stanza does not affect connectivity.)
+    - name: Disable cloud-init network config (stop it regenerating a conflicting netplan)
+      ansible.builtin.copy:
+        dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+        content: "network: {config: disabled}\n"
+        mode: "0644"
+
+    - name: Remove the conflicting cloud-init netplan (enp39s0 + duplicate default route)
+      ansible.builtin.file:
+        path: /etc/netplan/50-cloud-init.yaml
+        state: absent
 
     # ── RENUMBER SAFETY: auto-revert if the new IP locks us out ────────────────
     # Back up whatever netplan config is live RIGHT NOW (before we overwrite it),
@@ -104,8 +122,8 @@
       changed_when: true
 
     # ── HOW TO CANCEL THE AUTO-REVERT ──────────────────────────────────────────
-    # After you have confirmed the host answers on the NEW IP (192.168.50.240) —
-    # e.g. `ssh ansible@192.168.50.240` and `curl http://192.168.50.240:11434/api/version` —
+    # After you have confirmed the host answers on the NEW IP (192.168.50.12) —
+    # e.g. `ssh ansible@192.168.50.12` and `curl http://192.168.50.12:11434/api/version` —
     # cancel the pending revert so it does NOT undo the renumber. On the host:
     #
     #     sudo rm -f /run/ollama-netplan-revert.pending     # disarm the revert
@@ -113,7 +131,7 @@
     #
     # Removing the sentinel is sufficient: when the timer fires it sees no
     # sentinel and keeps the new config. `pkill` just ends the wait early.
-    # The second play below does this automatically once it reconnects on .240.
+    # The second play below does this automatically once it reconnects on .12.
 
     - name: Write Ubuntu Server netplan static IP config
       ansible.builtin.copy:
@@ -175,7 +193,7 @@
       ansible.builtin.debug:
         msg: "{{ ip_result.stdout_lines | select('match', '.*inet .*') | list }}"
 
-    # Reconnected on .240 -> the renumber worked. Cancel the armed auto-revert
+    # Reconnected on .12 -> the renumber worked. Cancel the armed auto-revert
     # by removing the sentinel and killing the timer, so it cannot undo us.
     - name: Cancel the auto-revert (reachable on new IP)
       ansible.builtin.file:

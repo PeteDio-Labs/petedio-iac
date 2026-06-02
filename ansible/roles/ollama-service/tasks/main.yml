@@ -1,5 +1,5 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
 # Both GPUs are exposed via ONE Ollama service on :11434 with NO
 # CUDA_VISIBLE_DEVICES pin — Ollama sees both cards and schedules across them.
 # (We deliberately do NOT run the old per-GPU second service on :11435; one

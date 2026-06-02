@@ -1,7 +1,7 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
 ---
-# Wake ollama-host (192.168.50.240) via a Wake-on-LAN magic packet.
+# Wake ollama-host (192.168.50.12) via a Wake-on-LAN magic packet.
 # Run this from the Mac-local control node when the machine is powered off.
 #
 # Requirements:
@@ -20,7 +20,7 @@
 
   vars:
     target_mac: "2c:f0:5d:a2:7f:4f"
-    target_ip: "192.168.50.240"
+    target_ip: "192.168.50.12"
     broadcast_ip: "192.168.50.255"
     ssh_timeout_seconds: 120
 

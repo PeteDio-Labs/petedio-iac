@@ -1,10 +1,10 @@
-<!-- Ported from homelab-infra for the greenfield petedio-iac. Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240. -->
+<!-- Ported from homelab-infra for the greenfield petedio-iac. Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12. -->
 # Ansible — ollama-host
 
 Manages **ollama-host**: an Ubuntu Server 24.04 box (MSI X570-A PRO) running
 **native Ollama** (not Docker) across **two GPUs — GTX 1660 SUPER + RTX 3060 Ti**
 via a single Ollama service (no GPU pin; Ollama uses both), serving the Ollama
-API to the homelab LAN at **`192.168.50.240:11434`**. Brought under IaC the
+API to the homelab LAN at **`192.168.50.12:11434`**. Brought under IaC the
 bare-metal way — Terraform declares the host; Ansible does the OS/service config.
 
 - **NIC:** `eth0`, MAC `2c:f0:5d:a2:7f:4f`, Wake-on-LAN (magic packet) enabled.
@@ -16,7 +16,7 @@ bare-metal way — Terraform declares the host; Ansible does the OS/service conf
 
 ```
 ansible.cfg
-inventory/hosts.yml                 # ollama group -> ollama-host @ .240
+inventory/hosts.yml                 # ollama group -> ollama-host @ .12
 inventory/host_vars/ollama-host.yml # NIC/WoL/IP/DNS, base models, GPU env
 roles/ollama-service/              # NVIDIA 550, Ollama install, systemd drop-in, UFW, WoL, no-sleep
 roles/ollama-models/               # pulls base models (gemma4:e4b)
@@ -31,7 +31,7 @@ playbooks/provision-new-ollama-host.yml # fresh-box bootstrap (keys/hostname/IP)
 
 Run from this `ansible/` directory.
 
-1. **(Fresh box only) Provision** — keys, hostname, static IP at `.240` (reboots to apply).
+1. **(Fresh box only) Provision** — keys, hostname, static IP at `.12` (reboots to apply).
    Point the inventory at the box's current address:
    ```sh
    ansible-playbook playbooks/provision-new-ollama-host.yml -i '<current-ip>,' -e ansible_user=ansible
@@ -56,13 +56,13 @@ Run from this `ansible/` directory.
 ansible-playbook playbooks/wake-ollama-host.yml --tags wait
 ```
 
-## Renumber runbook: `.59` -> `.240`
+## Renumber runbook: `.59` -> `.12`
 
 > **Manual, gated step — NOT apply-on-merge.** A bad netplan apply can lock the
 > box off the network. `set-ollama-static-ip.yml` installs an **auto-revert
 > safety**: it backs up the live netplan and arms a detached background timer
 > that restores + re-applies the old config after `netplan_revert_seconds`
-> (default **180**) **unless cancelled**. The second play reconnects on `.240`
+> (default **180**) **unless cancelled**. The second play reconnects on `.12`
 > and cancels the revert automatically; if it never reconnects, the box heals
 > itself back to the previous network.
 
@@ -75,19 +75,19 @@ ansible-playbook playbooks/wake-ollama-host.yml --tags wait
 
 **Apply (auto-revert safe)**
 
-The inventory now points ollama-host at `.240`, but during the cutover the box is
+The inventory now points ollama-host at `.12`, but during the cutover the box is
 still at `.59` — so reach it at its CURRENT address via `current_ollama_host`:
 ```sh
-# the .59 -> .240 cutover (box is currently at .59):
+# the .59 -> .12 cutover (box is currently at .59):
 ansible-playbook playbooks/set-ollama-static-ip.yml -e current_ollama_host=192.168.50.59
 # ...or from any other current/temporary address (e.g. a DHCP lease):
 ansible-playbook playbooks/set-ollama-static-ip.yml -e current_ollama_host=192.168.50.X
-# once the host is already on .240 (idempotent re-runs), the bare command works:
+# once the host is already on .12 (idempotent re-runs), the bare command works:
 ansible-playbook playbooks/set-ollama-static-ip.yml
 ```
 The play backs up the current netplan, arms the revert sentinel
 (`/run/ollama-netplan-revert.pending`), launches the detached guard, writes the
-`.240` config, and applies (SSH will drop). It then reconnects on `.240`,
+`.12` config, and applies (SSH will drop). It then reconnects on `.12`,
 confirms the address, and **cancels the revert**.
 
 **If you get locked out**
@@ -96,19 +96,19 @@ confirms the address, and **cancels the revert**.
 - To recover sooner, reach the box via **WoL**, the **pve01 jump**, or the
   **physical console** and inspect `/var/log/ollama-netplan-revert.log`.
 
-**Manually cancelling the revert** (if you confirmed `.240` out of band):
+**Manually cancelling the revert** (if you confirmed `.12` out of band):
 ```sh
 sudo rm -f /run/ollama-netplan-revert.pending   # disarm
 sudo pkill -f ollama-netplan-revert.sh          # stop the timer now
 ```
 
 **Update the router DHCP reservation**
-- Change the reservation for MAC **`2c:f0:5d:a2:7f:4f`** to **`192.168.50.240`**
+- Change the reservation for MAC **`2c:f0:5d:a2:7f:4f`** to **`192.168.50.12`**
   so the lease and the static config agree.
 
 **Post-checks**
 ```sh
-curl http://192.168.50.240:11434/api/version          # Ollama answering on .240
-curl http://192.168.50.240:11434/api/tags             # models intact (gemma4:e4b present)
-ssh ansible@192.168.50.240 nvidia-smi                  # both GPUs healthy (1660 SUPER + 3060 Ti)
+curl http://192.168.50.12:11434/api/version          # Ollama answering on .12
+curl http://192.168.50.12:11434/api/tags             # models intact (gemma4:e4b present)
+ssh ansible@192.168.50.12 nvidia-smi                  # both GPUs healthy (1660 SUPER + 3060 Ti)
 ```
