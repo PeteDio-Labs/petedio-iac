@@ -71,6 +71,7 @@ resource "proxmox_virtual_environment_container" "canary" {
     ignore_changes = [
       operating_system[0].template_file_id,
       initialization[0].user_account,
+      features, # set out-of-band by pct (root@pam gotcha) — see GOTCHAS
     ]
   }
 }

@@ -69,10 +69,15 @@ resource "proxmox_virtual_environment_container" "runner" {
     firewall = false
   }
 
+  # `features` is set out-of-band by `pct set --features nesting=1,keyctl=1`
+  # (the Proxmox-token/root@pam gotcha — see docs/GOTCHAS.md). Ignore it so apply
+  # doesn't strip nesting/keyctl from the running runner. Debian 13's systemd 257
+  # needs nesting to boot.
   lifecycle {
     ignore_changes = [
       operating_system[0].template_file_id,
       initialization[0].user_account,
+      features,
     ]
   }
 }
