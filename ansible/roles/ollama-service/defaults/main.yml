@@ -1,5 +1,5 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240. One ollama service uses BOTH
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12. One ollama service uses BOTH
 # (no CUDA_VISIBLE_DEVICES pin); the old per-GPU :11435 service is not used.
 ---
 ollama_service_name: ollama

@@ -1,8 +1,8 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
 ---
 # Provision a fresh Ubuntu Server box as ollama-host: SSH keys, hostname,
-# and a static IP at 192.168.50.240/24 (applied on reboot).
+# and a static IP at 192.168.50.12/24 (applied on reboot).
 #
 # Connection (no secrets needed):
 #   ansible_user: ansible, key ~/.ssh/id_ed25519_pedro, become: true
@@ -20,7 +20,7 @@
     ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pedro
     new_hostname: "ollama-host"
     net_interface: "eth0"
-    new_ip: "192.168.50.240/24"
+    new_ip: "192.168.50.12/24"
     gateway: "192.168.50.1"
     dns:
       - "1.1.1.1"

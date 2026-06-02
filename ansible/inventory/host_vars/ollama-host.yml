@@ -1,5 +1,5 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
 ---
 # ollama-host — Ubuntu Server 24.04, MSI X570-A PRO, native Ollama (not Docker).
 # GPUs: GTX 1660 SUPER (6GB) + RTX 3060 Ti (8GB) — BOTH exposed via one Ollama
@@ -8,7 +8,7 @@
 wol_interface: eth0
 wol_mac: "2c:f0:5d:a2:7f:4f"
 ollama_network_interface: eth0
-ollama_static_ip: "192.168.50.240"   # renumbered from 192.168.50.59
+ollama_static_ip: "192.168.50.12"   # renumbered from 192.168.50.59
 ollama_prefix: "24"
 ollama_gateway: "192.168.50.1"
 ollama_dns:

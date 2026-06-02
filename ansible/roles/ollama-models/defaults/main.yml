@@ -1,5 +1,5 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
 # The 5 custom petedio-* Modelfiles were dropped (stale k8s/Mission-Control
 # context) — this role now only pulls base models from the Ollama registry.
 ---

@@ -1,5 +1,5 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .240. One ollama service for both GPUs.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12. One ollama service for both GPUs.
 ---
 - name: Restart ollama
   ansible.builtin.systemd:
