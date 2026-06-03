@@ -1,0 +1,25 @@
+{# Managed by Ansible (configure-vault.yml) — do not edit on the host. #}
+ui = true
+
+# disable_mlock = true: this is an UNPRIVILEGED LXC, where mlock/CAP_IPC_LOCK is
+# unreliable — the container usually lacks the capability, so Vault can't lock its
+# memory and would fail to start (or log mlock errors) if mlock stayed enabled.
+# The tradeoff is that secrets/keys may be paged to disk by the host kernel; we
+# accept it because the raft data already lives on the container's local disk and
+# this is the standard, well-documented way to run Vault inside an LXC. Re-enable
+# (drop this line) if/when this graduates to a host where CAP_IPC_LOCK is granted.
+disable_mlock = true
+
+storage "raft" {
+  path    = "/opt/vault/data"
+  node_id = "vault-223"
+}
+
+listener "tcp" {
+  address       = "0.0.0.0:8200"
+  tls_cert_file = "/opt/vault/tls/vault.crt"
+  tls_key_file  = "/opt/vault/tls/vault.key"
+}
+
+api_addr     = "https://192.168.50.223:8200"
+cluster_addr = "https://192.168.50.223:8201"
