@@ -1,0 +1,140 @@
+---
+# configure-vault.yml — provision HashiCorp Vault on the LXC 223 host.
+#
+# Runs post-create against the bare Debian 13 UNPRIVILEGED LXC that Terraform
+# stands up (environments/homelab/vault.tf). Terraform owns the container's
+# existence + hardware + network only; this playbook installs Vault, lays down
+# integrated raft storage, a self-signed-TLS listener, and the systemd config,
+# then starts the service.
+#
+# IMPORTANT — Vault comes up SEALED on first boot. This playbook intentionally
+# does NOT `vault operator init` / unseal: that is a one-time manual operator
+# step (it produces the root token + unseal/recovery keys, which must be handled
+# off-box). Re-running this playbook is safe and will not disturb a running,
+# unsealed Vault.
+#
+# Container features (nesting/keyctl) are NOT set here. The bpg/proxmox provider
+# can't set LXC `features{}` over an API token — Proxmox enforces a hardcoded
+# user == root@pam check that an API token (root@pam!tokenid) fails (root@pam
+# gotcha — see docs/GOTCHAS.md). They are applied out-of-band on the Proxmox
+# node: `pct set 223 --features nesting=1,keyctl=1`. The pre_task below just
+# surfaces whether keyctl is present; it never fails the run.
+#
+# Inventory: target the 223 host (the `vault` group → 192.168.50.223),
+# connecting as root over the SSH key Terraform installed.
+
+- name: Configure HashiCorp Vault (LXC 223)
+  hosts: vault
+  become: true
+
+  pre_tasks:
+    # keyctl/nesting are set out-of-band on the Proxmox node
+    # (`pct set 223 --features nesting=1,keyctl=1`) because the API token can't
+    # mutate LXC features (root@pam gotcha — docs/GOTCHAS.md). This is a
+    # non-failing visibility probe only; Vault runs fine without keyctl since we
+    # disable_mlock in vault.hcl (see the template).
+    - name: Probe whether keyctl is available (informational only)
+      ansible.builtin.command: keyctl show
+      register: vault_keyctl_probe
+      failed_when: false
+      changed_when: false
+
+  tasks:
+    - name: Install prerequisites for the HashiCorp apt repo + TLS generation
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - curl
+          - openssl
+        state: present
+        update_cache: true
+
+    - name: Add the HashiCorp apt signing key
+      ansible.builtin.get_url:
+        url: https://apt.releases.hashicorp.com/gpg
+        dest: /usr/share/keyrings/hashicorp-archive-keyring.asc
+        mode: "0644"
+
+    - name: Add the HashiCorp apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.asc]
+          https://apt.releases.hashicorp.com {{ ansible_distribution_release }} main
+        filename: hashicorp
+        state: present
+
+    - name: Install Vault
+      ansible.builtin.apt:
+        name: vault
+        state: present
+        update_cache: true
+
+    # The `vault` OS user and the vault.service systemd unit are created by the
+    # apt package; we only need to drop data/TLS dirs, config, and start it.
+    - name: Ensure the raft data and TLS directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: vault
+        group: vault
+        mode: "0700"
+      loop:
+        - /opt/vault/data
+        - /opt/vault/tls
+
+    # Self-signed cert/key for the TLS listener. `creates:` makes this idempotent
+    # — it won't regenerate (and won't churn the cert) on re-runs.
+    - name: Generate a self-signed TLS certificate + key
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -newkey rsa:4096 -nodes
+          -keyout /opt/vault/tls/vault.key
+          -out /opt/vault/tls/vault.crt
+          -days 3650 -subj "/CN=vault-223"
+          -addext "subjectAltName=IP:192.168.50.223,DNS:vault-223,DNS:vault.local"
+        creates: /opt/vault/tls/vault.crt
+      notify: Restart vault
+
+    - name: Lock down the TLS cert + key ownership/permissions
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: vault
+        group: vault
+        mode: "0600"
+      loop:
+        - /opt/vault/tls/vault.key
+        - /opt/vault/tls/vault.crt
+
+    - name: Render the Vault configuration (raft storage + TLS listener)
+      ansible.builtin.template:
+        src: templates/vault.hcl.j2
+        dest: /etc/vault.d/vault.hcl
+        owner: vault
+        group: vault
+        mode: "0640"
+      notify: Restart vault
+
+    # The CA/cert is PUBLIC — not a secret — so we pull it back to the repo for
+    # consumers to trust via VAULT_CACERT (clients, CI, the postgresql provider).
+    # Committed at environments/homelab/vault-ca.crt.
+    - name: Fetch the public TLS cert back to the controller for VAULT_CACERT
+      ansible.builtin.fetch:
+        src: /opt/vault/tls/vault.crt
+        dest: "{{ playbook_dir }}/../../environments/homelab/vault-ca.crt"
+        flat: true
+
+    # Vault comes up SEALED on first boot — see the header. `vault operator init`
+    # / unseal is a separate manual operator step, intentionally not done here.
+    - name: Enable and start Vault (comes up SEALED on first boot)
+      ansible.builtin.systemd:
+        name: vault
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart vault
+      ansible.builtin.systemd:
+        name: vault
+        state: restarted
