@@ -58,10 +58,15 @@
         line: "listen_addresses = '{{ postgres_listen_addresses }}'"
       notify: Restart postgresql
 
-    - name: Allow md5-authenticated connections from the homelab subnet (pg_hba)
+    # PG16+ default password_encryption=scram-sha-256, so the hba method must be
+    # scram-sha-256 too: an md5 hba line cannot verify a scram-hashed password and
+    # every TCP login fails. regexp replaces any prior host line for this CIDR so
+    # re-runs don't leave a stale md5 entry.
+    - name: Allow scram-authenticated connections from the homelab subnet (pg_hba)
       ansible.builtin.lineinfile:
         path: "{{ pg_conf_dir.stdout }}/pg_hba.conf"
-        line: "host    all    all    {{ postgres_allowed_cidr }}    md5"
+        regexp: "^host\\s+all\\s+all\\s+{{ postgres_allowed_cidr | regex_escape }}\\s+"
+        line: "host    all    all    {{ postgres_allowed_cidr }}    scram-sha-256"
         insertafter: EOF
       notify: Restart postgresql
 
@@ -73,7 +78,7 @@
 
     # Create the admin/login role the cyrilgdn/postgresql provider connects as.
     # On Debian the bootstrap `postgres` role is peer-auth/passwordless; give it a
-    # password so the provider can authenticate over TCP with md5.
+    # password so the provider can authenticate over TCP (scram-sha-256).
     - name: Create / update the Postgres admin role used by the Terraform provider
       community.postgresql.postgresql_user:
         name: "{{ postgres_admin_user }}"
