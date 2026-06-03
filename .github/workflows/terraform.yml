@@ -23,6 +23,14 @@ env:
   TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
   TF_VAR_ssh_public_key: ${{ secrets.LXC_SSH_PUBLIC_KEY }}
 
+  # Terraform's `vault` provider (providers.tf) reads these at apply time when
+  # postgres_ready=true (the gated vault_kv_secret_v2.poker_db read). vault-action
+  # does NOT export VAULT_ADDR/VAULT_CACERT, and exports the token only with
+  # exportToken (set below) — so address + CA path are pinned here. VAULT_CACERT is
+  # a file path → the committed self-signed CA (absolute, working-dir-independent).
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+
 permissions:
   contents: read
   pull-requests: write # to post the plan as a PR comment
@@ -64,6 +72,11 @@ jobs:
           role: github-actions
           jwtGithubAudience: https://github.com/PeteDio-Labs
           caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          # exportToken: write the minted Vault token (ci-read policy) to $GITHUB_ENV
+          # as VAULT_TOKEN so Terraform's `vault` provider can read kv/poker/db at
+          # apply time (Phase 3 / postgres_ready=true). exportEnv exports the mapped
+          # secrets below for the init/plan/apply steps that follow.
+          exportToken: true
           exportEnv: true
           secrets: |
             kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;

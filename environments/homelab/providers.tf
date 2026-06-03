@@ -31,9 +31,10 @@ provider "postgresql" {
 }
 
 # Vault provider (PET-29) — source app/DB secrets at apply time instead of static
-# CI secrets. Configured ENTIRELY from env so nothing is committed: in CI the
-# "Vault — mint creds via OIDC" step (vault-action, exportEnv) sets VAULT_ADDR,
-# VAULT_TOKEN, and VAULT_CACERT; locally the operator exports the same.
+# CI secrets. Configured ENTIRELY from env so nothing is committed: in CI,
+# VAULT_ADDR + VAULT_CACERT come from the workflow `env:` block and VAULT_TOKEN
+# from the "Vault — mint creds via OIDC" step (vault-action `exportToken: true`);
+# locally the operator exports the same three.
 #
 # PHASE-1 SAFETY: an empty provider block does NOT open a connection, and
 # `terraform validate` never contacts providers — so phase-1 validate works with
