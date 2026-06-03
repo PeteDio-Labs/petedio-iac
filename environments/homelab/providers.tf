@@ -40,4 +40,11 @@ provider "postgresql" {
 # `terraform validate` never contacts providers — so phase-1 validate works with
 # no live Vault. The only Vault read (vault_kv_secret_v2.poker_db, postgres.tf)
 # is gated on var.postgres_ready, so phase-1 PLAN never touches Vault either.
-provider "vault" {}
+#
+# skip_child_token: by default the provider mints a short-lived CHILD token from
+# VAULT_TOKEN, which needs the token-create capability. In CI the token is the
+# OIDC-minted `ci-read` token (read/list only, no token create) → child-token
+# creation 403s. Skip it so the provider uses the token directly to read kv/poker/db.
+provider "vault" {
+  skip_child_token = true
+}
