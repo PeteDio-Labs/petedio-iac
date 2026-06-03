@@ -65,11 +65,14 @@ variable "postgres_ready" {
     never contacted (Postgres isn't installed/reachable yet — a configured-but-
     unused provider does not connect).
 
-    PHASE 2 (true): after Ansible (configure-postgres.yml) installs Postgres,
-    opens listen_addresses/pg_hba, and creates the admin role — and once
-    TF_VAR_postgres_admin_password is in CI — flip this to true so the next apply
-    creates the `poker` database, owner role, and grants.
+    PHASE 2 (true, current default — PET-32): Postgres is live on 231 and the
+    `poker` db/role were created MANUALLY (verified, scram TCP). The default is
+    now true so CI's apply-on-merge agrees with reality. The live objects are NOT
+    in TF state yet, so they MUST be `terraform import`ed BEFORE any apply runs
+    with this flag — otherwise cyrilgdn errors "already exists" or proposes
+    recreating the live db. See docs/runbooks/postgres-import.md (import-before-
+    apply, lockstep ordering, 0-to-destroy gate).
   EOT
   type        = bool
-  default     = false
+  default     = true
 }

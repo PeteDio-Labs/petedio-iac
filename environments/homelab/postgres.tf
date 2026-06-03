@@ -3,19 +3,22 @@
 # reusable modules/proxmox-lxc module.
 #
 # TWO-PHASE APPLY (gated on var.postgres_ready — see variables.tf):
-#   PHASE 1  (postgres_ready = false, the default):
+#   PHASE 1  (postgres_ready = false):
 #     `terraform apply` creates ONLY the 231 LXC. modules/postgres-db has
 #     count = 0, so no DB objects are planned and the postgresql provider is
 #     never contacted (it's configured but unused — that does not open a
-#     connection). This is correct because Postgres isn't installed yet.
+#     connection). This was correct while Postgres wasn't installed yet.
 #   --- between phases ---
 #     Run ansible/playbooks/configure-postgres.yml against 231: install
 #     Postgres, set listen_addresses='*' + pg_hba for 192.168.50.0/24, create
 #     the admin role the provider uses. Add TF_VAR_postgres_admin_password (and
 #     TF_VAR_poker_db_password) to CI from Vault (PET-6).
-#   PHASE 2  (postgres_ready = true):
-#     Flip the flag; the next apply creates the `poker` database, its owner
-#     role, and grants via the postgresql provider against the live host.
+#   PHASE 2  (postgres_ready = true — CURRENT default, PET-32):
+#     Postgres is LIVE on 231; the `poker` db/owner role/ALL-grant were created
+#     MANUALLY (verified). count flips to 1 so TF now manages those objects.
+#     CRITICAL: they are NOT in state yet — `terraform import` them BEFORE any
+#     apply (else cyrilgdn errors "already exists" / proposes recreating the live
+#     db). See docs/runbooks/postgres-import.md.
 #
 # As with poker-api (230), TF owns existence + hardware + network only; Docker
 # is not needed here, but the nesting/keyctl container features still come from
@@ -36,7 +39,8 @@ module "postgres_host" {
 }
 
 # Vault-sourced DB secrets (PET-29; consumed by PET-32). KV v2 entry at
-# kv/data/poker/db holds { postgres_admin_password, poker_db_password }.
+# kv/data/poker/db holds { DATABASE_URL, admin_password, poker_password } — the
+# exact keys PET-27 seeds (see docs/runbooks/vault-bootstrap.md).
 #
 # GATED on var.postgres_ready (same gate as the DB module + postgresql provider):
 # data sources are read at PLAN/refresh time, so an ungated read would hit live
@@ -61,12 +65,12 @@ locals {
   poker_db_password = (
     var.poker_db_password != null
     ? var.poker_db_password
-    : try(data.vault_kv_secret_v2.poker_db[0].data["poker_db_password"], null)
+    : try(data.vault_kv_secret_v2.poker_db[0].data["poker_password"], null)
   )
   postgres_admin_password = (
     var.postgres_admin_password != null
     ? var.postgres_admin_password
-    : try(data.vault_kv_secret_v2.poker_db[0].data["postgres_admin_password"], null)
+    : try(data.vault_kv_secret_v2.poker_db[0].data["admin_password"], null)
   )
 }
 
