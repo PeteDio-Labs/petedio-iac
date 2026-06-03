@@ -11,15 +11,30 @@ on:
 
 env:
   TF_IN_AUTOMATION: "1"
-  # Creds for the MinIO S3 backend + bpg/proxmox provider come from repo secrets.
+  # Creds for the MinIO S3 backend + bpg/proxmox provider.
+  # PET-29 PHASE 1 (this PR): these 4 STATIC repo secrets stay as an overlap/
+  # fallback while the Vault-OIDC path (the "Vault — mint creds" step below) is
+  # proven. vault-action exports the same names into $GITHUB_ENV, which OVERRIDES
+  # these job-level env values for every step after it (init/plan/apply) — so the
+  # Vault-sourced creds win at runtime. PHASE 2 (separate PR) deletes these 4
+  # secrets + rotates the Proxmox token. Do NOT remove them in this PR.
   AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
   TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
   TF_VAR_ssh_public_key: ${{ secrets.LXC_SSH_PUBLIC_KEY }}
 
+  # Terraform's `vault` provider (providers.tf) reads these at apply time when
+  # postgres_ready=true (the gated vault_kv_secret_v2.poker_db read). vault-action
+  # does NOT export VAULT_ADDR/VAULT_CACERT, and exports the token only with
+  # exportToken (set below) — so address + CA path are pinned here. VAULT_CACERT is
+  # a file path → the committed self-signed CA (absolute, working-dir-independent).
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+
 permissions:
   contents: read
   pull-requests: write # to post the plan as a PR comment
+  id-token: write # mint the GitHub OIDC token vault-action exchanges for a Vault token
 
 jobs:
   tf:
@@ -33,6 +48,45 @@ jobs:
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
+
+      # vault-action's `caCertificate` input wants BASE64-encoded PEM content, and
+      # a `with:` value can't read a file — so emit the committed self-signed CA
+      # (environments/homelab/vault-ca.crt, relative to working-directory) as a
+      # base64 step output. We verify TLS against this CA rather than tlsSkipVerify.
+      - name: Encode Vault CA
+        id: vault_ca
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      # Exchange the GitHub Actions OIDC token for a short-lived Vault token (JWT
+      # auth, role github-actions) and export the same env the static repo secrets
+      # provide. jwtGithubAudience MUST equal var.github_oidc_audience in
+      # vault-config/variables.tf. KV v2 reads go through kv/data/<path>.
+      # NB (PET-29 two-phase): this step is RED until PET-27 seeds these KV values —
+      # vault-action can't read secrets that don't exist yet. Expected; gates merge.
+      - name: Vault — mint creds via OIDC
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          # The JWT backend is mounted at jwt-github/ (not the default jwt/), so the
+          # auth path must be set explicitly — otherwise vault-action POSTs to
+          # auth/jwt/login and Vault returns 403 permission denied.
+          path: jwt-github
+          role: github-actions
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          # exportToken: write the minted Vault token (ci-read policy) to $GITHUB_ENV
+          # as VAULT_TOKEN so Terraform's `vault` provider can read kv/poker/db at
+          # apply time (Phase 3 / postgres_ready=true). exportEnv exports the mapped
+          # secrets below for the init/plan/apply steps that follow.
+          exportToken: true
+          exportEnv: true
+          secrets: |
+            kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;
+            kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY ;
+            kv/data/iac/proxmox api_token | TF_VAR_proxmox_api_token ;
+            kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key
 
       - name: Init
         run: terraform init -input=false

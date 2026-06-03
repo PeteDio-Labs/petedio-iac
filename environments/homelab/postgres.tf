@@ -35,6 +35,41 @@ module "postgres_host" {
   description      = "Co-latro Postgres RDS-equivalent host. Managed by Terraform."
 }
 
+# Vault-sourced DB secrets (PET-29; consumed by PET-32). KV v2 entry at
+# kv/data/poker/db holds { postgres_admin_password, poker_db_password }.
+#
+# GATED on var.postgres_ready (same gate as the DB module + postgresql provider):
+# data sources are read at PLAN/refresh time, so an ungated read would hit live
+# Vault during phase-1 plan and fail (no Vault env, secret not seeded until
+# PET-27). With count=0 in phase 1 the read never happens. (`terraform validate`
+# never reads data sources, so validate is green regardless.)
+data "vault_kv_secret_v2" "poker_db" {
+  count = var.postgres_ready ? 1 : 0
+  mount = "kv"
+  name  = "poker/db"
+}
+
+# Resolve the DB secrets with a TF_VAR-first, Vault-fallback precedence so BOTH
+# phases work from one config:
+#   PHASE 1 (postgres_ready=false): data source absent → both resolve to null
+#     (the var defaults). Nothing is required, nothing reads Vault. These locals
+#     ARE evaluated in phase-1 (the postgresql provider references the admin one),
+#     so the expression MUST tolerate everything being null — hence NOT coalesce(),
+#     which errors on all-null. An explicit TF_VAR_* (break-glass) still wins.
+#   PHASE 2 (postgres_ready=true): no TF_VAR set → fall through to the Vault value.
+locals {
+  poker_db_password = (
+    var.poker_db_password != null
+    ? var.poker_db_password
+    : try(data.vault_kv_secret_v2.poker_db[0].data["poker_db_password"], null)
+  )
+  postgres_admin_password = (
+    var.postgres_admin_password != null
+    ? var.postgres_admin_password
+    : try(data.vault_kv_secret_v2.poker_db[0].data["postgres_admin_password"], null)
+  )
+}
+
 # Gated logical layer: the database + owner role + grants. count = 0 until
 # var.postgres_ready flips to true (phase 2), keeping phase-1 applies host-only.
 module "poker_db" {
@@ -43,7 +78,7 @@ module "poker_db" {
 
   db_name        = "poker"
   owner_role     = "poker"
-  owner_password = var.poker_db_password
+  owner_password = local.poker_db_password
 }
 
 output "postgres_host_id" {

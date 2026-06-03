@@ -45,3 +45,41 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   a runner that doesn't exist yet. Break it by applying the runner LOCALLY once
   (`terraform apply -target=...container.runner`) + Ansible-registering it, then let CI
   take over.
+
+## Vault — TLS + GitHub-OIDC (PET-29)
+
+- **Self-signed CA, so verify — don't skip.** Vault on .223 serves an HTTPS listener
+  with a self-signed CA (matches the LAN's insecure Proxmox/MinIO posture). The CA is
+  committed at `environments/homelab/vault-ca.crt`. Verify against it
+  (`VAULT_CACERT=…/vault-ca.crt` locally; vault-action's `caCertificate` in CI) — never
+  `tlsSkipVerify`/`-tls-skip-verify`. A leaf-cert SAN must cover the address you dial
+  (this cert lists `192.168.50.223` + `vault.local`); dialing a name not in the SAN
+  fails TLS even with the right CA.
+
+- **`vault-action`'s `caCertificate` wants BASE64-encoded PEM, not raw PEM or a path.**
+  A workflow `with:` value can't read a file, so add a preceding step that base64s the
+  committed CA into a step output and pass that:
+  `echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"` →
+  `caCertificate: ${{ steps.<id>.outputs.b64 }}`. The path is relative to the job's
+  `working-directory` (CI `cd`s into `environments/homelab`, where the cert lives).
+
+- **GitHub OIDC `sub` differs by event — bind BOTH or you break plan-on-PR.**
+  push-to-main → `repo:<owner>/<repo>:ref:refs/heads/main`; pull_request →
+  `repo:<owner>/<repo>:pull_request`. CI's plan (PR) and apply (merge) BOTH run
+  terraform → both need creds → both subs must be allowed. Bind exactly those two,
+  not repository-only (any branch/workflow) and not main-only (kills PR plans).
+
+- **The Terraform provider only takes STRING `bound_claims`, not lists.** Put multiple
+  allowed values in ONE comma-separated string with OR semantics:
+  `bound_claims = { sub = "<main-sub>,<pr-sub>" }`, and set
+  `bound_claims_type = "string"` (exact match) — `glob` is only for wildcards.
+
+- **`jwtGithubAudience` MUST equal the role's `bound_audiences`.** We use
+  `https://github.com/PeteDio-Labs` (`var.github_oidc_audience`). A mismatch → Vault
+  rejects the login with an audience error, not an obvious one.
+
+- **Public repo + self-hosted runner = a real exposure (follow-up).** Fork
+  `pull_request`s can run on a self-hosted runner that can reach Vault. The `sub`
+  binding scopes WHICH OIDC tokens are accepted, but doesn't stop untrusted PR code
+  from running on the runner. Gate fork PRs (require-approval / trusted-only) before
+  relying on this in anger.
