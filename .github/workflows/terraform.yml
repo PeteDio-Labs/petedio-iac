@@ -69,6 +69,10 @@ jobs:
         with:
           url: https://192.168.50.223:8200
           method: jwt
+          # The JWT backend is mounted at jwt-github/ (not the default jwt/), so the
+          # auth path must be set explicitly — otherwise vault-action POSTs to
+          # auth/jwt/login and Vault returns 403 permission denied.
+          path: jwt-github
           role: github-actions
           jwtGithubAudience: https://github.com/PeteDio-Labs
           caCertificate: ${{ steps.vault_ca.outputs.b64 }}
