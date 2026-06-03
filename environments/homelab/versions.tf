@@ -10,5 +10,9 @@ terraform {
       source  = "cyrilgdn/postgresql"
       version = "~> 1.0"
     }
+    vault = {
+      source  = "hashicorp/vault"
+      version = "~> 4.0"
+    }
   }
 }

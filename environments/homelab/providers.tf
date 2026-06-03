@@ -19,11 +19,24 @@ provider "proxmox" {
 # provider is never contacted even though it's configured. Phase 2 flips the
 # flag once Postgres is actually running + reachable here.
 provider "postgresql" {
-  host            = "192.168.50.231"
-  port            = 5432
+  host = "192.168.50.231"
+  port = 5432
+  # local.postgres_admin_password (postgres.tf): Vault-first, TF_VAR fallback.
+  # Phase 1 it resolves to null and the provider is never contacted (gated).
   username        = var.postgres_admin_user
-  password        = var.postgres_admin_password
+  password        = local.postgres_admin_password
   sslmode         = "disable"
   superuser       = false
   connect_timeout = 15
 }
+
+# Vault provider (PET-29) — source app/DB secrets at apply time instead of static
+# CI secrets. Configured ENTIRELY from env so nothing is committed: in CI the
+# "Vault — mint creds via OIDC" step (vault-action, exportEnv) sets VAULT_ADDR,
+# VAULT_TOKEN, and VAULT_CACERT; locally the operator exports the same.
+#
+# PHASE-1 SAFETY: an empty provider block does NOT open a connection, and
+# `terraform validate` never contacts providers — so phase-1 validate works with
+# no live Vault. The only Vault read (vault_kv_secret_v2.poker_db, postgres.tf)
+# is gated on var.postgres_ready, so phase-1 PLAN never touches Vault either.
+provider "vault" {}

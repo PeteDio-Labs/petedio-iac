@@ -37,18 +37,31 @@ resource "vault_jwt_auth_backend" "github" {
 # github-actions role → ci-read policy. role_type MUST be "jwt": the provider
 # default is "oidc", and bound_audiences is required for jwt-type roles.
 #
-# For now we bind by `repository` only. When the CI cutover lands (deferred
-# PET-29), tighten this with a ref/branch bound_claim (e.g. only refs/heads/main)
-# so non-default branches can't mint a CI token.
+# CLAIM BINDING (PET-29 — tightened from repository-only): we bind the OIDC `sub`
+# to EXACTLY the two events CI legitimately runs from, so no other branch/tag/
+# workflow/environment in this repo (and no other repo) can mint a CI token:
+#   - push to main → sub = "repo:<repo>:ref:refs/heads/main"   (apply-on-merge)
+#   - pull_request → sub = "repo:<repo>:pull_request"          (plan-on-PR)
+# Both terraform jobs (plan + apply) need the backend/provider creds, so BOTH
+# subs must be allowed — binding only main would break plan-on-PR.
+#
+# bound_claims_type = "string" → EXACT match (not glob): these two subs are fixed
+# strings with no wildcard. A single claim value may carry multiple comma-separated
+# allowed values with OR semantics ("a,b" matches a OR b) — per the hashicorp/vault
+# provider docs — so we list both subs in one comma-joined string.
+#
+# NOTE (follow-up risk, out of scope): this is a PUBLIC repo on a self-hosted
+# runner. Fork pull_requests on self-hosted runners are a known exposure
+# (untrusted code on a runner that can reach Vault) — track separately.
 resource "vault_jwt_auth_backend_role" "github_actions" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "github-actions"
   role_type         = "jwt"
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
-  bound_claims_type = "glob"
+  bound_claims_type = "string"
   bound_claims = {
-    repository = var.github_repo
+    sub = "repo:${var.github_repo}:ref:refs/heads/main,repo:${var.github_repo}:pull_request"
   }
   token_policies = [vault_policy.ci_read.name]
   token_ttl      = 900
