@@ -76,3 +76,19 @@ variable "postgres_ready" {
   type        = bool
   default     = true
 }
+
+variable "cloudflare_api_token" {
+  description = <<-EOT
+    Cloudflare API token the cloudflare provider authenticates with to READ the
+    existing Zero Trust tunnel + pdlab.dev zone (cloudflare.tf). Sourced from
+    Vault (kv/iac/cloudflare, field api_token) and passed as
+    TF_VAR_cloudflare_api_token in CI — never committed. Defaults to null so
+    validate/plan without Vault degrade cleanly; the resolver falls back to the
+    Vault data-source value and an explicit TF_VAR wins as break-glass. Distinct
+    from the cloudflared daemon token at kv/services/cloudflare/tunnel_token
+    (consumed by Ansible, not Terraform).
+  EOT
+  type        = string
+  sensitive   = true
+  default     = null
+}
