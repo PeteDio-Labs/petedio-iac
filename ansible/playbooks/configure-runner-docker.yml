@@ -1,0 +1,83 @@
+---
+# configure-runner-docker.yml — install Docker CE on the self-hosted GitHub Actions
+# runner (LXC 232) so app CI can build images + use service containers. (PET-79)
+#
+# The runner (runner-232, configured out-of-band from the ported github-runner.yml)
+# runs terraform/ansible fine, but the Co-latro backend CI needs Docker on the runner:
+# a `services: postgres` container for tests + `docker build/push` for the image. The
+# runner landed jobs with `docker: command not found` until this ran.
+#
+# LXC 232 already has nesting=1,keyctl=1 (verified), so Docker runs in the unprivileged
+# container. The `runner` user is added to the docker group so workflow steps (which run
+# as that user) can talk to the daemon without sudo.
+#
+# Inventory: the `runner` group → 192.168.50.232, root over the TF-installed key.
+
+- name: Install Docker on the GitHub Actions runner (LXC 232)
+  hosts: runner
+  become: true
+
+  vars:
+    runner_user: runner
+
+  tasks:
+    - name: Install prerequisites for the Docker apt repo
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Add the Docker apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /usr/share/keyrings/docker-archive-keyring.asc
+        mode: "0644"
+
+    - name: Add the Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/usr/share/keyrings/docker-archive-keyring.asc]
+          https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+
+    - name: Install Docker CE + buildx (the app CI uses buildx for cross-arch builds)
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker is started and enabled
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    # Workflow steps run as the runner user; group membership lets them use the daemon
+    # socket without sudo. Requires the runner service to restart to pick up the new
+    # group — handled below so a fresh job sees docker immediately.
+    - name: Add the runner user to the docker group
+      ansible.builtin.user:
+        name: "{{ runner_user }}"
+        groups: docker
+        append: true
+      notify: Restart the actions runner
+
+  handlers:
+    # The runner service caches the process group set at start; restart so jobs pick up
+    # docker-group membership. The unit name follows the actions/runner svc.sh convention.
+    - name: Restart the actions runner
+      ansible.builtin.shell: |
+        set -e
+        svc=$(systemctl list-units --type=service --all --no-legend 'actions.runner.*' \
+              | awk '{print $1}' | head -1)
+        if [ -n "$svc" ]; then systemctl restart "$svc"; else echo "no runner svc found"; fi
+      changed_when: true
