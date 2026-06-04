@@ -1,0 +1,273 @@
+---
+# configure-poker-api.yml — roll out the Co-latro app onto the poker-api LXC 230. (PET-44)
+#
+# Runs post-create against the bare Debian UNPRIVILEGED LXC that Terraform stands up
+# (environments/homelab/poker.tf — TF owns existence + hardware + network only). This
+# playbook makes it a working app host:
+#   Docker CE  ->  Nexus login  ->  rendered env-file (DATABASE_URL)  ->  systemd unit
+#   running the backend image on :3020  ->  nginx serving the frontend + proxying /api.
+#
+# Container features (nesting/keyctl) are NOT set here — the bpg/proxmox provider can't
+# set LXC features{} over an API token (root@pam gotcha — docs/GOTCHAS.md). Run
+# scripts/lxc-features-230.sh FIRST (PET-43); the pre_task below fails fast if it wasn't.
+#
+# SECRETS: this playbook takes no secrets of its own — they are resolved BEFORE the run
+# by scripts/deploy-poker-api.sh (the repo's shell-wrapper convention) and passed as
+# no_log extra-vars:
+#   colatro_database_url  (Vault kv/poker/db DATABASE_URL — via the terraform-local
+#                          AppRole, which is granted kv/poker/*; the ansible policy is
+#                          deliberately NOT — see docs/runbooks/vault-seed.md)
+#   nexus_username / nexus_password          (Vault kv/services/nexus)
+#   minio_frontend_access_key / _secret_key  (Vault kv/services/minio-frontend)
+# Run via:  ./scripts/deploy-poker-api.sh
+#
+# Requires the community.docker collection on the controller:
+#   ansible-galaxy collection install -r ansible/requirements.yml
+#
+# Inventory: target the 230 host (the `poker-api` group → 192.168.50.230),
+# connecting as root over the SSH key Terraform installed.
+
+- name: Configure Co-latro poker-api host (LXC 230)
+  hosts: poker-api
+  become: true
+
+  vars:
+    colatro_port: 3020
+    colatro_container_name: co-latro-backend
+    colatro_config_dir: /etc/co-latro
+    colatro_env_file: /etc/co-latro/co-latro.env
+    colatro_web_root: /var/www/co-latro
+    nexus_registry: docker.pdlab.dev
+    colatro_image: "docker.pdlab.dev/co-latro-backend"
+    # Override with -e backend_image_tag=<sha> for a pinned / rollback-able deploy.
+    backend_image_tag: "latest"
+    minio_frontend_endpoint: "http://192.168.50.221:9000"
+    minio_frontend_bucket: "co-latro-frontend"
+    mc_bin: /usr/local/bin/mc
+    mc_url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+
+  pre_tasks:
+    # Docker in an unprivileged LXC needs nesting + keyctl, set out-of-band on the
+    # Proxmox node (scripts/lxc-features-230.sh, PET-43). Fail fast with a clear
+    # pointer if they're missing — otherwise Docker installs but can't run containers.
+    - name: Probe whether keyctl is available (set by lxc-features-230.sh)
+      ansible.builtin.command: keyctl show
+      register: poker_keyctl_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Assert the LXC features are set (run scripts/lxc-features-230.sh if this fails)
+      ansible.builtin.assert:
+        that: poker_keyctl_probe.rc == 0
+        fail_msg: >-
+          keyctl is unavailable on LXC 230 — Docker cannot run containers here.
+          Run scripts/lxc-features-230.sh (PET-43) on the Proxmox node first, then re-run.
+
+    - name: Assert required secret extra-vars were provided (use scripts/deploy-poker-api.sh)
+      ansible.builtin.assert:
+        that:
+          - colatro_database_url is defined and colatro_database_url | length > 0
+          - nexus_username is defined and nexus_username | length > 0
+          - nexus_password is defined and nexus_password | length > 0
+          - minio_frontend_access_key is defined and minio_frontend_access_key | length > 0
+          - minio_frontend_secret_key is defined and minio_frontend_secret_key | length > 0
+        fail_msg: >-
+          Missing secret extra-vars. Don't run this playbook directly — run
+          scripts/deploy-poker-api.sh, which resolves them from Vault and passes them in.
+      no_log: true
+
+  tasks:
+    # ---- Docker CE ----
+    - name: Install prerequisites for the Docker apt repo
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Add the Docker apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /usr/share/keyrings/docker-archive-keyring.asc
+        mode: "0644"
+
+    - name: Add the Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/usr/share/keyrings/docker-archive-keyring.asc]
+          https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+
+    - name: Install Docker CE
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker is started and enabled
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    # ---- Nexus registry login ----
+    - name: Log in to the Nexus Docker registry
+      ansible.builtin.command:
+        cmd: "docker login {{ nexus_registry }} -u {{ nexus_username }} --password-stdin"
+        stdin: "{{ nexus_password }}"
+      register: docker_login
+      changed_when: "'Login Succeeded' in docker_login.stdout"
+      no_log: true
+
+    # ---- App config: env-file (secret) ----
+    - name: Create the co-latro config directory (root-only)
+      ansible.builtin.file:
+        path: "{{ colatro_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Render the backend env-file (DATABASE_URL from Vault)
+      ansible.builtin.template:
+        src: templates/co-latro.env.j2
+        dest: "{{ colatro_env_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Restart co-latro-backend
+
+    # ---- Backend container image + systemd unit ----
+    - name: Pull the backend image from Nexus
+      community.docker.docker_image:
+        name: "{{ colatro_image }}:{{ backend_image_tag }}"
+        source: pull
+        force_source: true
+      notify: Restart co-latro-backend
+
+    - name: Render the co-latro-backend systemd unit
+      ansible.builtin.template:
+        src: templates/co-latro-backend.service.j2
+        dest: /etc/systemd/system/co-latro-backend.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart co-latro-backend
+
+    - name: Enable and start the co-latro-backend service
+      ansible.builtin.systemd:
+        name: co-latro-backend
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # ---- nginx (frontend + /api proxy) ----
+    - name: Install nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+
+    - name: Create the frontend web root
+      ansible.builtin.file:
+        path: "{{ colatro_web_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: Drop the co-latro nginx site
+      ansible.builtin.copy:
+        src: files/co-latro-nginx.conf
+        dest: /etc/nginx/sites-available/co-latro
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload nginx
+
+    - name: Enable the co-latro site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/co-latro
+        dest: /etc/nginx/sites-enabled/co-latro
+        state: link
+      notify: Reload nginx
+
+    # The co-latro site is default_server; nginx allows only one per address, so the
+    # distro's stock default site must go or `nginx -t` fails on a duplicate.
+    - name: Remove the distro stock default site (default_server clash)
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload nginx
+
+    - name: Ensure nginx is started and enabled
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    # ---- Frontend dist sync from MinIO ----
+    - name: Install the MinIO client (mc)
+      ansible.builtin.get_url:
+        url: "{{ mc_url }}"
+        dest: "{{ mc_bin }}"
+        mode: "0755"
+
+    - name: Configure the mc alias for the frontend bucket
+      ansible.builtin.command:
+        cmd: >-
+          {{ mc_bin }} alias set colatro-minio {{ minio_frontend_endpoint }}
+          {{ minio_frontend_access_key }} {{ minio_frontend_secret_key }}
+      register: mc_alias
+      changed_when: false
+      no_log: true
+
+    # mc mirror only transfers changed objects; --remove deletes web-root files that
+    # are absent from the bucket (the web root MIRRORS the bucket — intended).
+    - name: Sync the frontend dist from MinIO into the web root
+      ansible.builtin.command:
+        cmd: >-
+          {{ mc_bin }} mirror --overwrite --remove
+          colatro-minio/{{ minio_frontend_bucket }} {{ colatro_web_root }}
+      register: mc_mirror
+      changed_when: "'Total: 0 B' not in mc_mirror.stdout and mc_mirror.stdout | length > 0"
+
+    - name: Fix web-root ownership after the sync
+      ansible.builtin.file:
+        path: "{{ colatro_web_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        recurse: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart co-latro-backend
+      ansible.builtin.systemd:
+        name: co-latro-backend
+        state: restarted
+
+    # Validate before reloading so a bad config never takes nginx down.
+    - name: Reload nginx
+      ansible.builtin.command: nginx -t
+      register: nginx_t
+      changed_when: false
+      notify: Do reload nginx
+
+    - name: Do reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
