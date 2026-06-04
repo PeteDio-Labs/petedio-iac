@@ -265,14 +265,10 @@
         name: co-latro-backend
         state: restarted
 
-    # Validate before reloading so a bad config never takes nginx down.
+    # Validate AND reload in one handler: `nginx -t && systemctl reload`. A single
+    # handler avoids the handler-notifies-handler trap (Ansible doesn't reliably run a
+    # handler notified by another handler), which previously left nginx un-reloaded.
+    # The `&&` means a failed `nginx -t` aborts before reload — bad config never reloads.
     - name: Reload nginx
-      ansible.builtin.command: nginx -t
-      register: nginx_t
-      changed_when: false
-      notify: Do reload nginx
-
-    - name: Do reload nginx
-      ansible.builtin.systemd:
-        name: nginx
-        state: reloaded
+      ansible.builtin.command: nginx -t && systemctl reload nginx
+      changed_when: true
