@@ -19,6 +19,14 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   and version-gates fields. Cluster nodes can differ (pve01 9.1.x). Point
   `proxmox_endpoint` at the node where the resources live.
 
+- **Scoped API tokens use `--privsep 1` + an explicit ACL** (PET-55). A privsep token
+  has its OWN permissions, independent of the user — and NONE until you grant them:
+  `pveum acl modify / --tokens '<user>@pam!<id>' --roles PVEVMAdmin,PVEDatastoreUser`.
+  That pair covers the IaC's VM/CT lifecycle + disk allocation while staying narrower
+  than a `PVEAdmin@/` bootstrap token. Prove the new token refreshes clean BEFORE
+  seeding it to Vault (the old token is the only fallback), and revoke the old one only
+  after a CI apply is green.
+
 - **On pve01 the LAN/uplink bridge is `vmbr1`, NOT `vmbr0`.** `vmbr0` = `eno1`, a
   separate segment with no gateway — a container on it has an IP but cannot ARP the
   gateway (outbound 100% loss, DNS fails). `vmbr1` = `eno2`/`eno3`, where the
@@ -83,6 +91,17 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   binding scopes WHICH OIDC tokens are accepted, but doesn't stop untrusted PR code
   from running on the runner. Gate fork PRs (require-approval / trusted-only) before
   relying on this in anger.
+
+- **`terraform validate` still needs `VAULT_ADDR` set** even though it never connects.
+  The `vault` provider's `address` is a required argument; with no `VAULT_ADDR` in the
+  env, `validate` fails with `Missing required argument … "address"` (not a connection
+  error). CI pins it in the job `env:`; locally export it before `validate`/`plan`.
+
+- **CI→Vault cutover is lockout-guarded (PET-29).** vault-action's `$GITHUB_ENV` exports
+  OVERRIDE job-level `env` defaults, so the static repo secrets and the Vault path
+  co-exist harmlessly (statics are dead weight once Vault works). Delete the static
+  fallback secrets ONLY after a Vault-only apply is green on `main` — never in the same
+  change that removes their last reference.
 
 ## App rollout — Co-latro / poker-api 230 (PET-12/43/44)
 

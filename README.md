@@ -54,6 +54,7 @@ provider env from KV v2:
 | `iac/minio` | `secret_key` | `AWS_SECRET_ACCESS_KEY` |
 | `iac/proxmox` | `api_token` | `TF_VAR_proxmox_api_token` |
 | `iac/lxc-ssh` | `public_key` | `TF_VAR_ssh_public_key` |
+| `iac/cloudflare` | `api_token` | `TF_VAR_cloudflare_api_token` |
 
 The OIDC `sub` claim is bound (vault-config `auth.tf`) to exactly this repo's
 **`push` to `main`** and **`pull_request`** events — nothing else can mint a CI
@@ -61,34 +62,31 @@ token. TLS to Vault (self-signed homelab CA) is verified against the committed
 `environments/homelab/vault-ca.crt` (base64-encoded into vault-action's
 `caCertificate`), never `tlsSkipVerify`.
 
-**Two-phase cutover.** *Phase 1 (now):* the 4 legacy repo Actions secrets
-(`MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `PROXMOX_API_TOKEN`, `LXC_SSH_PUBLIC_KEY`)
-**remain** as a job-level `env` overlap/fallback; vault-action overrides them at
-runtime via `$GITHUB_ENV`. Prove one green Vault-sourced apply on merge. *Phase 2
-(separate PR):* delete the 4 static secrets + rotate the Proxmox token (runbook
-below). Never commit creds; `*.tfvars` is gitignored.
+**Cutover complete (PET-29).** CI sources every cred **solely from Vault**. The 4
+legacy repo Actions secrets (`MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`,
+`PROXMOX_API_TOKEN`, `LXC_SSH_PUBLIC_KEY`) were **deleted** once a Vault-only apply
+proved green on `main` — the lockout guard: never drop the last static fallback
+before the Vault path is proven. The Proxmox token was rotated to a scoped privsep
+token (runbook below). Never commit creds; `*.tfvars` is gitignored.
 
-> CI stays **RED** until the Vault KV values above are seeded (PET-27) —
-> vault-action cannot read secrets that do not exist yet.
+### Runbook — rotate the Proxmox API token (PET-55, done)
 
-### Runbook — rotate the Proxmox API token (Phase 2)
-
-Executed by the operator once the Vault-OIDC path is proven. Mints a NEW token
-scoped **narrower than `PVEAdmin@/`**, stores it in Vault, applies once, then
-revokes the old token:
+A **privsep-1** token scoped to `PVEVMAdmin` + `PVEDatastoreUser` on `/` — narrower
+than the old `PVEAdmin@/` bootstrap token, but enough for VM/CT lifecycle + disk
+allocation:
 
 ```bash
-# 1. On the PVE node — mint a fresh, narrowly-scoped token for petedio@pam.
-#    Scope to only what the IaC needs (VM/CT lifecycle on the target node),
-#    NOT a blanket PVEAdmin on '/'. Capture the printed secret.
-pveum user token add petedio@pam petedio --privsep 0
-#    (and ensure an ACL narrower than PVEAdmin@/ grants exactly the needed perms)
+# 1. On the PVE node — mint a privsep token (its OWN ACL, not the user's perms).
+pveum user token add petedio@pam iac --privsep 1 --output-format json   # capture .value
+pveum acl modify / --tokens 'petedio@pam!iac' --roles PVEVMAdmin,PVEDatastoreUser
 
-# 2. Store the full token string in Vault (KV v2). CI reads kv/data/iac/proxmox.
-vault kv put kv/iac/proxmox api_token='petedio@pam!petedio=<new-secret>'
+# 2. Prove it BEFORE Vault: a local `terraform plan` with TF_VAR_proxmox_api_token
+#    = the new token must refresh clean. The old token stays the live fallback
+#    until this passes.
 
-# 3. Trigger ONE terraform apply (merge a no-op/PR) so CI proves the new token.
+# 3. Store the full token string in Vault (KV v2). CI reads kv/data/iac/proxmox.
+vault kv put kv/iac/proxmox api_token='petedio@pam!iac=<new-secret>'
 
-# 4. Revoke the OLD token on the node — only after the apply above is green.
-pveum user token remove petedio@pam <old-token-id>
+# 4. Prove in CI (one apply-on-merge green), THEN revoke the old broad token(s):
+pveum user token remove petedio@pam petedio        # the bootstrap PVEAdmin token
 ```
