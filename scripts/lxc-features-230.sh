@@ -14,23 +14,28 @@
 # the PET-44 rollout). Idempotent — if the features are already present it makes no
 # change and does NOT reboot.
 #
-#   pve host:  $PVE_HOST (default 192.168.50.10 = pve01, where 230 lives)
-#   ssh key :  $SSH_KEY  (default ~/.ssh/id_ed25519_ansible — the key TF installs)
+#   pve host:  $PVE_HOST  (default 192.168.50.10 = pve01, where 230 lives)
+#   pve key :  $PVE_SSH_KEY (default ~/.ssh/id_ed25519_proxmox_pedro — bare-metal root)
+#   lxc key :  $LXC_SSH_KEY (default ~/.ssh/id_ed25519_ansible — the key TF installs in 230)
+# NB: the Proxmox NODE and the LXC use DIFFERENT keys — the node is bare metal (root via
+# the proxmox key), 230 is a TF-created LXC (root via the ansible key). Don't conflate them.
 set -euo pipefail
 
 PVE_HOST="${PVE_HOST:-192.168.50.10}"
 PVE_SSH_USER="${PVE_SSH_USER:-root}"
 VMID="${VMID:-230}"
 LXC_IP="${LXC_IP:-192.168.50.230}"
-SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519_ansible}"
+PVE_SSH_KEY="${PVE_SSH_KEY:-$HOME/.ssh/id_ed25519_proxmox_pedro}"
+LXC_SSH_KEY="${LXC_SSH_KEY:-$HOME/.ssh/id_ed25519_ansible}"
 FEATURES="nesting=1,keyctl=1"
 
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
 command -v ssh >/dev/null || die "ssh not in PATH"
-[ -f "$SSH_KEY" ] || die "SSH key not found: $SSH_KEY"
+[ -f "$PVE_SSH_KEY" ] || die "Proxmox SSH key not found: $PVE_SSH_KEY"
+[ -f "$LXC_SSH_KEY" ] || die "LXC SSH key not found: $LXC_SSH_KEY"
 
-SSH=(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$PVE_SSH_USER@$PVE_HOST")
+SSH=(ssh -i "$PVE_SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$PVE_SSH_USER@$PVE_HOST")
 
 step "Reading current features of LXC $VMID on $PVE_HOST"
 CFG="$("${SSH[@]}" "pct config $VMID" 2>/dev/null)" || die "cannot read pct config $VMID on $PVE_HOST (is $VMID on this node? is SSH-as-root working?)"
@@ -52,9 +57,9 @@ step "Rebooting LXC $VMID so the new features take effect (230 is empty — safe
   "${SSH[@]}" "pct stop $VMID || true; sleep 3; pct start $VMID"
 }
 
-step "Waiting for $VMID to answer SSH on $LXC_IP"
+step "Waiting for $VMID to answer SSH on $LXC_IP (LXC key, not the pve key)"
 for i in $(seq 1 30); do
-  if ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
+  if ssh -i "$LXC_SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
         "root@$LXC_IP" true 2>/dev/null; then
     echo "  up after ${i} tries"; break
   fi

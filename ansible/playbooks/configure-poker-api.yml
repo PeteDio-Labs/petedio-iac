@@ -48,20 +48,24 @@
 
   pre_tasks:
     # Docker in an unprivileged LXC needs nesting + keyctl, set out-of-band on the
-    # Proxmox node (scripts/lxc-features-230.sh, PET-43). Fail fast with a clear
-    # pointer if they're missing — otherwise Docker installs but can't run containers.
-    - name: Probe whether keyctl is available (set by lxc-features-230.sh)
+    # Proxmox node (scripts/lxc-features-230.sh, PET-43). We cannot reliably detect
+    # the kernel features from inside the LXC (the `keyctl` CLI isn't installed by
+    # default, and its absence does NOT mean the feature is off). So this is an
+    # INFORMATIONAL probe only — the authoritative check is the systemd start of the
+    # container below: if nesting/keyctl are missing, the container fails to run and
+    # that task errors clearly. Run scripts/lxc-features-230.sh first if it does.
+    - name: Probe the kernel keyring (informational; keyctl CLI may be absent)
       ansible.builtin.command: keyctl show
       register: poker_keyctl_probe
       failed_when: false
       changed_when: false
 
-    - name: Assert the LXC features are set (run scripts/lxc-features-230.sh if this fails)
-      ansible.builtin.assert:
-        that: poker_keyctl_probe.rc == 0
-        fail_msg: >-
-          keyctl is unavailable on LXC 230 — Docker cannot run containers here.
-          Run scripts/lxc-features-230.sh (PET-43) on the Proxmox node first, then re-run.
+    - name: Note keyring probe result (features are set on the node, not visible here)
+      ansible.builtin.debug:
+        msg: >-
+          keyctl probe rc={{ poker_keyctl_probe.rc }}
+          (non-zero is OK if the keyctl binary isn't installed — the real test is the
+          container start; if THAT fails, run scripts/lxc-features-230.sh, PET-43).
 
     - name: Assert required secret extra-vars were provided (use scripts/deploy-poker-api.sh)
       ansible.builtin.assert:
@@ -78,13 +82,14 @@
 
   tasks:
     # ---- Docker CE ----
-    - name: Install prerequisites for the Docker apt repo
+    - name: Install prerequisites for the Docker apt repo (+ keyutils for the probe)
       ansible.builtin.apt:
         name:
           - apt-transport-https
           - ca-certificates
           - gnupg
           - curl
+          - keyutils
         state: present
         update_cache: true
 
