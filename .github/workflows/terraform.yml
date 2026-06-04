@@ -11,17 +11,13 @@ on:
 
 env:
   TF_IN_AUTOMATION: "1"
-  # Creds for the MinIO S3 backend + bpg/proxmox provider.
-  # PET-29 PHASE 1 (this PR): these 4 STATIC repo secrets stay as an overlap/
-  # fallback while the Vault-OIDC path (the "Vault — mint creds" step below) is
-  # proven. vault-action exports the same names into $GITHUB_ENV, which OVERRIDES
-  # these job-level env values for every step after it (init/plan/apply) — so the
-  # Vault-sourced creds win at runtime. PHASE 2 (separate PR) deletes these 4
-  # secrets + rotates the Proxmox token. Do NOT remove them in this PR.
-  AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
-  TF_VAR_proxmox_api_token: ${{ secrets.PROXMOX_API_TOKEN }}
-  TF_VAR_ssh_public_key: ${{ secrets.LXC_SSH_PUBLIC_KEY }}
+  # Creds for the MinIO S3 backend + bpg/proxmox provider come SOLELY from Vault
+  # now (PET-29 phase 2). The "Vault — mint creds via OIDC" step below exports
+  # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / TF_VAR_proxmox_api_token /
+  # TF_VAR_ssh_public_key / TF_VAR_cloudflare_api_token into $GITHUB_ENV for the
+  # init/plan/apply steps. The four static repo secrets (MINIO_ACCESS_KEY,
+  # MINIO_SECRET_KEY, PROXMOX_API_TOKEN, LXC_SSH_PUBLIC_KEY) that used to provide
+  # a fallback here were deleted once a Vault-only apply proved green.
 
   # Terraform's `vault` provider (providers.tf) reads these at apply time when
   # postgres_ready=true (the gated vault_kv_secret_v2.poker_db read). vault-action
