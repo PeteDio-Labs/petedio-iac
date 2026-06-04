@@ -50,6 +50,37 @@ resource "vault_policy" "terraform" {
   EOT
 }
 
+# colatro-ci: the policy the Co-latro app repos get via the colatro-ci JWT role
+# (auth.tf). Least-privilege for publish-on-merge + the manual deploy workflow:
+#   - kv/services/nexus            push the backend image to Nexus
+#   - kv/services/minio-frontend-ci  WRITE the frontend dist to the MinIO bucket
+#     (distinct from the read-only kv/services/minio-frontend the on-box rollout uses)
+#   - kv/iac/lxc-ssh               SSH key to reach LXC 230 from the deploy workflow
+# Deliberately NOT kv/poker/* (the DB env-file is rendered on the box by the one-time
+# Ansible rollout — publish/deploy CI never needs DATABASE_URL) and NOT kv/iac/* beyond
+# the SSH key.
+resource "vault_policy" "colatro_ci" {
+  name = "colatro-ci"
+
+  policy = <<-EOT
+    path "kv/data/services/nexus" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/minio-frontend-ci" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
 # ansible: host-config runs read infra + service secrets.
 resource "vault_policy" "ansible" {
   name = "ansible"

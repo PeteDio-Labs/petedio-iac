@@ -66,3 +66,29 @@ resource "vault_jwt_auth_backend_role" "github_actions" {
   token_policies = [vault_policy.ci_read.name]
   token_ttl      = 900
 }
+
+# colatro-ci role → colatro-ci policy. Same JWT backend, separate role so the Co-latro
+# app repos get ONLY the colatro-ci policy (Nexus + MinIO-write + LXC SSH), never the
+# iac ci-read creds. Binds main + pull_request subs for BOTH app repos — built from
+# var.colatro_repos and comma-joined into one string (bound_claims_type=string, OR
+# semantics), matching the github-actions role's two-sub pattern. Bind main + PR so a
+# future PR-time job (e.g. a build check) can also mint a token; publish/deploy gate
+# on the workflow's own `if: push to main` / workflow_dispatch.
+resource "vault_jwt_auth_backend_role" "colatro_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "colatro-ci"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = join(",", flatten([
+      for r in var.colatro_repos : [
+        "repo:${r}:ref:refs/heads/main",
+        "repo:${r}:pull_request",
+      ]
+    ]))
+  }
+  token_policies = [vault_policy.colatro_ci.name]
+  token_ttl      = 900
+}
