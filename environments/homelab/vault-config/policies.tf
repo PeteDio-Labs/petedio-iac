@@ -103,3 +103,34 @@ resource "vault_policy" "ansible" {
     }
   EOT
 }
+
+# media-ci: the policy the petedio-media-iac GitHub Actions gets via its own JWT/
+# OIDC role (auth.tf, role media-ci). Scoped to exactly what media TF init/plan +
+# Ansible need: the shared iac backend/provider creds (minio/proxmox/lxc-ssh) and
+# the media-only service secret. NOT given poker/* or cloudflare/* — those are
+# unrelated to the media stack.
+resource "vault_policy" "media_ci" {
+  name = "media-ci"
+
+  policy = <<-EOT
+    path "kv/data/iac/minio" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/proxmox" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/media/*" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}

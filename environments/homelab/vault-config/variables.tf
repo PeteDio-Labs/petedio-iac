@@ -6,6 +6,15 @@ variable "github_repo" {
   default     = "PeteDio-Labs/petedio-iac"
 }
 
+# GitHub repo for the media stack IaC (petedio-media-iac). Bound to its own
+# `media-ci` JWT role so media CI gets ONLY the read creds it needs (minio +
+# proxmox + lxc-ssh + services/media) and never the broader iac ci-read scope.
+variable "media_repo" {
+  description = "owner/name of the petedio-media-iac repo bound to the media-ci JWT role."
+  type        = string
+  default     = "PeteDio-Labs/petedio-media-iac"
+}
+
 # OIDC audience the JWT role accepts. MUST match the `jwtGithubAudience` that
 # hashicorp/vault-action sends from the workflow — if they disagree, Vault rejects
 # the login with an audience-mismatch error.

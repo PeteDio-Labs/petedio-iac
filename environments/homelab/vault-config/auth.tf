@@ -67,6 +67,25 @@ resource "vault_jwt_auth_backend_role" "github_actions" {
   token_ttl      = 900
 }
 
+# media-ci role → media-ci policy. Same JWT backend, separate role so petedio-
+# media-iac CI gets ONLY the media-ci policy (minio/proxmox/lxc-ssh + services/
+# media), never the broader iac ci-read scope. Binds main + pull_request subs for
+# the media repo — same two-sub exact-match pattern as github-actions
+# (plan-on-PR + apply-on-merge both need the backend/provider creds).
+resource "vault_jwt_auth_backend_role" "media_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "media-ci"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = "repo:${var.media_repo}:ref:refs/heads/main,repo:${var.media_repo}:pull_request"
+  }
+  token_policies = [vault_policy.media_ci.name]
+  token_ttl      = 900
+}
+
 # colatro-ci role → colatro-ci policy. Same JWT backend, separate role so the Co-latro
 # app repos get ONLY the colatro-ci policy (Nexus + MinIO-write + LXC SSH), never the
 # iac ci-read creds. Binds main + pull_request subs for BOTH app repos — built from
