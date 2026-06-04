@@ -4,13 +4,17 @@
 #
 # Follows the repo convention (reseed/import scripts): resolve secrets BEFORE the
 # playbook and pass them as no_log extra-vars, rather than an in-playbook hashi_vault
-# lookup. DATABASE_URL is read with the terraform-local AppRole (granted kv/poker/*);
-# the ansible policy is deliberately NOT granted poker/* (docs/runbooks/vault-seed.md).
-# Nexus + frontend-bucket MinIO creds come from kv/services/* (ansible-readable, but we
-# read them here too so the playbook stays secret-free).
+# lookup. The secrets span TWO least-privilege policies (docs/runbooks/vault-seed.md),
+# so this logs in with BOTH AppRoles and reads each from its own domain:
+#   - kv/poker/db (DATABASE_URL)            -> terraform-local AppRole (policy: terraform)
+#   - kv/services/{nexus,minio-frontend}    -> ansible AppRole         (policy: ansible)
+# No single token reads both — the ansible policy is deliberately NOT granted poker/*.
+#
+# OPERATOR path (run from the Mac). The runner/OIDC CD-on-merge path is a fast-follow:
+# ci-read currently reads poker/* but NOT services/* — grant that before moving here.
 #
 # Idempotent; no secrets printed. Run PET-43 (scripts/lxc-features-230.sh) FIRST.
-#   AppRole creds: $SECRETS_DIR/terraform-local.{role_id,secret_id} (gitignored .secrets/)
+#   AppRole creds: $SECRETS_DIR/{terraform-local,ansible}.{role_id,secret_id} (gitignored .secrets/)
 #   Optional: -e backend_image_tag=<sha> passthrough via $IMAGE_TAG
 set -euo pipefail
 
@@ -26,20 +30,34 @@ export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
 for t in vault ansible-playbook; do command -v "$t" >/dev/null || die "$t not in PATH"; done
-[ -f "$SECRETS/terraform-local.role_id" ] || die "AppRole creds not in $SECRETS (see vault-seed.md)."
+for r in terraform-local ansible; do
+  [ -f "$SECRETS/$r.role_id" ] && [ -f "$SECRETS/$r.secret_id" ] \
+    || die "AppRole creds for '$r' not in $SECRETS (see vault-seed.md)."
+done
 
-step "AppRole login (terraform-local — can read kv/poker/*)"
-RID="$(cat "$SECRETS/terraform-local.role_id")"; SID="$(cat "$SECRETS/terraform-local.secret_id")"
-VAULT_TOKEN="$(vault write -field=token auth/approle/login role_id="$RID" secret_id="$SID")"; export VAULT_TOKEN
-vault token lookup >/dev/null 2>&1 || die "AppRole login failed."
+# The rollout's secrets span TWO least-privilege policies, by design
+# (docs/runbooks/vault-seed.md): kv/poker/* is readable by terraform-local only,
+# kv/services/* by ansible only. No single token reads both — so log in with each
+# AppRole for its own domain. (When this moves to the runner, the OIDC ci-read path
+# must likewise be granted both — currently it reads poker/* but not services/*.)
+applogin(){ # $1=role  -> echoes a token
+  local rid sid
+  rid="$(cat "$SECRETS/$1.role_id")"; sid="$(cat "$SECRETS/$1.secret_id")"
+  vault write -field=token auth/approle/login role_id="$rid" secret_id="$sid" 2>/dev/null \
+    || die "AppRole login failed for '$1'."
+}
 
-step "Resolving secrets from Vault"
-DB_URL="$(vault kv get -field=DATABASE_URL kv/poker/db)" || die "cannot read kv/poker/db."
-NEXUS_U="$(vault kv get -field=username kv/services/nexus 2>/dev/null || echo admin)"
-NEXUS_P="$(vault kv get -field=admin_password kv/services/nexus)" || die "cannot read kv/services/nexus."
-MINIO_AK="$(vault kv get -field=access_key kv/services/minio-frontend)" \
+step "Resolving kv/poker/db (terraform-local AppRole)"
+TF_TOKEN="$(applogin terraform-local)"
+DB_URL="$(VAULT_TOKEN="$TF_TOKEN" vault kv get -field=DATABASE_URL kv/poker/db)" || die "cannot read kv/poker/db."
+
+step "Resolving kv/services/* (ansible AppRole)"
+AN_TOKEN="$(applogin ansible)"
+NEXUS_U="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=username kv/services/nexus 2>/dev/null || echo admin)"
+NEXUS_P="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=admin_password kv/services/nexus)" || die "cannot read kv/services/nexus."
+MINIO_AK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=access_key kv/services/minio-frontend)" \
   || die "cannot read kv/services/minio-frontend — run scripts/reseed-minio-frontend-vault.sh first."
-MINIO_SK="$(vault kv get -field=secret_key kv/services/minio-frontend)" || die "cannot read minio-frontend secret_key."
+MINIO_SK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=secret_key kv/services/minio-frontend)" || die "cannot read minio-frontend secret_key."
 [ -n "$DB_URL" ] && [ -n "$NEXUS_P" ] && [ -n "$MINIO_AK" ] && [ -n "$MINIO_SK" ] || die "a required secret was empty."
 
 step "Running configure-poker-api.yml against poker-api (230)"

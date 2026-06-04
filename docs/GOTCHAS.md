@@ -93,6 +93,13 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   (`scripts/deploy-poker-api.sh`), NOT an in-playbook `ansible`-policy lookup. Don't widen
   the `ansible` policy to "fix" a permission-denied here — use the right token.
 
+- **The poker-api rollout's secrets span TWO policies → log in TWICE.** `kv/poker/db` is
+  readable only by `terraform`/`ci-read`; `kv/services/{nexus,minio-frontend}` only by
+  `ansible`. **No single token reads both.** `deploy-poker-api.sh` logs in with each AppRole
+  for its own domain. When the rollout moves to the runner (OIDC CD-on-merge), the **`ci-read`**
+  policy reads `kv/poker/*` but **not `kv/services/*`** — grant it `kv/data/services/nexus` +
+  `kv/data/services/minio-frontend` (or relocate those creds) before the runner can deploy.
+
 - **`kv/iac/minio` is scoped to the `tfstate` bucket ONLY** (see `reseed-minio-vault.sh`
   policy JSON). It cannot read app buckets like `co-latro-frontend`. Mint a separate
   bucket-scoped svcacct (`scripts/reseed-minio-frontend-vault.sh` → `kv/services/minio-frontend`)
