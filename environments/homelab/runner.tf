@@ -1,7 +1,14 @@
-# runner (LXC 232) — self-hosted GitHub Actions runner for PeteDio-Labs/petedio-iac.
-# Runner labels: self-hosted,linux,x64,homelab. Runs the terraform plan/apply
-# jobs against this very workspace (Workflow B), from INSIDE the homelab so it
-# can reach the Proxmox API + MinIO state backend.
+# runner (LXC 232) — self-hosted GitHub Actions runner, ORG-scoped to PeteDio-Labs.
+# Runner labels: self-hosted,linux,x64,homelab. Runs Workflow B (this workspace's
+# terraform plan/apply) AND the Co-latro app CI/CD, from INSIDE the homelab so it
+# can reach the Proxmox API + MinIO + Nexus + Vault.
+#
+# PET-79: re-registered from petedio-iac-REPO scope to ORG scope so it serves all
+# PeteDio-Labs repos, and Docker was installed (configure-runner-docker.yml) so app
+# CI can build images + use service containers. The legacy org runner ci-runner
+# (LXC 116, no Docker, not in IaC) was deregistered + stopped. FOLLOW-UP: the runner
+# REGISTRATION is still out-of-band (org reg token + config.sh) — TF owns only the
+# LXC; an IaC-managed registration is not yet wired.
 #
 # PLAN calls this "VM 232"; we implement it as an LXC — the old ci-runner (116)
 # proved the native-runner-in-LXC pattern (no Docker, no features needed, the
