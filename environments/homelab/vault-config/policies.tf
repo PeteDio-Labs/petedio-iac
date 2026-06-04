@@ -21,6 +21,10 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
+    path "kv/data/iac/cloudflare" {
+      capabilities = ["read"]
+    }
+
     path "kv/data/poker/*" {
       capabilities = ["read"]
     }

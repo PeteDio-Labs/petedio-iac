@@ -48,3 +48,18 @@ provider "postgresql" {
 provider "vault" {
   skip_child_token = true
 }
+
+# Cloudflare provider (PET-34) — reads the EXISTING Zero Trust tunnel + pdlab.dev
+# zone as data sources (cloudflare.tf); creates nothing. api_token resolves
+# Vault-first (local.cloudflare_api_token) with a TF_VAR_cloudflare_api_token
+# break-glass fallback — the same precedence as local.postgres_admin_password.
+#
+# The scoped Cloudflare API token lives at kv/iac/cloudflare (distinct from the
+# cloudflared *daemon* token at kv/services/cloudflare/tunnel_token that Ansible
+# consumes — a different credential). An unset token leaves the provider
+# effectively unconfigured; `terraform validate` never contacts it. The
+# data-source reads DO require Vault live + kv/iac/cloudflare seeded + the
+# ci-read policy granted that path.
+provider "cloudflare" {
+  api_token = local.cloudflare_api_token
+}

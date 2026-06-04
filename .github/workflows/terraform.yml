@@ -86,7 +86,8 @@ jobs:
             kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;
             kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY ;
             kv/data/iac/proxmox api_token | TF_VAR_proxmox_api_token ;
-            kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key
+            kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key ;
+            kv/data/iac/cloudflare api_token | TF_VAR_cloudflare_api_token
 
       - name: Init
         run: terraform init -input=false
