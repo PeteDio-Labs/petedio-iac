@@ -83,3 +83,31 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   binding scopes WHICH OIDC tokens are accepted, but doesn't stop untrusted PR code
   from running on the runner. Gate fork PRs (require-approval / trusted-only) before
   relying on this in anger.
+
+## App rollout — Co-latro / poker-api 230 (PET-12/43/44)
+
+- **The `ansible` Vault policy can't read `kv/poker/*` — by design.** Least-privilege:
+  Ansible host-config reads `kv/iac/*` + `kv/services/*`; the app DB creds (`kv/poker/db`)
+  are read by the `terraform`/`ci-read` policies. So the poker-api rollout resolves
+  `DATABASE_URL` with the **`terraform-local` AppRole** in its wrapper
+  (`scripts/deploy-poker-api.sh`), NOT an in-playbook `ansible`-policy lookup. Don't widen
+  the `ansible` policy to "fix" a permission-denied here — use the right token.
+
+- **`kv/iac/minio` is scoped to the `tfstate` bucket ONLY** (see `reseed-minio-vault.sh`
+  policy JSON). It cannot read app buckets like `co-latro-frontend`. Mint a separate
+  bucket-scoped svcacct (`scripts/reseed-minio-frontend-vault.sh` → `kv/services/minio-frontend`)
+  rather than reusing the tfstate credential.
+
+- **nginx `default_server` clash.** A `listen 80 default_server` site (the co-latro frontend)
+  collides with the distro's stock default site — `nginx -t` fails with a duplicate
+  default_server error. Remove `/etc/nginx/sites-enabled/default` before reload, and always
+  gate the reload behind `nginx -t` so a bad config can't take nginx down.
+
+- **`mc mirror --remove` deletes web-root files absent from the bucket.** Intended (the web
+  root mirrors the `co-latro-frontend` bucket = source of truth) — just don't hand-edit files
+  under `/var/www/co-latro`; they'll be wiped on the next sync.
+
+- **Backend `/health` is at the ROOT, not under `/api`.** nginx proxies only `/api/` → `:3020`,
+  so `/health` is NOT reachable through nginx (the SPA fallback serves index.html for it). Health
+  checks must hit `http://127.0.0.1:3020/health` directly on the box; smoke-test nginx with a real
+  `/api/...` route instead.

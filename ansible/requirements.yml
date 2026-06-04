@@ -5,3 +5,4 @@ collections:
   - name: community.general    # ufw (ollama-service firewall), misc modules
   - name: ansible.posix        # authorized_key (provision-new-ollama-host)
   - name: community.postgresql # configure-postgres.yml (postgres-rds, PET-19)
+  - name: community.docker     # configure-poker-api.yml (docker_image pull, PET-44)

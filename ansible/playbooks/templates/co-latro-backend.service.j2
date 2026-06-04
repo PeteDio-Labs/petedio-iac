@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+# Co-latro backend — runs the Nexus image as a systemd-managed Docker container.
+# Single container, so plain `docker run` (no compose). The DATABASE_URL secret
+# lives ONLY in the 0600 EnvironmentFile, never in this (world-readable) unit.
+[Unit]
+Description=Co-latro backend (Docker)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=0
+EnvironmentFile={{ colatro_env_file }}
+# Clean any stale container so restarts are idempotent (leading - = ignore failure).
+ExecStartPre=-/usr/bin/docker rm -f {{ colatro_container_name }}
+# Re-pull on (re)start so `systemctl restart` after a new push rolls the image.
+ExecStartPre=/usr/bin/docker pull {{ colatro_image }}:{{ backend_image_tag }}
+# Bind to loopback only — nginx (same host) is the sole consumer; no LAN exposure.
+ExecStart=/usr/bin/docker run --rm --name {{ colatro_container_name }} \
+  -p 127.0.0.1:{{ colatro_port }}:{{ colatro_port }} \
+  --env-file {{ colatro_env_file }} \
+  {{ colatro_image }}:{{ backend_image_tag }}
+ExecStop=/usr/bin/docker stop {{ colatro_container_name }}
+
+[Install]
+WantedBy=multi-user.target
