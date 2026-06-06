@@ -64,6 +64,10 @@ resource "proxmox_virtual_environment_container" "this" {
       operating_system[0].template_file_id,
       initialization[0].user_account,
       features,
+      # device_passthrough (e.g. /dev/net/tun for faasd's CNI on the openfaas LXC) is set
+      # out-of-band like features (scripts/lxc-features-*.sh, `pct set <id> -dev0 ...`) —
+      # ignore it so a later apply never strips a manually-added device. See docs/GOTCHAS.md.
+      device_passthrough,
     ]
   }
 }
