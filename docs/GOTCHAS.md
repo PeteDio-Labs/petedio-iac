@@ -137,3 +137,36 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   so `/health` is NOT reachable through nginx (the SPA fallback serves index.html for it). Health
   checks must hit `http://127.0.0.1:3020/health` directly on the box; smoke-test nginx with a real
   `/api/...` route instead.
+
+## OpenFaaS / faasd (PET-86)
+
+- **Creating an LXC NIC needs `SDN.Use` on the bridge's SDN zone** (newer Proxmox). The IaC
+  token 403s on create: `Permission check failed (/sdn/zones/localnetwork/vmbr1, SDN.Use)`.
+  LXCs 230/231/232 predate this enforcement. Fix once, out-of-band (root@pam on the node):
+  `pveum role add IaCSDNUser -privs "SDN.Use,SDN.Audit"` then
+  `pveum acl modify /sdn/zones/localnetwork -roles IaCSDNUser -tokens 'petedio@pam!iac' -users 'petedio@pam'`.
+
+- **faasd in an unprivileged LXC needs `/dev/net/tun`** for its CNI bridge. Without it the
+  gateway/functions deploy but get no network (invokes hang / "no route to host"). Pass it
+  through on the node: `pct set <id> -dev0 /dev/net/tun,mode=0666` + reboot (the line is in
+  `scripts/lxc-features-241.sh`). nesting+keyctl are necessary but NOT sufficient for faasd.
+
+- **faasd basic-auth secret files must be `0644`, not `0600`.** The gateway runs as a NON-root
+  user and bind-mounts `/var/lib/faasd/secrets/basic-auth-{user,password}` → `/run/secrets`.
+  With `0600 root:root` it can't read them and **silently exits** — and since the gateway is the
+  ONLY core service that reads basic-auth, only it dies (nats/prometheus/queue-worker stay up),
+  masquerading as a CNI "no route to host" on `:8080`. faasd's own generated secrets are `0644`.
+
+- **Don't PUSH a custom gateway password — let faasd own it and CAPTURE it.** Overwriting
+  basic-auth-password from Vault + restarting faasd proved unreliable: the gateway returned 401
+  to its *own* on-disk password (confirmed via raw `curl`, so not a faas-cli quirk) even after a
+  full container recreate — worst on gateway **0.27.12**. Working model: let `faasd install`
+  generate the password (gateway image must be **>= 0.27.13**), then read
+  `/var/lib/faasd/secrets/basic-auth-password` and seed it into Vault. See
+  `ansible/playbooks/configure-openfaas.yml` (capture model) + `scripts/deploy-openfaas.sh`.
+
+- **`faasd install` must run from the faasd source-clone dir.** It reads `./hack/*.service`
+  templates relative to CWD; run elsewhere and it errors *after* truncating
+  `/var/lib/faasd/docker-compose.yaml` to 0 bytes → `faasd up` then fails with
+  "Top-level object must be a mapping" and crash-loops. Recover by restoring the compose from
+  the clone: `cp /opt/faasd-src/docker-compose.yaml /var/lib/faasd/`.
