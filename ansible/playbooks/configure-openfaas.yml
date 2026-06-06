@@ -1,0 +1,128 @@
+---
+# configure-openfaas.yml — install faasd (single-node OpenFaaS) on the openfaas LXC 241. (PET-86)
+#
+# MODEL: faasd OWNS the gateway basic-auth password. It generates basic-auth-{user,password}
+# at install time, written 0644 so the NON-root gateway container can read them (0600 makes
+# the gateway silently exit — it's the only core service that reads basic-auth). We do NOT
+# overwrite the password: pushing our own value proved unreliable (the gateway kept
+# validating a stale/mismatched credential → 401 even when the on-disk file matched). The
+# wrapper scripts/deploy-openfaas.sh CAPTURES faasd's generated password into Vault
+# (kv/services/openfaas) after this runs, so Vault stays the source of truth for clients.
+#
+# PREREQS (run FIRST): scripts/lxc-features-241.sh (nesting/keyctl for containerd/faasd) and
+# /dev/net/tun on the node for faasd's CNI:  pct set 241 -dev0 /dev/net/tun,mode=0666
+# (see scripts/lxc-features-241.sh — without tun, functions deploy but won't network).
+#
+# Run via: scripts/deploy-openfaas.sh
+# Inventory: the `openfaas` group -> 192.168.50.241, root over the TF-installed SSH key.
+
+- name: Configure OpenFaaS (faasd) host (LXC 241)
+  hosts: openfaas
+  become: true
+
+  vars:
+    faasd_src_dir: /opt/faasd-src
+    # NB: the gateway image the compose ships must be >= 0.27.13 — 0.27.12 exhibited a
+    # basic-auth rejection in this setup. `master` currently ships 0.27.13. TODO(PET-86):
+    # pin to a faasd release tag whose docker-compose.yaml references gateway >= 0.27.13.
+    faasd_version: master
+    faasd_secrets_dir: /var/lib/faasd/secrets
+    faasd_gateway: "http://127.0.0.1:8080"
+    faas_cli: /usr/local/bin/faas-cli
+    openfaas_smoke_test: true
+    smoke_function: nodeinfo
+
+  pre_tasks:
+    - name: Probe the kernel keyring (informational; keyctl CLI may be absent)
+      ansible.builtin.command: keyctl show
+      register: faasd_keyctl_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Note keyring probe result (features are set on the node, not visible here)
+      ansible.builtin.debug:
+        msg: >-
+          keyctl probe rc={{ faasd_keyctl_probe.rc }}
+          (non-zero is OK if keyctl isn't installed — the real test is faasd/containerd
+          starting below; if THAT fails, run scripts/lxc-features-241.sh).
+
+  tasks:
+    - name: Install faasd prerequisites
+      ansible.builtin.apt:
+        name: [git, curl, ca-certificates, keyutils]
+        state: present
+        update_cache: true
+
+    - name: Clone the faasd source
+      ansible.builtin.git:
+        repo: https://github.com/openfaas/faasd
+        dest: "{{ faasd_src_dir }}"
+        version: "{{ faasd_version }}"
+        depth: 1
+
+    - name: Install faasd (containerd + CNI + runc + faasd + faas-cli + systemd units)
+      ansible.builtin.command:
+        cmd: ./hack/install.sh
+        chdir: "{{ faasd_src_dir }}"
+        creates: /usr/local/bin/faasd
+      # faasd generates basic-auth-{user,password} (0644) here; we keep faasd's own value.
+
+    - name: Ensure faasd + faasd-provider are enabled and started
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop:
+        - faasd-provider
+        - faasd
+
+    # ---- Validation: gateway health + login + a real function invoke (proves CNI) ----
+    - name: Wait for the gateway to answer
+      ansible.builtin.uri:
+        url: "{{ faasd_gateway }}/healthz"
+        status_code: [200]
+      register: faasd_health
+      # First faasd boot pulls ~5 core service images before /healthz answers (~38s seen).
+      retries: 40
+      delay: 5
+      until: faasd_health.status == 200
+      when: openfaas_smoke_test | bool
+
+    - name: Log in to the gateway with faasd's own password (read from disk; file has no newline)
+      ansible.builtin.shell:
+        cmd: "set -o pipefail; cat {{ faasd_secrets_dir }}/basic-auth-password | {{ faas_cli }} login --gateway {{ faasd_gateway }} -u admin --password-stdin"
+      register: faas_login
+      changed_when: false
+      no_log: true
+      when: openfaas_smoke_test | bool
+
+    - name: Check whether the smoke-test function is already deployed
+      ansible.builtin.command: "{{ faas_cli }} list --gateway {{ faasd_gateway }}"
+      register: faas_list
+      changed_when: false
+      when: openfaas_smoke_test | bool
+
+    - name: Deploy the smoke-test function from the store
+      ansible.builtin.command: "{{ faas_cli }} store deploy {{ smoke_function }} --gateway {{ faasd_gateway }}"
+      changed_when: true
+      when:
+        - openfaas_smoke_test | bool
+        - smoke_function not in faas_list.stdout
+
+    - name: Invoke the smoke-test function (must return output — proves function networking/CNI)
+      ansible.builtin.shell:
+        cmd: "echo '' | {{ faas_cli }} invoke {{ smoke_function }} --gateway {{ faasd_gateway }}"
+      register: faas_invoke
+      retries: 10
+      delay: 6
+      until: faas_invoke.rc == 0 and (faas_invoke.stdout | length) > 0
+      changed_when: false
+      when: openfaas_smoke_test | bool
+      # If this never succeeds: faasd is up but function networking (CNI) isn't — ensure
+      # /dev/net/tun is passed through (pct set 241 -dev0 /dev/net/tun,mode=0666; reboot).
+
+    - name: Report the smoke-test result
+      ansible.builtin.debug:
+        msg: "faasd OK — {{ smoke_function }} invoked, {{ faas_invoke.stdout | length }} bytes returned."
+      when: openfaas_smoke_test | bool
