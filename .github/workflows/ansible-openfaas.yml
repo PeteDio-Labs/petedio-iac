@@ -1,0 +1,96 @@
+# Workflow B (IaC) for Ansible host-config — the GitOps analog of deploy-openfaas.sh.
+# syntax-check on PR (cheap, no secrets, no host contact); APPLY on merge to main.
+#
+# The apply job runs on the self-hosted homelab runner (VM 232), which can SSH to LXC 241,
+# and mints a short-lived Vault token via GitHub OIDC (role openfaas-ci) for the ansible SSH
+# key (kv/iac/lxc-ssh) + the Nexus pull creds (kv/services/nexus). It runs the same committed
+# playbook the operator script does — no operator SSH. (PET-88)
+#
+# Ansible runs in an official python:3.12-slim container: the self-hosted runner ships a
+# minimal Python (no venv/pip), but it has Docker. No third-party image; openssh-client is
+# added for the apply. (TODO: bake an ansible image into Nexus to drop the per-run apt/pip.)
+name: ansible-openfaas
+
+on:
+  pull_request:
+    paths:
+      - ansible/playbooks/configure-openfaas.yml
+      - ansible/inventory/hosts.yml
+      - .github/workflows/ansible-openfaas.yml
+  push:
+    branches: [main]
+    paths:
+      - ansible/playbooks/configure-openfaas.yml
+      - ansible/inventory/hosts.yml
+      - .github/workflows/ansible-openfaas.yml
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+  ANSIBLE_IMAGE: python:3.12-slim
+
+permissions:
+  contents: read
+  id-token: write # mint the GitHub OIDC token vault-action exchanges for a Vault token
+
+jobs:
+  # PR: prove the play parses. No secrets, no host contact, no ssh.
+  syntax-check:
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, linux, x64, homelab]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Syntax check (ansible in Docker)
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE/ansible:/ansible" -w /ansible \
+            -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
+            "$ANSIBLE_IMAGE" sh -c \
+            "pip install -q ansible-core && ansible-playbook -i inventory/hosts.yml --syntax-check playbooks/configure-openfaas.yml"
+
+  # merge to main: apply the play to LXC 241.
+  apply:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: [self-hosted, linux, x64, homelab]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Vault — mint creds via OIDC
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: openfaas-ci
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportEnv: true
+          secrets: |
+            kv/data/services/nexus username | NEXUS_USERNAME ;
+            kv/data/services/nexus admin_password | NEXUS_PASSWORD ;
+            kv/data/iac/lxc-ssh private_key | ANSIBLE_SSH_KEY
+
+      - name: Apply configure-openfaas.yml to 241 (ansible in Docker)
+        shell: bash
+        run: |
+          umask 077
+          CI=/tmp/ci-openfaas
+          rm -rf "$CI"; mkdir -p "$CI"
+          trap 'rm -rf "$CI"' EXIT
+          printf '%s\n' "$ANSIBLE_SSH_KEY" > "$CI/key"; chmod 600 "$CI/key"
+          # nexus creds via a JSON @file — never on argv, never logged. python3 stdlib (no pip).
+          python3 - "$CI/evars.json" <<'PY'
+          import json, os, sys
+          json.dump({"nexus_username": os.environ["NEXUS_USERNAME"],
+                     "nexus_password": os.environ["NEXUS_PASSWORD"]}, open(sys.argv[1], "w"))
+          PY
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/ansible:/ansible" -v "$CI:/ci:ro" -w /ansible \
+            -e ANSIBLE_HOST_KEY_CHECKING=False -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
+            "$ANSIBLE_IMAGE" sh -c \
+            "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && pip install -q ansible-core && ansible-playbook -i inventory/hosts.yml playbooks/configure-openfaas.yml --private-key /ci/key -e @/ci/evars.json"

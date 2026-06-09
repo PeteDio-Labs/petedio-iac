@@ -170,3 +170,11 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   `/var/lib/faasd/docker-compose.yaml` to 0 bytes → `faasd up` then fails with
   "Top-level object must be a mapping" and crash-loops. Recover by restoring the compose from
   the clone: `cp /opt/faasd-src/docker-compose.yaml /var/lib/faasd/`.
+
+- **Private-registry (Nexus) pulls: creds go in `/var/lib/faasd/.docker/config.json`** (PET-88),
+  standard Docker format `{"auths":{"docker.pdlab.dev":{"auth":"<base64 user:pass>"}}}` — NOT
+  `~/.docker/...` and NOT a faasd CLI flag. `docker.pdlab.dev` is publicly-trusted, so (like Docker
+  on 230) **no CA install / insecure-registries** is needed — only the auth. Written `0600` by
+  `configure-openfaas.yml`; restart **`faasd-provider`** (the puller) to pick up a change. Don't
+  create it with `docker login` on macOS — the helper leaves an empty `auth` (templating it is why
+  the play builds the base64 itself).

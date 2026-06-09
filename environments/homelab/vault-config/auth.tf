@@ -111,3 +111,21 @@ resource "vault_jwt_auth_backend_role" "colatro_ci" {
   token_policies = [vault_policy.colatro_ci.name]
   token_ttl      = 900
 }
+
+# openfaas-ci role → openfaas-ci policy. APPLY-on-merge only: ansible-openfaas.yml runs the
+# host-config play against LXC 241 from the runner on push to main. Bound to ONLY the
+# main-push sub (NOT pull_request — the PR job is a no-secrets syntax-check), so this token
+# can't be minted from a PR / fork. Gets only the ansible SSH key + Nexus pull creds.
+resource "vault_jwt_auth_backend_role" "openfaas_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "openfaas-ci"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = "repo:${var.github_repo}:ref:refs/heads/main"
+  }
+  token_policies = [vault_policy.openfaas_ci.name]
+  token_ttl      = 900
+}
