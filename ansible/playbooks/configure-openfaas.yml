@@ -13,6 +13,11 @@
 # /dev/net/tun on the node for faasd's CNI:  pct set 241 -dev0 /dev/net/tun,mode=0666
 # (see scripts/lxc-features-241.sh — without tun, functions deploy but won't network).
 #
+# REGISTRY (PET-88): also writes /var/lib/faasd/.docker/config.json so faasd/containerd can
+# pull our function images from the private Nexus registry (docker.pdlab.dev — publicly-trusted,
+# so NO CA / insecure-registries needed, same as Docker on 230). nexus_username/nexus_password
+# come from Vault (kv/services/nexus) via the wrapper, no_log.
+#
 # Run via: scripts/deploy-openfaas.sh
 # Inventory: the `openfaas` group -> 192.168.50.241, root over the TF-installed SSH key.
 
@@ -31,6 +36,7 @@
     faas_cli: /usr/local/bin/faas-cli
     openfaas_smoke_test: true
     smoke_function: nodeinfo
+    nexus_registry: docker.pdlab.dev
 
   pre_tasks:
     - name: Probe the kernel keyring (informational; keyctl CLI may be absent)
@@ -45,6 +51,16 @@
           keyctl probe rc={{ faasd_keyctl_probe.rc }}
           (non-zero is OK if keyctl isn't installed — the real test is faasd/containerd
           starting below; if THAT fails, run scripts/lxc-features-241.sh).
+
+    - name: Assert the Nexus pull creds were provided (use scripts/deploy-openfaas.sh)
+      ansible.builtin.assert:
+        that:
+          - nexus_username is defined and nexus_username | length > 0
+          - nexus_password is defined and nexus_password | length > 0
+        fail_msg: >-
+          Missing nexus_username/nexus_password. Don't run this playbook directly — run
+          scripts/deploy-openfaas.sh, which resolves them from Vault (kv/services/nexus).
+      no_log: true
 
   tasks:
     - name: Install faasd prerequisites
@@ -76,6 +92,26 @@
       loop:
         - faasd-provider
         - faasd
+
+    # ---- Private-registry (Nexus) pull auth: faasd/containerd reads this to pull our images ----
+    - name: Ensure the faasd docker-creds directory exists
+      ansible.builtin.file:
+        path: /var/lib/faasd/.docker
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Write the Nexus pull credentials (faasd reads /var/lib/faasd/.docker/config.json)
+      ansible.builtin.copy:
+        dest: /var/lib/faasd/.docker/config.json
+        content: |
+          {"auths":{"{{ nexus_registry }}":{"auth":"{{ (nexus_username ~ ':' ~ nexus_password) | b64encode }}"}}}
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Restart faasd-provider
 
     # ---- Validation: gateway health + login + a real function invoke (proves CNI) ----
     - name: Wait for the gateway to answer
@@ -126,3 +162,11 @@
       ansible.builtin.debug:
         msg: "faasd OK — {{ smoke_function }} invoked, {{ faas_invoke.stdout | length }} bytes returned."
       when: openfaas_smoke_test | bool
+
+  handlers:
+    # faasd-provider is the component that pulls function images; restart it so a changed
+    # /var/lib/faasd/.docker/config.json (Nexus creds) is picked up for subsequent pulls.
+    - name: Restart faasd-provider
+      ansible.builtin.systemd:
+        name: faasd-provider
+        state: restarted
