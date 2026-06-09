@@ -1,0 +1,107 @@
+# Workflow B (IaC) for Ansible host-config — the GitOps analog of deploy-openfaas.sh.
+# syntax-check on PR (cheap, no secrets, no host contact); APPLY on merge to main.
+#
+# The apply job runs on the self-hosted homelab runner (VM 232), which can SSH to LXC 241,
+# and mints a short-lived Vault token via GitHub OIDC (role openfaas-ci) for the ansible SSH
+# key (kv/iac/lxc-ssh) + the Nexus pull creds (kv/services/nexus). It runs the same committed
+# playbook the operator script does — no operator SSH. (PET-88)
+name: ansible-openfaas
+
+on:
+  pull_request:
+    paths:
+      - ansible/playbooks/configure-openfaas.yml
+      - ansible/inventory/hosts.yml
+      - .github/workflows/ansible-openfaas.yml
+  push:
+    branches: [main]
+    paths:
+      - ansible/playbooks/configure-openfaas.yml
+      - ansible/inventory/hosts.yml
+      - .github/workflows/ansible-openfaas.yml
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+
+permissions:
+  contents: read
+  id-token: write # mint the GitHub OIDC token vault-action exchanges for a Vault token
+
+jobs:
+  # PR: prove the play parses. No secrets, no host contact.
+  syntax-check:
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, linux, x64, homelab]
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up ansible-core
+        shell: bash
+        run: |
+          if command -v ansible-playbook >/dev/null 2>&1; then exit 0; fi
+          if python3 -m venv /tmp/av 2>/dev/null && /tmp/av/bin/pip install -q ansible-core; then
+            echo "/tmp/av/bin" >> "$GITHUB_PATH"; exit 0
+          fi
+          python3 -m pip install -q --user ansible-core && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Syntax check
+        run: ansible-playbook --syntax-check playbooks/configure-openfaas.yml
+
+  # merge to main: apply the play to LXC 241.
+  apply:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: [self-hosted, linux, x64, homelab]
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Vault — mint creds via OIDC
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: openfaas-ci
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportEnv: true
+          secrets: |
+            kv/data/services/nexus username | NEXUS_USERNAME ;
+            kv/data/services/nexus admin_password | NEXUS_PASSWORD ;
+            kv/data/iac/lxc-ssh private_key | ANSIBLE_SSH_KEY
+
+      - name: Set up ansible-core
+        shell: bash
+        run: |
+          if command -v ansible-playbook >/dev/null 2>&1; then exit 0; fi
+          if python3 -m venv /tmp/av 2>/dev/null && /tmp/av/bin/pip install -q ansible-core; then
+            echo "/tmp/av/bin" >> "$GITHUB_PATH"; exit 0
+          fi
+          python3 -m pip install -q --user ansible-core && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Apply configure-openfaas.yml to 241
+        shell: bash
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+        run: |
+          umask 077
+          KEY="$(mktemp)"; EVARS="$(mktemp)"
+          trap 'rm -f "$KEY" "$EVARS"' EXIT
+          printf '%s\n' "$ANSIBLE_SSH_KEY" > "$KEY"
+          # nexus creds via a tmp JSON @file — never on argv, never logged.
+          python3 - "$EVARS" <<'PY'
+          import json, os, sys
+          json.dump({"nexus_username": os.environ["NEXUS_USERNAME"],
+                     "nexus_password": os.environ["NEXUS_PASSWORD"]}, open(sys.argv[1], "w"))
+          PY
+          ansible-playbook playbooks/configure-openfaas.yml --private-key "$KEY" -e "@$EVARS"
