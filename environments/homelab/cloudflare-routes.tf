@@ -31,3 +31,27 @@ output "all_dns_records" {
     "${r.name} ${r.type} -> ${r.content}"
   ])
 }
+
+# Live tunnel ingress (hostname -> internal service). Source for the keep-set's
+# `service` values when we declare modules/cloudflare-ingress. (PET-36 step 1b)
+data "cloudflare_zero_trust_tunnel_cloudflared_config" "live" {
+  account_id = local.cloudflare_account_id
+  tunnel_id  = local.cloudflare_tunnel_id
+}
+
+output "live_ingress" {
+  description = "PET-36: live tunnel ingress as 'hostname -> service' (keep-set service mappings)."
+  value = try([
+    for r in data.cloudflare_zero_trust_tunnel_cloudflared_config.live.config.ingress :
+    "${coalesce(try(r.hostname, ""), "(catch-all)")} -> ${try(r.service, "")}"
+  ], ["unavailable"])
+}
+
+# name -> record id for the tunnel-backed CNAMEs, for `terraform import`.
+output "route_record_ids" {
+  description = "PET-36: DNS record name -> id (CNAMEs to the tunnel) for terraform import."
+  value = {
+    for r in data.cloudflare_dns_records.all.result :
+    r.name => r.id if try(strcontains(r.content, "cfargotunnel.com"), false)
+  }
+}
