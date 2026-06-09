@@ -29,6 +29,10 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
+    path "kv/data/admin/*" {
+      capabilities = ["read"]
+    }
+
     path "kv/metadata/*" {
       capabilities = ["list"]
     }
@@ -45,6 +49,10 @@ resource "vault_policy" "terraform" {
     }
 
     path "kv/data/poker/*" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/admin/*" {
       capabilities = ["read"]
     }
 
@@ -95,6 +103,10 @@ resource "vault_policy" "ansible" {
     }
 
     path "kv/data/services/*" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/admin/*" {
       capabilities = ["read"]
     }
 

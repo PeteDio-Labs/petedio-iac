@@ -77,6 +77,19 @@ variable "postgres_ready" {
   default     = true
 }
 
+variable "admin_db_password" {
+  description = <<-EOT
+    Password for the `admin` DB owner role (the co-latro-admin service, PET-88). Sourced from
+    Vault (kv/admin/db, field owner_password) and passed as TF_VAR_admin_db_password in CI;
+    defaults to null so validate/plan without Vault degrade cleanly (resolver falls back to the
+    Vault data-source value, explicit TF_VAR wins). Seed kv/admin/db + grant ci-read read on
+    kv/data/admin/* BEFORE the consuming apply (lessons.md no-default-var / cutover ordering).
+  EOT
+  type        = string
+  sensitive   = true
+  default     = null
+}
+
 variable "cloudflare_api_token" {
   description = <<-EOT
     Cloudflare API token the cloudflare provider authenticates with to READ the
