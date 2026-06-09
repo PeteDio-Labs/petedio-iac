@@ -24,6 +24,13 @@ on:
       - ansible/inventory/hosts.yml
       - .github/workflows/ansible-openfaas.yml
 
+# Serialize runs of this workflow: two fast merges would race two ansible applies
+# against the same host (241). Separate group from terraform.yml's tf-homelab —
+# this workflow never touches Terraform state.
+concurrency:
+  group: ansible-openfaas
+  cancel-in-progress: false
+
 env:
   VAULT_ADDR: https://192.168.50.223:8200
   VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt

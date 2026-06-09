@@ -9,6 +9,15 @@ on:
   push:
     branches: [main]
 
+# Serialize ALL runs (plans and applies) in one group: the MinIO state backend has
+# no locking (backend.tf), so concurrent jobs racing on the same state file is the
+# repo's #1 footgun ("Never run concurrent applies"). cancel-in-progress: false
+# queues instead of killing a mid-flight apply; GitHub keeps only the newest
+# pending run, which is fine — applies are declarative, the last one converges.
+concurrency:
+  group: tf-homelab
+  cancel-in-progress: false
+
 env:
   TF_IN_AUTOMATION: "1"
   # Creds for the MinIO S3 backend + bpg/proxmox provider come SOLELY from Vault
