@@ -86,11 +86,15 @@ jobs:
           # nexus creds via a JSON @file — never on argv, never logged. python3 stdlib (no pip).
           python3 - "$CI/evars.json" <<'PY'
           import json, os, sys
+          # ansible_ssh_private_key_file as an extra-var (highest precedence) — overrides the
+          # inventory group var (~/.ssh/id_ed25519_ansible, absent in the container); --private-key
+          # alone loses to the inventory var.
           json.dump({"nexus_username": os.environ["NEXUS_USERNAME"],
-                     "nexus_password": os.environ["NEXUS_PASSWORD"]}, open(sys.argv[1], "w"))
+                     "nexus_password": os.environ["NEXUS_PASSWORD"],
+                     "ansible_ssh_private_key_file": "/ci/key"}, open(sys.argv[1], "w"))
           PY
           docker run --rm --network host \
             -v "$GITHUB_WORKSPACE/ansible:/ansible" -v "$CI:/ci:ro" -w /ansible \
             -e ANSIBLE_HOST_KEY_CHECKING=False -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
             "$ANSIBLE_IMAGE" sh -c \
-            "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && pip install -q ansible-core && ansible-playbook -i inventory/hosts.yml playbooks/configure-openfaas.yml --private-key /ci/key -e @/ci/evars.json"
+            "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && pip install -q ansible-core && ansible-playbook -i inventory/hosts.yml playbooks/configure-openfaas.yml -e @/ci/evars.json"
