@@ -15,6 +15,14 @@
 # Requires the `community.postgresql` collection on the controller:
 #   ansible-galaxy collection install community.postgresql
 #
+# SECRETS (PET-106): postgres_admin_password is REQUIRED and deliberately has NO
+# default — a committed placeholder would silently become the live admin password
+# on a bare re-run. Resolve it from Vault (kv/poker/db, field admin_password) and
+# pass it as a no_log extra-var via a 0600 JSON @file, the repo's shell-wrapper
+# convention (see scripts/deploy-poker-api.sh / deploy-openfaas.sh for the
+# pattern). It MUST match the password the cyrilgdn provider connects with
+# (local.postgres_admin_password — the same Vault value).
+#
 # Inventory: target the 231 host (e.g. a `postgres` group → 192.168.50.231),
 # connecting as root over the SSH key Terraform installed.
 
@@ -26,12 +34,18 @@
     postgres_port: 5432
     postgres_allowed_cidr: "192.168.50.0/24"
     postgres_admin_user: "postgres"
-    # TODO(PET-6): source postgres_admin_password from Vault, NOT a plaintext var.
-    #   e.g. community.hashi_vault.vault_kv2_get → set_fact, or a vault lookup:
-    #   postgres_admin_password: "{{ lookup('community.hashi_vault.vault_kv2_get',
-    #     'petedio/postgres', engine_mount_point='secret').secret.admin_password }}"
-    #   This MUST match TF_VAR_postgres_admin_password used by the provider.
-    postgres_admin_password: "CHANGE_ME_FROM_VAULT" # placeholder — do NOT commit a real value
+
+  pre_tasks:
+    - name: Assert the admin password was provided (Vault kv/poker/db — never a committed default)
+      ansible.builtin.assert:
+        that:
+          - postgres_admin_password is defined
+          - postgres_admin_password | length > 0
+        fail_msg: >-
+          Missing postgres_admin_password. Don't run this playbook bare — resolve it from
+          Vault (kv/poker/db, field admin_password) and pass it as a no_log extra-var via
+          a 0600 JSON @file (see the header / scripts/deploy-poker-api.sh for the pattern).
+      no_log: true
 
   tasks:
     - name: Install PostgreSQL server + psycopg (for community.postgresql modules)
@@ -82,7 +96,7 @@
     - name: Create / update the Postgres admin role used by the Terraform provider
       community.postgresql.postgresql_user:
         name: "{{ postgres_admin_user }}"
-        password: "{{ postgres_admin_password }}" # TODO(PET-6): from Vault
+        password: "{{ postgres_admin_password }}" # required extra-var, asserted above (PET-106)
         role_attr_flags: "LOGIN,CREATEDB,CREATEROLE"
         state: present
       become_user: postgres
