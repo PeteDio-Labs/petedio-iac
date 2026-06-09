@@ -27,7 +27,10 @@ docs/GOTCHAS.md         # hard-won bpg/MinIO/runner patterns — READ THIS
 3. **On merge to `main` (squash):** `terraform apply -auto-approve`.
 4. Linear `PET-<n>` rides Todo → In Progress (PR) → Done (merge).
 
-State in MinIO S3 (no lock; versioning is the net). **Never run concurrent applies.**
+State in MinIO S3 with S3-native locking (`use_lockfile`, PET-105) and a
+`tf-homelab` CI concurrency group serializing plans/applies; bucket versioning is
+the recovery net. Existing local workdirs need a one-time `terraform init
+-reconfigure` after the lockfile change.
 
 ## Running locally
 
