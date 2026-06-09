@@ -1,57 +1,57 @@
-# PET-36 — bring the live Cloudflare tunnel routes under Terraform (zero-drift) and
-# drop the dead ones (k8s services destroyed in PET-93: mc / searxng / argocd /
-# portfolio / web-search).
+# PET-36 — Cloudflare tunnel routes under Terraform; dead routes dropped.
 #
-# STEP 1 (this commit): ENUMERATE — read-only. No resources created or changed.
-# The CI plan surfaces `live_tunnel_routes` + `all_dns_records` so we can see the
-# real inventory and pick the keep-set before declaring/importing it via the
-# modules/cloudflare-ingress "URL factory". `terraform validate` never reads data
-# sources, so this stays green with no Vault; the runner's plan (token from Vault)
-# resolves the actual values.
+# The cloudflared tunnel is token-managed (routes live in Cloudflare, not on the
+# box). This adopts the tunnel config + the live keep-set CNAMEs into the
+# cloudflare-ingress module (PET-35) and rewrites the ingress to ONLY the keep
+# routes, dropping the 11 dead ones whose backends were destroyed in PET-93:
+#   k8s:        argocd, grafana, mc, mc-dev, mc-mcp, petedillo.com, www.petedillo.com
+#   LXCs gone:  files (102), *.sandbox (120), job-hunt (118)
+#   legacy:     media (-> old MinIO 115)
+#
+# Keep-set `service` values + record IDs were read from the live tunnel ingress
+# (PR #31 plan, steps 1/1b). TF reads the CF token + account/zone/tunnel IDs from
+# Vault (kv/iac/cloudflare) — no manual secret handling. After apply the 11 dead
+# routes return 404 (their ingress rules removed); deleting the now-orphaned dead
+# CNAMEs is optional follow-up hygiene.
 
-data "cloudflare_dns_records" "all" {
-  zone_id = local.cloudflare_zone_id
-}
+module "cloudflare_ingress" {
+  source = "../../modules/cloudflare-ingress"
 
-# Hostnames whose proxied CNAME points at the cloudflared tunnel = the public
-# routes. These are the candidates for the module's `routes` map (minus the dead).
-output "live_tunnel_routes" {
-  description = "PET-36: hostnames whose CNAME targets *.cfargotunnel.com (tunnel routes)."
-  value = sort([
-    for r in data.cloudflare_dns_records.all.result :
-    r.name if try(strcontains(r.content, "cfargotunnel.com"), false)
-  ])
-}
+  account_id   = local.cloudflare_account_id
+  zone_id      = local.cloudflare_zone_id
+  tunnel_id    = local.cloudflare_tunnel_id
+  tunnel_cname = "${local.cloudflare_tunnel_id}.cfargotunnel.com"
 
-# Full DNS inventory (every record) for the migration writeup.
-output "all_dns_records" {
-  description = "PET-36: every DNS record as 'name TYPE -> content' for the inventory."
-  value = sort([
-    for r in data.cloudflare_dns_records.all.result :
-    "${r.name} ${r.type} -> ${r.content}"
-  ])
-}
-
-# Live tunnel ingress (hostname -> internal service). Source for the keep-set's
-# `service` values when we declare modules/cloudflare-ingress. (PET-36 step 1b)
-data "cloudflare_zero_trust_tunnel_cloudflared_config" "live" {
-  account_id = local.cloudflare_account_id
-  tunnel_id  = local.cloudflare_tunnel_id
-}
-
-output "live_ingress" {
-  description = "PET-36: live tunnel ingress as 'hostname -> service' (keep-set service mappings)."
-  value = try([
-    for r in data.cloudflare_zero_trust_tunnel_cloudflared_config.live.config.ingress :
-    "${coalesce(try(r.hostname, ""), "(catch-all)")} -> ${try(r.service, "")}"
-  ], ["unavailable"])
-}
-
-# name -> record id for the tunnel-backed CNAMEs, for `terraform import`.
-output "route_record_ids" {
-  description = "PET-36: DNS record name -> id (CNAMEs to the tunnel) for terraform import."
-  value = {
-    for r in data.cloudflare_dns_records.all.result :
-    r.name => r.id if try(strcontains(r.content, "cfargotunnel.com"), false)
+  # KEEP — live services. Everything else is dropped by the ingress rewrite.
+  routes = {
+    "auth.pdlab.dev"     = { service = "http://192.168.50.119:9000" } # Authentik
+    "docker.pdlab.dev"   = { service = "http://192.168.50.111:8082" } # Nexus (docker)
+    "registry.pdlab.dev" = { service = "http://192.168.50.111:8081" } # Nexus (registry)
+    "seer.pdlab.dev"     = { service = "http://192.168.50.33:5055" }  # Overseerr
   }
+}
+
+# Adopt the existing tunnel configuration so the apply is a clean diff that
+# removes the 11 dead ingress rules (not a blind overwrite).
+import {
+  to = module.cloudflare_ingress.cloudflare_zero_trust_tunnel_cloudflared_config.this
+  id = "${local.cloudflare_account_id}/${local.cloudflare_tunnel_id}"
+}
+
+# Adopt the existing keep CNAMEs (record IDs from the live pdlab.dev zone).
+import {
+  to = module.cloudflare_ingress.cloudflare_dns_record.route["auth.pdlab.dev"]
+  id = "${local.cloudflare_zone_id}/61c79a4269f9bd3113d1f306219009e9"
+}
+import {
+  to = module.cloudflare_ingress.cloudflare_dns_record.route["docker.pdlab.dev"]
+  id = "${local.cloudflare_zone_id}/cc952b328455a928811c5ad980f11599"
+}
+import {
+  to = module.cloudflare_ingress.cloudflare_dns_record.route["registry.pdlab.dev"]
+  id = "${local.cloudflare_zone_id}/0bc0916310c01640872d57482f14c637"
+}
+import {
+  to = module.cloudflare_ingress.cloudflare_dns_record.route["seer.pdlab.dev"]
+  id = "${local.cloudflare_zone_id}/553f672178651906b01c66cdca2c9de7"
 }
