@@ -24,8 +24,3 @@ agent_loop_cc_command: claude
 # Public keys only (safe to commit). Append to add more operators.
 agent_loop_authorized_keys:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEgSIpFv6ipc5B3CATvK1CIqul0hG6MSUT0cR5TqhAX4 pedro@type-shit"
-
-# The standing prompt run-loop.sh hands to Claude Code each iteration.
-agent_loop_prompt: >-
-  Read the Linear document 'Agent Loop Operations' in the Knowledge project
-  in full, then follow its run protocol
