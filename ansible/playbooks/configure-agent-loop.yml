@@ -1,0 +1,18 @@
+---
+# configure-agent-loop.yml — configure the agent-loop host (LXC 242). (PET-125)
+#
+# TF creates the LXC (environments/homelab/agent-loop.tf); this play installs the
+# loop toolchain (Node.js LTS, Claude Code, gh CLI) and lays down the run-loop.sh
+# skeleton via roles/agent-loop. NO secrets here: the scoped GitHub token lives in
+# Vault (kv/services/agent-loop — path reference only) and the `claude` login is
+# interactive — both are manual post-merge steps. Full runbook:
+# ../roles/agent-loop/README.md.
+#
+# Inventory: the `agent-loop` group -> 192.168.50.242, root over the TF-installed key.
+
+- name: Configure the agent-loop host (LXC 242)
+  hosts: agent-loop
+  become: true
+
+  roles:
+    - agent-loop

@@ -71,6 +71,17 @@ variable "template_file_id" {
   default     = "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst"
 }
 
+variable "os_type" {
+  description = <<-EOT
+    Proxmox operating_system.type — must match the distro of template_file_id
+    (e.g. "debian", "ubuntu"). Default stays "debian" (the value every pre-existing
+    consumer was created with) so adding this variable is a no-op for them; the
+    agent-loop host (242, Ubuntu LTS per PET-125) is the first to override it.
+  EOT
+  type        = string
+  default     = "debian"
+}
+
 variable "ssh_public_key" {
   description = "SSH public key installed for root inside the LXC (matches the key Ansible logs in with)."
   type        = string
