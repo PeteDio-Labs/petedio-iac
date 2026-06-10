@@ -152,9 +152,105 @@
   become: true
   become_user: "{{ agent_loop_user }}"
 
-# Shell QoL for the loop user: `cc` shorthand for Claude Code. Lives in a marked
-# block so it's idempotent and easy to extend later.
-- name: Install the cc alias for {{ agent_loop_user }}
+# --- IaC verify tooling (PET-131) --------------------------------------------------
+# So the loop can run fmt/validate/--syntax-check/lint on-host. Everything here is
+# install-only; the agent user gets NO sudo — root-level installs run because the role
+# itself is applied privileged. (Was hand-bootstrapped during PET-124; this ends that.)
+
+- name: Install IaC verify prerequisites (unzip for the TF zip, pipx for the agent)
+  ansible.builtin.apt:
+    name:
+      - python3-venv
+      - pipx
+      - unzip
+    state: present
+    update_cache: true
+
+# PET-124 unzipped a standalone terraform into ~/.local/bin via Python zipfile (no unzip
+# then). ~/.local/bin precedes /usr/local/bin on the agent's PATH, so that copy shadows
+# the pinned binary below and would silently pin the host to a stale version — remove it.
+- name: Remove the hand-bootstrapped terraform shim from PET-124
+  ansible.builtin.file:
+    path: "{{ agent_loop_home }}/.local/bin/terraform"
+    state: absent
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Check the installed Terraform version
+  ansible.builtin.command: /usr/local/bin/terraform version
+  register: agent_loop_tf_installed
+  changed_when: false
+  failed_when: false
+
+# Pinned binary + checksum (get_url fails the play on a sha mismatch). Skipped entirely
+# when the pinned version is already in place, so re-runs are no-ops and a version bump
+# re-installs.
+- name: Install pinned Terraform {{ agent_loop_terraform_version }}
+  when: agent_loop_terraform_version not in (agent_loop_tf_installed.stdout | default(''))
+  block:
+    - name: Download Terraform {{ agent_loop_terraform_version }} (checksum-verified)
+      ansible.builtin.get_url:
+        url: >-
+          https://releases.hashicorp.com/terraform/{{ agent_loop_terraform_version }}/terraform_{{ agent_loop_terraform_version }}_linux_{{ agent_loop_terraform_arch }}.zip
+        dest: "/tmp/terraform_{{ agent_loop_terraform_version }}_linux_{{ agent_loop_terraform_arch }}.zip"
+        checksum: "sha256:{{ agent_loop_terraform_sha256 }}"
+        mode: "0644"
+
+    - name: Unpack Terraform into /usr/local/bin
+      ansible.builtin.unarchive:
+        src: "/tmp/terraform_{{ agent_loop_terraform_version }}_linux_{{ agent_loop_terraform_arch }}.zip"
+        dest: /usr/local/bin
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+
+# ansible-core + linters, per-user via pipx (idempotent: pipx installs only when absent).
+# Run as the agent so the shims land in ~agent/.local/bin and there's no root-owned venv.
+- name: Install Python verify tooling via pipx ({{ agent_loop_user }})
+  community.general.pipx:
+    name: "{{ item }}"
+    state: install
+  loop: "{{ agent_loop_pipx_packages }}"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+# pipx ships ansible-CORE only — no bundled collections — so the repo's playbooks won't
+# syntax-check/lint until these are pulled from Galaxy into ~agent/.ansible/collections.
+- name: Ensure the agent's ~/.ansible directory exists
+  ansible.builtin.file:
+    path: "{{ agent_loop_home }}/.ansible"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Stage the Galaxy requirements file for the agent
+  ansible.builtin.copy:
+    src: requirements.yml
+    dest: "{{ agent_loop_home }}/.ansible/requirements.yml"
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0644"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Install Galaxy collections for on-host syntax-check ({{ agent_loop_user }})
+  ansible.builtin.command:
+    cmd: ansible-galaxy collection install -r {{ agent_loop_home }}/.ansible/requirements.yml
+  register: agent_loop_galaxy
+  changed_when: "'Installing ' in agent_loop_galaxy.stdout"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+  environment:
+    PATH: "{{ agent_loop_pipx_path }}"
+
+# Shell QoL for the loop user: `cc` shorthand for Claude Code, and ~/.local/bin (pipx
+# shims: ansible*, yamllint, ansible-lint) on PATH for interactive sessions. Lives in a
+# marked block so it's idempotent and easy to extend later.
+- name: Install the cc alias + PATH for {{ agent_loop_user }}
   ansible.builtin.blockinfile:
     path: "{{ agent_loop_home }}/.bashrc"
     create: true
@@ -163,6 +259,7 @@
     mode: "0644"
     marker: "# {mark} ANSIBLE MANAGED — agent-loop"
     block: |
+      export PATH="$HOME/.local/bin:$PATH"
       alias cc='{{ agent_loop_cc_command }}'
   become: true
   become_user: "{{ agent_loop_user }}"

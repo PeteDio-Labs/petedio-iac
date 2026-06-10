@@ -14,6 +14,18 @@ What the role installs (idempotent; a second run reports no changes):
 - **gh CLI** (official apt repo)
 - **Bun** (`npm i -g bun`) — Co-latro's runtime + test runner, so the loop's Co-latro
   test gate runs (toggle with `agent_loop_install_bun`)
+- **IaC verify toolchain** (PET-131) so the loop can `fmt`/`validate`/`--syntax-check`/
+  lint on-host:
+  - **Terraform** — a pinned binary verified against its official SHA256 and dropped into
+    `/usr/local/bin` (no HashiCorp apt repo); version + checksum are role defaults
+    (`agent_loop_terraform_version` / `_sha256`, pinned ≥ 1.10, the repo's strictest
+    `required_version`). The stray `~/.local/bin/terraform` hand-bootstrapped during
+    PET-124 is removed (it shadowed `/usr/local/bin` on the agent's PATH).
+  - **ansible-core**, **yamllint**, **ansible-lint** — per-user via `pipx` as the `agent`
+    user (no root venv), plus Galaxy collections (`community.general`, `ansible.posix`,
+    `community.postgresql`) from `files/requirements.yml` into `~agent/.ansible/collections`.
+  - The `agent` user gets **no sudo** — the apt prereqs (`python3-venv`, `pipx`, `unzip`)
+    and the TF binary install because the role itself is applied privileged.
 - Dedicated loop user **`agent`** (the loop never runs as root — Claude Code refuses
   `--dangerously-skip-permissions` as root), with operator SSH keys
   (`agent_loop_authorized_keys`, for direct `ssh agent@…`) and a `cc` alias
@@ -78,7 +90,10 @@ ssh -t agent@192.168.50.242 tmux attach -t loop
 The loop prompt points Claude at the Linear doc **Agent Loop Operations** (Knowledge
 project), which holds the full per-iteration protocol: pick one `agent-ok` issue →
 branch → implement → verify (**never apply**) → open a PR (**never merge**) → report on
-the issue. The ops doc's repo map says which repo each issue maps to; today the loop
+the issue. Since PET-131 the on-host **verify** step is real: `terraform fmt -check`/
+`validate`, `ansible-playbook --syntax-check`, `yamllint`, and `ansible-lint` all run
+locally as the `agent` user. (`terraform plan` against the real backend still needs
+operator-supplied MinIO/Vault creds and remains off-host — never run by the loop.) The ops doc's repo map says which repo each issue maps to; today the loop
 works **Platform** (`iac/`) — broadening to the other repos is governed there, not here.
 
 ## Secrets — Vault path reference only, NOTHING baked in
@@ -109,8 +124,13 @@ token never lands on disk.
    ubuntu-24.04-standard_24.04-2_amd64.tar.zst`).
 2. **Ansible**: `ansible-playbook playbooks/configure-agent-loop.yml` (then re-run to
    confirm idempotence — second run = no changes).
-3. **Verify toolchain**: `claude --version`, `gh --version`, and `bun --version` as the
-   `agent` user; confirm the public clones exist (`ls ~/work/petedio/{iac,media-iac,co-latro}`).
+3. **Verify toolchain**: as the `agent` user — `claude --version`, `gh --version`,
+   `bun --version`; and the IaC verify chain (PET-131): `terraform version` (must resolve
+   to `/usr/local/bin/terraform`, i.e. `which terraform`), `ansible --version`,
+   `yamllint --version`, `ansible-lint --version`, and `ansible-playbook --syntax-check`
+   on a playbook. Confirm the public clones exist
+   (`ls ~/work/petedio/{iac,media-iac,co-latro}`). A second role run must report **no
+   changes** (idempotent).
 4. **Claude login** (interactive, browser auth): `ssh agent@192.168.50.242`, run
    `claude`, complete the login flow. (`gh auth login` likewise, or use `GH_TOKEN`.)
 5. **Vault**: create `kv/services/agent-loop` with the scoped GitHub token (push
