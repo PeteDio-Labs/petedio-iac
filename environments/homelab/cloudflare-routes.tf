@@ -28,6 +28,12 @@ module "cloudflare_ingress" {
     "docker.pdlab.dev"   = { service = "http://192.168.50.111:8082" } # Nexus (docker)
     "registry.pdlab.dev" = { service = "http://192.168.50.111:8081" } # Nexus (registry)
     "seer.pdlab.dev"     = { service = "http://192.168.50.33:5055" }  # Overseerr
+
+    # PET-37 (F4) — Vault UI public URL. HTTPS origin behind a self-signed CA, so
+    # no_tls_verify. access stays false here BY DESIGN: F5/PET-38 flips on the
+    # Cloudflare Access gate (Authentik IdP). ⚠ Until F5 lands, applying this leaves
+    # Vault's UI reachable from the internet (login-gated only) — see PR caveat.
+    "vault.pdlab.dev" = { service = "https://192.168.50.223:8200", no_tls_verify = true }
   }
 }
 
