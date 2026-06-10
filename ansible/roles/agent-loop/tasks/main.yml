@@ -17,6 +17,8 @@
       # acl: lets become_user {{ agent_loop_user }} (the git clone below) set temp-file
       # ACLs even if a future run disables SSH pipelining.
       - acl
+      # tmux: a detachable session to run claude / the loop in, surviving SSH drops.
+      - tmux
     state: present
     update_cache: true
 
@@ -82,6 +84,16 @@
     shell: /bin/bash
     create_home: true
 
+# Operator keys for direct `ssh {{ agent_loop_user }}@<host>` — skip the root + su hop
+# when running the interactive auth bootstrap (scripts/agent-loop-login.sh).
+- name: Authorize operator SSH keys for {{ agent_loop_user }}
+  ansible.posix.authorized_key:
+    user: "{{ agent_loop_user }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ agent_loop_authorized_keys }}"
+  when: agent_loop_authorized_keys | length > 0
+
 - name: Create the work + log directories
   ansible.builtin.file:
     path: "{{ item }}"
@@ -94,7 +106,7 @@
     - "{{ agent_loop_log_dir }}"
 
 # update: false — Ansible clones once and never mutates the working tree afterwards
-# (run-loop.sh owns syncing main each iteration; a play must not clobber in-flight work).
+# (the loop owns syncing main each iteration; a play must not clobber in-flight work).
 - name: Clone petedio-iac into the loop workspace
   ansible.builtin.git:
     repo: "{{ agent_loop_repo_url }}"
@@ -104,10 +116,17 @@
   become: true
   become_user: "{{ agent_loop_user }}"
 
-- name: Install the run-loop.sh skeleton
-  ansible.builtin.template:
-    src: run-loop.sh.j2
-    dest: "{{ agent_loop_home }}/run-loop.sh"
+# Shell QoL for the loop user: `cc` shorthand for Claude Code. Lives in a marked
+# block so it's idempotent and easy to extend later.
+- name: Install the cc alias for {{ agent_loop_user }}
+  ansible.builtin.blockinfile:
+    path: "{{ agent_loop_home }}/.bashrc"
+    create: true
     owner: "{{ agent_loop_user }}"
     group: "{{ agent_loop_user }}"
-    mode: "0755"
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED — agent-loop"
+    block: |
+      alias cc='{{ agent_loop_cc_command }}'
+  become: true
+  become_user: "{{ agent_loop_user }}"
