@@ -1,5 +1,5 @@
 # Reusable LXC on Proxmox (Debian by default; os_type/template_file_id select the
-# distro — agent-loop 240 runs Ubuntu LTS) — the EC2-equivalent building block.
+# distro — agent-loop 242 runs Ubuntu LTS) — the EC2-equivalent building block.
 # Generalized from environments/homelab/runner.tf (the proven LXC 232 pattern).
 #
 # Deliberately NO `features {}` block: Proxmox rejects API tokens for the

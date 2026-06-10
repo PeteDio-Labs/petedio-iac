@@ -1,4 +1,4 @@
-# agent-loop (LXC 240) — autonomous coding loop host (PET-125): Claude Code working
+# agent-loop (LXC 242) — autonomous coding loop host (PET-125): Claude Code working
 # `agent-ok` issues. Greenfield create via modules/proxmox-lxc, same split as the
 # other app LXCs: TF owns existence + hardware + network; everything inside (Node.js
 # LTS, Claude Code, gh, the run-loop.sh skeleton) is Ansible —
@@ -6,11 +6,9 @@
 # rejected (renumbering = destroy+recreate anyway; the loop host is cattle, not pets)
 # — 113 proceeds to teardown per PET-17.
 #
-# VMID 240 = compute/AI block (.240), VMID = last IP octet. NB: .240 was historically
-# unusable on the LAN — a stale router DHCP reservation is what pushed ollama-host to
-# .12 (see the Inventory doc §3–4). PET-125 reclaims it: confirm the router
-# reservation is cleared/repointed BEFORE merging, or the host comes up into an
-# address conflict.
+# VMID 242 = compute/AI block (.242), VMID = last IP octet — the NEXT free number:
+# .240 is skipped (stale router DHCP reservation on the LAN, the same one that pushed
+# ollama-host to .12 — see the Inventory doc §3–4) and 241 = openfaas.
 #
 # Ubuntu LTS (24.04 noble) per PET-125 — the first non-Debian LXC here, hence the
 # os_type override (the module default stays "debian"). PRE-MERGE: the template must
@@ -25,9 +23,9 @@
 module "agent_loop" {
   source = "../../modules/proxmox-lxc"
 
-  vm_id            = 240
-  hostname         = "agent-loop-240"
-  ipv4_address     = "192.168.50.240/24"
+  vm_id            = 242
+  hostname         = "agent-loop-242"
+  ipv4_address     = "192.168.50.242/24"
   ssh_public_key   = var.ssh_public_key
   target_node      = var.target_node
   cores            = 2

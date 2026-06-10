@@ -1,6 +1,6 @@
 ---
 # agent-loop tasks (PET-125) — toolchain + loop skeleton for the agent-loop host
-# (LXC 240, Ubuntu LTS). Idempotent by design: repo-key/repo/apt/npm/user/template
+# (LXC 242, Ubuntu LTS). Idempotent by design: repo-key/repo/apt/npm/user/template
 # tasks all converge; the clone uses update: false so a second run never touches a
 # working tree the loop may have in flight. NO secrets here — see README.md for the
 # manual auth steps (interactive `claude` login, GitHub token from Vault

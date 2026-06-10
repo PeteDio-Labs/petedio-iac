@@ -1,8 +1,9 @@
-# agent-loop role — autonomous coding loop host (LXC 240) — PET-125
+# agent-loop role — autonomous coding loop host (LXC 242) — PET-125
 
-Configures **agent-loop-240** (`192.168.50.240`, Ubuntu 24.04 LTS LXC, TF-created by
+Configures **agent-loop-242** (`192.168.50.242`, Ubuntu 24.04 LTS LXC, TF-created by
 `environments/homelab/agent-loop.tf`): the box that runs the autonomous coding loop —
-Claude Code working `agent-ok` Linear issues.
+Claude Code working `agent-ok` Linear issues. (242 = the next free compute-block
+number: `.240` is burned by a stale router DHCP reservation, 241 = openfaas.)
 
 What the role installs (idempotent; a second run reports no changes):
 
@@ -48,15 +49,13 @@ token never lands on disk.
 
 ## Post-merge provisioning runbook (manual, in order)
 
-1. **Runner applies on merge** → LXC 240 created (TF). Pre-merge: the Ubuntu template
+1. **Runner applies on merge** → LXC 242 created (TF). Pre-merge: the Ubuntu template
    must exist on pve01 (`pveam update && pveam download local
-   ubuntu-24.04-standard_24.04-2_amd64.tar.zst`) and the stale `.240` router DHCP
-   reservation — the one that originally pushed ollama-host to `.12` — must be
-   cleared/repointed.
+   ubuntu-24.04-standard_24.04-2_amd64.tar.zst`).
 2. **Ansible**: `ansible-playbook playbooks/configure-agent-loop.yml` (then re-run to
    confirm idempotence — second run = no changes).
 3. **Verify toolchain**: `claude --version` and `gh --version` as the `agent` user.
-4. **Claude login** (interactive, browser auth): console in (`pct enter 240` or SSH),
+4. **Claude login** (interactive, browser auth): console in (`pct enter 242` or SSH),
    `su - agent`, run `claude`, complete the login flow.
 5. **Vault**: create `kv/services/agent-loop` with the scoped GitHub token (push
    branches + open PRs only, no merge); export it per the section above.

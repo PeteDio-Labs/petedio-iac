@@ -76,7 +76,7 @@ variable "os_type" {
     Proxmox operating_system.type — must match the distro of template_file_id
     (e.g. "debian", "ubuntu"). Default stays "debian" (the value every pre-existing
     consumer was created with) so adding this variable is a no-op for them; the
-    agent-loop host (240, Ubuntu LTS per PET-125) is the first to override it.
+    agent-loop host (242, Ubuntu LTS per PET-125) is the first to override it.
   EOT
   type        = string
   default     = "debian"
