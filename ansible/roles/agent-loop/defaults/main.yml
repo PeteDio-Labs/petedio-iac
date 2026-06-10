@@ -15,6 +15,10 @@ agent_loop_log_dir: "{{ agent_loop_home }}/loop-logs"
 # Node.js LTS major (NodeSource). 22 = active LTS ("jod").
 agent_loop_nodejs_major: 22
 
+# What the `cc` shell alias runs. Plain `claude` by default; set to
+# "claude --dangerously-skip-permissions" once the host is trusted as a sandbox.
+agent_loop_cc_command: claude
+
 # Operator SSH public keys authorized to log in directly as the loop user, so you can
 # `ssh agent@192.168.50.242` and run the auth bootstrap without hopping through root.
 # Public keys only (safe to commit). Append to add more operators.

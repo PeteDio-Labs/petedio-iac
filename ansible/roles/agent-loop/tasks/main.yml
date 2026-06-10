@@ -17,6 +17,8 @@
       # acl: lets become_user {{ agent_loop_user }} (the git clone below) set temp-file
       # ACLs even if a future run disables SSH pipelining.
       - acl
+      # tmux: a detachable session to run claude / the loop in, surviving SSH drops.
+      - tmux
     state: present
     update_cache: true
 
@@ -121,3 +123,18 @@
     owner: "{{ agent_loop_user }}"
     group: "{{ agent_loop_user }}"
     mode: "0755"
+
+# Shell QoL for the loop user: `cc` shorthand for Claude Code. Lives in a marked
+# block so it's idempotent and easy to extend later.
+- name: Install the cc alias for {{ agent_loop_user }}
+  ansible.builtin.blockinfile:
+    path: "{{ agent_loop_home }}/.bashrc"
+    create: true
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED — agent-loop"
+    block: |
+      alias cc='{{ agent_loop_cc_command }}'
+  become: true
+  become_user: "{{ agent_loop_user }}"
