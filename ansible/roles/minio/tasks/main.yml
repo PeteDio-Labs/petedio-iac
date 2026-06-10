@@ -1,0 +1,273 @@
+---
+# minio role (PET-124) — config-as-code for the Terraform state backend (LXC 221 / .221).
+# Idempotent and safe to re-run against the live host. NO secrets are committed: the
+# root credentials arrive as a no_log extra-var (Vault kv/iac/minio-root — see defaults).
+# The tfstate-scoped svcacct in Vault (kv/iac/minio) is owned by
+# scripts/reseed-minio-vault.sh, NOT this role (see README.md).
+
+- name: Assert the MinIO root credentials were provided (Vault kv/iac/minio-root — never a committed default)
+  ansible.builtin.assert:
+    that:
+      - minio_root_user is defined
+      - minio_root_user | length > 0
+      - minio_root_password is defined
+      - minio_root_password | length >= 8
+    fail_msg: >-
+      Missing minio_root_user / minio_root_password. Don't run this play bare — resolve
+      them from Vault (kv/iac/minio-root, fields root_user/root_password) and pass them as
+      a no_log extra-var via a 0600 JSON @file (see the role README / runbook for the
+      pattern, mirrored from configure-postgres.yml).
+  no_log: true
+
+# --- OS account + storage --------------------------------------------------------
+
+- name: Create the minio system group
+  ansible.builtin.group:
+    name: "{{ minio_group }}"
+    system: true
+
+- name: Create the minio system user
+  ansible.builtin.user:
+    name: "{{ minio_user }}"
+    group: "{{ minio_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ minio_data_dir }}"
+    create_home: false
+
+- name: Create the MinIO data directory
+  ansible.builtin.file:
+    path: "{{ minio_data_dir }}"
+    state: directory
+    owner: "{{ minio_user }}"
+    group: "{{ minio_group }}"
+    mode: "0750"
+
+# --- Binaries (pinned + checksummed) ---------------------------------------------
+
+- name: Install the MinIO server binary ({{ minio_version }})
+  ansible.builtin.get_url:
+    url: "{{ minio_server_url }}"
+    dest: "{{ minio_bin }}"
+    checksum: "sha256:{{ minio_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart minio
+
+- name: Install the mc client binary ({{ mc_version }})
+  ansible.builtin.get_url:
+    url: "{{ mc_url }}"
+    dest: "{{ mc_bin }}"
+    checksum: "sha256:{{ mc_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+# --- Service config --------------------------------------------------------------
+
+- name: Write the MinIO environment file (root creds + volumes)
+  ansible.builtin.copy:
+    dest: "{{ minio_config_env }}"
+    owner: root
+    group: "{{ minio_group }}"
+    mode: "0640"
+    content: |
+      # ANSIBLE MANAGED (roles/minio) — do not edit by hand.
+      # Root credentials come from Vault (kv/iac/minio-root); never commit real values.
+      MINIO_ROOT_USER={{ minio_root_user }}
+      MINIO_ROOT_PASSWORD={{ minio_root_password }}
+      MINIO_VOLUMES="{{ minio_data_dir }}"
+      MINIO_OPTS="--address {{ minio_server_address }} --console-address {{ minio_console_address }}"
+  no_log: true
+  notify: Restart minio
+
+- name: Install the MinIO systemd unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/minio.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # ANSIBLE MANAGED (roles/minio).
+      [Unit]
+      Description=MinIO (Terraform state backend, LXC 221)
+      Documentation=https://min.io/docs/minio/linux/index.html
+      Wants=network-online.target
+      After=network-online.target
+      AssertFileIsExecutable={{ minio_bin }}
+
+      [Service]
+      Type=notify
+      User={{ minio_user }}
+      Group={{ minio_group }}
+      EnvironmentFile={{ minio_config_env }}
+      ExecStart={{ minio_bin }} server $MINIO_OPTS $MINIO_VOLUMES
+      Restart=always
+      RestartSec=5s
+      LimitNOFILE=65536
+      TimeoutStopSec=infinity
+      SendSIGKILL=no
+      OOMScoreAdjust=-1000
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Restart minio
+
+- name: Flush handlers so MinIO is (re)started before the bucket tasks run
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure MinIO is enabled and started
+  ansible.builtin.systemd:
+    name: minio
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Ensure ufw is installed (the firewall rule task needs it)
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+  when: minio_firewall_enabled | bool
+
+- name: Allow the MinIO S3 API + console from the homelab LAN (UFW)
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+    from_ip: "{{ minio_firewall_subnet }}"
+    comment: "MinIO {{ item }} - homelab LAN"
+  loop:
+    - "9000"
+    - "9001"
+  when: minio_firewall_enabled | bool
+
+# --- Wait for readiness, then administer via mc ----------------------------------
+
+- name: Wait for the MinIO health endpoint to report ready
+  ansible.builtin.uri:
+    url: "{{ minio_local_endpoint }}/minio/health/ready"
+    status_code: 200
+  register: minio_ready
+  retries: 12
+  delay: 5
+  until: minio_ready.status == 200
+
+# mc stores its alias config under root's HOME (/root/.mc). Setting the alias is how mc
+# authenticates for every admin call below; it carries the root secret, hence no_log.
+- name: Configure the local mc alias
+  ansible.builtin.command:
+    cmd: >-
+      {{ mc_bin }} alias set {{ minio_mc_alias }}
+      {{ minio_local_endpoint }} {{ minio_root_user }} {{ minio_root_password }}
+  register: mc_alias
+  changed_when: false
+  no_log: true
+
+# --- State bucket + versioning ---------------------------------------------------
+
+- name: Check whether the state bucket exists
+  ansible.builtin.command:
+    cmd: "{{ mc_bin }} ls {{ minio_mc_alias }}/{{ minio_state_bucket }}"
+  register: mc_bucket_check
+  changed_when: false
+  failed_when: false
+
+- name: Create the state bucket if absent
+  ansible.builtin.command:
+    cmd: "{{ mc_bin }} mb {{ minio_mc_alias }}/{{ minio_state_bucket }}"
+  when: mc_bucket_check.rc != 0
+  register: mc_bucket_create
+  changed_when: mc_bucket_create.rc == 0
+
+- name: Read current versioning state of the bucket
+  ansible.builtin.command:
+    cmd: "{{ mc_bin }} version info {{ minio_mc_alias }}/{{ minio_state_bucket }}"
+  register: mc_version_info
+  changed_when: false
+
+# Only enable when not already enabled, so a converged host reports no change (mc
+# prints a success line every time otherwise). Match case-insensitively — `mc version
+# info` reports "... versioning is enabled".
+- name: Enable versioning on the state bucket (the lock-light backend's recovery net)
+  ansible.builtin.command:
+    cmd: "{{ mc_bin }} version enable {{ minio_mc_alias }}/{{ minio_state_bucket }}"
+  when: "'enabled' not in (mc_version_info.stdout | lower)"
+  register: mc_version_enable
+  changed_when: mc_version_enable.rc == 0
+
+# --- Off-host backup (opt-in) ----------------------------------------------------
+
+- name: Configure off-host backup of the state bucket
+  when: minio_backup_enabled | bool
+  block:
+    - name: Assert a backup destination was set
+      ansible.builtin.assert:
+        that:
+          - minio_backup_dest | length > 0
+        fail_msg: >-
+          minio_backup_enabled is true but minio_backup_dest is empty. Set it to a
+          pre-configured off-host mc target (e.g. "offsite/tfstate-backup") — see the
+          runbook for choosing and seeding the destination.
+
+    - name: Install the state-bucket backup script
+      ansible.builtin.copy:
+        dest: "{{ minio_backup_script }}"
+        owner: root
+        group: root
+        mode: "0750"
+        content: |
+          #!/usr/bin/env bash
+          # ANSIBLE MANAGED (roles/minio) — off-host backup of the Terraform state bucket.
+          # Mirrors the live tfstate objects (all versions, never pruning the target) to
+          # the operator-configured off-host destination. Runs as root via the timer below.
+          set -euo pipefail
+          {{ mc_bin }} mirror --overwrite --preserve \
+            "{{ minio_mc_alias }}/{{ minio_state_bucket }}" "{{ minio_backup_dest }}"
+
+    - name: Install the backup systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/minio-tfstate-backup.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # ANSIBLE MANAGED (roles/minio).
+          [Unit]
+          Description=Off-host backup of the MinIO Terraform state bucket
+          After=network-online.target minio.service
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          ExecStart={{ minio_backup_script }}
+      notify: Reload systemd
+
+    - name: Install the backup systemd timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/minio-tfstate-backup.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # ANSIBLE MANAGED (roles/minio).
+          [Unit]
+          Description=Schedule off-host backup of the MinIO state bucket
+
+          [Timer]
+          OnCalendar={{ minio_backup_oncalendar }}
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+      notify: Reload systemd
+
+    - name: Flush handlers so the timer unit is loaded before we enable it
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start the backup timer
+      ansible.builtin.systemd:
+        name: minio-tfstate-backup.timer
+        enabled: true
+        state: started
