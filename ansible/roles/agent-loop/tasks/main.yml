@@ -76,6 +76,20 @@
     state: present
     update_cache: true
 
+# --- Bun (Co-latro runtime + test runner) -----------------------------------------
+
+# Both Co-latro repos are Bun (`bun install` / `bun test`; vitest runs under bun). Same
+# npm-global install + "upgrades are deliberate" convention as Claude Code above, so the
+# loop's Co-latro test gate fails on the code, not on a missing toolchain. Node LTS (for
+# vitest/Vite) is already installed above. (Playwright e2e — browsers + apt libs — is a
+# deliberate follow-up, not installed here.)
+- name: Install Bun (npm global)
+  community.general.npm:
+    name: bun
+    global: true
+    state: present
+  when: agent_loop_install_bun | bool
+
 # --- Loop user + workspace ---------------------------------------------------------
 
 - name: Create the loop user ({{ agent_loop_user }})
@@ -94,7 +108,7 @@
   loop: "{{ agent_loop_authorized_keys }}"
   when: agent_loop_authorized_keys | length > 0
 
-- name: Create the work + log directories
+- name: Create the work, workspace, and log directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -103,16 +117,38 @@
     mode: "0755"
   loop:
     - "{{ agent_loop_home }}/work"
+    - "{{ agent_loop_workspace }}"
     - "{{ agent_loop_log_dir }}"
 
-# update: false — Ansible clones once and never mutates the working tree afterwards
-# (the loop owns syncing main each iteration; a play must not clobber in-flight work).
-- name: Clone petedio-iac into the loop workspace
+# The host mirrors the petedio-workspace layout (PET-130). The OPTIONAL private parent
+# (meta-docs) is cloned FIRST, into the workspace root, so the public children below land
+# in its already-gitignored subpaths without dirtying its status. It needs gh auth on the
+# host, so it's gated behind agent_loop_clone_private (default false — see README).
+- name: Clone the private parent workspace + admin (opt-in; needs host gh auth)
   ansible.builtin.git:
-    repo: "{{ agent_loop_repo_url }}"
-    dest: "{{ agent_loop_repo_dest }}"
+    repo: "{{ agent_loop_github_base }}/{{ item.name }}.git"
+    dest: "{{ agent_loop_workspace }}/{{ item.dest }}"
     version: main
     update: false
+  loop: "{{ agent_loop_private_repos }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.dest }}"
+  when: agent_loop_clone_private | bool
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+# update: false — Ansible clones each repo once and never mutates the working tree
+# afterwards (the loop owns syncing main each iteration; a play must not clobber in-flight
+# work). git creates the intermediate dirs (e.g. co-latro/) on clone.
+- name: Clone the public child repos into the workspace
+  ansible.builtin.git:
+    repo: "{{ agent_loop_github_base }}/{{ item.name }}.git"
+    dest: "{{ agent_loop_workspace }}/{{ item.dest }}"
+    version: main
+    update: false
+  loop: "{{ agent_loop_repos }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.dest }}"
   become: true
   become_user: "{{ agent_loop_user }}"
 

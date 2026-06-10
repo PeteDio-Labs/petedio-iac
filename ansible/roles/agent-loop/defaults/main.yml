@@ -5,12 +5,38 @@
 agent_loop_user: agent
 agent_loop_home: "/home/{{ agent_loop_user }}"
 
-# Where the loop works. Public repo — the clone needs no token; the token (Vault
-# kv/services/agent-loop, by reference only — see README.md) is only needed for
-# gh to push branches / open PRs.
-agent_loop_repo_url: https://github.com/PeteDio-Labs/petedio-iac.git
-agent_loop_repo_dest: "{{ agent_loop_home }}/work/petedio-iac"
+# Where the loop works (PET-130). The host MIRRORS the petedio-workspace layout: a
+# workspace root with the child repos cloned into the SAME gitignored nested paths the
+# parent repo uses, so a Platform/IaC issue is worked in {{ agent_loop_workspace }}/iac,
+# a Co-latro issue in co-latro/backend|frontend, etc.
+agent_loop_workspace: "{{ agent_loop_home }}/work/petedio"
+agent_loop_github_base: https://github.com/PeteDio-Labs
+
+# Public child repos — always cloned, no token needed (the loop branches/PRs per repo
+# via gh). `dest` is RELATIVE to agent_loop_workspace and matches the parent repo's
+# .gitignore (iac/, media-iac/, co-latro/backend/, co-latro/frontend/).
+agent_loop_repos:
+  - { name: petedio-iac, dest: iac }
+  - { name: petedio-media-iac, dest: media-iac }
+  - { name: co-latro-backend, dest: co-latro/backend }
+  - { name: co-latro-frontend, dest: co-latro/frontend }
+
+# Private repos: the parent workspace meta-docs (.agent/lessons.md, .claude/CLAUDE.md)
+# and co-latro-admin. These need gh auth ON THE HOST, which is a manual post-provision
+# step — so they're OFF by default. Enable once the agent user has GH_TOKEN/gh login
+# (see README). The parent clones into the workspace root ("."); its .gitignore already
+# ignores the nested children above, so they never dirty its git status.
+agent_loop_clone_private: false
+agent_loop_private_repos:
+  - { name: petedio-workspace, dest: "." }
+  - { name: co-latro-admin, dest: co-latro-admin }
+
 agent_loop_log_dir: "{{ agent_loop_home }}/loop-logs"
+
+# Bun — Co-latro's runtime + test runner (both repos: `bun install` / `bun test`, and
+# vitest runs under bun). Installed as an npm global like Claude Code; upgrades are
+# deliberate (`npm update -g bun`), not on every play. Set false for an IaC-only host.
+agent_loop_install_bun: true
 
 # Node.js LTS major (NodeSource). 22 = active LTS ("jod").
 agent_loop_nodejs_major: 22
