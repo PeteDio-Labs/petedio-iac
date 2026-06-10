@@ -30,9 +30,33 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
 - **On pve01 the LAN/uplink bridge is `vmbr1`, NOT `vmbr0`.** `vmbr0` = `eno1`, a
   separate segment with no gateway — a container on it has an IP but cannot ARP the
   gateway (outbound 100% loss, DNS fails). `vmbr1` = `eno2`/`eno3`, where the
-  working containers live. **Do NOT copy net config from a pve02 container** (the old
-  MinIO/115 uses `vmbr0` *on pve02*, where the bridge layout differs). Discovered
-  2026-06-02 standing up the fresh MinIO (.221).
+  working containers live. **Do NOT copy net config from a pve02 container** — on
+  **pve02 the LAN bridge IS `vmbr0`** (single NIC `enp0s31f6`, VLAN-aware), the
+  opposite of pve01. So `bridge` is per-node: `vmbr1` for pve01 resources, `vmbr0`
+  for pve02. Discovered 2026-06-02 standing up the fresh MinIO (.221).
+
+## pve01 / pve02 cluster + storage (PET-127)
+
+- **pve01 + pve02 are a quorate 2-node cluster** ("Homelab"), so `/etc/pve/storage.cfg`
+  is **cluster-shared** — a storage entry without an explicit `nodes <name>` line is
+  offered on BOTH nodes. Always scope node-local storage with `nodes pve01` / `nodes pve02`.
+
+- **Stale node-name pin = silently "disabled" storage.** pve02 was once named `pete`;
+  a `network-storage` entry pinned to `nodes pete` showed `disabled` in `pvesm status`
+  forever (no such node). If a storage is mysteriously disabled, check its `nodes`
+  line against `ls /etc/pve/nodes/`.
+
+- **`content` must match what the storage actually is.** That same `network-storage`
+  was declared `content rootdir,images` but its VG held plain ext4 filesystem LVs
+  (NFS export mounts), not Proxmox image volumes — Proxmox would have tried to carve
+  VM disks into a filesystem. Filesystem-mount LVs → register as a `dir` storage on
+  the mountpoint, not as `lvm`.
+
+- **pve02 is the homelab NFS file server — it is load-bearing, not idle.** It exports
+  `/mnt/{nexus-data,backups,shared}` over NFS; pve01 host-mounts all three as
+  `/mnt/pete/*`. The cluster `pete-backups` storage IS pve02's HDD over NFS, and
+  **Nexus's blob store (CT106) is an NFS mount of pve02's `/mnt/nexus-data`** — never
+  touch that export or `nfs-server` on pve02 or you break `docker.pdlab.dev`.
 
 ## MinIO S3 state backend
 
