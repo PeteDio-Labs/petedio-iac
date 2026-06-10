@@ -70,7 +70,7 @@ jobs:
       # NB (PET-29 two-phase): this step is RED until PET-27 seeds these KV values —
       # vault-action can't read secrets that don't exist yet. Expected; gates merge.
       - name: Vault — mint creds via OIDC
-        uses: hashicorp/vault-action@v3
+        uses: hashicorp/vault-action@v4
         with:
           url: https://192.168.50.223:8200
           method: jwt
