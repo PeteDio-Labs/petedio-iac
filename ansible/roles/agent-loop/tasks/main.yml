@@ -82,6 +82,16 @@
     shell: /bin/bash
     create_home: true
 
+# Operator keys for direct `ssh {{ agent_loop_user }}@<host>` — skip the root + su hop
+# when running the interactive auth bootstrap (scripts/agent-loop-login.sh).
+- name: Authorize operator SSH keys for {{ agent_loop_user }}
+  ansible.posix.authorized_key:
+    user: "{{ agent_loop_user }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ agent_loop_authorized_keys }}"
+  when: agent_loop_authorized_keys | length > 0
+
 - name: Create the work + log directories
   ansible.builtin.file:
     path: "{{ item }}"
