@@ -106,7 +106,7 @@
     - "{{ agent_loop_log_dir }}"
 
 # update: false — Ansible clones once and never mutates the working tree afterwards
-# (run-loop.sh owns syncing main each iteration; a play must not clobber in-flight work).
+# (the loop owns syncing main each iteration; a play must not clobber in-flight work).
 - name: Clone petedio-iac into the loop workspace
   ansible.builtin.git:
     repo: "{{ agent_loop_repo_url }}"
@@ -115,14 +115,6 @@
     update: false
   become: true
   become_user: "{{ agent_loop_user }}"
-
-- name: Install the run-loop.sh skeleton
-  ansible.builtin.template:
-    src: run-loop.sh.j2
-    dest: "{{ agent_loop_home }}/run-loop.sh"
-    owner: "{{ agent_loop_user }}"
-    group: "{{ agent_loop_user }}"
-    mode: "0755"
 
 # Shell QoL for the loop user: `cc` shorthand for Claude Code. Lives in a marked
 # block so it's idempotent and easy to extend later.
