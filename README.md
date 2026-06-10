@@ -43,6 +43,17 @@ terraform init
 terraform plan
 ```
 
+**Provider lock files (PET-108):** `.terraform.lock.hcl` is committed so CI runs
+exactly the provider builds that were reviewed. After the first init (here and in
+`vault-config/`), generate cross-platform hashes and commit the result:
+
+```bash
+terraform providers lock -platform=linux_amd64 -platform=darwin_arm64 -platform=darwin_amd64
+```
+
+Provider upgrades are deliberate: `terraform init -upgrade` in a PR, reviewed via
+the plan.
+
 ## Secrets (CI)
 
 CI gets its creds from **HashiCorp Vault via GitHub OIDC** (PET-29). The workflow
