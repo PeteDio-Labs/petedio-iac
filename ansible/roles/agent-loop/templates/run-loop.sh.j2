@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# run-loop.sh — one iteration of the agent loop (PET-125). SKELETON: sync main, hand
+# off to Claude Code with the standing prompt, log the whole run to {{ agent_loop_log_dir }}.
+#
+# Managed by Ansible (roles/agent-loop/templates/run-loop.sh.j2) — edit the template,
+# not this file. Run as {{ agent_loop_user }}, never root (Claude Code refuses
+# --dangerously-skip-permissions as root).
+#
+# Auth prereqs — neither is baked in (see roles/agent-loop/README.md):
+#   * `claude` logged in once, interactively (browser auth).
+#   * GH_TOKEN exported from Vault kv/services/agent-loop (scoped: push branches +
+#     open PRs only, no merge).
+#
+# No scheduler is wired yet: invoke by hand (first runs SUPERVISED), move to a
+# systemd timer once the loop has proven itself.
+set -euo pipefail
+
+REPO_DIR="{{ agent_loop_repo_dest }}"
+LOG_DIR="{{ agent_loop_log_dir }}"
+PROMPT="{{ agent_loop_prompt }}"
+
+mkdir -p "${LOG_DIR}"
+LOG_FILE="${LOG_DIR}/loop-$(date +%Y%m%d-%H%M%S).log"
+
+{
+  echo "=== agent-loop iteration start $(date -Is) ==="
+
+  cd "${REPO_DIR}"
+  git checkout main
+  git pull --ff-only origin main
+
+  # TODO(first supervised run): settle the permission flags — likely
+  # --dangerously-skip-permissions once the host is trusted as a sandbox.
+  claude -p "${PROMPT}"
+
+  echo "=== agent-loop iteration end $(date -Is) ==="
+} 2>&1 | tee -a "${LOG_FILE}"

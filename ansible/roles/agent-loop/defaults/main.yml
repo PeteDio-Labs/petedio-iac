@@ -1,0 +1,21 @@
+---
+# agent-loop role defaults (PET-125). The loop runs as a dedicated non-root user:
+# Claude Code refuses --dangerously-skip-permissions as root, and the scoped GitHub
+# token should not live in root's environment anyway.
+agent_loop_user: agent
+agent_loop_home: "/home/{{ agent_loop_user }}"
+
+# Where the loop works. Public repo — the clone needs no token; the token (Vault
+# kv/services/agent-loop, by reference only — see README.md) is only needed for
+# gh to push branches / open PRs.
+agent_loop_repo_url: https://github.com/PeteDio-Labs/petedio-iac.git
+agent_loop_repo_dest: "{{ agent_loop_home }}/work/petedio-iac"
+agent_loop_log_dir: "{{ agent_loop_home }}/loop-logs"
+
+# Node.js LTS major (NodeSource). 22 = active LTS ("jod").
+agent_loop_nodejs_major: 22
+
+# The standing prompt run-loop.sh hands to Claude Code each iteration.
+agent_loop_prompt: >-
+  Read the Linear document 'Agent Loop Operations' in the Knowledge project
+  in full, then follow its run protocol
