@@ -6,9 +6,10 @@
 #
 # Each value is taken from a matching env var if already exported, otherwise prompted
 # for interactively with `read -s` (silent — no terminal echo). Values are held only
-# in shell variables and passed to `vault kv put`; this script NEVER echoes a value,
-# NEVER writes one to disk, and NEVER logs one. Idempotent: re-running overwrites the
-# same KV entries with the same (re-entered) values — safe to repeat.
+# in shell variables and PIPED to `vault kv put <path> -` as JSON on stdin (PET-110:
+# never on a child process argv, where `ps` could see them); this script NEVER echoes
+# a value, NEVER writes one to disk, and NEVER logs one. Idempotent: re-running
+# overwrites the same KV entries with the same (re-entered) values — safe to repeat.
 #
 # Source of each value → docs/runbooks/vault-seed.md (Source mapping). Real values come
 # from the old homelab-infra ansible-vault files or Pedro's password manager.
@@ -37,6 +38,7 @@ set -euo pipefail
 : "${VAULT_TOKEN:?run 'vault login' or export VAULT_TOKEN (root/bootstrap token)}"
 
 command -v vault >/dev/null 2>&1 || { echo "FATAL: vault CLI not found on PATH" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "FATAL: python3 not found on PATH (needed to build JSON payloads)" >&2; exit 1; }
 
 # Fail fast if Vault is unreachable or sealed (don't half-seed).
 if ! vault status >/dev/null 2>&1; then
@@ -64,13 +66,33 @@ load_value() {
   REPLY_VALUE="$v"
 }
 
-# --- helper: put one KV entry. Args: <path> then key=valuevar pairs are built by ---
-# the callers below. We build the `vault kv put` arg array WITHOUT ever expanding a
-# value into a command echoed by `set -x`-style tracing (this script never sets -x).
+# --- helper: put one KV entry. Args: <path> then literal key=value strings -------
+# assembled by the callers below. PET-110: values must NEVER land on a child
+# process's argv (visible in `ps` / /proc/<pid>/cmdline while it runs) — the same
+# rule reseed-openfaas-vault.sh documents. Function args are shell-internal (no
+# process is spawned), so the caller signature is safe; from here the pairs travel
+# NUL-separated over a PIPE to python3 (stdin), which emits a JSON object that is
+# PIPED to `vault kv put <path> -` (vault reads the payload from stdin). No argv,
+# no temp file, no terminal echo.
+#
+# A value starting with "@" is read from that file path by python (replaces the
+# old `vault kv put key=@file` argv convention — used for the SSH private key).
 put_entry() {
   local path="$1"; shift
-  # remaining args are literal key=value strings already assembled by the caller
-  if vault kv put "$path" "$@" >/dev/null; then
+  local json
+  json="$(printf '%s\0' "$@" | python3 -c '
+import json, sys
+d = {}
+for pair in sys.stdin.buffer.read().split(b"\0"):
+    if not pair:
+        continue
+    k, sep, v = pair.decode().partition("=")
+    if not sep:
+        sys.exit(f"FATAL: malformed pair for key {k!r} (no =)")
+    d[k] = open(v[1:]).read() if v.startswith("@") else v
+print(json.dumps(d))
+')"
+  if printf '%s' "$json" | vault kv put "$path" - >/dev/null; then
     echo "  -> wrote $path"
   else
     echo "FATAL: failed to write $path" >&2
@@ -113,7 +135,8 @@ else
     read -r -p "  Path to LXC SSH private key file (PEM; will NOT be modified): " key_path < /dev/tty
     [ -r "$key_path" ] || echo "  (file not readable — re-enter)" >&2
   done
-  # @file makes vault read the value from the file directly.
+  # The @-prefix makes put_entry's python read the value from the file (the path,
+  # not the key contents, is what passes through the function args).
   put_entry kv/iac/lxc-ssh "public_key=${lxc_pub}" "private_key=@${key_path}"
   echo "  NOTE: remember to 'shred -u ${key_path}' if it is a temporary copy." >&2
 fi
@@ -128,12 +151,17 @@ load_value POSTGRES_ADMIN_PASSWORD "Postgres ADMIN/superuser password (password 
 pg_admin="${REPLY_VALUE}"
 load_value POKER_PASSWORD "Postgres 'poker' role password (password manager; must match TF_VAR_poker_db_password)"
 poker_pw="${REPLY_VALUE}"
-database_url="postgresql://poker:${poker_pw}@192.168.50.231:5432/poker?sslmode=disable"
+# PET-110: percent-encode the password into the URL — a password containing
+# @ / ? # : would otherwise produce a silently-broken DATABASE_URL that only
+# surfaces as a confusing connection failure at rollout. Password travels to
+# python via stdin (never argv).
+poker_pw_enc="$(printf '%s' "$poker_pw" | python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=""))')"
+database_url="postgresql://poker:${poker_pw_enc}@192.168.50.231:5432/poker?sslmode=disable"
 put_entry kv/poker/db \
   "DATABASE_URL=${database_url}" \
   "admin_password=${pg_admin}" \
   "poker_password=${poker_pw}"
-unset pg_admin poker_pw database_url
+unset pg_admin poker_pw poker_pw_enc database_url
 echo
 
 # --- kv/services/qbittorrent -----------------------------------------------------

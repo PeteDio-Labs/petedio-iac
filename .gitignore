@@ -1,6 +1,8 @@
 # Terraform
 .terraform/
-.terraform.lock.hcl
+# .terraform.lock.hcl is COMMITTED (PET-108): it pins provider versions +
+# checksums so CI applies exactly what was planned/reviewed. Generate with:
+#   terraform providers lock -platform=linux_amd64 -platform=darwin_arm64 -platform=darwin_amd64
 *.tfstate
 *.tfstate.*
 crash.log
