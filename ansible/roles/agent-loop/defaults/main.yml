@@ -45,6 +45,31 @@ agent_loop_nodejs_major: 22
 # "claude --dangerously-skip-permissions" once the host is trusted as a sandbox.
 agent_loop_cc_command: claude
 
+# --- IaC verify tooling (PET-131) --------------------------------------------------
+# The loop must be able to run fmt/validate/--syntax-check/lint on-host (it can't apply,
+# but it authors). All installed by the role, which runs privileged on apply — the agent
+# user itself never gets sudo.
+
+# Terraform: a single pinned binary + its official SHA256, dropped into /usr/local/bin
+# (NO HashiCorp apt repo). Pin ≥ 1.10 (the repo's strictest required_version, in
+# modules/cloudflare-ingress). Bump version + sha together; the sha is the linux_<arch>
+# entry from https://releases.hashicorp.com/terraform/<ver>/terraform_<ver>_SHA256SUMS.
+agent_loop_terraform_version: "1.13.5"
+agent_loop_terraform_arch: amd64
+agent_loop_terraform_sha256: "0dbe3fcc268eb670801af6a6456799d1ae26e72e73797f6c6167e18aafd1fd9a"
+
+# Python tools installed per-user with pipx as the agent (no sudo): ansible-core + the two
+# linters. Collections come separately from files/requirements.yml via ansible-galaxy.
+agent_loop_pipx_packages:
+  - ansible-core
+  - yamllint
+  - ansible-lint
+
+# PATH used for tasks that invoke pipx-installed tools (ansible-galaxy etc.) non-interactively
+# as the agent user. ~/.local/bin (pipx shims) first, then the system path; terraform still
+# resolves from /usr/local/bin because the stray ~/.local/bin/terraform is removed (PET-124).
+agent_loop_pipx_path: "{{ agent_loop_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
 # Operator SSH public keys authorized to log in directly as the loop user, so you can
 # `ssh agent@192.168.50.242` and run the auth bootstrap without hopping through root.
 # Public keys only (safe to commit). Append to add more operators.

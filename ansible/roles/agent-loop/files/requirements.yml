@@ -1,0 +1,14 @@
+---
+# Galaxy collections the agent-loop host needs so `ansible-playbook --syntax-check`
+# / `ansible-lint` resolve the modules this repo's playbooks use (PET-131). pipx
+# installs ansible-CORE only — it bundles no collections — so these must come from
+# Galaxy, installed as the `agent` user into ~/.ansible/collections.
+#
+# Keep in sync with what the repo's roles/playbooks actually use:
+#   - community.general    — npm, pipx, blockinfile-adjacent modules, etc.
+#   - ansible.posix        — authorized_key (agent-loop role)
+#   - community.postgresql — postgres-db role/playbooks
+collections:
+  - name: community.general
+  - name: ansible.posix
+  - name: community.postgresql
