@@ -15,6 +15,14 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   (or `pct set <id> --features nesting=1,keyctl=1` over ssh-as-root) sets them
   out-of-band. Keep `features` in `ignore_changes`.
 
+- **The loop reads live LXC config read-only — never with the mutation token.** Brownfield
+  captures need the running `pct config` so the import plans as a no-op; the loop is
+  author-only and must not guess specs on live hosts. `scripts/proxmox-ro-config.sh
+  <node> <vmid>` GETs the config with a separate `PVEAuditor` token (`petedio@pam!loop-ro`,
+  read-only, from Vault `kv/services/agent-loop`) — distinct from the full
+  `petedio@pam!petedio` mutation token at `kv/iac/proxmox`. `apply`/`import`/state edits
+  stay operator-only. See `docs/runbooks/loop-proxmox-readonly.md`.
+
 - **Target the correct node endpoint.** bpg reads the PVE version from the endpoint
   and version-gates fields. Cluster nodes can differ (pve01 9.1.x). Point
   `proxmox_endpoint` at the node where the resources live.
