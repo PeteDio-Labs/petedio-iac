@@ -210,3 +210,20 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   `configure-openfaas.yml`; restart **`faasd-provider`** (the puller) to pick up a change. Don't
   create it with `docker login` on macOS — the helper leaves an empty `auth` (templating it is why
   the play builds the base64 itself).
+
+## agent-loop host (242) — toolchain (PET-125/131/139)
+
+- **npm globals for the loop must live in a USER-writable prefix, not `/usr`.** The loop
+  runs as non-root `agent` (no sudo). Installing Claude Code / Bun as root into the system
+  npm prefix (`/usr/lib/node_modules`) makes the agent's `npm -g` writes — including Claude
+  Code's **auto-update** — fail with `Auto-update failed: no write permission to npm prefix
+  · Run /doctor` (EACCES). Fix (PET-139): set the agent's npm prefix to `~/.npm-global`
+  (role var `agent_loop_npm_prefix`, written to `~/.npmrc`), install both globals **as the
+  `agent` user** into it, and put `~/.npm-global/bin` on PATH ahead of `/usr/bin` so the
+  user-owned, self-updatable copy wins. Don't `chown -R` the system prefix or give the
+  agent sudo — give it its own prefix. **Migration note:** a host first built by the old
+  role still has the root-global copy in `/usr`; the new role leaves it **shadowed** (PATH
+  prefers the agent copy) rather than removing it — reaping `/usr`'s copy live would break
+  the running loop's tmux shell (cached `claude` path + a PATH set before the `.bashrc`
+  edit). Remove it by hand (`npm rm -g …` as root) only while the loop is idle. A
+  long-running `claude` keeps showing the warning until it's **restarted in a fresh shell**.
