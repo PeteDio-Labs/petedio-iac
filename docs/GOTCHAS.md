@@ -211,7 +211,7 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   create it with `docker login` on macOS — the helper leaves an empty `auth` (templating it is why
   the play builds the base64 itself).
 
-## agent-loop host (242) — toolchain (PET-125/131/139)
+## agent-loop host (242) — toolchain (PET-125/131/139/140)
 
 - **npm globals for the loop must live in a USER-writable prefix, not `/usr`.** The loop
   runs as non-root `agent` (no sudo). Installing Claude Code / Bun as root into the system
@@ -227,3 +227,10 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   the running loop's tmux shell (cached `claude` path + a PATH set before the `.bashrc`
   edit). Remove it by hand (`npm rm -g …` as root) only while the loop is idle. A
   long-running `claude` keeps showing the warning until it's **restarted in a fresh shell**.
+
+- **`community.general.pipx` needs pipx ≥1.7.0 — Ubuntu 24.04 apt ships 1.4.3.** Every pipx
+  task fails `The pipx tool must be at least at version 1.7.0` if you rely on the apt
+  package, so the loop's verify tooling (ansible-core / yamllint / ansible-lint) never
+  installs. Install pipx via **pip** instead (`--break-system-packages`, since 24.04's
+  python is PEP-668 externally-managed; system pip lands it in `/usr/local/bin`, ahead of
+  `/usr/bin`) and reap the stale apt pipx. PET-140.

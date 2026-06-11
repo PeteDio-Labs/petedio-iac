@@ -27,8 +27,10 @@ What the role installs (idempotent; a second run reports no changes):
   - **ansible-core**, **yamllint**, **ansible-lint** — per-user via `pipx` as the `agent`
     user (no root venv), plus Galaxy collections (`community.general`, `ansible.posix`,
     `community.postgresql`) from `files/requirements.yml` into `~agent/.ansible/collections`.
-  - The `agent` user gets **no sudo** — the apt prereqs (`python3-venv`, `pipx`, `unzip`)
-    and the TF binary install because the role itself is applied privileged.
+  - The `agent` user gets **no sudo** — the apt prereqs (`python3-venv`, `python3-pip`,
+    `unzip`), a pip-installed **pipx ≥1.7.0** (24.04's apt ships 1.4.3, too old for
+    `community.general.pipx` — PET-140), and the TF binary install because the role itself
+    is applied privileged.
 - Dedicated loop user **`agent`** (the loop never runs as root — Claude Code refuses
   `--dangerously-skip-permissions` as root), with operator SSH keys
   (`agent_loop_authorized_keys`, for direct `ssh agent@…`) and a `cc` alias

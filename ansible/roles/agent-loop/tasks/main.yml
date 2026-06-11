@@ -226,14 +226,33 @@
 # install-only; the agent user gets NO sudo — root-level installs run because the role
 # itself is applied privileged. (Was hand-bootstrapped during PET-124; this ends that.)
 
-- name: Install IaC verify prerequisites (unzip for the TF zip, pipx for the agent)
+- name: Install IaC verify prerequisites (python3-venv/pip for pipx, unzip for the TF zip)
   ansible.builtin.apt:
     name:
       - python3-venv
-      - pipx
+      - python3-pip
       - unzip
     state: present
     update_cache: true
+
+# Ubuntu 24.04's apt `pipx` is 1.4.3, but community.general.pipx needs >= 1.7.0 (otherwise
+# every pipx task fails with "The pipx tool must be at least at version 1.7.0"). Drop the apt
+# pipx FIRST — pip can't upgrade a dpkg-owned package in place ("Cannot uninstall pipx 1.4.3,
+# RECORD file not found") — then pip-install a current one below. No-op on a fresh host (apt
+# pipx is no longer in the prereqs). PET-140.
+- name: Remove the stale apt pipx (replaced by the pip install below)
+  ansible.builtin.apt:
+    name: pipx
+    state: absent
+
+# Nothing dpkg-owned is in the way now: system pip installs pipx into /usr/local/bin (ahead
+# of /usr/bin on PATH), reusing the apt-provided deps. --break-system-packages because
+# 24.04's python is PEP-668 externally-managed. PET-140.
+- name: Install pipx >= 1.7.0 via pip (apt ships 1.4.3; community.general.pipx needs >= 1.7.0)
+  ansible.builtin.pip:
+    name: pipx>=1.7.0
+    extra_args: --break-system-packages
+    state: present
 
 # PET-124 unzipped a standalone terraform into ~/.local/bin via Python zipfile (no unzip
 # then). ~/.local/bin precedes /usr/local/bin on the agent's PATH, so that copy shadows
@@ -283,6 +302,8 @@
   loop: "{{ agent_loop_pipx_packages }}"
   become: true
   become_user: "{{ agent_loop_user }}"
+  environment:
+    PATH: "{{ agent_loop_pipx_path }}"
 
 # pipx ships ansible-CORE only — no bundled collections — so the repo's playbooks won't
 # syntax-check/lint until these are pulled from Galaxy into ~agent/.ansible/collections.
