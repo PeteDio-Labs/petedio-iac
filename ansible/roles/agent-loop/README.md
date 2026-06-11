@@ -10,10 +10,13 @@ What the role installs (idempotent; a second run reports no changes):
 
 - Base toolchain: `git`, `curl`, `build-essential`, `tmux`
 - Node.js LTS (NodeSource, major pinned via `agent_loop_nodejs_major`)
-- **Claude Code** (`npm i -g @anthropic-ai/claude-code`)
+- **Claude Code** — `npm i -g @anthropic-ai/claude-code`, installed **as the `agent` user
+  into a per-user npm prefix** (`~/.npm-global`, `agent_loop_npm_prefix`) so the loop can
+  self-update it. A root-owned system prefix is the "no write permission to npm prefix"
+  auto-update failure (PET-139).
 - **gh CLI** (official apt repo)
-- **Bun** (`npm i -g bun`) — Co-latro's runtime + test runner, so the loop's Co-latro
-  test gate runs (toggle with `agent_loop_install_bun`)
+- **Bun** (`npm i -g bun`, same per-user prefix as Claude Code) — Co-latro's runtime +
+  test runner, so the loop's Co-latro test gate runs (toggle with `agent_loop_install_bun`)
 - **IaC verify toolchain** (PET-131) so the loop can `fmt`/`validate`/`--syntax-check`/
   lint on-host:
   - **Terraform** — a pinned binary verified against its official SHA256 and dropped into
@@ -125,7 +128,9 @@ token never lands on disk.
 2. **Ansible**: `ansible-playbook playbooks/configure-agent-loop.yml` (then re-run to
    confirm idempotence — second run = no changes).
 3. **Verify toolchain**: as the `agent` user — `claude --version`, `gh --version`,
-   `bun --version`; and the IaC verify chain (PET-131): `terraform version` (must resolve
+   `bun --version`, and `command -v claude` → `~/.npm-global/bin/claude` (the per-user npm
+   prefix, NOT `/usr/bin` — PET-139, so Claude Code's auto-update can write); and the IaC
+   verify chain (PET-131): `terraform version` (must resolve
    to `/usr/local/bin/terraform`, i.e. `which terraform`), `ansible --version`,
    `yamllint --version`, `ansible-lint --version`, and `ansible-playbook --syntax-check`
    on a playbook. Confirm the public clones exist

@@ -44,15 +44,65 @@
     state: present
     update_cache: true
 
-# --- Claude Code ----------------------------------------------------------------
+# --- Loop user ---------------------------------------------------------------------
+# Created early: the per-user Claude Code / Bun installs below run AS this user and write
+# into its home (~/.npm-global, ~/.npmrc), so the account + home must exist first. The loop
+# never runs as root (Claude Code refuses --dangerously-skip-permissions as root, and the
+# scoped GitHub token shouldn't live in root's env).
+- name: Create the loop user ({{ agent_loop_user }})
+  ansible.builtin.user:
+    name: "{{ agent_loop_user }}"
+    shell: /bin/bash
+    create_home: true
 
-# community.general.npm with global=true converges (installs only when absent).
-# Upgrades are deliberate, not on every play: `npm update -g @anthropic-ai/claude-code`.
-- name: Install Claude Code (npm global)
+# --- Claude Code ----------------------------------------------------------------
+# Installed AS the agent into a per-user npm prefix ({{ agent_loop_npm_prefix }}), NOT the
+# root-owned system prefix (/usr): the loop runs as non-root `agent` with no sudo, so
+# Claude Code's auto-update (`npm i -g`) must be able to write the global prefix itself —
+# a root-owned prefix is exactly the "no write permission to npm prefix" failure. The dir
+# + ~/.npmrc below make every `npm -g` run as the agent (this install AND the runtime
+# self-update) resolve to the writable prefix. PET-139.
+
+- name: Create the agent's writable npm global prefix
+  ansible.builtin.file:
+    path: "{{ agent_loop_npm_prefix }}"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+
+- name: Point the agent's npm at the per-user global prefix (~/.npmrc)
+  ansible.builtin.lineinfile:
+    path: "{{ agent_loop_home }}/.npmrc"
+    create: true
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0644"
+    regexp: '^prefix='
+    line: "prefix={{ agent_loop_npm_prefix }}"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+# community.general.npm with global=true converges (installs only when absent). Run AS the
+# agent with NPM_CONFIG_PREFIX/HOME pinned so it lands in the writable prefix regardless of
+# how `become` seeds HOME. Upgrades stay deliberate: `npm update -g @anthropic-ai/claude-code`.
+- name: Install Claude Code (npm global, per-user prefix)
   community.general.npm:
     name: "@anthropic-ai/claude-code"
     global: true
     state: present
+  become: true
+  become_user: "{{ agent_loop_user }}"
+  environment:
+    HOME: "{{ agent_loop_home }}"
+    NPM_CONFIG_PREFIX: "{{ agent_loop_npm_prefix }}"
+
+# NOTE: on a host first provisioned by the OLD role, Claude Code is also still present as a
+# root-global in /usr (the source of the auto-update bug). It is NOT removed here: the PATH
+# block below makes the agent's writable copy win, leaving the /usr copy harmlessly shadowed
+# (and a working fallback for any shell predating this change). Reap it by hand as root
+# (`npm rm -g @anthropic-ai/claude-code`) when the loop is idle — never mid-iteration, since
+# that would break the live tmux shell's next `claude`. Fresh hosts never get a root copy.
 
 # --- gh CLI -----------------------------------------------------------------------
 
@@ -79,24 +129,43 @@
 # --- Bun (Co-latro runtime + test runner) -----------------------------------------
 
 # Both Co-latro repos are Bun (`bun install` / `bun test`; vitest runs under bun). Same
-# npm-global install + "upgrades are deliberate" convention as Claude Code above, so the
-# loop's Co-latro test gate fails on the code, not on a missing toolchain. Node LTS (for
-# vitest/Vite) is already installed above. (Playwright e2e — browsers + apt libs — is a
-# deliberate follow-up, not installed here.)
-- name: Install Bun (npm global)
+# per-user-prefix install + "upgrades are deliberate" convention as Claude Code above (so a
+# `bun upgrade`-class write never hits the same root-prefix wall), so the loop's Co-latro
+# test gate fails on the code, not on a missing toolchain. Node LTS (for vitest/Vite) is
+# already installed above. (Playwright e2e — browsers + apt libs — is a deliberate
+# follow-up, not installed here.)
+- name: Install Bun (npm global, per-user prefix)
   community.general.npm:
     name: bun
     global: true
     state: present
+  become: true
+  become_user: "{{ agent_loop_user }}"
+  environment:
+    HOME: "{{ agent_loop_home }}"
+    NPM_CONFIG_PREFIX: "{{ agent_loop_npm_prefix }}"
   when: agent_loop_install_bun | bool
 
-# --- Loop user + workspace ---------------------------------------------------------
+# Shell QoL for the loop user: `cc` shorthand for Claude Code, and PATH = the per-user npm
+# prefix bin ({{ agent_loop_npm_prefix }}/bin — claude, bun) FIRST so the agent-owned, self-
+# updatable claude wins over any /usr/bin/claude, then ~/.local/bin (pipx shims — ansible*,
+# yamllint, ansible-lint — added by the IaC verify section below). Set here, right after the
+# per-user toolchain, so it lands even if a later task fails. Marked block: idempotent.
+- name: Install the cc alias + PATH for {{ agent_loop_user }}
+  ansible.builtin.blockinfile:
+    path: "{{ agent_loop_home }}/.bashrc"
+    create: true
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED — agent-loop"
+    block: |
+      export PATH="{{ agent_loop_npm_prefix }}/bin:$HOME/.local/bin:$PATH"
+      alias cc='{{ agent_loop_cc_command }}'
+  become: true
+  become_user: "{{ agent_loop_user }}"
 
-- name: Create the loop user ({{ agent_loop_user }})
-  ansible.builtin.user:
-    name: "{{ agent_loop_user }}"
-    shell: /bin/bash
-    create_home: true
+# --- Loop user keys + workspace ----------------------------------------------------
 
 # Operator keys for direct `ssh {{ agent_loop_user }}@<host>` — skip the root + su hop
 # when running the interactive auth bootstrap (scripts/agent-loop-login.sh).
@@ -246,20 +315,3 @@
   become_user: "{{ agent_loop_user }}"
   environment:
     PATH: "{{ agent_loop_pipx_path }}"
-
-# Shell QoL for the loop user: `cc` shorthand for Claude Code, and ~/.local/bin (pipx
-# shims: ansible*, yamllint, ansible-lint) on PATH for interactive sessions. Lives in a
-# marked block so it's idempotent and easy to extend later.
-- name: Install the cc alias + PATH for {{ agent_loop_user }}
-  ansible.builtin.blockinfile:
-    path: "{{ agent_loop_home }}/.bashrc"
-    create: true
-    owner: "{{ agent_loop_user }}"
-    group: "{{ agent_loop_user }}"
-    mode: "0644"
-    marker: "# {mark} ANSIBLE MANAGED — agent-loop"
-    block: |
-      export PATH="$HOME/.local/bin:$PATH"
-      alias cc='{{ agent_loop_cc_command }}'
-  become: true
-  become_user: "{{ agent_loop_user }}"

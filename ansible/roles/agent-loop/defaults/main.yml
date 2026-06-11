@@ -41,6 +41,13 @@ agent_loop_install_bun: true
 # Node.js LTS major (NodeSource). 22 = active LTS ("jod").
 agent_loop_nodejs_major: 22
 
+# Per-user npm global prefix for the loop user. Claude Code + Bun install here AS the
+# agent — NOT into the root-owned system prefix (/usr) — so the agent can write the
+# prefix and Claude Code's auto-update (`npm i -g`) succeeds instead of EACCES-ing with
+# "Auto-update failed: no write permission to npm prefix". Its bin/ goes first on the
+# agent's PATH (see the .bashrc block) so the user copy wins over /usr/bin. PET-139.
+agent_loop_npm_prefix: "{{ agent_loop_home }}/.npm-global"
+
 # What the `cc` shell alias runs. Plain `claude` by default; set to
 # "claude --dangerously-skip-permissions" once the host is trusted as a sandbox.
 agent_loop_cc_command: claude
