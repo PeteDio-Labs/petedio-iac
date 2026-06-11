@@ -336,3 +336,105 @@
   become_user: "{{ agent_loop_user }}"
   environment:
     PATH: "{{ agent_loop_pipx_path }}"
+
+# --- Vault Agent (PET-141) -----------------------------------------------------------
+# A Vault Agent auto-auths with the read-only `agent-loop` AppRole and renews a token into
+# ~agent/.vault-token, so the loop self-serves kv/services/agent-loop — the proxmox helper's
+# Vault fallback works with no env var and no claude restart (the CLI reads the token off
+# disk). Gated so an IaC-only / offline host can skip it. AppRole creds are operator-
+# provisioned in .secrets/ (NOT in the repo); the play fails fast if they're missing.
+- name: Vault Agent for the loop user
+  when: agent_loop_vault_agent_enabled | bool
+  block:
+    - name: Assert the agent-loop AppRole creds exist (control node)
+      ansible.builtin.assert:
+        that:
+          - agent_loop_vault_role_id_file is exists
+          - agent_loop_vault_secret_id_file is exists
+        fail_msg: >-
+          agent-loop AppRole creds missing ({{ agent_loop_vault_role_id_file }} / .secret_id).
+          Provision them first (apply environments/homelab/vault-config, then mint role_id +
+          secret_id — see roles/agent-loop/README.md), or set
+          agent_loop_vault_agent_enabled=false.
+
+    - name: Check the installed vault version
+      ansible.builtin.command: /usr/local/bin/vault version
+      register: agent_loop_vault_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Install pinned vault {{ agent_loop_vault_version }} (CLI + agent)
+      when: agent_loop_vault_version not in (agent_loop_vault_installed.stdout | default(''))
+      block:
+        - name: Download vault {{ agent_loop_vault_version }} (checksum-verified)
+          ansible.builtin.get_url:
+            url: >-
+              https://releases.hashicorp.com/vault/{{ agent_loop_vault_version }}/vault_{{ agent_loop_vault_version }}_linux_{{ agent_loop_vault_arch }}.zip
+            dest: "/tmp/vault_{{ agent_loop_vault_version }}_linux_{{ agent_loop_vault_arch }}.zip"
+            checksum: "sha256:{{ agent_loop_vault_sha256 }}"
+            mode: "0644"
+
+        - name: Unpack vault into /usr/local/bin
+          ansible.builtin.unarchive:
+            src: "/tmp/vault_{{ agent_loop_vault_version }}_linux_{{ agent_loop_vault_arch }}.zip"
+            dest: /usr/local/bin
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0755"
+
+    - name: Create the Vault Agent config + creds dir (agent-owned, 0700)
+      ansible.builtin.file:
+        path: "{{ agent_loop_home }}/.config/vault-agent"
+        state: directory
+        owner: "{{ agent_loop_user }}"
+        group: "{{ agent_loop_user }}"
+        mode: "0700"
+
+    - name: Install the homelab Vault CA cert for the agent
+      ansible.builtin.copy:
+        src: "{{ agent_loop_vault_ca_src }}"
+        dest: "{{ agent_loop_home }}/.config/vault-agent/vault-ca.crt"
+        owner: "{{ agent_loop_user }}"
+        group: "{{ agent_loop_user }}"
+        mode: "0644"
+
+    - name: Install the agent-loop AppRole role_id + secret_id (0600)
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ agent_loop_home }}/.config/vault-agent/{{ item.dest }}"
+        owner: "{{ agent_loop_user }}"
+        group: "{{ agent_loop_user }}"
+        mode: "0600"
+      loop:
+        - { src: "{{ agent_loop_vault_role_id_file }}", dest: role_id }
+        - { src: "{{ agent_loop_vault_secret_id_file }}", dest: secret_id }
+      loop_control:
+        label: "{{ item.dest }}"
+      no_log: true
+      notify: Restart vault-agent
+
+    - name: Template the Vault Agent config
+      ansible.builtin.template:
+        src: vault-agent.hcl.j2
+        dest: "{{ agent_loop_home }}/.config/vault-agent/vault-agent.hcl"
+        owner: "{{ agent_loop_user }}"
+        group: "{{ agent_loop_user }}"
+        mode: "0640"
+      notify: Restart vault-agent
+
+    - name: Install the vault-agent systemd unit
+      ansible.builtin.template:
+        src: vault-agent.service.j2
+        dest: /etc/systemd/system/vault-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart vault-agent
+
+    - name: Enable + start vault-agent
+      ansible.builtin.systemd_service:
+        name: vault-agent
+        enabled: true
+        state: started
+        daemon_reload: true

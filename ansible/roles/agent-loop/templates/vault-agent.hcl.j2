@@ -1,0 +1,32 @@
+# Vault Agent — agent-loop host (LXC 242). MANAGED BY ANSIBLE (PET-141).
+# Auto-auths with the read-only `agent-loop` AppRole and renews a token into the file sink
+# (~{{ agent_loop_user }}/.vault-token), so `vault kv get` / scripts/proxmox-ro-config.sh
+# self-serve with no operator step and no claude restart. No secrets here — role_id and
+# secret_id are separate 0600 files; this config is safe to template.
+pid_file = "{{ agent_loop_home }}/.config/vault-agent/pidfile"
+
+vault {
+  address = "{{ agent_loop_vault_addr }}"
+  ca_cert = "{{ agent_loop_home }}/.config/vault-agent/vault-ca.crt"
+}
+
+auto_auth {
+  method "approle" {
+    config = {
+      role_id_file_path   = "{{ agent_loop_home }}/.config/vault-agent/role_id"
+      secret_id_file_path = "{{ agent_loop_home }}/.config/vault-agent/secret_id"
+      # Keep the secret_id on disk: the Agent re-auths with it when token_max_ttl is hit,
+      # and Ansible re-runs must stay idempotent (default true deletes it after first read).
+      remove_secret_id_file_after_reading = false
+    }
+  }
+
+  # Token sink only (no listener/cache): the vault CLI auto-reads ~/.vault-token, which is
+  # all the helper needs.
+  sink "file" {
+    config = {
+      path = "{{ agent_loop_home }}/.vault-token"
+      mode = 0600
+    }
+  }
+}
