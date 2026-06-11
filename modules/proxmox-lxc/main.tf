@@ -25,9 +25,18 @@ resource "proxmox_virtual_environment_container" "this" {
       }
     }
 
-    dns {
-      servers = var.dns_servers
-      domain  = var.dns_domain
+    # DNS is optional: a brownfield container that sets no nameserver/searchdomain
+    # (e.g. the Nexus registry 106, which inherits the host's resolv.conf) passes
+    # dns_servers = [] so NO dns block is rendered — matching its live config keeps
+    # the import a no-op instead of writing resolver config into a live host. Default
+    # dns_servers is non-empty, so greenfield consumers render exactly the same block
+    # as before (no-op).
+    dynamic "dns" {
+      for_each = length(var.dns_servers) > 0 ? [1] : []
+      content {
+        servers = var.dns_servers
+        domain  = var.dns_domain
+      }
     }
 
     user_account {
@@ -55,9 +64,13 @@ resource "proxmox_virtual_environment_container" "this" {
   }
 
   network_interface {
-    name     = "eth0"
+    name     = var.network_interface_name
     bridge   = var.bridge
     firewall = false
+    # null (default) → provider-computed, a no-op for greenfield consumers; a brownfield
+    # capture pins the running hwaddr so the import doesn't rely on computed-value
+    # preservation. See docs/GOTCHAS.md.
+    mac_address = var.mac_address
   }
 
   lifecycle {
@@ -69,6 +82,13 @@ resource "proxmox_virtual_environment_container" "this" {
       # out-of-band like features (scripts/lxc-features-*.sh, `pct set <id> -dev0 ...`) —
       # ignore it so a later apply never strips a manually-added device. See docs/GOTCHAS.md.
       device_passthrough,
+      # mount_point: bind-mounting a HOST path into the guest (e.g. Nexus 106's
+      # mp0 /mnt/pete/nexus-data -> /nexus-data, an NFS-backed blob store) hits the
+      # same root@pam API restriction as features, so it's set out-of-band on the node.
+      # Ignore it so an import/apply never tries to strip a load-bearing mount the API
+      # token couldn't recreate anyway. Greenfield consumers declare no mounts → no-op.
+      # See docs/GOTCHAS.md.
+      mount_point,
     ]
   }
 }

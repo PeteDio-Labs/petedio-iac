@@ -8,6 +8,23 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   `initialization.user_account`. Always `lifecycle { ignore_changes = [...] }` them,
   or every plan shows phantom drift.
 
+- **Brownfield-capturing a community-scripts LXC diverges from the greenfield module
+  defaults — match it exactly or the import is NOT a no-op** (PET-122, Nexus 106). A
+  "Docker LXC" created by the community-scripts installer (not by `modules/proxmox-lxc`)
+  differs in ways that each force a destroy/recreate or a live-behaviour change if you
+  don't match them: (a) its NIC is named **`eth1`**, not `eth0` — renaming recreates the
+  interface (new MAC, network blip) → `network_interface_name`; (b) **pin the running
+  `hwaddr`** via `mac_address` so the import doesn't rely on computed-value preservation;
+  (c) it sets **no** `nameserver`/`searchdomain` (inherits the host resolv.conf) — render
+  no `dns` block (`dns_servers = []`) or the plan writes resolver config into a live host;
+  (d) host-path **bind mounts** (`mp0 /mnt/pete/… -> /…`, e.g. Nexus's NFS-backed blob
+  store) and the raw `lxc.idmap`/`apparmor` lines are set out-of-band on the node — bind
+  mounts hit the **same `root@pam` API restriction as features**, so the token can't manage
+  them; keep `mount_point` in `ignore_changes` (the raw `lxc.*` keys are invisible to bpg
+  anyway). Read the live config read-only first (`scripts/proxmox-ro-config.sh <node>
+  <vmid>`) and expect only **cosmetic** `description`/`tags` diffs after import. Full
+  procedure: `docs/runbooks/nexus-import.md`.
+
 - **Proxmox API tokens can't set LXC `features{}`.** The API enforces a hardcoded
   `user == root@pam` check for features other than bare `nesting`; an API token's
   username is `root@pam!tokenid`, not `root@pam`, so it fails — even for a PVEAdmin

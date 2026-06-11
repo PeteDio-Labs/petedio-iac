@@ -65,6 +65,29 @@ variable "bridge" {
   default     = "vmbr1"
 }
 
+variable "network_interface_name" {
+  description = <<-EOT
+    Guest-side name of the LXC's network interface (the `name=` of `net0`). Default
+    "eth0" matches every greenfield consumer, so adding this variable is a no-op for
+    them. Brownfield captures override it when the running container uses a different
+    name (e.g. the Nexus registry, 106, runs on "eth1") — matching it keeps the import
+    a no-op instead of renaming (and so recreating) the live NIC.
+  EOT
+  type        = string
+  default     = "eth0"
+}
+
+variable "mac_address" {
+  description = <<-EOT
+    MAC address for the LXC's network interface. Default null leaves it provider-computed
+    — a no-op for greenfield consumers (and an imported MAC is preserved as that computed
+    value). Brownfield captures pin the running container's hwaddr so the import plans as a
+    guaranteed no-op rather than relying on computed-value preservation.
+  EOT
+  type        = string
+  default     = null
+}
+
 variable "template_file_id" {
   description = "OS template volume ID for the container."
   type        = string
