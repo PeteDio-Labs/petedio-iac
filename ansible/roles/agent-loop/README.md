@@ -38,6 +38,12 @@ What the role installs (idempotent; a second run reports no changes):
 - **All active repos** cloned into a workspace mirroring `petedio-workspace` (see below;
   `update: false` — Ansible clones once, the loop owns syncing `main`, so a re-run never
   clobbers in-flight work)
+- **Vault Agent** (PET-141, toggle `agent_loop_vault_agent_enabled`) — a pinned `vault`
+  binary (`/usr/local/bin`, checksum-verified) + a systemd `vault-agent` service that
+  auto-auths with the **read-only `agent-loop` AppRole** and renews a token into
+  `~agent/.vault-token`, so the loop self-serves `kv/services/agent-loop` (e.g.
+  `scripts/proxmox-ro-config.sh`'s Vault fallback) with no hand-exported env var and no
+  claude restart. AppRole creds are operator-provisioned into `.secrets/` (see runbook).
 
 Run the role:
 
@@ -127,24 +133,35 @@ token never lands on disk.
 1. **Runner applies on merge** → LXC 242 created (TF). Pre-merge: the Ubuntu template
    must exist on pve01 (`pveam update && pveam download local
    ubuntu-24.04-standard_24.04-2_amd64.tar.zst`).
-2. **Ansible**: `ansible-playbook playbooks/configure-agent-loop.yml` (then re-run to
+2. **Vault Agent creds (PET-141)** — before the Ansible run, create the read-only
+   `agent-loop` AppRole and seed its creds locally (the play asserts they exist; skip with
+   `agent_loop_vault_agent_enabled=false`):
+   ```sh
+   scripts/apply-vault-config.sh   # creates the agent-loop policy + AppRole (TF, operator-applied)
+   # mint creds into the gitignored .secrets/ (needs the Vault root token, same as above):
+   vault read  -field=role_id     auth/approle/role/agent-loop/role-id     > .secrets/agent-loop.role_id
+   vault write -f -field=secret_id auth/approle/role/agent-loop/secret-id   > .secrets/agent-loop.secret_id
+   ```
+3. **Ansible**: `ansible-playbook playbooks/configure-agent-loop.yml` (then re-run to
    confirm idempotence — second run = no changes).
-3. **Verify toolchain**: as the `agent` user — `claude --version`, `gh --version`,
+4. **Verify toolchain**: as the `agent` user — `claude --version`, `gh --version`,
    `bun --version`, and `command -v claude` → `~/.npm-global/bin/claude` (the per-user npm
    prefix, NOT `/usr/bin` — PET-139, so Claude Code's auto-update can write); and the IaC
    verify chain (PET-131): `terraform version` (must resolve
    to `/usr/local/bin/terraform`, i.e. `which terraform`), `ansible --version`,
    `yamllint --version`, `ansible-lint --version`, and `ansible-playbook --syntax-check`
-   on a playbook. Confirm the public clones exist
+   on a playbook. Vault Agent (PET-141): `systemctl status vault-agent` is active and, as
+   the agent, `vault kv get -field=proxmox_ro_token kv/services/agent-loop` works (token
+   read off `~/.vault-token`, no env var). Confirm the public clones exist
    (`ls ~/work/petedio/{iac,media-iac,co-latro}`). A second role run must report **no
    changes** (idempotent).
-4. **Claude login** (interactive, browser auth): `ssh agent@192.168.50.242`, run
+5. **Claude login** (interactive, browser auth): `ssh agent@192.168.50.242`, run
    `claude`, complete the login flow. (`gh auth login` likewise, or use `GH_TOKEN`.)
-5. **Vault**: create `kv/services/agent-loop` with the scoped GitHub token (push
+6. **Vault**: create `kv/services/agent-loop` with the scoped GitHub token (push
    branches + open PRs only, no merge); export it per the section above.
-6. **(Optional) private repos**: once `gh`/`GH_TOKEN` works on the host, set
+7. **(Optional) private repos**: once `gh`/`GH_TOKEN` works on the host, set
    `agent_loop_clone_private: true` and re-run the play to clone the parent
    `petedio-workspace` (meta-docs / `.agent/lessons.md`) + `co-latro-admin`.
-7. **Start the loop**: attach to the tmux session **in the right repo dir** (Platform =
+8. **Start the loop**: attach to the tmux session **in the right repo dir** (Platform =
    `~/work/petedio/iac`; see *How the loop runs* above) and give Claude the loop prompt.
    Run the first iterations **supervised** before trusting it unattended.

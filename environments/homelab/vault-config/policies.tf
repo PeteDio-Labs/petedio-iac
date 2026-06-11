@@ -168,3 +168,19 @@ resource "vault_policy" "openfaas_ci" {
     }
   EOT
 }
+
+# agent-loop: the autonomous loop host (LXC 242) reads ONLY its own service secret
+# (proxmox_ro_token now, github_token later) — strictly narrower than `ansible` (all
+# services/*). A Vault Agent on the box auto-auths with the agent-loop AppRole (auth.tf)
+# and renews a token into ~agent/.vault-token, so the read-only Proxmox helper self-serves
+# with no operator step. Single read path = minimal blast radius for an unattended box.
+# PET-141.
+resource "vault_policy" "agent_loop" {
+  name = "agent-loop"
+
+  policy = <<-EOT
+    path "kv/data/services/agent-loop" {
+      capabilities = ["read"]
+    }
+  EOT
+}

@@ -234,3 +234,13 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   installs. Install pipx via **pip** instead (`--break-system-packages`, since 24.04's
   python is PEP-668 externally-managed; system pip lands it in `/usr/local/bin`, ahead of
   `/usr/bin`) and reap the stale apt pipx. PET-140.
+
+- **Vault Agent `remove_secret_id_file_after_reading` defaults to TRUE.** The loop reads its
+  own secrets via a Vault Agent that auto-auths with the read-only `agent-loop` AppRole and
+  sinks a renewing token to `~agent/.vault-token` — so `scripts/proxmox-ro-config.sh`'s Vault
+  fallback works with no env var and no claude restart (the CLI reads the token off disk).
+  But the Agent **deletes the `secret_id` file after first use** unless you set
+  `remove_secret_id_file_after_reading = false`; without it an Agent restart (or Ansible
+  re-run that re-templates the config) can't re-auth and the token sink goes stale. The host
+  needs the `vault` binary too (the CLI/`vault agent` are one binary) — the helper's Vault
+  fallback was dead weight until this. PET-141.
