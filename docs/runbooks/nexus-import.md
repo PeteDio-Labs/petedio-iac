@@ -35,7 +35,7 @@ This container was **not** created by `modules/proxmox-lxc` — it's a community
 | `net0 name=eth1 … hwaddr=BC:24:11:F0:6A:D5 ip=…111/24` | `network_interface_name = "eth1"`, `mac_address = "BC:24:11:F0:6A:D5"`, `ipv4_address` |
 | **no** `nameserver`/`searchdomain`                     | `dns_servers = []` (renders no dns block) |
 | `mp0 /mnt/pete/nexus-data,mp=/nexus-data`              | **ignored** (`mount_point` in `ignore_changes`) — out-of-band, like features |
-| `features nesting=1,keyctl=1`; raw `lxc.idmap`/apparmor | **out-of-band on the node** — invisible to the provider (set by community-scripts) |
+| `features nesting=1,keyctl=1`; `lxc.idmap`; console     | **out-of-band on the node** — `features`, `idmap`, `console` all in `ignore_changes`; bpg round-trips idmap/console on import (NOT invisible — only the raw apparmor line is), so without the ignore the first plan tries to strip the load-bearing idmap |
 
 ---
 
@@ -76,6 +76,11 @@ terraform plan
   - `description` — community-scripts ships a big HTML blob; `nexus.tf` sets a clean
     TF-managed string. The plan will show this one-field update.
   - `tags` — the live container has a whitespace-only `tags` value that bpg may normalise.
+  - State-side noise, not API mutations: `+ vm_id = 106` and `+ timeout_*` lines (import
+    doesn't populate these provider attributes; the update writes the same values back).
+- Anything touching `idmap` or `console` must **NOT** appear — both are in the module's
+  `ignore_changes` (bpg round-trips them on import; stripping the idmap would break the
+  blob store's in-guest ownership). If they show up, the module ignore list regressed.
 - If you want a **strictly empty** plan instead of accepting the cosmetic `description`
   update, add `description` (and/or `tags`) to the module's `ignore_changes` — but the
   cleaner outcome is to apply the one-field description update so the Proxmox UI reflects

@@ -89,6 +89,13 @@ resource "proxmox_virtual_environment_container" "this" {
       # token couldn't recreate anyway. Greenfield consumers declare no mounts → no-op.
       # See docs/GOTCHAS.md.
       mount_point,
+      # idmap + console: bpg DOES round-trip these on import (the original PET-122
+      # assumption that raw lxc.idmap is invisible was wrong — only the apparmor line
+      # is). CT106's idmap (host 200 ↔ guest 200) is what makes the NFS blob-store
+      # mount writable in-guest — load-bearing, root@pam-only like features; never let
+      # an apply strip it. Greenfield consumers declare neither block → no-op.
+      idmap,
+      console,
     ]
   }
 }

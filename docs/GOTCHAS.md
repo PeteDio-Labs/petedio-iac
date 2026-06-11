@@ -20,10 +20,15 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   (d) host-path **bind mounts** (`mp0 /mnt/pete/… -> /…`, e.g. Nexus's NFS-backed blob
   store) and the raw `lxc.idmap`/`apparmor` lines are set out-of-band on the node — bind
   mounts hit the **same `root@pam` API restriction as features**, so the token can't manage
-  them; keep `mount_point` in `ignore_changes` (the raw `lxc.*` keys are invisible to bpg
-  anyway). Read the live config read-only first (`scripts/proxmox-ro-config.sh <node>
-  <vmid>`) and expect only **cosmetic** `description`/`tags` diffs after import. Full
-  procedure: `docs/runbooks/nexus-import.md`.
+  them; keep `mount_point` in `ignore_changes`. (e) **bpg round-trips `idmap` and `console`
+  on import** — they are NOT invisible raw `lxc.*` config (only the apparmor line is). An
+  unaware first plan tries to **strip the idmap** — on CT106 that mapping (host 200 ↔
+  guest 200) is what makes the NFS blob store writable in-guest — so both sit in
+  `ignore_changes` too. Read the live config read-only first
+  (`scripts/proxmox-ro-config.sh <node> <vmid>`) and expect only **cosmetic**
+  `description`/`tags` diffs after import, plus state-side noise (`+ vm_id`, `+ timeout_*`
+  — provider attributes import doesn't populate, not API mutations). Full procedure:
+  `docs/runbooks/nexus-import.md`.
 
 - **Proxmox API tokens can't set LXC `features{}`.** The API enforces a hardcoded
   `user == root@pam` check for features other than bare `nesting`; an API token's

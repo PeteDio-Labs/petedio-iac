@@ -12,8 +12,11 @@
 #   - dns_servers = []  (CT106 sets no nameserver/searchdomain — inherits host resolv.conf)
 # and the module ignores `mount_point` (CT106's mp0 /mnt/pete/nexus-data -> /nexus-data is
 # a host-path bind mount of pve02's NFS export — set out-of-band on the node like features;
-# the API token can't manage it). features (nesting,keyctl) + the raw lxc.idmap/apparmor
-# config are likewise out-of-band and invisible to the provider. See docs/GOTCHAS.md.
+# the API token can't manage it). features (nesting,keyctl), the lxc.idmap (host 200 ↔
+# guest 200 — what makes that mount writable in-guest) and console are likewise out-of-band
+# and held in the module's ignore_changes: bpg round-trips idmap/console on import, so
+# without the ignore the first plan tries to strip them. Only the raw apparmor line is
+# truly invisible to the provider. See docs/GOTCHAS.md.
 #
 # Values below are the LIVE config, read read-only via scripts/proxmox-ro-config.sh pve01 106
 # (PVEAuditor token — no mutation) so the import plans as a no-op without guessing specs.
