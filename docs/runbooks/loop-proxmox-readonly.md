@@ -37,16 +37,20 @@ vault kv patch kv/services/agent-loop \
   proxmox_ro_token='petedio@pam!loop-ro=<secret-from-step-1>'
 ```
 
-On the loop host (as `agent`), export it for the session (alongside `GH_TOKEN`):
+On the loop host the helper now **self-serves** the token — no manual export. A **Vault
+Agent** (PET-141, `roles/agent-loop`) auto-auths with the read-only `agent-loop` AppRole and
+renews a token into `~agent/.vault-token`, which `vault` (and so
+`scripts/proxmox-ro-config.sh`'s Vault fallback) reads off disk. So once the host is
+provisioned (see `roles/agent-loop/README.md` for the one-time AppRole-creds step), just run
+the helper:
 
 ```sh
-export VAULT_ADDR=https://192.168.50.223:8200
-export VAULT_CACERT=<repo>/environments/homelab/vault-ca.crt
-export PROXMOX_RO_TOKEN="$(vault kv get -field=proxmox_ro_token kv/services/agent-loop)"
+scripts/proxmox-ro-config.sh pve01 106
 ```
 
-`scripts/proxmox-ro-config.sh` also falls back to reading the field from Vault directly if
-`PROXMOX_RO_TOKEN` isn't exported (needs `VAULT_TOKEN`).
+To override (e.g. debugging, or before the Vault Agent is up) the helper still honours a
+session env var: `export PROXMOX_RO_TOKEN="$(vault kv get -field=proxmox_ro_token kv/services/agent-loop)"`
+(needs a Vault token + `VAULT_ADDR`/`VAULT_CACERT`).
 
 ## Using it
 
