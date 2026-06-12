@@ -1,11 +1,20 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12. One ollama service for both GPUs.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12. Primary ollama + pinned extra instances.
 ---
 - name: Restart ollama
   ansible.builtin.systemd:
     name: ollama
     state: restarted
     daemon_reload: true
+
+- name: Restart pinned ollama instances
+  ansible.builtin.systemd:
+    name: "{{ item.name }}"
+    state: restarted
+    daemon_reload: true
+  loop: "{{ ollama_extra_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
 
 - name: Restart systemd-networkd
   ansible.builtin.service:
