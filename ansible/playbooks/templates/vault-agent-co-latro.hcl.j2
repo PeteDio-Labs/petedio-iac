@@ -1,0 +1,33 @@
+# {{ ansible_managed }}
+# Vault Agent — co-latro backend (LXC 230). MANAGED BY ANSIBLE (PET-57).
+# Auto-auths with the poker-api AppRole (policy: read kv/poker/db) and RENDERS the backend
+# env-file to a tmpfs path ({{ colatro_env_file }}) so DATABASE_URL is never at rest on the
+# persistent disk; on a secret change it restarts the backend. No secret here — role_id and
+# secret_id are separate 0600 files seeded out-of-band by the operator.
+pid_file = "/run/co-latro/vault-agent.pid"
+
+vault {
+  address = "{{ colatro_vault_addr }}"
+  ca_cert = "{{ colatro_vault_agent_dir }}/vault-ca.crt"
+}
+
+auto_auth {
+  method "approle" {
+    config = {
+      role_id_file_path   = "{{ colatro_vault_agent_dir }}/role_id"
+      secret_id_file_path = "{{ colatro_vault_agent_dir }}/secret_id"
+      # Keep the secret_id on disk so the Agent can re-auth at token_max_ttl and Ansible
+      # re-runs stay idempotent (default true deletes it after first read).
+      remove_secret_id_file_after_reading = false
+    }
+  }
+}
+
+# Render the env-file from kv/poker/db and restart the backend when it changes. No sink:
+# the template uses the auto-auth token directly.
+template {
+  source      = "{{ colatro_vault_agent_dir }}/co-latro.env.ctmpl"
+  destination = "{{ colatro_env_file }}"
+  perms       = "0600"
+  command     = "systemctl restart {{ colatro_container_name }}"
+}

@@ -21,20 +21,28 @@ is least-privilege (see [`vault-seed.md`](./vault-seed.md) policy map):
 
 | Secret | Vault path | Read by | Why |
 |---|---|---|---|
-| `DATABASE_URL` | `kv/poker/db` | **`terraform-local` AppRole** | the `ansible` policy is deliberately **not** granted `kv/poker/*`; `terraform-local` (policy `terraform`) is. |
+| `DATABASE_URL` | `kv/poker/db` | **`poker-api` AppRole → Vault Agent on 230** (PET-57) | rendered on-host to a tmpfs env-file, never at rest / never through the deploy; policy `poker-api` reads only `kv/poker/db`. |
 | Nexus creds | `kv/services/nexus` | `ansible`/`terraform` (both read `services/*` or via the wrapper) | registry pull auth |
 | Frontend MinIO creds | `kv/services/minio-frontend` | `ansible` policy | a **bucket-scoped** svcacct (`kv/iac/minio` is tfstate-only and can't read this bucket) |
 
-`scripts/deploy-poker-api.sh` logs in with the **`terraform-local`** AppRole (so it can read
-`kv/poker/db`), resolves all three, and passes them to the playbook as `no_log` extra-vars.
-**No policy change was needed** — we honor the documented boundary instead of widening it.
+`scripts/deploy-poker-api.sh` logs in with the **`ansible`** AppRole and resolves only the
+Nexus + MinIO `services/*` creds (passed as `no_log` extra-vars). **`DATABASE_URL` is no
+longer resolved by the deploy** — since PET-57 the `vault-agent-co-latro` systemd unit on 230
+auto-auths with the `poker-api` AppRole and renders it to `/run/co-latro/co-latro.env`
+(tmpfs), restarting the backend on rotation.
 
 ---
 
 ## Prerequisites
 
-- Vault unsealed; `terraform-local` AppRole creds present in the gitignored
-  `iac/.secrets/terraform-local.{role_id,secret_id}` (see [`vault-seed.md`](./vault-seed.md)).
+- Vault unsealed; `ansible` AppRole creds present in the gitignored
+  `iac/.secrets/ansible.{role_id,secret_id}` (see [`vault-seed.md`](./vault-seed.md)).
+- **Vault Agent (PET-57): the `poker-api` AppRole `role_id`/`secret_id` seeded on 230** at
+  `/etc/co-latro/vault-agent/{role_id,secret_id}` (root-only, `0600`). Mint with the root
+  token after `vault-config` is applied (it creates the `poker-api` policy + AppRole):
+  `vault read -field=role_id auth/approle/role/poker-api/role-id` and
+  `vault write -f -field=secret_id auth/approle/role/poker-api/secret-id`. Without it the
+  agent (and so the backend) won't start — the playbook warns and skips starting the agent.
 - `kv/services/nexus` seeded (PET-42). `kv/services/minio-frontend` seeded — run
   `scripts/reseed-minio-frontend-vault.sh` once if missing (mints a `co-latro-frontend`-only
   MinIO svcacct).
@@ -87,10 +95,11 @@ IMAGE_TAG=<git-sha> ./scripts/deploy-poker-api.sh
 ./scripts/deploy-poker-api.sh
 ```
 
-This installs Docker + nginx, logs in to Nexus, renders the `0600` env-file with `DATABASE_URL`,
-installs+starts the `co-latro-backend` systemd unit (container on `127.0.0.1:3020`), drops the
-nginx site (removing the distro default), and `mc mirror`s the frontend dist to
-`/var/www/co-latro`. Re-runnable.
+This installs Docker + nginx, logs in to Nexus, installs the **Vault Agent** that renders the
+backend env-file (`DATABASE_URL`) to tmpfs, installs+starts the `co-latro-backend` systemd unit
+(container on `127.0.0.1:3020`, gated on the agent-rendered env-file), drops the nginx site
+(removing the distro default), and `mc mirror`s the frontend dist to `/var/www/co-latro`.
+Re-runnable.
 
 ---
 
@@ -132,4 +141,6 @@ When green: mark **PET-54** done, comment results on **PET-12**, close PET-12.
 - The backend binds `127.0.0.1:3020` (nginx is the only consumer) — not LAN-exposed.
 - `nginx -t` runs in the reload handler, so a bad config never reloads a broken nginx.
 - Rollback: `IMAGE_TAG=<previous-sha> ./scripts/deploy-poker-api.sh` re-pulls + restarts.
-- Deferred (PET-57): replace the rendered env-file with a Vault Agent template for live rotation.
+- `DATABASE_URL` is delivered by a **Vault Agent** (PET-57): `vault-agent-co-latro.service`
+  renders `/run/co-latro/co-latro.env` (tmpfs) from `kv/poker/db` and restarts the backend on
+  rotation. Debug: `journalctl -u vault-agent-co-latro`; the secret is never on persistent disk.
