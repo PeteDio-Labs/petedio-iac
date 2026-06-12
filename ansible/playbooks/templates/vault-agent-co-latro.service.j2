@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+# Vault Agent for the co-latro backend (LXC 230, PET-57) — renders DATABASE_URL to tmpfs.
+# Runs as root: it owns /run/co-latro (RuntimeDirectory) and restarts the backend on a
+# secret change. Starts before the backend so the env-file exists first.
+[Unit]
+Description=Vault Agent (co-latro backend secrets) — renders DATABASE_URL to tmpfs (PET-57)
+After=network-online.target
+Wants=network-online.target
+Before={{ colatro_container_name }}.service
+
+[Service]
+# /run/co-latro is tmpfs (RAM) — the rendered secret never touches persistent disk.
+RuntimeDirectory=co-latro
+RuntimeDirectoryMode=0755
+ExecStart={{ colatro_vault_bin }} agent -config={{ colatro_vault_agent_dir }}/vault-agent-co-latro.hcl
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

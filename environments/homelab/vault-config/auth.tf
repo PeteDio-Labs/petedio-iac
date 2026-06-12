@@ -143,3 +143,15 @@ resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   token_policies = [vault_policy.openfaas_ci.name]
   token_ttl      = 900
 }
+
+# poker-api role → poker-api policy (PET-57). The Vault Agent on LXC 230 auto-auths with
+# this AppRole and renews a token used to render the backend env-file (DATABASE_URL) to a
+# tmpfs path — replacing the old 0600 plaintext at rest. Like agent-loop, the token is
+# continuously renewed by the Agent and the secret_id is seeded out-of-band on the host.
+resource "vault_approle_auth_backend_role" "poker_api" {
+  backend        = vault_auth_backend.approle.path
+  role_name      = "poker-api"
+  token_policies = [vault_policy.poker_api.name]
+  token_ttl      = 3600
+  token_max_ttl  = 14400
+}

@@ -184,3 +184,17 @@ resource "vault_policy" "agent_loop" {
     }
   EOT
 }
+
+# poker-api: the policy the Vault Agent on the poker-api host (LXC 230) gets (PET-57). It
+# reads ONLY kv/poker/db — the app's own DATABASE_URL — so the Agent can render the backend
+# env-file to tmpfs at runtime. Strictly narrower than terraform/ci-read (all poker/*); a
+# leaked 230 token reads its own DB URL and nothing else.
+resource "vault_policy" "poker_api" {
+  name = "poker-api"
+
+  policy = <<-EOT
+    path "kv/data/poker/db" {
+      capabilities = ["read"]
+    }
+  EOT
+}
