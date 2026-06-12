@@ -30,6 +30,17 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   — provider attributes import doesn't populate, not API mutations). Full procedure:
   `docs/runbooks/nexus-import.md`.
 
+- **More brownfield divergences, from the Authentik capture** (PET-123, LXC 119): not every
+  captured LXC is a community-scripts box, but the same "match it exactly" rule applies to
+  whatever the live config shows. Two new ones beyond the Nexus list: (a) **`net0
+  firewall=1`** — the module's NIC firewall defaults off, so a live container with the
+  Proxmox NIC firewall ON needs `network_interface_firewall = true` or the import plans to
+  **disable the firewall on a live host**; (b) a container that sets a **`nameserver` but no
+  `searchdomain`** (e.g. CT119) needs `dns_servers=[…]` **with** `dns_domain = ""` — the
+  module renders `domain = null` when empty so it doesn't write a searchdomain that wasn't
+  there. Also set `os_type` to the live `ostype` (CT119 is `ubuntu`, not the `debian`
+  default). Full procedure: `docs/runbooks/authentik-import.md`.
+
 - **Proxmox API tokens can't set LXC `features{}`.** The API enforces a hardcoded
   `user == root@pam` check for features other than bare `nesting`; an API token's
   username is `root@pam!tokenid`, not `root@pam`, so it fails — even for a PVEAdmin
