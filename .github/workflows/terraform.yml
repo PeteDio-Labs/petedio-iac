@@ -48,9 +48,9 @@ jobs:
       run:
         working-directory: environments/homelab
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - uses: hashicorp/setup-terraform@v4
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_wrapper: false
 
@@ -70,7 +70,7 @@ jobs:
       # NB (PET-29 two-phase): this step is RED until PET-27 seeds these KV values —
       # vault-action can't read secrets that don't exist yet. Expected; gates merge.
       - name: Vault — mint creds via OIDC
-        uses: hashicorp/vault-action@v4
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
           method: jwt
@@ -120,7 +120,7 @@ jobs:
         # never reach the comment. The outcome guard skips it if Plan never ran
         # (e.g. an earlier init/validate/fmt step failed).
         if: ${{ always() && github.event_name == 'pull_request' && steps.plan.outcome != 'skipped' }}
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('fs');

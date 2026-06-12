@@ -35,7 +35,12 @@
     colatro_port: 3020
     colatro_container_name: co-latro-backend
     colatro_config_dir: /etc/co-latro
-    colatro_env_file: /etc/co-latro/co-latro.env
+    # The backend env-file is now rendered by a Vault Agent to TMPFS (/run is RAM) so
+    # DATABASE_URL is never at rest on persistent disk (PET-57).
+    colatro_env_file: /run/co-latro/co-latro.env
+    colatro_vault_agent_dir: /etc/co-latro/vault-agent
+    colatro_vault_addr: "https://192.168.50.223:8200"
+    colatro_vault_bin: /usr/bin/vault
     colatro_web_root: /var/www/co-latro
     nexus_registry: docker.pdlab.dev
     colatro_image: "docker.pdlab.dev/co-latro-backend"
@@ -70,7 +75,6 @@
     - name: Assert required secret extra-vars were provided (use scripts/deploy-poker-api.sh)
       ansible.builtin.assert:
         that:
-          - colatro_database_url is defined and colatro_database_url | length > 0
           - nexus_username is defined and nexus_username | length > 0
           - nexus_password is defined and nexus_password | length > 0
           - minio_frontend_access_key is defined and minio_frontend_access_key | length > 0
@@ -131,24 +135,110 @@
       changed_when: "'Login Succeeded' in docker_login.stdout"
       no_log: true
 
-    # ---- App config: env-file (secret) ----
-    - name: Create the co-latro config directory (root-only)
+    # ---- App config: DATABASE_URL via Vault Agent (PET-57) ----
+    # Replaces the old 0600 plaintext env-file with a Vault Agent that renders the env-file
+    # (incl. DATABASE_URL from kv/poker/db) to a TMPFS path (/run/co-latro) — never at rest
+    # on persistent disk, auto-refreshed on rotation. role_id/secret_id are seeded
+    # out-of-band by the operator (see docs/runbooks/poker-api-deploy.md); no secret in the
+    # playbook or the repo.
+    - name: Create the co-latro config + vault-agent directories (root-only)
       ansible.builtin.file:
-        path: "{{ colatro_config_dir }}"
+        path: "{{ item }}"
         state: directory
         owner: root
         group: root
         mode: "0700"
+      loop:
+        - "{{ colatro_config_dir }}"
+        - "{{ colatro_vault_agent_dir }}"
 
-    - name: Render the backend env-file (DATABASE_URL from Vault)
-      ansible.builtin.template:
-        src: templates/co-latro.env.j2
-        dest: "{{ colatro_env_file }}"
+    - name: Add the HashiCorp apt signing key (for the vault binary)
+      ansible.builtin.get_url:
+        url: https://apt.releases.hashicorp.com/gpg
+        dest: /usr/share/keyrings/hashicorp-archive-keyring.asc
+        mode: "0644"
+
+    - name: Add the HashiCorp apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.asc]
+          https://apt.releases.hashicorp.com {{ ansible_distribution_release }} main
+        filename: hashicorp
+        state: present
+
+    - name: Install the vault binary (provides `vault agent`)
+      ansible.builtin.apt:
+        name: vault
+        state: present
+        update_cache: true
+
+    - name: Copy the Vault CA cert so the agent can verify TLS (public — not a secret)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../environments/homelab/vault-ca.crt"
+        dest: "{{ colatro_vault_agent_dir }}/vault-ca.crt"
         owner: root
         group: root
-        mode: "0600"
-      no_log: true
-      notify: Restart co-latro-backend
+        mode: "0644"
+
+    - name: Render the Vault Agent env-file template (consul-template; holds no secret)
+      ansible.builtin.template:
+        src: templates/co-latro.env.ctmpl.j2
+        dest: "{{ colatro_vault_agent_dir }}/co-latro.env.ctmpl"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart vault-agent-co-latro
+
+    - name: Render the Vault Agent config
+      ansible.builtin.template:
+        src: templates/vault-agent-co-latro.hcl.j2
+        dest: "{{ colatro_vault_agent_dir }}/vault-agent-co-latro.hcl"
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Restart vault-agent-co-latro
+
+    - name: Install the Vault Agent systemd unit
+      ansible.builtin.template:
+        src: templates/vault-agent-co-latro.service.j2
+        dest: /etc/systemd/system/vault-agent-co-latro.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart vault-agent-co-latro
+
+    - name: Check whether the poker-api AppRole secret_id has been seeded
+      ansible.builtin.stat:
+        path: "{{ colatro_vault_agent_dir }}/secret_id"
+      register: poker_secret_id_stat
+
+    - name: Warn if the poker-api AppRole secret_id is not yet seeded
+      ansible.builtin.debug:
+        msg: >-
+          {{ colatro_vault_agent_dir }}/secret_id is missing — seed the poker-api AppRole
+          role_id/secret_id (root-only, 0600) before the agent can render DATABASE_URL (see
+          docs/runbooks/poker-api-deploy.md). The agent + backend stay down until it exists.
+      when: not poker_secret_id_stat.stat.exists
+
+    # Only start the agent once the secret_id is present, or it would crash-loop. Once it
+    # runs it renders the env-file and (via its template command) starts the backend.
+    - name: Enable and start the Vault Agent (co-latro secrets)
+      ansible.builtin.systemd:
+        name: vault-agent-co-latro
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: poker_secret_id_stat.stat.exists
+
+    # Block until the agent has rendered the tmpfs env-file, so the backend start below
+    # (ExecStartPre test -f) doesn't race the agent's first auth+render on a fresh apply.
+    - name: Wait for the Vault Agent to render the backend env-file
+      ansible.builtin.wait_for:
+        path: "{{ colatro_env_file }}"
+        timeout: 30
+      when: poker_secret_id_stat.stat.exists
 
     # ---- Backend container image + systemd unit ----
     - name: Pull the backend image from Nexus
@@ -259,6 +349,13 @@
     - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: true
+
+    - name: Restart vault-agent-co-latro
+      ansible.builtin.systemd:
+        name: vault-agent-co-latro
+        state: restarted
+      # No-op until the operator has seeded the secret_id (the unit would crash-loop).
+      when: poker_secret_id_stat.stat.exists | default(false)
 
     - name: Restart co-latro-backend
       ansible.builtin.systemd:
