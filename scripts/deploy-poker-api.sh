@@ -3,18 +3,18 @@
 # configure-poker-api.yml against LXC 230. (PET-44 driver)
 #
 # Follows the repo convention (reseed/import scripts): resolve secrets BEFORE the
-# playbook and pass them as no_log extra-vars, rather than an in-playbook hashi_vault
-# lookup. The secrets span TWO least-privilege policies (docs/runbooks/vault-seed.md),
-# so this logs in with BOTH AppRoles and reads each from its own domain:
-#   - kv/poker/db (DATABASE_URL)            -> terraform-local AppRole (policy: terraform)
-#   - kv/services/{nexus,minio-frontend}    -> ansible AppRole         (policy: ansible)
-# No single token reads both — the ansible policy is deliberately NOT granted poker/*.
+# playbook and pass them as no_log extra-vars. DATABASE_URL is NO LONGER resolved here —
+# since PET-57 a Vault Agent on 230 renders it to a tmpfs env-file from kv/poker/db
+# directly (so it's never at rest / never flows through the deploy). This script now
+# resolves only the deploy-time secrets the playbook still needs, all under the ansible
+# policy:
+#   - kv/services/{nexus,minio-frontend}    -> ansible AppRole (policy: ansible)
 #
 # OPERATOR path (run from the Mac). The runner/OIDC CD-on-merge path is a fast-follow:
 # ci-read currently reads poker/* but NOT services/* — grant that before moving here.
 #
 # Idempotent; no secrets printed. Run PET-43 (scripts/lxc-features-230.sh) FIRST.
-#   AppRole creds: $SECRETS_DIR/{terraform-local,ansible}.{role_id,secret_id} (gitignored .secrets/)
+#   AppRole creds: $SECRETS_DIR/ansible.{role_id,secret_id} (gitignored .secrets/)
 #   Optional: -e backend_image_tag=<sha> passthrough via $IMAGE_TAG
 set -euo pipefail
 
@@ -30,26 +30,20 @@ export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
 for t in vault ansible-playbook; do command -v "$t" >/dev/null || die "$t not in PATH"; done
-for r in terraform-local ansible; do
+for r in ansible; do
   [ -f "$SECRETS/$r.role_id" ] && [ -f "$SECRETS/$r.secret_id" ] \
     || die "AppRole creds for '$r' not in $SECRETS (see vault-seed.md)."
 done
 
-# The rollout's secrets span TWO least-privilege policies, by design
-# (docs/runbooks/vault-seed.md): kv/poker/* is readable by terraform-local only,
-# kv/services/* by ansible only. No single token reads both — so log in with each
-# AppRole for its own domain. (When this moves to the runner, the OIDC ci-read path
-# must likewise be granted both — currently it reads poker/* but not services/*.)
+# This script resolves only kv/services/* (nexus + minio-frontend), all under the ansible
+# policy. DATABASE_URL (kv/poker/db) is rendered on-host by the poker-api Vault Agent
+# (PET-57), not here — the ansible policy is deliberately NOT granted poker/*.
 applogin(){ # $1=role  -> echoes a token
   local rid sid
   rid="$(cat "$SECRETS/$1.role_id")"; sid="$(cat "$SECRETS/$1.secret_id")"
   vault write -field=token auth/approle/login role_id="$rid" secret_id="$sid" 2>/dev/null \
     || die "AppRole login failed for '$1'."
 }
-
-step "Resolving kv/poker/db (terraform-local AppRole)"
-TF_TOKEN="$(applogin terraform-local)"
-DB_URL="$(VAULT_TOKEN="$TF_TOKEN" vault kv get -field=DATABASE_URL kv/poker/db)" || die "cannot read kv/poker/db."
 
 step "Resolving kv/services/* (ansible AppRole)"
 AN_TOKEN="$(applogin ansible)"
@@ -58,7 +52,7 @@ NEXUS_P="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=admin_password kv/service
 MINIO_AK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=access_key kv/services/minio-frontend)" \
   || die "cannot read kv/services/minio-frontend — run scripts/reseed-minio-frontend-vault.sh first."
 MINIO_SK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=secret_key kv/services/minio-frontend)" || die "cannot read minio-frontend secret_key."
-[ -n "$DB_URL" ] && [ -n "$NEXUS_P" ] && [ -n "$MINIO_AK" ] && [ -n "$MINIO_SK" ] || die "a required secret was empty."
+[ -n "$NEXUS_P" ] && [ -n "$MINIO_AK" ] && [ -n "$MINIO_SK" ] || die "a required secret was empty."
 
 step "Running configure-poker-api.yml against poker-api (230)"
 EXTRA_TAG=()
@@ -69,7 +63,6 @@ cd "$ANSIBLE_DIR"
 EVARS="$(mktemp)"; chmod 600 "$EVARS"; trap 'rm -f "$EVARS"' EXIT
 cat > "$EVARS" <<JSON
 {
-  "colatro_database_url": $(printf '%s' "$DB_URL" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
   "nexus_username": $(printf '%s' "$NEXUS_U" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
   "nexus_password": $(printf '%s' "$NEXUS_P" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
   "minio_frontend_access_key": $(printf '%s' "$MINIO_AK" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),

@@ -1,0 +1,35 @@
+---
+# configure-minio.yml — configure the MinIO Terraform state backend (LXC 221 / .221). (PET-124)
+#
+# .221 is HAND-MANAGED by design — there is NO Terraform resource for it, ever
+# (Terraform can't create the host that stores Terraform state). This play gives the
+# host config-as-code: pinned MinIO + mc binaries, the systemd service, and the
+# `tfstate` bucket with versioning ON. Idempotent and safe to re-run against the live
+# host (a converged host = no changes, no restart). Full rebuild path + backup setup:
+# ../../docs/runbooks/minio-221-rebuild.md.
+#
+# SECRETS: the MinIO root credentials are REQUIRED and have NO committed default —
+# a placeholder would silently become the live root credential on a bare re-run.
+# Resolve them from Vault (kv/iac/minio-root, fields root_user/root_password) and pass
+# them as a no_log extra-var via a 0600 JSON @file, the repo convention (mirrors
+# configure-postgres.yml / PET-106). For example:
+#
+#   umask 077
+#   vault kv get -format=json kv/iac/minio-root | \
+#     jq '{minio_root_user: .data.data.root_user, minio_root_password: .data.data.root_password}' \
+#     > /tmp/minio-secrets.json
+#   ansible-playbook playbooks/configure-minio.yml -e @/tmp/minio-secrets.json
+#   shred -u /tmp/minio-secrets.json
+#
+# NOTE: this play administers MinIO over mc; under `--check` the command-based bucket/
+# versioning tasks are skipped. Use `--check` for the binary/unit/UFW diff; do a real
+# run (in a no-apply window) to converge bucket versioning.
+#
+# Inventory: the `minio` group -> 192.168.50.221, root over the ansible-automation key.
+
+- name: Configure the MinIO Terraform state backend (LXC 221)
+  hosts: minio
+  become: true
+
+  roles:
+    - minio

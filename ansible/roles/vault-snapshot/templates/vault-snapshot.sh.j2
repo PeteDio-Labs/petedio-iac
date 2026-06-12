@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# vault-snapshot (PET-109) — take a Vault raft snapshot and upload it to MinIO, then prune
+# old local copies. Run by the vault-snapshot.timer systemd unit on .223.
+#
+# Auth: AppRole `vault-snapshot` (policy: sys/storage/raft/snapshot + read the MinIO
+# creds). role_id/secret_id are read with vault's key=@file syntax so the secret_id never
+# appears on a command line; MinIO creds are read from Vault and passed via MC_HOST_ env so
+# they are never written to ~/.mc/config.json or argv. No secret is ever echoed.
+set -euo pipefail
+
+export VAULT_ADDR="{{ vault_snapshot_vault_addr }}"
+export VAULT_CACERT="{{ vault_snapshot_vault_cacert }}"
+
+ROLE_ID_FILE="{{ vault_snapshot_role_id_file }}"
+SECRET_ID_FILE="{{ vault_snapshot_secret_id_file }}"
+SNAP_DIR="{{ vault_snapshot_local_dir }}"
+RETAIN="{{ vault_snapshot_retain_local }}"
+MC="{{ vault_snapshot_mc_path }}"
+MC_ALIAS="{{ vault_snapshot_mc_alias }}"
+MINIO_URL="{{ vault_snapshot_minio_scheme }}://{{ vault_snapshot_minio_hostport }}"
+BUCKET="{{ vault_snapshot_bucket }}"
+CREDS_PATH="{{ vault_snapshot_minio_creds_path | regex_replace('^kv/data/', 'kv/') }}"
+
+log() { printf 'vault-snapshot: %s\n' "$*"; }
+die() { printf 'vault-snapshot: ERROR: %s\n' "$*" >&2; exit 1; }
+
+command -v vault >/dev/null || die "vault CLI not found"
+[ -x "$MC" ] || die "mc not found at $MC"
+[ -r "$ROLE_ID_FILE" ] || die "role_id unreadable ($ROLE_ID_FILE) — operator must seed it"
+[ -r "$SECRET_ID_FILE" ] || die "secret_id unreadable ($SECRET_ID_FILE) — operator must seed it"
+
+umask 077
+mkdir -p "$SNAP_DIR"
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+snap="${SNAP_DIR}/vault-${ts}.snap"
+
+# AppRole login → short-lived token. key=@file keeps the secret_id off the argv/ps table.
+VAULT_TOKEN="$(vault write -field=token auth/approle/login \
+  role_id=@"$ROLE_ID_FILE" secret_id=@"$SECRET_ID_FILE")" || die "AppRole login failed"
+export VAULT_TOKEN
+
+# Take the snapshot.
+vault operator raft snapshot save "$snap" || die "raft snapshot save failed"
+[ -s "$snap" ] || die "snapshot file is empty: $snap"
+
+# Read MinIO creds (by reference) and hand them to mc via MC_HOST_ env — not argv, not
+# persisted to ~/.mc. -field returns just the value, never logged.
+mc_key="$(vault kv get -field=access_key "$CREDS_PATH")" || die "read MinIO access_key failed"
+mc_sec="$(vault kv get -field=secret_key "$CREDS_PATH")" || die "read MinIO secret_key failed"
+export MC_HOST_${MC_ALIAS}="{{ vault_snapshot_minio_scheme }}://${mc_key}:${mc_sec}@{{ vault_snapshot_minio_hostport }}"
+unset mc_key mc_sec VAULT_TOKEN
+
+# Upload. mc makes the bucket path; the bucket itself is created out-of-band (operator).
+"$MC" cp --quiet "$snap" "${MC_ALIAS}/${BUCKET}/" >/dev/null || die "upload to MinIO failed"
+log "uploaded ${snap##*/} to ${MINIO_URL}/${BUCKET}/"
+
+# Local retention: keep the newest $RETAIN snapshots, drop older (durable copy is in MinIO).
+# shellcheck disable=SC2012
+ls -1t "${SNAP_DIR}"/vault-*.snap 2>/dev/null | tail -n "+$((RETAIN + 1))" | xargs -r rm -f
+
+log "ok"

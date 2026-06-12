@@ -1,14 +1,28 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
 # Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
-# Both GPUs are exposed via ONE Ollama service on :11434 with NO
-# CUDA_VISIBLE_DEVICES pin — Ollama sees both cards and schedules across them.
-# (We deliberately do NOT run the old per-GPU second service on :11435; one
-# endpoint serves both GPUs. Set OLLAMA_SCHED_SPREAD=1 to force-split every model
-# across both.)
+# WORKER INFERENCE LAYOUT (PET-132): the primary `ollama` service (:11434) is pinned to
+# ONE GPU (the 3060 Ti) via CUDA_VISIBLE_DEVICES in host_vars and serves the coder;
+# additional pinned single-GPU instances (ollama_extra_instances, e.g. gemma on the 1660S
+# at :11435) get their own systemd unit. This supersedes the old single-service-both-GPUs
+# design — see roles/ollama-service/defaults/main.yml for the why.
 # Installs: NVIDIA driver 550 + reboot-if-changed, official Ollama installer,
-#   OLLAMA_HOST systemd drop-in, UFW 11434 from 192.168.50.0/24,
+#   OLLAMA_HOST systemd drop-in + extra pinned units, UFW from 192.168.50.0/24,
 #   WoL .link file, no-sleep/no-suspend hardening. Asserts BOTH GPUs are visible.
 ---
+# Fail fast if the GPU pins were never filled in: an unresolved CUDA_VISIBLE_DEVICES
+# placeholder makes ollama silently fall back to CPU (or the wrong card) — exactly the
+# footgun PET-132 is trying to avoid. Guards both the primary env and the extra instances.
+- name: Assert GPU pins are not still placeholders
+  ansible.builtin.assert:
+    that:
+      - "(ollama_extra_env | join(' ')) is not search('REPLACE_WITH')"
+      - "(ollama_extra_instances | map(attribute='env') | flatten | join(' ')) is not search('REPLACE_WITH')"
+    fail_msg: >-
+      A CUDA_VISIBLE_DEVICES pin still contains the REPLACE_WITH placeholder. Fill the real
+      GPU UUIDs in host_vars/ollama-host.yml from `nvidia-smi -L` before applying (see the
+      PET-132 PR / Manual steps), or the coder will not be pinned to the 3060 Ti.
+    quiet: true
+
 - name: Ensure ethtool is installed (needed for WoL persistence)
   ansible.builtin.apt:
     name: ethtool
@@ -147,13 +161,55 @@
     enabled: true
     state: started
 
+# ── Extra pinned single-GPU instances (PET-132 worker inference layout) ───────
+# Each runs the same ollama binary + shared model store on its own port/GPU. Empty list
+# on any non-worker host → these tasks no-op.
+- name: Discover the ollama binary path for the pinned instance units
+  ansible.builtin.shell: command -v ollama
+  args:
+    executable: /bin/bash
+  register: ollama_bin_which
+  changed_when: false
+  failed_when: false
+  when: ollama_extra_instances | length > 0
+
+- name: Use the discovered ollama binary path when found
+  ansible.builtin.set_fact:
+    ollama_binary_path: "{{ ollama_bin_which.stdout | trim }}"
+  when:
+    - ollama_extra_instances | length > 0
+    - ollama_bin_which.stdout | default('') | trim | length > 0
+
+- name: Install a systemd unit for each pinned ollama instance
+  ansible.builtin.template:
+    src: ollama-instance.service.j2
+    dest: "/etc/systemd/system/{{ item.name }}.service"
+    mode: '0644'
+  loop: "{{ ollama_extra_instances }}"
+  loop_control:
+    label: "{{ item.name }} (:{{ item.port }})"
+  notify: Restart pinned ollama instances
+
+- name: Enable and start each pinned ollama instance
+  ansible.builtin.systemd:
+    name: "{{ item.name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: "{{ ollama_extra_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 - name: Allow Ollama API from homelab LAN (UFW)
   community.general.ufw:
     rule: allow
-    port: "{{ ollama_port | string }}"
+    port: "{{ item | string }}"
     proto: tcp
     from_ip: "{{ ollama_firewall_subnet }}"
     comment: "Ollama API - homelab LAN"
+  loop: "{{ ollama_firewall_ports }}"
+  loop_control:
+    label: "{{ item }}"
   when: ollama_firewall_enabled | bool
 
 - name: Check updated Ollama version

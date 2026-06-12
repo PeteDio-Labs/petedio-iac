@@ -1,0 +1,70 @@
+# vault-snapshot (PET-109) — install the raft-snapshot script + systemd timer on the Vault
+# host. Idempotent. The AppRole secret_id and the MinIO bucket/svcacct are seeded
+# out-of-band by the operator (see docs/runbooks/vault-resilience.md) — this role asserts
+# the secret_id is present so a half-configured host fails loudly instead of silently never
+# backing up.
+---
+- name: Install the mc (MinIO client) binary
+  ansible.builtin.get_url:
+    url: "{{ vault_snapshot_mc_url }}"
+    dest: "{{ vault_snapshot_mc_path }}"
+    mode: "0755"
+    owner: root
+    group: root
+    # Only fetch if missing — mc is a moving 'latest' URL; pin/refresh deliberately, don't
+    # re-pull every run. (Follow-up: pin to a dated release, cf. PET-111.)
+    force: false
+
+- name: Ensure the snapshot credential + staging directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ vault_snapshot_cred_dir }}", mode: "0700" }
+    - { path: "{{ vault_snapshot_local_dir }}", mode: "0700" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Check whether the AppRole secret_id has been seeded
+  ansible.builtin.stat:
+    path: "{{ vault_snapshot_secret_id_file }}"
+  register: vault_snapshot_secret_id_stat
+
+- name: Warn if the AppRole secret_id is not yet seeded (timer will fail until it is)
+  ansible.builtin.debug:
+    msg: >-
+      {{ vault_snapshot_secret_id_file }} is missing — seed the vault-snapshot AppRole
+      role_id/secret_id (root-only, 0600) before the timer can run. See
+      docs/runbooks/vault-resilience.md. The units are installed but the job will error
+      until the creds exist.
+  when: not vault_snapshot_secret_id_stat.stat.exists
+
+- name: Install the snapshot script
+  ansible.builtin.template:
+    src: vault-snapshot.sh.j2
+    dest: "{{ vault_snapshot_script_path }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the snapshot systemd service + timer units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - vault-snapshot.service
+    - vault-snapshot.timer
+  notify: Reload systemd
+
+- name: Enable and start the snapshot timer
+  ansible.builtin.systemd:
+    name: vault-snapshot.timer
+    enabled: true
+    state: started
+    daemon_reload: true

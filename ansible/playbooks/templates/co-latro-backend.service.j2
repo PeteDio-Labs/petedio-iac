@@ -1,18 +1,25 @@
 # {{ ansible_managed }}
 # Co-latro backend — runs the Nexus image as a systemd-managed Docker container.
-# Single container, so plain `docker run` (no compose). The DATABASE_URL secret
-# lives ONLY in the 0600 EnvironmentFile, never in this (world-readable) unit.
+# Single container, so plain `docker run` (no compose). The DATABASE_URL secret lives ONLY
+# in the EnvironmentFile, which is now a tmpfs file rendered by the Vault Agent (PET-57) —
+# never on persistent disk, never in this (world-readable) unit.
 [Unit]
 Description=Co-latro backend (Docker)
-After=docker.service network-online.target
+After=docker.service network-online.target vault-agent-co-latro.service
 Requires=docker.service
-Wants=network-online.target
+# Want (not Require) the agent: if it's briefly down the backend keeps its last env-file
+# and Restart=always retries; the agent restarts the backend whenever it re-renders.
+Wants=network-online.target vault-agent-co-latro.service
 
 [Service]
 Restart=always
 RestartSec=5
 TimeoutStartSec=0
 EnvironmentFile={{ colatro_env_file }}
+# Gate on the Vault-Agent-rendered env-file: if it isn't on tmpfs yet (agent still
+# auth'ing on boot), fail fast and let Restart=always retry — the agent's render command
+# restarts us once it lands.
+ExecStartPre=/usr/bin/test -f {{ colatro_env_file }}
 # Clean any stale container so restarts are idempotent (leading - = ignore failure).
 ExecStartPre=-/usr/bin/docker rm -f {{ colatro_container_name }}
 # Re-pull on (re)start so `systemctl restart` after a new push rolls the image.
