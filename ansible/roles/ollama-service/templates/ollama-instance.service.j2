@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+# Pinned extra Ollama instance "{{ item.name }}" — PET-132 worker inference layout.
+# Runs the same ollama binary as the primary ollama.service and shares the model store,
+# but on its own port + GPU (env below). Used to keep a second model resident on the
+# other card (gemma4:e4b on the GTX 1660 SUPER) with zero swap latency.
+[Unit]
+Description={{ item.description | default('Ollama pinned instance ' + item.name) }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart={{ ollama_binary_path }} serve
+User=ollama
+Group=ollama
+Restart=always
+RestartSec=3
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="OLLAMA_HOST={{ ollama_host_bind }}:{{ item.port }}"
+{% for env_var in item.env | default([]) %}
+Environment="{{ env_var }}"
+{% endfor %}
+
+[Install]
+WantedBy=multi-user.target

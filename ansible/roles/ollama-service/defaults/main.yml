@@ -1,6 +1,14 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12. One ollama service uses BOTH
-# (no CUDA_VISIBLE_DEVICES pin); the old per-GPU :11435 service is not used.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
+#
+# WORKER INFERENCE LAYOUT (PET-132): the two-agent pivot repurposes this host as the
+# worker's inference tier and needs each model pinned ENTIRELY to its own GPU (the coder
+# must never spill onto the Turing 1660S → slow fallback kernels). That can only be
+# guaranteed per-process via CUDA_VISIBLE_DEVICES, so the layout is now TWO single-GPU
+# services: the primary `ollama` (:11434, pinned to the 3060 Ti, serves the coder) plus
+# extra pinned instances (see ollama_extra_instances; gemma4:e4b on the 1660S at :11435).
+# This deliberately supersedes the older "one service across both GPUs" design — the pin
+# is required for the worker. The pins/env live in host_vars/ollama-host.yml.
 ---
 ollama_service_name: ollama
 ollama_install_script_url: https://ollama.com/install.sh
@@ -9,13 +17,31 @@ ollama_update_enabled: true
 # Bind to all interfaces so LAN dev machines and the CI runner can reach Ollama.
 ollama_host_bind: "0.0.0.0"
 
-# Allow Ollama API from homelab LAN.
+# Allow Ollama API from homelab LAN. ollama_firewall_ports lists every instance port to
+# open (primary + extras); defaults to just the primary so existing single-port consumers
+# are unaffected.
 ollama_firewall_enabled: true
 ollama_firewall_subnet: "192.168.50.0/24"
 ollama_port: 11434
+ollama_firewall_ports: "{{ [ollama_port] + (ollama_extra_instances | map(attribute='port') | list) }}"
 ollama_api_url: "http://127.0.0.1:{{ ollama_port }}/api/version"
 
-# Extra systemd Environment= lines for the ollama unit. No CUDA_VISIBLE_DEVICES
-# pin — the single service sees BOTH GPUs and schedules across them. Set
-# OLLAMA_SCHED_SPREAD=1 if you want every model split across both cards.
+# Extra systemd Environment= lines for the PRIMARY ollama unit (:11434). host_vars pins it
+# to the 3060 Ti and tunes it for the coder (CUDA_VISIBLE_DEVICES, OLLAMA_FLASH_ATTENTION,
+# OLLAMA_KV_CACHE_TYPE=q8_0, OLLAMA_CONTEXT_LENGTH, OLLAMA_KEEP_ALIVE).
 ollama_extra_env: []
+
+# Additional pinned ollama instances, each its own systemd unit sharing the model store
+# but on its own port + GPU. Empty by default (a no-op for any other ollama host); the
+# worker host defines the 1660S/gemma instance here. Each item:
+#   - name: ollama-1660s     # systemd unit name (also the unit file basename)
+#     port: 11435            # OLLAMA_HOST port
+#     description: "..."      # optional unit Description
+#     env:                   # extra Environment= lines (CUDA_VISIBLE_DEVICES pin, etc.)
+#       - "CUDA_VISIBLE_DEVICES=GPU-..."
+ollama_extra_instances: []
+
+# Absolute path to the ollama binary for the extra-instance units. Discovered at run time
+# (the official installer lands it in /usr/local/bin or /usr/bin); this is only the
+# fallback if discovery somehow fails.
+ollama_binary_path: /usr/local/bin/ollama
