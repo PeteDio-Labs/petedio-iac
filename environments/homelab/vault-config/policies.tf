@@ -168,3 +168,40 @@ resource "vault_policy" "openfaas_ci" {
     }
   EOT
 }
+
+# agent-loop: the autonomous loop host (LXC 242) reads ONLY its own service secret
+# (proxmox_ro_token now, github_token later) — strictly narrower than `ansible` (all
+# services/*). A Vault Agent on the box auto-auths with the agent-loop AppRole (auth.tf)
+# and renews a token into ~agent/.vault-token, so the read-only Proxmox helper self-serves
+# with no operator step. Single read path = minimal blast radius for an unattended box.
+# PET-141.
+resource "vault_policy" "agent_loop" {
+  name = "agent-loop"
+
+  policy = <<-EOT
+    path "kv/data/services/agent-loop" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+# vault-snapshot: the policy the automated raft-snapshot timer on .223 uses (PET-109).
+# Exactly two narrow reads — take a raft snapshot, and read the MinIO svcacct creds it
+# uploads with. Nothing else: a leaked snapshot token can back Vault up and read the
+# snapshot-upload creds, but cannot read any app/infra secret in kv/.
+resource "vault_policy" "vault_snapshot" {
+  name = "vault-snapshot"
+
+  policy = <<-EOT
+    # Take an integrated-storage (raft) snapshot.
+    path "sys/storage/raft/snapshot" {
+      capabilities = ["read"]
+    }
+
+    # Read the scoped MinIO svcacct creds used to upload the snapshot to the
+    # vault-snapshots bucket (seeded out-of-band by the operator — see the runbook).
+    path "kv/data/services/vault-snapshots" {
+      capabilities = ["read"]
+    }
+  EOT
+}

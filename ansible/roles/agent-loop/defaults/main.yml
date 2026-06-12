@@ -5,22 +5,109 @@
 agent_loop_user: agent
 agent_loop_home: "/home/{{ agent_loop_user }}"
 
-# Where the loop works. Public repo — the clone needs no token; the token (Vault
-# kv/services/agent-loop, by reference only — see README.md) is only needed for
-# gh to push branches / open PRs.
-agent_loop_repo_url: https://github.com/PeteDio-Labs/petedio-iac.git
-agent_loop_repo_dest: "{{ agent_loop_home }}/work/petedio-iac"
+# Where the loop works (PET-130). The host MIRRORS the petedio-workspace layout: a
+# workspace root with the child repos cloned into the SAME gitignored nested paths the
+# parent repo uses, so a Platform/IaC issue is worked in {{ agent_loop_workspace }}/iac,
+# a Co-latro issue in co-latro/backend|frontend, etc.
+agent_loop_workspace: "{{ agent_loop_home }}/work/petedio"
+agent_loop_github_base: https://github.com/PeteDio-Labs
+
+# Public child repos — always cloned, no token needed (the loop branches/PRs per repo
+# via gh). `dest` is RELATIVE to agent_loop_workspace and matches the parent repo's
+# .gitignore (iac/, media-iac/, co-latro/backend/, co-latro/frontend/).
+agent_loop_repos:
+  - { name: petedio-iac, dest: iac }
+  - { name: petedio-media-iac, dest: media-iac }
+  - { name: co-latro-backend, dest: co-latro/backend }
+  - { name: co-latro-frontend, dest: co-latro/frontend }
+
+# Private repos: the parent workspace meta-docs (.agent/lessons.md, .claude/CLAUDE.md)
+# and co-latro-admin. These need gh auth ON THE HOST, which is a manual post-provision
+# step — so they're OFF by default. Enable once the agent user has GH_TOKEN/gh login
+# (see README). The parent clones into the workspace root ("."); its .gitignore already
+# ignores the nested children above, so they never dirty its git status.
+agent_loop_clone_private: false
+agent_loop_private_repos:
+  - { name: petedio-workspace, dest: "." }
+  - { name: co-latro-admin, dest: co-latro-admin }
+
 agent_loop_log_dir: "{{ agent_loop_home }}/loop-logs"
+
+# Bun — Co-latro's runtime + test runner (both repos: `bun install` / `bun test`, and
+# vitest runs under bun). Installed as an npm global like Claude Code; upgrades are
+# deliberate (`npm update -g bun`), not on every play. Set false for an IaC-only host.
+agent_loop_install_bun: true
 
 # Node.js LTS major (NodeSource). 22 = active LTS ("jod").
 agent_loop_nodejs_major: 22
 
+# Per-user npm global prefix for the loop user. Claude Code + Bun install here AS the
+# agent — NOT into the root-owned system prefix (/usr) — so the agent can write the
+# prefix and Claude Code's auto-update (`npm i -g`) succeeds instead of EACCES-ing with
+# "Auto-update failed: no write permission to npm prefix". Its bin/ goes first on the
+# agent's PATH (see the .bashrc block) so the user copy wins over /usr/bin. PET-139.
+agent_loop_npm_prefix: "{{ agent_loop_home }}/.npm-global"
+
 # What the `cc` shell alias runs. Plain `claude` by default; set to
 # "claude --dangerously-skip-permissions" once the host is trusted as a sandbox.
 agent_loop_cc_command: claude
+
+# --- IaC verify tooling (PET-131) --------------------------------------------------
+# The loop must be able to run fmt/validate/--syntax-check/lint on-host (it can't apply,
+# but it authors). All installed by the role, which runs privileged on apply — the agent
+# user itself never gets sudo.
+
+# Terraform: a single pinned binary + its official SHA256, dropped into /usr/local/bin
+# (NO HashiCorp apt repo). Pin ≥ 1.10 (the repo's strictest required_version, in
+# modules/cloudflare-ingress). Bump version + sha together; the sha is the linux_<arch>
+# entry from https://releases.hashicorp.com/terraform/<ver>/terraform_<ver>_SHA256SUMS.
+agent_loop_terraform_version: "1.13.5"
+agent_loop_terraform_arch: amd64
+agent_loop_terraform_sha256: "0dbe3fcc268eb670801af6a6456799d1ae26e72e73797f6c6167e18aafd1fd9a"
+
+# Python tools installed per-user with pipx as the agent (no sudo): ansible-core + the two
+# linters. Collections come separately from files/requirements.yml via ansible-galaxy.
+agent_loop_pipx_packages:
+  - ansible-core
+  - yamllint
+  - ansible-lint
+
+# PATH used for tasks that invoke pipx-installed tools (ansible-galaxy etc.) non-interactively
+# as the agent user. ~/.local/bin (pipx shims) first, then the system path; terraform still
+# resolves from /usr/local/bin because the stray ~/.local/bin/terraform is removed (PET-124).
+agent_loop_pipx_path: "{{ agent_loop_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 # Operator SSH public keys authorized to log in directly as the loop user, so you can
 # `ssh agent@192.168.50.242` and run the auth bootstrap without hopping through root.
 # Public keys only (safe to commit). Append to add more operators.
 agent_loop_authorized_keys:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEgSIpFv6ipc5B3CATvK1CIqul0hG6MSUT0cR5TqhAX4 pedro@type-shit"
+
+# --- Vault Agent (PET-141) -----------------------------------------------------------
+# The loop reads its own secrets (proxmox_ro_token now, github_token later) straight from
+# Vault instead of hand-exported env vars. A Vault Agent auto-auths with the read-only
+# `agent-loop` AppRole (environments/homelab/vault-config) and keeps a renewed token in
+# ~agent/.vault-token, so scripts/proxmox-ro-config.sh's Vault fallback (and any
+# `vault kv get`) self-serves with NO operator step and NO claude restart. Set false for an
+# IaC-only / offline host.
+agent_loop_vault_agent_enabled: true
+agent_loop_vault_addr: https://192.168.50.223:8200
+
+# Pinned vault binary (the CLI and `vault agent` are one binary) + its official SHA256,
+# dropped into /usr/local/bin like terraform. Matches the server (v2.0.1). Bump version +
+# sha together (the linux_<arch> line from
+# https://releases.hashicorp.com/vault/<ver>/vault_<ver>_SHA256SUMS).
+agent_loop_vault_version: "2.0.1"
+agent_loop_vault_arch: amd64
+agent_loop_vault_sha256: "c6ed3be36a750875906916716680322719920a102f98c9a0b3105ecff63b9e34"
+
+# Committed homelab Vault CA (self-signed; NOT a secret) — copied to the host so the Agent
+# verifies TLS. Path is relative to the playbook dir (ansible/playbooks).
+agent_loop_vault_ca_src: "{{ playbook_dir }}/../../environments/homelab/vault-ca.crt"
+
+# agent-loop AppRole creds — operator-provisioned into the gitignored .secrets/ (same
+# pattern as the ansible/terraform-local AppRoles), copied to the host 0600. NOT in the
+# repo. See README for the one-time provisioning (apply vault-config, then mint role_id +
+# secret_id).
+agent_loop_vault_role_id_file: "{{ playbook_dir }}/../../.secrets/agent-loop.role_id"
+agent_loop_vault_secret_id_file: "{{ playbook_dir }}/../../.secrets/agent-loop.secret_id"

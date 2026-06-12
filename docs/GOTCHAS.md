@@ -8,12 +8,42 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   `initialization.user_account`. Always `lifecycle { ignore_changes = [...] }` them,
   or every plan shows phantom drift.
 
+- **Brownfield-capturing a community-scripts LXC diverges from the greenfield module
+  defaults — match it exactly or the import is NOT a no-op** (PET-122, Nexus 106). A
+  "Docker LXC" created by the community-scripts installer (not by `modules/proxmox-lxc`)
+  differs in ways that each force a destroy/recreate or a live-behaviour change if you
+  don't match them: (a) its NIC is named **`eth1`**, not `eth0` — renaming recreates the
+  interface (new MAC, network blip) → `network_interface_name`; (b) **pin the running
+  `hwaddr`** via `mac_address` so the import doesn't rely on computed-value preservation;
+  (c) it sets **no** `nameserver`/`searchdomain` (inherits the host resolv.conf) — render
+  no `dns` block (`dns_servers = []`) or the plan writes resolver config into a live host;
+  (d) host-path **bind mounts** (`mp0 /mnt/pete/… -> /…`, e.g. Nexus's NFS-backed blob
+  store) and the raw `lxc.idmap`/`apparmor` lines are set out-of-band on the node — bind
+  mounts hit the **same `root@pam` API restriction as features**, so the token can't manage
+  them; keep `mount_point` in `ignore_changes`. (e) **bpg round-trips `idmap` and `console`
+  on import** — they are NOT invisible raw `lxc.*` config (only the apparmor line is). An
+  unaware first plan tries to **strip the idmap** — on CT106 that mapping (host 200 ↔
+  guest 200) is what makes the NFS blob store writable in-guest — so both sit in
+  `ignore_changes` too. Read the live config read-only first
+  (`scripts/proxmox-ro-config.sh <node> <vmid>`) and expect only **cosmetic**
+  `description`/`tags` diffs after import, plus state-side noise (`+ vm_id`, `+ timeout_*`
+  — provider attributes import doesn't populate, not API mutations). Full procedure:
+  `docs/runbooks/nexus-import.md`.
+
 - **Proxmox API tokens can't set LXC `features{}`.** The API enforces a hardcoded
   `user == root@pam` check for features other than bare `nesting`; an API token's
   username is `root@pam!tokenid`, not `root@pam`, so it fails — even for a PVEAdmin
   token. **Workaround:** TF creates the LXC *without* a `features{}` block; Ansible
   (or `pct set <id> --features nesting=1,keyctl=1` over ssh-as-root) sets them
   out-of-band. Keep `features` in `ignore_changes`.
+
+- **The loop reads live LXC config read-only — never with the mutation token.** Brownfield
+  captures need the running `pct config` so the import plans as a no-op; the loop is
+  author-only and must not guess specs on live hosts. `scripts/proxmox-ro-config.sh
+  <node> <vmid>` GETs the config with a separate `PVEAuditor` token (`petedio@pam!loop-ro`,
+  read-only, from Vault `kv/services/agent-loop`) — distinct from the full
+  `petedio@pam!petedio` mutation token at `kv/iac/proxmox`. `apply`/`import`/state edits
+  stay operator-only. See `docs/runbooks/loop-proxmox-readonly.md`.
 
 - **Target the correct node endpoint.** bpg reads the PVE version from the endpoint
   and version-gates fields. Cluster nodes can differ (pve01 9.1.x). Point
@@ -30,9 +60,33 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
 - **On pve01 the LAN/uplink bridge is `vmbr1`, NOT `vmbr0`.** `vmbr0` = `eno1`, a
   separate segment with no gateway — a container on it has an IP but cannot ARP the
   gateway (outbound 100% loss, DNS fails). `vmbr1` = `eno2`/`eno3`, where the
-  working containers live. **Do NOT copy net config from a pve02 container** (the old
-  MinIO/115 uses `vmbr0` *on pve02*, where the bridge layout differs). Discovered
-  2026-06-02 standing up the fresh MinIO (.221).
+  working containers live. **Do NOT copy net config from a pve02 container** — on
+  **pve02 the LAN bridge IS `vmbr0`** (single NIC `enp0s31f6`, VLAN-aware), the
+  opposite of pve01. So `bridge` is per-node: `vmbr1` for pve01 resources, `vmbr0`
+  for pve02. Discovered 2026-06-02 standing up the fresh MinIO (.221).
+
+## pve01 / pve02 cluster + storage (PET-127)
+
+- **pve01 + pve02 are a quorate 2-node cluster** ("Homelab"), so `/etc/pve/storage.cfg`
+  is **cluster-shared** — a storage entry without an explicit `nodes <name>` line is
+  offered on BOTH nodes. Always scope node-local storage with `nodes pve01` / `nodes pve02`.
+
+- **Stale node-name pin = silently "disabled" storage.** pve02 was once named `pete`;
+  a `network-storage` entry pinned to `nodes pete` showed `disabled` in `pvesm status`
+  forever (no such node). If a storage is mysteriously disabled, check its `nodes`
+  line against `ls /etc/pve/nodes/`.
+
+- **`content` must match what the storage actually is.** That same `network-storage`
+  was declared `content rootdir,images` but its VG held plain ext4 filesystem LVs
+  (NFS export mounts), not Proxmox image volumes — Proxmox would have tried to carve
+  VM disks into a filesystem. Filesystem-mount LVs → register as a `dir` storage on
+  the mountpoint, not as `lvm`.
+
+- **pve02 is the homelab NFS file server — it is load-bearing, not idle.** It exports
+  `/mnt/{nexus-data,backups,shared}` over NFS; pve01 host-mounts all three as
+  `/mnt/pete/*`. The cluster `pete-backups` storage IS pve02's HDD over NFS, and
+  **Nexus's blob store (CT106) is an NFS mount of pve02's `/mnt/nexus-data`** — never
+  touch that export or `nfs-server` on pve02 or you break `docker.pdlab.dev`.
 
 ## MinIO S3 state backend
 
@@ -178,3 +232,37 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   `configure-openfaas.yml`; restart **`faasd-provider`** (the puller) to pick up a change. Don't
   create it with `docker login` on macOS — the helper leaves an empty `auth` (templating it is why
   the play builds the base64 itself).
+
+## agent-loop host (242) — toolchain (PET-125/131/139/140)
+
+- **npm globals for the loop must live in a USER-writable prefix, not `/usr`.** The loop
+  runs as non-root `agent` (no sudo). Installing Claude Code / Bun as root into the system
+  npm prefix (`/usr/lib/node_modules`) makes the agent's `npm -g` writes — including Claude
+  Code's **auto-update** — fail with `Auto-update failed: no write permission to npm prefix
+  · Run /doctor` (EACCES). Fix (PET-139): set the agent's npm prefix to `~/.npm-global`
+  (role var `agent_loop_npm_prefix`, written to `~/.npmrc`), install both globals **as the
+  `agent` user** into it, and put `~/.npm-global/bin` on PATH ahead of `/usr/bin` so the
+  user-owned, self-updatable copy wins. Don't `chown -R` the system prefix or give the
+  agent sudo — give it its own prefix. **Migration note:** a host first built by the old
+  role still has the root-global copy in `/usr`; the new role leaves it **shadowed** (PATH
+  prefers the agent copy) rather than removing it — reaping `/usr`'s copy live would break
+  the running loop's tmux shell (cached `claude` path + a PATH set before the `.bashrc`
+  edit). Remove it by hand (`npm rm -g …` as root) only while the loop is idle. A
+  long-running `claude` keeps showing the warning until it's **restarted in a fresh shell**.
+
+- **`community.general.pipx` needs pipx ≥1.7.0 — Ubuntu 24.04 apt ships 1.4.3.** Every pipx
+  task fails `The pipx tool must be at least at version 1.7.0` if you rely on the apt
+  package, so the loop's verify tooling (ansible-core / yamllint / ansible-lint) never
+  installs. Install pipx via **pip** instead (`--break-system-packages`, since 24.04's
+  python is PEP-668 externally-managed; system pip lands it in `/usr/local/bin`, ahead of
+  `/usr/bin`) and reap the stale apt pipx. PET-140.
+
+- **Vault Agent `remove_secret_id_file_after_reading` defaults to TRUE.** The loop reads its
+  own secrets via a Vault Agent that auto-auths with the read-only `agent-loop` AppRole and
+  sinks a renewing token to `~agent/.vault-token` — so `scripts/proxmox-ro-config.sh`'s Vault
+  fallback works with no env var and no claude restart (the CLI reads the token off disk).
+  But the Agent **deletes the `secret_id` file after first use** unless you set
+  `remove_secret_id_file_after_reading = false`; without it an Agent restart (or Ansible
+  re-run that re-templates the config) can't re-auth and the token sink goes stale. The host
+  needs the `vault` binary too (the CLI/`vault agent` are one binary) — the helper's Vault
+  fallback was dead weight until this. PET-141.

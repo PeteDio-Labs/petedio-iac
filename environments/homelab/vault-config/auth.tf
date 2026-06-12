@@ -24,6 +24,20 @@ resource "vault_approle_auth_backend_role" "terraform_local" {
   token_max_ttl  = 3600
 }
 
+# agent-loop role → agent-loop policy. The loop host (LXC 242) runs a Vault Agent that
+# auto-auths with this AppRole and keeps a renewed token in ~agent/.vault-token, so the
+# read-only Proxmox helper self-serves with no per-session login. Unlike the ansible/
+# terraform-local roles (short-lived per-run logins), this token is continuously renewed
+# by the Agent; the secret_id is non-expiring (default) so the Agent can re-auth when
+# token_max_ttl is reached. PET-141.
+resource "vault_approle_auth_backend_role" "agent_loop" {
+  backend        = vault_auth_backend.approle.path
+  role_name      = "agent-loop"
+  token_policies = [vault_policy.agent_loop.name]
+  token_ttl      = 3600
+  token_max_ttl  = 14400
+}
+
 # JWT auth for GitHub Actions OIDC. Mounted at a non-default path (`jwt-github`)
 # so a future second JWT issuer can coexist. type=jwt validates the Actions OIDC
 # token against GitHub's discovery URL.
@@ -128,4 +142,16 @@ resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   }
   token_policies = [vault_policy.openfaas_ci.name]
   token_ttl      = 900
+}
+
+# vault-snapshot role → vault-snapshot policy (PET-109). The raft-snapshot systemd timer
+# on .223 (Ansible role vault-snapshot) logs in with this AppRole to take + upload a
+# snapshot. Short token TTL — the job runs in seconds and re-auths each run; the secret_id
+# is seeded out-of-band on the host (operator, root-only file). See the resilience runbook.
+resource "vault_approle_auth_backend_role" "vault_snapshot" {
+  backend        = vault_auth_backend.approle.path
+  role_name      = "vault-snapshot"
+  token_policies = [vault_policy.vault_snapshot.name]
+  token_ttl      = 300
+  token_max_ttl  = 600
 }

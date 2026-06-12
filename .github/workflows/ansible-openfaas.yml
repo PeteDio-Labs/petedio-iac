@@ -46,7 +46,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: [self-hosted, linux, x64, homelab]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Syntax check (ansible in Docker)
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE/ansible:/ansible" -w /ansible \
@@ -59,7 +59,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: [self-hosted, linux, x64, homelab]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Encode Vault CA
         id: vault_ca
@@ -68,7 +68,7 @@ jobs:
         run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
 
       - name: Vault — mint creds via OIDC
-        uses: hashicorp/vault-action@v4
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
           method: jwt

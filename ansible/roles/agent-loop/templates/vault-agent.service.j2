@@ -1,0 +1,16 @@
+# vault-agent — MANAGED BY ANSIBLE (PET-141). Runs as {{ agent_loop_user }}; auto-auths with
+# the read-only agent-loop AppRole and renews a token into ~{{ agent_loop_user }}/.vault-token.
+[Unit]
+Description=Vault Agent (agent-loop secrets) for {{ agent_loop_user }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{ agent_loop_user }}
+Group={{ agent_loop_user }}
+ExecStart=/usr/local/bin/vault agent -config={{ agent_loop_home }}/.config/vault-agent/vault-agent.hcl
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -44,15 +44,65 @@
     state: present
     update_cache: true
 
-# --- Claude Code ----------------------------------------------------------------
+# --- Loop user ---------------------------------------------------------------------
+# Created early: the per-user Claude Code / Bun installs below run AS this user and write
+# into its home (~/.npm-global, ~/.npmrc), so the account + home must exist first. The loop
+# never runs as root (Claude Code refuses --dangerously-skip-permissions as root, and the
+# scoped GitHub token shouldn't live in root's env).
+- name: Create the loop user ({{ agent_loop_user }})
+  ansible.builtin.user:
+    name: "{{ agent_loop_user }}"
+    shell: /bin/bash
+    create_home: true
 
-# community.general.npm with global=true converges (installs only when absent).
-# Upgrades are deliberate, not on every play: `npm update -g @anthropic-ai/claude-code`.
-- name: Install Claude Code (npm global)
+# --- Claude Code ----------------------------------------------------------------
+# Installed AS the agent into a per-user npm prefix ({{ agent_loop_npm_prefix }}), NOT the
+# root-owned system prefix (/usr): the loop runs as non-root `agent` with no sudo, so
+# Claude Code's auto-update (`npm i -g`) must be able to write the global prefix itself —
+# a root-owned prefix is exactly the "no write permission to npm prefix" failure. The dir
+# + ~/.npmrc below make every `npm -g` run as the agent (this install AND the runtime
+# self-update) resolve to the writable prefix. PET-139.
+
+- name: Create the agent's writable npm global prefix
+  ansible.builtin.file:
+    path: "{{ agent_loop_npm_prefix }}"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+
+- name: Point the agent's npm at the per-user global prefix (~/.npmrc)
+  ansible.builtin.lineinfile:
+    path: "{{ agent_loop_home }}/.npmrc"
+    create: true
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0644"
+    regexp: '^prefix='
+    line: "prefix={{ agent_loop_npm_prefix }}"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+# community.general.npm with global=true converges (installs only when absent). Run AS the
+# agent with NPM_CONFIG_PREFIX/HOME pinned so it lands in the writable prefix regardless of
+# how `become` seeds HOME. Upgrades stay deliberate: `npm update -g @anthropic-ai/claude-code`.
+- name: Install Claude Code (npm global, per-user prefix)
   community.general.npm:
     name: "@anthropic-ai/claude-code"
     global: true
     state: present
+  become: true
+  become_user: "{{ agent_loop_user }}"
+  environment:
+    HOME: "{{ agent_loop_home }}"
+    NPM_CONFIG_PREFIX: "{{ agent_loop_npm_prefix }}"
+
+# NOTE: on a host first provisioned by the OLD role, Claude Code is also still present as a
+# root-global in /usr (the source of the auto-update bug). It is NOT removed here: the PATH
+# block below makes the agent's writable copy win, leaving the /usr copy harmlessly shadowed
+# (and a working fallback for any shell predating this change). Reap it by hand as root
+# (`npm rm -g @anthropic-ai/claude-code`) when the loop is idle — never mid-iteration, since
+# that would break the live tmux shell's next `claude`. Fresh hosts never get a root copy.
 
 # --- gh CLI -----------------------------------------------------------------------
 
@@ -76,13 +126,46 @@
     state: present
     update_cache: true
 
-# --- Loop user + workspace ---------------------------------------------------------
+# --- Bun (Co-latro runtime + test runner) -----------------------------------------
 
-- name: Create the loop user ({{ agent_loop_user }})
-  ansible.builtin.user:
-    name: "{{ agent_loop_user }}"
-    shell: /bin/bash
-    create_home: true
+# Both Co-latro repos are Bun (`bun install` / `bun test`; vitest runs under bun). Same
+# per-user-prefix install + "upgrades are deliberate" convention as Claude Code above (so a
+# `bun upgrade`-class write never hits the same root-prefix wall), so the loop's Co-latro
+# test gate fails on the code, not on a missing toolchain. Node LTS (for vitest/Vite) is
+# already installed above. (Playwright e2e — browsers + apt libs — is a deliberate
+# follow-up, not installed here.)
+- name: Install Bun (npm global, per-user prefix)
+  community.general.npm:
+    name: bun
+    global: true
+    state: present
+  become: true
+  become_user: "{{ agent_loop_user }}"
+  environment:
+    HOME: "{{ agent_loop_home }}"
+    NPM_CONFIG_PREFIX: "{{ agent_loop_npm_prefix }}"
+  when: agent_loop_install_bun | bool
+
+# Shell QoL for the loop user: `cc` shorthand for Claude Code, and PATH = the per-user npm
+# prefix bin ({{ agent_loop_npm_prefix }}/bin — claude, bun) FIRST so the agent-owned, self-
+# updatable claude wins over any /usr/bin/claude, then ~/.local/bin (pipx shims — ansible*,
+# yamllint, ansible-lint — added by the IaC verify section below). Set here, right after the
+# per-user toolchain, so it lands even if a later task fails. Marked block: idempotent.
+- name: Install the cc alias + PATH for {{ agent_loop_user }}
+  ansible.builtin.blockinfile:
+    path: "{{ agent_loop_home }}/.bashrc"
+    create: true
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0644"
+    marker: "# {mark} ANSIBLE MANAGED — agent-loop"
+    block: |
+      export PATH="{{ agent_loop_npm_prefix }}/bin:$HOME/.local/bin:$PATH"
+      alias cc='{{ agent_loop_cc_command }}'
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+# --- Loop user keys + workspace ----------------------------------------------------
 
 # Operator keys for direct `ssh {{ agent_loop_user }}@<host>` — skip the root + su hop
 # when running the interactive auth bootstrap (scripts/agent-loop-login.sh).
@@ -94,7 +177,7 @@
   loop: "{{ agent_loop_authorized_keys }}"
   when: agent_loop_authorized_keys | length > 0
 
-- name: Create the work + log directories
+- name: Create the work, workspace, and log directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -103,30 +186,255 @@
     mode: "0755"
   loop:
     - "{{ agent_loop_home }}/work"
+    - "{{ agent_loop_workspace }}"
     - "{{ agent_loop_log_dir }}"
 
-# update: false — Ansible clones once and never mutates the working tree afterwards
-# (the loop owns syncing main each iteration; a play must not clobber in-flight work).
-- name: Clone petedio-iac into the loop workspace
+# The host mirrors the petedio-workspace layout (PET-130). The OPTIONAL private parent
+# (meta-docs) is cloned FIRST, into the workspace root, so the public children below land
+# in its already-gitignored subpaths without dirtying its status. It needs gh auth on the
+# host, so it's gated behind agent_loop_clone_private (default false — see README).
+- name: Clone the private parent workspace + admin (opt-in; needs host gh auth)
   ansible.builtin.git:
-    repo: "{{ agent_loop_repo_url }}"
-    dest: "{{ agent_loop_repo_dest }}"
+    repo: "{{ agent_loop_github_base }}/{{ item.name }}.git"
+    dest: "{{ agent_loop_workspace }}/{{ item.dest }}"
     version: main
     update: false
+  loop: "{{ agent_loop_private_repos }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.dest }}"
+  when: agent_loop_clone_private | bool
   become: true
   become_user: "{{ agent_loop_user }}"
 
-# Shell QoL for the loop user: `cc` shorthand for Claude Code. Lives in a marked
-# block so it's idempotent and easy to extend later.
-- name: Install the cc alias for {{ agent_loop_user }}
-  ansible.builtin.blockinfile:
-    path: "{{ agent_loop_home }}/.bashrc"
-    create: true
+# update: false — Ansible clones each repo once and never mutates the working tree
+# afterwards (the loop owns syncing main each iteration; a play must not clobber in-flight
+# work). git creates the intermediate dirs (e.g. co-latro/) on clone.
+- name: Clone the public child repos into the workspace
+  ansible.builtin.git:
+    repo: "{{ agent_loop_github_base }}/{{ item.name }}.git"
+    dest: "{{ agent_loop_workspace }}/{{ item.dest }}"
+    version: main
+    update: false
+  loop: "{{ agent_loop_repos }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.dest }}"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+# --- IaC verify tooling (PET-131) --------------------------------------------------
+# So the loop can run fmt/validate/--syntax-check/lint on-host. Everything here is
+# install-only; the agent user gets NO sudo — root-level installs run because the role
+# itself is applied privileged. (Was hand-bootstrapped during PET-124; this ends that.)
+
+- name: Install IaC verify prerequisites (python3-venv/pip for pipx, unzip for the TF zip)
+  ansible.builtin.apt:
+    name:
+      - python3-venv
+      - python3-pip
+      - unzip
+    state: present
+    update_cache: true
+
+# Ubuntu 24.04's apt `pipx` is 1.4.3, but community.general.pipx needs >= 1.7.0 (otherwise
+# every pipx task fails with "The pipx tool must be at least at version 1.7.0"). Drop the apt
+# pipx FIRST — pip can't upgrade a dpkg-owned package in place ("Cannot uninstall pipx 1.4.3,
+# RECORD file not found") — then pip-install a current one below. No-op on a fresh host (apt
+# pipx is no longer in the prereqs). PET-140.
+- name: Remove the stale apt pipx (replaced by the pip install below)
+  ansible.builtin.apt:
+    name: pipx
+    state: absent
+
+# Nothing dpkg-owned is in the way now: system pip installs pipx into /usr/local/bin (ahead
+# of /usr/bin on PATH), reusing the apt-provided deps. --break-system-packages because
+# 24.04's python is PEP-668 externally-managed. PET-140.
+- name: Install pipx >= 1.7.0 via pip (apt ships 1.4.3; community.general.pipx needs >= 1.7.0)
+  ansible.builtin.pip:
+    name: pipx>=1.7.0
+    extra_args: --break-system-packages
+    state: present
+
+# PET-124 unzipped a standalone terraform into ~/.local/bin via Python zipfile (no unzip
+# then). ~/.local/bin precedes /usr/local/bin on the agent's PATH, so that copy shadows
+# the pinned binary below and would silently pin the host to a stale version — remove it.
+- name: Remove the hand-bootstrapped terraform shim from PET-124
+  ansible.builtin.file:
+    path: "{{ agent_loop_home }}/.local/bin/terraform"
+    state: absent
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Check the installed Terraform version
+  ansible.builtin.command: /usr/local/bin/terraform version
+  register: agent_loop_tf_installed
+  changed_when: false
+  failed_when: false
+
+# Pinned binary + checksum (get_url fails the play on a sha mismatch). Skipped entirely
+# when the pinned version is already in place, so re-runs are no-ops and a version bump
+# re-installs.
+- name: Install pinned Terraform {{ agent_loop_terraform_version }}
+  when: agent_loop_terraform_version not in (agent_loop_tf_installed.stdout | default(''))
+  block:
+    - name: Download Terraform {{ agent_loop_terraform_version }} (checksum-verified)
+      ansible.builtin.get_url:
+        url: >-
+          https://releases.hashicorp.com/terraform/{{ agent_loop_terraform_version }}/terraform_{{ agent_loop_terraform_version }}_linux_{{ agent_loop_terraform_arch }}.zip
+        dest: "/tmp/terraform_{{ agent_loop_terraform_version }}_linux_{{ agent_loop_terraform_arch }}.zip"
+        checksum: "sha256:{{ agent_loop_terraform_sha256 }}"
+        mode: "0644"
+
+    - name: Unpack Terraform into /usr/local/bin
+      ansible.builtin.unarchive:
+        src: "/tmp/terraform_{{ agent_loop_terraform_version }}_linux_{{ agent_loop_terraform_arch }}.zip"
+        dest: /usr/local/bin
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+
+# ansible-core + linters, per-user via pipx (idempotent: pipx installs only when absent).
+# Run as the agent so the shims land in ~agent/.local/bin and there's no root-owned venv.
+- name: Install Python verify tooling via pipx ({{ agent_loop_user }})
+  community.general.pipx:
+    name: "{{ item }}"
+    state: install
+  loop: "{{ agent_loop_pipx_packages }}"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+  environment:
+    PATH: "{{ agent_loop_pipx_path }}"
+
+# pipx ships ansible-CORE only — no bundled collections — so the repo's playbooks won't
+# syntax-check/lint until these are pulled from Galaxy into ~agent/.ansible/collections.
+- name: Ensure the agent's ~/.ansible directory exists
+  ansible.builtin.file:
+    path: "{{ agent_loop_home }}/.ansible"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Stage the Galaxy requirements file for the agent
+  ansible.builtin.copy:
+    src: requirements.yml
+    dest: "{{ agent_loop_home }}/.ansible/requirements.yml"
     owner: "{{ agent_loop_user }}"
     group: "{{ agent_loop_user }}"
     mode: "0644"
-    marker: "# {mark} ANSIBLE MANAGED — agent-loop"
-    block: |
-      alias cc='{{ agent_loop_cc_command }}'
   become: true
   become_user: "{{ agent_loop_user }}"
+
+- name: Install Galaxy collections for on-host syntax-check ({{ agent_loop_user }})
+  ansible.builtin.command:
+    cmd: ansible-galaxy collection install -r {{ agent_loop_home }}/.ansible/requirements.yml
+  register: agent_loop_galaxy
+  changed_when: "'Installing ' in agent_loop_galaxy.stdout"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+  environment:
+    PATH: "{{ agent_loop_pipx_path }}"
+
+# --- Vault Agent (PET-141) -----------------------------------------------------------
+# A Vault Agent auto-auths with the read-only `agent-loop` AppRole and renews a token into
+# ~agent/.vault-token, so the loop self-serves kv/services/agent-loop — the proxmox helper's
+# Vault fallback works with no env var and no claude restart (the CLI reads the token off
+# disk). Gated so an IaC-only / offline host can skip it. AppRole creds are operator-
+# provisioned in .secrets/ (NOT in the repo); the play fails fast if they're missing.
+- name: Vault Agent for the loop user
+  when: agent_loop_vault_agent_enabled | bool
+  block:
+    - name: Assert the agent-loop AppRole creds exist (control node)
+      ansible.builtin.assert:
+        that:
+          - agent_loop_vault_role_id_file is exists
+          - agent_loop_vault_secret_id_file is exists
+        fail_msg: >-
+          agent-loop AppRole creds missing ({{ agent_loop_vault_role_id_file }} / .secret_id).
+          Provision them first (apply environments/homelab/vault-config, then mint role_id +
+          secret_id — see roles/agent-loop/README.md), or set
+          agent_loop_vault_agent_enabled=false.
+
+    - name: Check the installed vault version
+      ansible.builtin.command: /usr/local/bin/vault version
+      register: agent_loop_vault_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Install pinned vault {{ agent_loop_vault_version }} (CLI + agent)
+      when: agent_loop_vault_version not in (agent_loop_vault_installed.stdout | default(''))
+      block:
+        - name: Download vault {{ agent_loop_vault_version }} (checksum-verified)
+          ansible.builtin.get_url:
+            url: >-
+              https://releases.hashicorp.com/vault/{{ agent_loop_vault_version }}/vault_{{ agent_loop_vault_version }}_linux_{{ agent_loop_vault_arch }}.zip
+            dest: "/tmp/vault_{{ agent_loop_vault_version }}_linux_{{ agent_loop_vault_arch }}.zip"
+            checksum: "sha256:{{ agent_loop_vault_sha256 }}"
+            mode: "0644"
+
+        - name: Unpack vault into /usr/local/bin
+          ansible.builtin.unarchive:
+            src: "/tmp/vault_{{ agent_loop_vault_version }}_linux_{{ agent_loop_vault_arch }}.zip"
+            dest: /usr/local/bin
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0755"
+
+    - name: Create the Vault Agent config + creds dir (agent-owned, 0700)
+      ansible.builtin.file:
+        path: "{{ agent_loop_home }}/.config/vault-agent"
+        state: directory
+        owner: "{{ agent_loop_user }}"
+        group: "{{ agent_loop_user }}"
+        mode: "0700"
+
+    - name: Install the homelab Vault CA cert for the agent
+      ansible.builtin.copy:
+        src: "{{ agent_loop_vault_ca_src }}"
+        dest: "{{ agent_loop_home }}/.config/vault-agent/vault-ca.crt"
+        owner: "{{ agent_loop_user }}"
+        group: "{{ agent_loop_user }}"
+        mode: "0644"
+
+    - name: Install the agent-loop AppRole role_id + secret_id (0600)
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ agent_loop_home }}/.config/vault-agent/{{ item.dest }}"
+        owner: "{{ agent_loop_user }}"
+        group: "{{ agent_loop_user }}"
+        mode: "0600"
+      loop:
+        - { src: "{{ agent_loop_vault_role_id_file }}", dest: role_id }
+        - { src: "{{ agent_loop_vault_secret_id_file }}", dest: secret_id }
+      loop_control:
+        label: "{{ item.dest }}"
+      no_log: true
+      notify: Restart vault-agent
+
+    - name: Template the Vault Agent config
+      ansible.builtin.template:
+        src: vault-agent.hcl.j2
+        dest: "{{ agent_loop_home }}/.config/vault-agent/vault-agent.hcl"
+        owner: "{{ agent_loop_user }}"
+        group: "{{ agent_loop_user }}"
+        mode: "0640"
+      notify: Restart vault-agent
+
+    - name: Install the vault-agent systemd unit
+      ansible.builtin.template:
+        src: vault-agent.service.j2
+        dest: /etc/systemd/system/vault-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart vault-agent
+
+    - name: Enable + start vault-agent
+      ansible.builtin.systemd_service:
+        name: vault-agent
+        enabled: true
+        state: started
+        daemon_reload: true
