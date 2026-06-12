@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+# One-shot Vault raft snapshot → MinIO (PET-109). Triggered by vault-snapshot.timer.
+[Unit]
+Description=Vault raft snapshot to MinIO (PET-109)
+After=network-online.target vault.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ vault_snapshot_script_path }}
+# Runs as root to read the 0600 root-only secret_id; keep the surface small.
+ProtectHome=true
+NoNewPrivileges=true
