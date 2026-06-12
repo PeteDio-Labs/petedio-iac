@@ -144,6 +144,18 @@ resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   token_ttl      = 900
 }
 
+# vault-snapshot role → vault-snapshot policy (PET-109). The raft-snapshot systemd timer
+# on .223 (Ansible role vault-snapshot) logs in with this AppRole to take + upload a
+# snapshot. Short token TTL — the job runs in seconds and re-auths each run; the secret_id
+# is seeded out-of-band on the host (operator, root-only file). See the resilience runbook.
+resource "vault_approle_auth_backend_role" "vault_snapshot" {
+  backend        = vault_auth_backend.approle.path
+  role_name      = "vault-snapshot"
+  token_policies = [vault_policy.vault_snapshot.name]
+  token_ttl      = 300
+  token_max_ttl  = 600
+}
+
 # poker-api role → poker-api policy (PET-57). The Vault Agent on LXC 230 auto-auths with
 # this AppRole and renews a token used to render the backend env-file (DATABASE_URL) to a
 # tmpfs path — replacing the old 0600 plaintext at rest. Like agent-loop, the token is

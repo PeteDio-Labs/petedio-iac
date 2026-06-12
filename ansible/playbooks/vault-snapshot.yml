@@ -1,0 +1,18 @@
+---
+# vault-snapshot.yml — install the automated Vault raft-snapshot timer on LXC 223 (PET-109).
+#
+# Run AFTER configure-vault.yml (which creates the audit dir) and AFTER the operator has:
+#   - applied vault-config (creates the vault-snapshot policy + AppRole), and
+#   - seeded the vault-snapshot AppRole role_id/secret_id under /etc/vault-snapshot/, and
+#   - created the MinIO vault-snapshots bucket + svcacct and seeded kv/services/vault-snapshots.
+# See docs/runbooks/vault-resilience.md for the full order + restore procedure.
+#
+# Usage:
+#   ansible-playbook playbooks/vault-snapshot.yml
+#   ansible-playbook playbooks/vault-snapshot.yml --check   # dry run
+
+- name: Install the Vault raft-snapshot timer (LXC 223)
+  hosts: vault
+  become: true
+  roles:
+    - vault-snapshot

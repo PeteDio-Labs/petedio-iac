@@ -1,0 +1,42 @@
+# vault-snapshot role (PET-109) — automated raft snapshot of the single-node Vault on
+# .223, uploaded to MinIO so losing the 223 rootfs doesn't lose every secret + the
+# auth/policy config. A systemd timer runs a script that AppRole-logs-in, takes a raft
+# snapshot, uploads it to the MinIO vault-snapshots bucket, and prunes old local copies.
+# All creds are read by reference (Vault AppRole + Vault-stored MinIO svcacct) — none in
+# the repo. See docs/runbooks/vault-resilience.md.
+---
+vault_snapshot_vault_addr: "https://192.168.50.223:8200"
+# Vault's self-signed CA is already on the host at /opt/vault/tls/vault.crt (the listener
+# cert, which is its own CA — see configure-vault.yml). Used as VAULT_CACERT so the CLI
+# verifies TLS instead of skipping it.
+vault_snapshot_vault_cacert: "/opt/vault/tls/vault.crt"
+
+# AppRole creds (role vault-snapshot, vault-config/auth.tf). role_id is not sensitive;
+# secret_id is — both are seeded out-of-band by the operator (root-only, 0600). The script
+# reads them with vault's key=@file syntax so the secret never lands on a command line.
+vault_snapshot_cred_dir: /etc/vault-snapshot
+vault_snapshot_role_id_file: "{{ vault_snapshot_cred_dir }}/role_id"
+vault_snapshot_secret_id_file: "{{ vault_snapshot_cred_dir }}/secret_id"
+
+# Local snapshot staging + retention (uploads are the durable copy; locals are a small
+# rolling cache for fast restore).
+vault_snapshot_local_dir: /var/backups/vault-snapshots
+vault_snapshot_retain_local: 7
+
+# MinIO target. http (matches the state backend endpoint); creds are read from Vault at
+# vault_snapshot_minio_creds_path (fields access_key / secret_key) — never inlined here.
+vault_snapshot_minio_scheme: http
+vault_snapshot_minio_hostport: "192.168.50.221:9000"
+vault_snapshot_bucket: vault-snapshots
+vault_snapshot_minio_creds_path: "kv/data/services/vault-snapshots"
+vault_snapshot_mc_alias: vaultsnap
+
+# mc (MinIO client) — single static binary; the host has no MinIO tooling otherwise.
+vault_snapshot_mc_url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+vault_snapshot_mc_path: /usr/local/bin/mc
+
+# Where the rendered snapshot script lands.
+vault_snapshot_script_path: /usr/local/sbin/vault-snapshot.sh
+
+# Timer schedule (systemd OnCalendar). Daily; Persistent catches up a missed run.
+vault_snapshot_oncalendar: "*-*-* 02:30:00"
