@@ -16,3 +16,31 @@
 - name: Report pulled models
   ansible.builtin.debug:
     msg: "Base models pulled: {{ ollama_base_models | join(', ') }}"
+
+# ── Residency (PET-132) ───────────────────────────────────────────────────────
+# Load each worker-tier model onto its pinned instance/GPU and keep it warm. An empty
+# prompt with keep_alive=-1 loads the model into that instance's VRAM and pins it there
+# (no idle unload). Requires the target instances to be running (ollama-service role).
+- name: Load each resident model onto its pinned instance (keep_alive=-1)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ item.port }}/api/generate"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ item.model }}"
+      keep_alive: -1
+    status_code: 200
+    timeout: 300
+  loop: "{{ ollama_resident_models }}"
+  loop_control:
+    label: "{{ item.model }} -> :{{ item.port }}"
+  changed_when: false
+  when: ollama_resident_models | length > 0
+
+- name: Report resident models
+  ansible.builtin.debug:
+    msg: >-
+      Resident models:
+      {{ ollama_resident_models | map(attribute='model') | join(', ')
+         if ollama_resident_models | length > 0 else 'none' }}
+      — verify real GPU placement with `ollama ps` (do NOT trust the offload %; bug #14351).

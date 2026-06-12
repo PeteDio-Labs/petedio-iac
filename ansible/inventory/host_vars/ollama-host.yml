@@ -2,8 +2,10 @@
 # Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
 ---
 # ollama-host — Ubuntu Server 24.04, MSI X570-A PRO, native Ollama (not Docker).
-# GPUs: GTX 1660 SUPER (6GB) + RTX 3060 Ti (8GB) — BOTH exposed via one Ollama
-# service (no CUDA_VISIBLE_DEVICES pin); Ollama sees and schedules across both.
+# GPUs: GTX 1660 SUPER (6GB) + RTX 3060 Ti (8GB).
+# WORKER INFERENCE LAYOUT (PET-132): each model is pinned ENTIRELY to one GPU via
+# CUDA_VISIBLE_DEVICES (two single-GPU ollama services) — the coder on the 3060 Ti
+# (:11434), gemma4:e4b on the 1660 SUPER (:11435). See the worker-layout block below.
 # NIC: eth0, MAC 2c:f0:5d:a2:7f:4f — WoL enabled (magic packet).
 wol_interface: eth0
 wol_mac: "2c:f0:5d:a2:7f:4f"
@@ -19,11 +21,46 @@ ollama_dns:
 ansible_user: ansible
 ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pedro
 
-# Base models to pull from the Ollama registry.
+# ── Worker inference layout (PET-132) ─────────────────────────────────────────
+# Coder served on :11434 pinned to the RTX 3060 Ti; gemma4:e4b kept resident on the
+# GTX 1660 SUPER via a second pinned instance on :11435. The worker hits :11434.
+ollama_coder_model: "qwen3:8b"   # Q4_K_M, 5.2 GB, tools+thinking (verified ollama.com/library)
+
+# GPU pins — CUDA_VISIBLE_DEVICES values. MUST be the stable per-card UUIDs (indices can
+# reorder across reboots). Fill from `nvidia-smi -L` on .12 (the loop can't read them):
+#   …RTX 3060 Ti (UUID: GPU-xxxx…)    -> ollama_coder_gpu
+#   …GTX 1660 SUPER (UUID: GPU-yyyy…) -> ollama_gemma_gpu
+# The ollama-service role asserts these no longer contain REPLACE_WITH before applying.
+ollama_coder_gpu: "GPU-REPLACE_WITH_3060TI_UUID"
+ollama_gemma_gpu: "GPU-REPLACE_WITH_1660S_UUID"
+
+# Pull the coder alongside gemma (shared model store → one pull serves both instances).
 ollama_base_models:
   - gemma4:e4b
+  - "{{ ollama_coder_model }}"
 
-# Both GPUs are visible to the single Ollama service (no CUDA_VISIBLE_DEVICES
-# pin): large models split across both cards, concurrent requests balance.
-# Set OLLAMA_SCHED_SPREAD=1 here to force every model across both GPUs.
-ollama_extra_env: []
+# PRIMARY service (:11434) — pinned to the 3060 Ti, tuned for the coder: q8_0 KV-cache
+# (halves KV VRAM, requires flash attention), 32K default context (never the silent 4096
+# default), keep_alive=-1 so the coder never unloads.
+ollama_extra_env:
+  - "CUDA_VISIBLE_DEVICES={{ ollama_coder_gpu }}"
+  - "OLLAMA_FLASH_ATTENTION=1"
+  - "OLLAMA_KV_CACHE_TYPE=q8_0"
+  - "OLLAMA_CONTEXT_LENGTH=32768"
+  - "OLLAMA_KEEP_ALIVE=-1"
+
+# SECOND pinned instance (:11435) — the 1660 SUPER, keeps gemma4:e4b resident.
+ollama_extra_instances:
+  - name: ollama-1660s
+    port: 11435
+    description: "Ollama (GTX 1660 SUPER) — keeps gemma4:e4b resident (PET-132)"
+    env:
+      - "CUDA_VISIBLE_DEVICES={{ ollama_gemma_gpu }}"
+      - "OLLAMA_KEEP_ALIVE=-1"
+
+# Keep each model warm on its pinned instance/GPU (loaded with keep_alive=-1).
+ollama_resident_models:
+  - model: "{{ ollama_coder_model }}"
+    port: 11434
+  - model: gemma4:e4b
+    port: 11435
