@@ -60,3 +60,46 @@ output "runner_id" {
   description = "VMID of the self-hosted runner container."
   value       = module.runner.vm_id
 }
+
+# runner-233 (LXC 233) — SECOND self-hosted runner, on pve02 (PET-128). Adds CI capacity on
+# both cluster nodes; pve02 gained ~421 GB HDD `pve02-shared` + a debian-12 LXC template in
+# PET-127. Mirrors runner-232 (org-scoped to PeteDio-Labs; Docker via
+# configure-runner-docker.yml; registration is OUT-OF-BAND — org reg token + config.sh — so
+# TF owns only the LXC). This is GREENFIELD (no moved{} block — unlike runner-232, which was
+# a state-move of a pre-existing container).
+#
+# Per-node differences from runner-232 (do NOT copy pve01's values):
+#   - target_node  = pve02
+#   - bridge       = vmbr0   ← pve02's LAN bridge (single NIC, VLAN-aware); pve01 uses vmbr1,
+#                              the OPPOSITE. A container on the wrong bridge can't reach the
+#                              gateway. See docs/GOTCHAS.md.
+#   - datastore_id = pve02-shared  ← the HDD dir storage added in PET-127.
+#   - template_file_id = pve02's debian-12 template. CONFIRM the exact volume ID on pve02
+#     (`pvesm list local`); the patch version below is a placeholder. template_file_id is in
+#     the module's ignore_changes (create-time only), so it only matters for the first apply.
+#
+# Out-of-band prerequisites (operator — see the PR Manual steps): SDN.Use for the IaC token
+# on pve02's vmbr0 SDN zone (new-NIC create 403s otherwise — GOTCHAS); `pct set 233
+# --features nesting=1,keyctl=1` for Docker; the .233 DHCP reservation; runner registration.
+module "runner_2" {
+  source = "../../modules/proxmox-lxc"
+
+  vm_id            = 233
+  hostname         = "runner-233"
+  ipv4_address     = "192.168.50.233/24"
+  ssh_public_key   = var.ssh_public_key
+  target_node      = "pve02"
+  cores            = 2
+  memory_dedicated = 2048
+  memory_swap      = 512
+  disk_size        = 20
+  datastore_id     = "pve02-shared"
+  bridge           = "vmbr0"
+  template_file_id = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
+  description      = "GitHub Actions self-hosted runner #2 on pve02 (petedio-iac). Managed by Terraform."
+}
+
+output "runner_2_id" {
+  description = "VMID of the second self-hosted runner container (pve02)."
+  value       = module.runner_2.vm_id
+}
