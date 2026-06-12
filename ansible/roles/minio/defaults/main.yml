@@ -1,0 +1,75 @@
+---
+# minio role defaults (PET-124) — the Terraform STATE BACKEND host (LXC 221 / .221).
+#
+# .221 is HAND-MANAGED by design: there is NO Terraform resource for it, ever, because
+# Terraform cannot create the host that stores Terraform's own state (bootstrap
+# circularity). See the rebuild runbook (docs/runbooks/minio-221-rebuild.md), the repo
+# exception (environments/homelab/minio-state-backend.tf), and the MinIO ADR (PET-102).
+#
+# The role is idempotent and SAFE to re-run against the LIVE host: it converges the
+# binaries, the systemd unit, and the state bucket's versioning. It NEVER writes object
+# data, NEVER removes a bucket, and NEVER suspends versioning — a converged host reports
+# zero changes and triggers no restart.
+
+# --- MinIO server + client binaries (pinned + checksummed) -----------------------
+# Supply-chain hygiene (cf. PET-111): pin BOTH the version and its sha256, bumped
+# together. The sha256 values were verified from the official dl.min.io `.sha256sum`
+# sidecars on 2026-06-10. To upgrade: change the version, fetch the matching
+# `<binary>.<version>.sha256sum`, and update the hash here in the same commit.
+minio_version: "RELEASE.2025-09-07T16-13-09Z"
+minio_sha256: "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f"
+minio_server_url: "https://dl.min.io/server/minio/release/linux-amd64/archive/minio.{{ minio_version }}"
+
+mc_version: "RELEASE.2025-08-13T08-35-41Z"
+mc_sha256: "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
+mc_url: "https://dl.min.io/client/mc/release/linux-amd64/archive/mc.{{ mc_version }}"
+
+minio_bin: /usr/local/bin/minio
+mc_bin: /usr/local/bin/mc
+
+# --- Service account / storage ---------------------------------------------------
+minio_user: minio-user
+minio_group: minio-user
+# The single data drive for the state backend. A fresh host starts empty; the runbook
+# restores the `tfstate` objects from backup BEFORE the first `terraform init`.
+minio_data_dir: /var/lib/minio
+minio_config_env: /etc/default/minio   # systemd EnvironmentFile (0640, holds root creds)
+
+# --- Network ---------------------------------------------------------------------
+# S3 API on :9000, web console on :9001 (matches backend.tf endpoint .221:9000).
+minio_server_address: ":9000"
+minio_console_address: ":9001"
+# Loopback endpoint mc dials to administer the server — admin stays on-box.
+minio_local_endpoint: "http://127.0.0.1:9000"
+minio_mc_alias: local
+
+# --- State bucket ----------------------------------------------------------------
+# Versioning is the recovery net for the lock-light backend (docs/GOTCHAS.md →
+# "MinIO S3 state backend"; backend.tf uses S3-native use_lockfile + versioning). The
+# role ENABLES versioning when off; it never suspends it.
+minio_state_bucket: tfstate
+
+# --- Root credentials (REQUIRED — no default, never commit) ----------------------
+# Resolve from Vault and pass as a no_log extra-var via a 0600 JSON @file — the
+# configure-postgres.yml pattern (PET-106). Referenced Vault path (by name only):
+#   kv/iac/minio-root   fields: root_user, root_password
+# Deliberately left UNDEFINED: a committed placeholder would silently become the live
+# root credential on a bare re-run. tasks/main.yml asserts both are defined first.
+# minio_root_user: <from Vault kv/iac/minio-root>
+# minio_root_password: <from Vault kv/iac/minio-root>
+
+# --- Firewall (UFW) --------------------------------------------------------------
+minio_firewall_enabled: true
+minio_firewall_subnet: "192.168.50.0/24"
+
+# --- Off-host backup of the state bucket (issue item 3) --------------------------
+# DISABLED by default: enabling needs an off-host destination you choose (a pre-
+# configured `mc` alias for another MinIO/S3, or a path on a mounted off-host share).
+# When enabled the role installs an `mc mirror` script + a systemd timer. See the
+# runbook for picking a target, first-run seeding, and the check cadence.
+minio_backup_enabled: false
+# The mc target the backup mirrors INTO, e.g. "offsite/tfstate-backup" (an mc alias you
+# configure on the host out-of-band). No default — must be set when enabling.
+minio_backup_dest: ""
+minio_backup_oncalendar: "daily"       # systemd OnCalendar= for the backup timer
+minio_backup_script: /usr/local/bin/minio-tfstate-backup.sh

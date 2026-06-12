@@ -1,0 +1,14 @@
+---
+# minio role handlers (PET-124).
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+# daemon_reload picks up unit/env changes before the restart. Only fires when the
+# binary, env file, or unit actually changed — a converged host never restarts the
+# live state backend.
+- name: Restart minio
+  ansible.builtin.systemd:
+    name: minio
+    state: restarted
+    daemon_reload: true
