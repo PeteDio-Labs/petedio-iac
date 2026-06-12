@@ -27,10 +27,14 @@
 
   vars:
     faasd_src_dir: /opt/faasd-src
-    # NB: the gateway image the compose ships must be >= 0.27.13 — 0.27.12 exhibited a
-    # basic-auth rejection in this setup. `master` currently ships 0.27.13. TODO(PET-86):
-    # pin to a faasd release tag whose docker-compose.yaml references gateway >= 0.27.13.
-    faasd_version: master
+    # The gateway image the compose ships must be >= 0.27.13 (0.27.12 exhibited a basic-auth
+    # rejection in this setup). PET-111: pin off the moving `master` branch so an upstream
+    # push can't change what apply-on-merge runs as root on 241. NOTE no faasd RELEASE tag
+    # ships gateway >= 0.27.13 yet — the latest, 0.19.7, still ships 0.27.12 — so we pin a
+    # specific master COMMIT (immutable) that does, rather than a tag. Revisit and switch to a
+    # release tag once one ships gateway >= 0.27.13. (Gateway constraint from PET-86.)
+    # 13f03f3 = openfaas/faasd master @ 2025-11-18; its docker-compose.yaml = gateway 0.27.13.
+    faasd_version: "13f03f3d47072f29781ef78a1f5a406c800cc513"
     faasd_secrets_dir: /var/lib/faasd/secrets
     faasd_gateway: "http://127.0.0.1:8080"
     faas_cli: /usr/local/bin/faas-cli
@@ -74,7 +78,9 @@
         repo: https://github.com/openfaas/faasd
         dest: "{{ faasd_src_dir }}"
         version: "{{ faasd_version }}"
-        depth: 1
+        # Full clone (no depth) — faasd_version is now a commit SHA (PET-111), and a shallow
+        # clone only fetches the branch tip, so it can't reliably check out an arbitrary
+        # commit. The faasd repo is small, so the full clone is cheap.
 
     - name: Install faasd (containerd + CNI + runc + faasd + faas-cli + systemd units)
       ansible.builtin.command:
