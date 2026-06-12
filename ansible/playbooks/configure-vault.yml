@@ -84,6 +84,41 @@
         - /opt/vault/data
         - /opt/vault/tls
 
+    # Audit log directory (PET-109). MUST exist + be vault-writable BEFORE the
+    # vault-config `vault_audit` resource is applied — enabling a file audit device
+    # against an unwritable path fails, and once enabled Vault is fail-closed (it stops
+    # serving if it can't write the audit log). See docs/runbooks/vault-resilience.md.
+    - name: Ensure the Vault audit-log directory exists
+      ansible.builtin.file:
+        path: /opt/vault/logs
+        state: directory
+        owner: vault
+        group: vault
+        mode: "0700"
+
+    # Rotate the audit log via SIGHUP — Vault holds the file descriptor and reopens its
+    # audit files on SIGHUP, so we must NOT copytruncate/rename out from under it (that
+    # loses entries / leaves it writing to a unlinked fd). compress old, keep ~2 weeks.
+    - name: Install logrotate config for the Vault audit log
+      ansible.builtin.copy:
+        dest: /etc/logrotate.d/vault-audit
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          /opt/vault/logs/vault_audit.log {
+            daily
+            rotate 14
+            compress
+            delaycompress
+            missingok
+            notifempty
+            create 0600 vault vault
+            postrotate
+              systemctl kill -s HUP vault.service 2>/dev/null || true
+            endscript
+          }
+
     # Self-signed cert/key for the TLS listener. `creates:` makes this idempotent
     # — it won't regenerate (and won't churn the cert) on re-runs.
     - name: Generate a self-signed TLS certificate + key

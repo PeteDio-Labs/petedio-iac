@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+# Daily schedule for vault-snapshot.service (PET-109).
+[Unit]
+Description=Daily Vault raft snapshot (PET-109)
+
+[Timer]
+OnCalendar={{ vault_snapshot_oncalendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
