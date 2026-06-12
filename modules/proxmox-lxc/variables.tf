@@ -88,6 +88,18 @@ variable "mac_address" {
   default     = null
 }
 
+variable "network_interface_firewall" {
+  description = <<-EOT
+    Whether the Proxmox NIC-level firewall is enabled on net0. Default false matches every
+    greenfield consumer (the module never enabled it), so adding this variable is a no-op
+    for them. Brownfield captures set it true when the running container has `firewall=1`
+    (e.g. Authentik, 119) — matching it keeps the import a no-op instead of DISABLING the
+    firewall on a live host.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "template_file_id" {
   description = "OS template volume ID for the container."
   type        = string
