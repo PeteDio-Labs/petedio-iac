@@ -3,6 +3,15 @@
 # The 5 custom petedio-* Modelfiles were dropped (stale k8s/Mission-Control
 # context) — this role now only pulls base models from the Ollama registry.
 ---
-# Base models to pull from the Ollama registry (ollama pull).
+# Base models to pull from the Ollama registry (ollama pull). Pulls write to the shared
+# model store, so a single pull (via the default endpoint) makes a model available to
+# every pinned instance.
 ollama_base_models:
   - gemma4:e4b
+
+# Models to keep RESIDENT on a specific pinned instance (PET-132). After pulling, the role
+# loads each into its target port with keep_alive=-1 (an empty-prompt /api/generate load),
+# so it sits warm on that instance's GPU with zero swap latency. Empty by default. Each item:
+#   - model: qwen3:8b
+#     port: 11434          # the instance (and so the GPU) it should stay resident on
+ollama_resident_models: []

@@ -184,3 +184,38 @@ resource "vault_policy" "agent_loop" {
     }
   EOT
 }
+
+# vault-snapshot: the policy the automated raft-snapshot timer on .223 uses (PET-109).
+# Exactly two narrow reads — take a raft snapshot, and read the MinIO svcacct creds it
+# uploads with. Nothing else: a leaked snapshot token can back Vault up and read the
+# snapshot-upload creds, but cannot read any app/infra secret in kv/.
+resource "vault_policy" "vault_snapshot" {
+  name = "vault-snapshot"
+
+  policy = <<-EOT
+    # Take an integrated-storage (raft) snapshot.
+    path "sys/storage/raft/snapshot" {
+      capabilities = ["read"]
+    }
+
+    # Read the scoped MinIO svcacct creds used to upload the snapshot to the
+    # vault-snapshots bucket (seeded out-of-band by the operator — see the runbook).
+    path "kv/data/services/vault-snapshots" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+# poker-api: the policy the Vault Agent on the poker-api host (LXC 230) gets (PET-57). It
+# reads ONLY kv/poker/db — the app's own DATABASE_URL — so the Agent can render the backend
+# env-file to tmpfs at runtime. Strictly narrower than terraform/ci-read (all poker/*); a
+# leaked 230 token reads its own DB URL and nothing else.
+resource "vault_policy" "poker_api" {
+  name = "poker-api"
+
+  policy = <<-EOT
+    path "kv/data/poker/db" {
+      capabilities = ["read"]
+    }
+  EOT
+}
