@@ -1,0 +1,304 @@
+<!doctype html>
+<!--
+  Mission Control v3 — live PR board (PET-158). A SINGLE self-contained HTML artifact:
+  no backend, no build, no host. It reads live state at runtime from GitHub (GraphQL) and
+  Linear (GraphQL), joins each open PR to its Linear issue on the PET-<n> key, and surfaces
+  the merge-readiness signal Pedro triages by. READ-ONLY: it never merges, comments, labels,
+  or writes anything.
+
+  SECRETS: none are embedded or committed. Tokens are pasted at runtime into the fields below
+  and kept only in your browser (localStorage, opt-in) — see CLAUDE.md. Where to get them:
+  GitHub PAT (repo:read / public_repo) and a Linear personal API key — store the real values
+  in Vault (paths by name in CLAUDE.md), never here.
+
+  Merge state is shown ONLY as GitHub reports it (hard rule 7) — never inferred from Linear's
+  (lagging) PR sync.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mission Control — PR board</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#8b949e;
+    --green:#3fb950; --yellow:#d29922; --red:#f85149; --blue:#58a6ff; --purple:#bc8cff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  header { padding:14px 18px; border-bottom:1px solid var(--border); background:var(--panel);
+           position:sticky; top:0; z-index:5; }
+  h1 { margin:0 0 2px; font-size:16px; }
+  .sub { color:var(--muted); font-size:12px; }
+  .config { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:8px;
+            margin-top:12px; }
+  .config label { display:block; font-size:11px; color:var(--muted); margin-bottom:3px; }
+  .config input { width:100%; padding:6px 8px; background:var(--bg); color:var(--fg);
+                  border:1px solid var(--border); border-radius:6px; font:inherit; font-size:12px; }
+  .row2 { display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+  button { background:#21262d; color:var(--fg); border:1px solid var(--border); border-radius:6px;
+           padding:7px 14px; font:inherit; cursor:pointer; }
+  button.primary { background:#238636; border-color:#2ea043; }
+  button:hover { filter:brightness(1.15); }
+  .chk { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:5px; }
+  main { padding:18px; }
+  .banner { padding:9px 12px; border-radius:6px; margin-bottom:10px; font-size:13px;
+            border:1px solid var(--border); }
+  .banner.err { background:#2d1214; border-color:var(--red); color:#ffb4ab; }
+  .banner.warn { background:#2b2410; border-color:var(--yellow); color:#f0d58a; }
+  .banner.info { background:#10202b; border-color:var(--blue); color:#a9d4ff; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+       border-bottom:1px solid var(--border); padding-bottom:5px; margin:22px 0 8px; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--border);
+          vertical-align:top; font-size:13px; }
+  th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; }
+  tr.gated { background:#2b2410; }
+  tr.ready { background:#0f2417; }
+  a { color:var(--blue); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px;
+          border:1px solid var(--border); white-space:nowrap; }
+  .pill.green{color:var(--green);border-color:var(--green)} .pill.red{color:var(--red);border-color:var(--red)}
+  .pill.yellow{color:var(--yellow);border-color:var(--yellow)} .pill.blue{color:var(--blue);border-color:var(--blue)}
+  .pill.purple{color:var(--purple);border-color:var(--purple)} .pill.muted{color:var(--muted)}
+  .labels { display:flex; gap:4px; flex-wrap:wrap; }
+  .title { max-width:380px; }
+  .empty { color:var(--muted); padding:24px; text-align:center; }
+  .repo { color:var(--muted); font-size:12px; }
+  code { background:var(--bg); padding:1px 4px; border-radius:4px; border:1px solid var(--border); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛰️ Mission Control — PR board <span class="sub" id="updated"></span></h1>
+  <div class="sub">Read-only. Open PRs across the org, joined to Linear on the <code>PET-&lt;n&gt;</code> key.
+    Merge state is from GitHub only (never Linear's lagging sync).</div>
+  <div class="config">
+    <div><label>GitHub token (PAT, repo read)</label><input id="ghToken" type="password" placeholder="ghp_… / github_pat_…" /></div>
+    <div><label>Linear API key (optional)</label><input id="lnToken" type="password" placeholder="lin_api_…" /></div>
+    <div><label>GitHub org / owner</label><input id="owner" value="PeteDio-Labs" /></div>
+    <div><label>Repos (comma-separated)</label><input id="repos" value="petedio-iac,petedio-media-iac,co-latro-backend,co-latro-frontend" /></div>
+    <div><label>Linear team key</label><input id="teamKey" value="PET" /></div>
+    <div><label>Loop account login(s)</label><input id="loopLogins" placeholder="loop-bot,agent-…" /></div>
+  </div>
+  <div class="row2">
+    <button class="primary" id="refresh">↻ Refresh</button>
+    <label class="chk"><input type="checkbox" id="remember" /> remember tokens in this browser (localStorage)</label>
+    <span class="sub" id="status"></span>
+  </div>
+</header>
+<main>
+  <div id="banners"></div>
+  <div id="ready"></div>
+  <div id="all"></div>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const LS = "mc_v3_cfg";
+const GH_GQL = "https://api.github.com/graphql";
+const LN_GQL = "https://api.linear.app/graphql";
+
+// --- config persistence (opt-in; tokens only saved if "remember" is checked) ---
+function loadCfg() {
+  try {
+    const c = JSON.parse(localStorage.getItem(LS) || "{}");
+    for (const k of ["ghToken","lnToken","owner","repos","teamKey","loopLogins"]) if (c[k] != null) $(k).value = c[k];
+    if (c.remember) $("remember").checked = true;
+  } catch {}
+}
+function saveCfg() {
+  const remember = $("remember").checked;
+  const base = { owner:$("owner").value, repos:$("repos").value, teamKey:$("teamKey").value,
+                 loopLogins:$("loopLogins").value, remember };
+  if (remember) { base.ghToken = $("ghToken").value; base.lnToken = $("lnToken").value; }
+  localStorage.setItem(LS, JSON.stringify(base));
+}
+
+const banners = [];
+function banner(kind, msg) { banners.push({kind,msg}); }
+function renderBanners() {
+  $("banners").innerHTML = banners.map(b => `<div class="banner ${b.kind}">${b.msg}</div>`).join("");
+}
+
+function petKey(s) { const m = /PET-(\d+)/i.exec(s || ""); return m ? "PET-" + m[1] : null; }
+function esc(s) { return String(s==null?"":s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function ageStr(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  const h = Math.floor(ms/3.6e6); if (h < 48) return h + "h";
+  return Math.floor(h/24) + "d";
+}
+
+// --- GitHub: open PRs per repo (GraphQL; one query per repo, run in parallel) ---
+async function ghPRs(token, owner, repo) {
+  const q = `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){
+    pullRequests(states:OPEN,first:50,orderBy:{field:CREATED_AT,direction:DESC}){nodes{
+      number title url isDraft mergeable createdAt headRefName author{login}
+      commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}`;
+  const r = await fetch(GH_GQL, { method:"POST",
+    headers:{ "Authorization":"Bearer "+token, "Content-Type":"application/json" },
+    body: JSON.stringify({ query:q, variables:{ owner, name:repo } }) });
+  if (!r.ok) throw new Error(`GitHub ${repo}: HTTP ${r.status}`);
+  const j = await r.json();
+  if (j.errors) throw new Error(`GitHub ${repo}: ${j.errors[0].message}`);
+  const repoNode = j.data && j.data.repository;
+  if (!repoNode) return []; // repo not found / no access — skip, not fatal
+  return repoNode.pullRequests.nodes.map(p => ({
+    repo, number:p.number, title:p.title, url:p.url, isDraft:p.isDraft,
+    mergeable:p.mergeable, createdAt:p.createdAt, branch:p.headRefName,
+    author:(p.author && p.author.login) || "?",
+    checks:(p.commits.nodes[0] && p.commits.nodes[0].commit.statusCheckRollup
+            && p.commits.nodes[0].commit.statusCheckRollup.state) || "NONE",
+    pet: petKey(p.title) || petKey(p.headRefName),
+  }));
+}
+
+// --- Linear: the matching issues, one batched query on number ∈ [...] ---
+async function linearIssues(token, teamKey, numbers) {
+  if (!token || !numbers.length) return {};
+  const q = `query($key:String!,$nums:[Float!]){issues(first:200,filter:{
+    team:{key:{eq:$key}},number:{in:$nums}}){nodes{
+      identifier number url state{name type} labels{nodes{name}} project{name} cycle{number}}}}`;
+  const r = await fetch(LN_GQL, { method:"POST",
+    headers:{ "Authorization":token, "Content-Type":"application/json" },
+    body: JSON.stringify({ query:q, variables:{ key:teamKey, nums:numbers } }) });
+  if (!r.ok) throw new Error(`Linear: HTTP ${r.status}`);
+  const j = await r.json();
+  if (j.errors) throw new Error(`Linear: ${j.errors[0].message}`);
+  const map = {};
+  for (const n of j.data.issues.nodes) {
+    map[n.identifier] = { status:n.state.name, type:n.state.type, url:n.url,
+      labels:n.labels.nodes.map(l => l.name),
+      project:n.project && n.project.name, cycle:n.cycle && n.cycle.number };
+  }
+  return map;
+}
+
+function checksPill(s) {
+  const map = { SUCCESS:["green","✓ green"], FAILURE:["red","✗ failing"], ERROR:["red","✗ error"],
+                PENDING:["yellow","● pending"], EXPECTED:["yellow","● pending"], NONE:["muted","– none"] };
+  const [c,t] = map[s] || ["muted", s.toLowerCase()];
+  return `<span class="pill ${c}">${t}</span>`;
+}
+function mergeablePill(m) {
+  return m==="MERGEABLE" ? `<span class="pill green">mergeable</span>`
+       : m==="CONFLICTING" ? `<span class="pill red">conflicts</span>`
+       : `<span class="pill muted">unknown</span>`;
+}
+function statusPill(li) {
+  if (!li) return `<span class="pill muted">no linear</span>`;
+  const t = li.type;
+  const c = t==="completed"?"green":t==="started"?"blue":t==="canceled"?"muted":"yellow";
+  return `<span class="pill ${c}">${esc(li.status)}</span>`;
+}
+const KEY_LABELS = { "agent-reviewed":"green","changes-requested":"yellow","import-gated":"red",
+                     "needs-human":"purple" };
+function labelPills(li) {
+  if (!li || !li.labels.length) return "";
+  return `<div class="labels">` + li.labels
+    .filter(l => KEY_LABELS[l]).map(l => `<span class="pill ${KEY_LABELS[l]}">${esc(l)}</span>`).join("") + `</div>`;
+}
+
+// fast-merge rule: In Review + agent-reviewed + checks green + mergeable + NOT import-gated.
+function isMergeReady(row) {
+  const li = row.li; if (!li) return false;
+  if (li.labels.includes("import-gated")) return false;
+  return (li.status === "In Review")
+      && li.labels.includes("agent-reviewed")
+      && row.checks === "SUCCESS"
+      && row.mergeable === "MERGEABLE"
+      && !row.isDraft;
+}
+
+function rowHTML(row) {
+  const li = row.li;
+  const gated = li && li.labels.includes("import-gated");
+  const loop = row.isLoop ? `<span class="pill blue">loop</span>` : `<span class="pill muted">human</span>`;
+  const draft = row.isDraft ? `<span class="pill muted">draft</span>` : `<span class="pill green">ready</span>`;
+  const petCell = row.pet
+    ? (li ? `<a href="${esc(li.url)}" target="_blank">${esc(row.pet)}</a>` : esc(row.pet))
+    : `<span class="pill muted">no key</span>`;
+  return `<tr class="${gated?"gated":(row.ready?"ready":"")}">
+    <td class="repo">${esc(row.repo)}</td>
+    <td>${petCell}</td>
+    <td class="title"><a href="${esc(row.url)}" target="_blank">#${row.number}</a> ${esc(row.title)}
+        ${gated?'<span class="pill red">⛔ import-gated</span>':''}</td>
+    <td>${loop}</td>
+    <td>${draft}</td>
+    <td>${checksPill(row.checks)}</td>
+    <td>${mergeablePill(row.mergeable)}</td>
+    <td>${statusPill(li)}</td>
+    <td>${labelPills(li)}</td>
+    <td class="repo">${ageStr(row.createdAt)}</td>
+  </tr>`;
+}
+function table(rows) {
+  if (!rows.length) return `<div class="empty">No PRs.</div>`;
+  return `<table><thead><tr>
+    <th>repo</th><th>PET</th><th>PR / title</th><th>author</th><th>state</th>
+    <th>checks</th><th>mergeable</th><th>linear</th><th>labels</th><th>age</th>
+  </tr></thead><tbody>${rows.map(rowHTML).join("")}</tbody></table>`;
+}
+
+async function refresh() {
+  banners.length = 0;
+  $("status").textContent = "loading…";
+  saveCfg();
+  const ghToken = $("ghToken").value.trim();
+  const lnToken = $("lnToken").value.trim();
+  const owner = $("owner").value.trim();
+  const repos = $("repos").value.split(",").map(s => s.trim()).filter(Boolean);
+  const teamKey = $("teamKey").value.trim() || "PET";
+  const loopLogins = $("loopLogins").value.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+
+  if (!ghToken) { banner("err", "GitHub token required — paste a PAT with read access."); renderBanners();
+                  $("status").textContent = ""; return; }
+
+  // --- GitHub (core) ---
+  let prs = [];
+  const results = await Promise.allSettled(repos.map(r => ghPRs(ghToken, owner, r)));
+  results.forEach((res, i) => {
+    if (res.status === "fulfilled") prs = prs.concat(res.value);
+    else banner("err", `GitHub: ${esc(res.reason.message || ("repo "+repos[i]+" failed"))}`);
+  });
+
+  // --- Linear (enrichment; degrade gracefully) ---
+  let linear = {};
+  const nums = [...new Set(prs.map(p => p.pet).filter(Boolean).map(k => parseInt(k.slice(4),10)))];
+  if (lnToken) {
+    try { linear = await linearIssues(lnToken, teamKey, nums); }
+    catch (e) {
+      banner("warn", `Linear unavailable — showing GitHub only. (${esc(e.message)}). `
+        + `If this is a browser CORS block, run the board in a context that proxies Linear, or see CLAUDE.md.`);
+    }
+  } else {
+    banner("info", "No Linear key — showing GitHub only (status/labels/merge-ready need Linear).");
+  }
+
+  // --- join + classify ---
+  const rows = prs.map(p => {
+    const li = p.pet ? linear[p.pet] : null;
+    const row = { ...p, li, isLoop: loopLogins.length ? loopLogins.includes(p.author.toLowerCase()) : false };
+    row.ready = isMergeReady(row);
+    return row;
+  }).sort((a,b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+  const ready = rows.filter(r => r.ready);
+  renderBanners();
+  $("ready").innerHTML = `<h2>✅ Merge-ready (${ready.length}) — In Review + agent-reviewed + green + mergeable, not import-gated</h2>`
+    + (lnToken ? table(ready) : `<div class="empty">Add a Linear key to compute merge-readiness.</div>`);
+  $("all").innerHTML = `<h2>All open PRs (${rows.length})</h2>` + table(rows);
+  $("updated").textContent = "· updated " + new Date().toLocaleTimeString();
+  $("status").textContent = `${rows.length} PRs · ${ready.length} merge-ready`;
+}
+
+$("refresh").addEventListener("click", refresh);
+loadCfg();
+if ($("ghToken").value) refresh(); else
+  $("banners").innerHTML = `<div class="banner info">Paste a GitHub token (and optionally a Linear key) above, then ↻ Refresh. Nothing is sent anywhere but GitHub/Linear; tokens stay in your browser. See CLAUDE.md.</div>`;
+</script>
+</body>
+</html>
