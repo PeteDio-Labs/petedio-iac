@@ -44,6 +44,10 @@ What the role installs (idempotent; a second run reports no changes):
   `~agent/.vault-token`, so the loop self-serves `kv/services/agent-loop` (e.g.
   `scripts/proxmox-ro-config.sh`'s Vault fallback) with no hand-exported env var and no
   claude restart. AppRole creds are operator-provisioned into `.secrets/` (see runbook).
+- **MinIO client `mc`** (PET-135, reviewer loop; toggle `agent_loop_install_mc`) — a
+  pinned, checksum-verified binary in `/usr/local/bin`, so the reviewer can append its
+  JSONL eval rows to MinIO (`agent-evals/verdicts.jsonl`). The `mc alias` credentials are
+  an operator step from Vault — see [`docs/runbooks/reviewer-loop.md`](../../../docs/runbooks/reviewer-loop.md).
 
 Run the role:
 

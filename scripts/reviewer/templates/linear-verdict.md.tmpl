@@ -1,0 +1,19 @@
+<!--
+  Reviewer Linear-comment template (PET-135). Claude fills {{...}} and posts this as a
+  comment on the worker's Linear issue, then sets the label: `agent-reviewed` always,
+  plus `changes-requested` when VERDICT=changes. NEVER change Linear status (hard rule) —
+  Pedro's fast-merge filter is "In Review + agent-reviewed", so this comment must be
+  self-contained. Drop the HTML comment when posting.
+-->
+🔬 **Reviewer verdict — {{VERDICT_EMOJI}} {{VERDICT_UPPER}}** ([PR #{{PR}}]({{PR_URL}}))
+
+- **Independent `bun test`:** {{TESTS_RESULT}}
+- **Head reviewed:** `{{HEAD_SHA}}`
+- **Round-trip:** {{ROUND_TRIP}} of 2 max
+
+**Findings:** {{FINDINGS}}
+<!-- "None." or a short numbered list mirroring the PR review -->
+
+**Merge recommendation:** {{ONE_LINE_RECOMMENDATION}}
+
+<sub>🤖 Reviewer loop, agent-loop-242. Labels set: `agent-reviewed`{{CHANGES_LABEL}}. Status unchanged — Pedro merges.</sub>

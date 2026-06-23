@@ -83,6 +83,19 @@ agent_loop_pipx_path: "{{ agent_loop_home }}/.local/bin:/usr/local/bin:/usr/bin:
 agent_loop_authorized_keys:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEgSIpFv6ipc5B3CATvK1CIqul0hG6MSUT0cR5TqhAX4 pedro@type-shit"
 
+# --- MinIO client `mc` (PET-135, reviewer loop) --------------------------------------
+# The reviewer appends its JSONL eval rows to MinIO (agent-evals/verdicts.jsonl) via `mc`
+# (jq isn't on the host; mc is the repo's MinIO convention — see GOTCHAS `mc version
+# enable`). Pinned binary + official SHA256 into /usr/local/bin, same pattern as terraform/
+# vault. mc uses ROLLING date-release tags; bump version + sha together (the linux-amd64
+# line from the release's mc.RELEASE.<ts>.sha256sum on GitHub). The `mc alias` creds are an
+# operator step from Vault — NOT here (see docs/runbooks/reviewer-loop.md). Set false for a
+# host that never runs the reviewer.
+agent_loop_install_mc: true
+agent_loop_mc_release: "RELEASE.2025-08-13T08-35-41Z"
+agent_loop_mc_arch: amd64
+agent_loop_mc_sha256: "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
+
 # --- Vault Agent (PET-141) -----------------------------------------------------------
 # The loop reads its own secrets (proxmox_ro_token now, github_token later) straight from
 # Vault instead of hand-exported env vars. A Vault Agent auto-auths with the read-only
