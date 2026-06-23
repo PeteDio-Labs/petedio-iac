@@ -1,0 +1,21 @@
+# {{ ansible_managed }}
+# Auto-rebase the loop's open PRs onto main, loop branches only (PET-148). Triggered by
+# rebase-loop-prs.timer. Runs AS the loop user so it uses the loop's gh config + the Vault
+# Agent token at ~/.vault-token (the script reads GH_TOKEN from kv/services/agent-loop).
+[Unit]
+Description=Rebase the loop's own open PRs onto main (PET-148)
+After=network-online.target vault-agent.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ agent_loop_user }}
+Group={{ agent_loop_user }}
+Environment=HOME={{ agent_loop_home }}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# VAULT_ADDR/VAULT_CACERT for the script's GH_TOKEN-from-Vault fallback (the CLI reads the
+# renewing token off ~/.vault-token, sunk by vault-agent.service).
+Environment=VAULT_ADDR={{ agent_loop_vault_addr }}
+Environment=VAULT_CACERT={{ agent_loop_home }}/.config/vault-agent/vault-ca.crt
+ExecStart=/usr/bin/env bash {{ agent_loop_rebase_script }}
+NoNewPrivileges=true
