@@ -337,6 +337,23 @@
   environment:
     PATH: "{{ agent_loop_pipx_path }}"
 
+# --- MinIO client `mc` (PET-135, reviewer loop) --------------------------------------
+# So the reviewer can append JSONL eval rows to MinIO (agent-evals/verdicts.jsonl). The
+# release binary is a single executable (not an archive), so get_url drops it straight into
+# /usr/local/bin with its official checksum — get_url re-downloads only when the on-disk
+# checksum differs, so re-runs are no-ops and a version bump (sha changes) re-installs. The
+# `mc alias` creds are an operator step from Vault, NOT here (docs/runbooks/reviewer-loop.md).
+- name: Install pinned MinIO client mc {{ agent_loop_mc_release }}
+  ansible.builtin.get_url:
+    url: >-
+      https://dl.min.io/client/mc/release/linux-{{ agent_loop_mc_arch }}/archive/mc.{{ agent_loop_mc_release }}
+    dest: /usr/local/bin/mc
+    checksum: "sha256:{{ agent_loop_mc_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: agent_loop_install_mc | bool
+
 # --- Vault Agent (PET-141) -----------------------------------------------------------
 # A Vault Agent auto-auths with the read-only `agent-loop` AppRole and renews a token into
 # ~agent/.vault-token, so the loop self-serves kv/services/agent-loop — the proxmox helper's
