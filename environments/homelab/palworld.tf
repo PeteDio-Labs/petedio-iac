@@ -46,18 +46,20 @@ module "palworld" {
 
   # PET-168: dual-home onto the 192.168.86.x mesh for local-LAN play, ALONGSIDE the
   # platform-LAN NIC (eth0, .50.234) and the Tailscale path — those are untouched. No
-  # gateway here: the default route stays on eth0. The launch-day install/enable is still
-  # the operator's (PET-157 carryover).
-  # >>> OPERATOR — confirm before apply (loop can't see the node; never applies):
-  #   - bridge: the Proxmox bridge for the .86 mesh on pve01. pve01 has vmbr1 (LAN .50 +
-  #     gateway) and vmbr0 (no gateway) — set this to whichever bridges the .86 mesh
-  #     segment (`ip -br link` / `cat /etc/network/interfaces` on pve01). Placeholder vmbr0.
-  #   - ipv4_address + the STATIC DHCP lease on the .86 mesh (router/DHCP = hard rule 6,
-  #     operator). .34 is a placeholder — confirm a free mesh address.
+  # gateway here: the default route stays on eth0.
+  #
+  # bridge = vmbr0: CONFIRMED the .86-mesh bridge on pve01 — Plex (CT103) is dual-homed at
+  # 192.168.86.140 over vmbr0 (Homelab Inventory & IP/VMID Scheme, §2). vmbr1 is the .50
+  # LAN/uplink (has the gateway); vmbr0 carries the mesh segment with no gateway, exactly
+  # what a secondary mesh NIC wants.
+  #
+  # >>> OPERATOR — confirm before apply (router/DHCP = hard rule 6, operator-only):
+  #   - .234 mirrors the VMID (234) and the LAN octet (.234). Confirm it's free on the .86
+  #     mesh and add the STATIC DHCP reservation on the router so it can't be re-leased.
   secondary_network_interface = {
     name         = "eth1"
     bridge       = "vmbr0"
-    ipv4_address = "192.168.86.34/24"
+    ipv4_address = "192.168.86.234/24"
     # no ipv4_gateway — default route stays on eth0 (platform LAN)
   }
 }
