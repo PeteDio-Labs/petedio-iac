@@ -2,7 +2,7 @@
 ---
 # ollama-worker-inference.yml — configure ollama-host (.12) as the two-agent pivot's
 # WORKER inference tier (PET-132): two pinned single-GPU Ollama services + dual-resident
-# models. Coder (qwen3:8b) on the RTX 3060 Ti at :11434; gemma4:e4b on the GTX 1660 SUPER
+# models. Coder (qwen3:8b) on the RTX 3060 Ti at :11434; qwen2.5:3b on the GTX 1660 SUPER
 # at :11435. Each model is pinned ENTIRELY to its card (CUDA_VISIBLE_DEVICES) — no
 # cross-GPU split, no Turing fallback-kernel risk.
 #
@@ -17,6 +17,18 @@
 - name: Configure ollama-host worker inference layout
   hosts: ollama
   become: true
-  roles:
-    - ollama-service
-    - ollama-models
+  force_handlers: true   # PET-132: apply the env/pin restart even if a later resident-load hiccups
+  tasks:
+    - name: Configure pinned ollama services (primary + extra instances)
+      ansible.builtin.import_role:
+        name: ollama-service
+
+    # Apply the systemd drop-in restart (GPU pin + q8_0 KV + 32K ctx) BEFORE warming
+    # models, so each resident load happens under the pinned env — not the pre-restart
+    # default. Without this the warm-up loaded the coder unpinned (both GPUs) / wrong KV.
+    - name: Restart services with new env before warming models
+      ansible.builtin.meta: flush_handlers
+
+    - name: Pull base models + load resident models
+      ansible.builtin.import_role:
+        name: ollama-models
