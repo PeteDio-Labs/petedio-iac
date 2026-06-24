@@ -99,7 +99,9 @@ vs Pedro, and gold failures (bugs that slip both gates).
   branches, `apply`/`import`/state, SSH to live hosts, or Vault reads in output.
 - **Never review your own PRs** — those wait for Pedro.
 - Max **2 round-trips** with the worker, then a `needs-human` comment.
-- Verify any merge claim via `gh pr view --json mergedAt` before asserting it (PET-146).
+- Verify any merge claim via `gh pr view --json mergedAt` before asserting it (PET-146) —
+  use the wrapper `scripts/pr-merge-status.sh <pr>`: it prints a ready-to-paste verified line
+  and exits 0 only when actually merged, so a comment can never assert a merge from memory.
 
 [Reviewer Operations — agent-loop-242]: https://linear.app/petedillo/document/reviewer-operations-agent-loop-242-e7e7014c9f23
 [Agent Loop Operations]: https://linear.app/petedillo/document/agent-loop-operations-living-doc-agent-reads-every-run-bf14d40272b9
