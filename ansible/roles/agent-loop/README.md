@@ -48,6 +48,14 @@ What the role installs (idempotent; a second run reports no changes):
   pinned, checksum-verified binary in `/usr/local/bin`, so the reviewer can append its
   JSONL eval rows to MinIO (`agent-evals/verdicts.jsonl`). The `mc alias` credentials are
   an operator step from Vault — see [`docs/runbooks/reviewer-loop.md`](../../../docs/runbooks/reviewer-loop.md).
+- **Auto-rebase timer** (PET-148, toggle `agent_loop_rebase_timer_enabled`) — a systemd
+  timer (`agent_loop_rebase_oncalendar`, default every 15 min) that runs
+  `scripts/rebase-loop-prs.sh` as the loop user to rebase the loop's **own** open PRs onto
+  `main` and force-push them (loop branches only — the script enforces a `^pet-` **and**
+  loop-author guard, and only ever works in a throwaway `/tmp` clone), so plan-on-PR always
+  reflects a fresh base. It self-serves `GH_TOKEN` from Vault (`kv/services/agent-loop`,
+  field `github_token`) via the Vault Agent token, so no env secret is needed. The push uses
+  the loop PAT (not the Actions `GITHUB_TOKEN`) specifically so it **re-triggers** plan-on-PR.
 
 Run the role:
 

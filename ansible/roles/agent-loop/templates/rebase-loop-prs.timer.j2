@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+# Periodic schedule for rebase-loop-prs.service (PET-148). The AC is "remaining open loop
+# PRs show 'up to date' within the cron interval", so this runs frequently, not daily.
+[Unit]
+Description=Periodic auto-rebase of the loop's open PRs (PET-148)
+
+[Timer]
+OnCalendar={{ agent_loop_rebase_oncalendar }}
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
