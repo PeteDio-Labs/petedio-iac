@@ -16,9 +16,10 @@
 #     used, .240 burned). CONFIRM against the Homelab Inventory & IP/VMID Scheme,
 #     and add the STATIC DHCP lease on the router (operator-only — hard rule 6).
 #   - datastore_id: PET-157 wanted an NVMe pool for save I/O, but pve01 (target_node)
-#     has NO NVMe — only the rotational `sdb3-storage` LVM pool. The cluster's only
-#     NVMe is on pve02. Decision (PET-157): keep `sdb3-storage` on pve01 for now and
-#     revisit NVMe (move to pve02 or add an NVMe pool) as a follow-up — no change here.
+#     has NO NVMe — `sdb3-storage` is an SSD-backed LVM pool (it reads `ROTA=1` in
+#     lsblk, but that's a PERC H710 hardware-RAID artifact, not spinning media). The
+#     cluster's only NVMe is on pve02. Decision (PET-157): keep `sdb3-storage` (SSD)
+#     on pve01 for now; revisit NVMe (move to pve02 or add a pool) as a follow-up.
 #   - CPU affinity: pin the container to the highest-clock physical cores after
 #     create (`pct set 234 --cores <n>` is set here; physical-core *affinity* is
 #     host-topology-specific — `pct set 234 --cpulimit`/`--cpuunits` or a cgroup
@@ -36,9 +37,10 @@ module "palworld" {
   memory_dedicated = 16384 # 16 GB — Pocketpair's 1.0 recommendation
   memory_swap      = 2048
   disk_size        = 40 # ~12-15 GB binaries + 1.0 saves + headroom
-  # `sdb3-storage` is pve01's LVM pool. PET-157 wanted NVMe for save I/O, but pve01
-  # has no NVMe (the cluster's only NVMe is on pve02), so we keep sdb3-storage here
-  # and defer NVMe to a follow-up. See header.
+  # `sdb3-storage` is pve01's SSD-backed LVM pool (lsblk shows ROTA=1, but that's a
+  # PERC H710 RAID artifact — it's an SSD). PET-157 wanted NVMe for save I/O, but
+  # pve01 has no NVMe (cluster NVMe is on pve02), so keep sdb3-storage and defer
+  # NVMe to a follow-up. See header.
   datastore_id = "sdb3-storage"
   description  = "Palworld 1.0 dedicated server (PET-157). Managed by Terraform."
 }
