@@ -125,11 +125,16 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   `caCertificate: ${{ steps.<id>.outputs.b64 }}`. The path is relative to the job's
   `working-directory` (CI `cd`s into `environments/homelab`, where the cert lives).
 
-- **GitHub OIDC `sub` differs by event — bind BOTH or you break plan-on-PR.**
-  push-to-main → `repo:<owner>/<repo>:ref:refs/heads/main`; pull_request →
-  `repo:<owner>/<repo>:pull_request`. CI's plan (PR) and apply (merge) BOTH run
-  terraform → both need creds → both subs must be allowed. Bind exactly those two,
-  not repository-only (any branch/workflow) and not main-only (kills PR plans).
+- **GitHub OIDC `sub` differs by event.** push-to-main →
+  `repo:<owner>/<repo>:ref:refs/heads/main`; pull_request →
+  `repo:<owner>/<repo>:pull_request`. Bind exactly the events that legitimately mint a
+  token — never repository-only (any branch/workflow). **For `petedio-iac` the
+  `github-actions` role is now MAIN-PUSH ONLY (PET-104):** the PR job moved to a
+  GitHub-hosted, no-Vault `fmt`/`validate` (PR-controlled code must not run on the
+  self-hosted LAN runner or mint creds), so there is no plan-on-PR to keep alive — do
+  NOT re-add the `pull_request` sub here. The two-sub "bind BOTH" pattern still applies to
+  roles whose repo genuinely runs a credentialed PR job (e.g. `media-ci`, `colatro-ci`
+  until they get the same PET-104 treatment).
 
 - **The Terraform provider only takes STRING `bound_claims`, not lists.** Put multiple
   allowed values in ONE comma-separated string with OR semantics:

@@ -1,7 +1,17 @@
 # runner (LXC 232) — self-hosted GitHub Actions runner, ORG-scoped to PeteDio-Labs.
-# Runner labels: self-hosted,linux,x64,homelab. Runs Workflow B (this workspace's
-# terraform plan/apply) AND the Co-latro app CI/CD, from INSIDE the homelab so it
-# can reach the Proxmox API + MinIO + Nexus + Vault.
+# Runner labels: self-hosted,linux,x64,homelab. Runs Workflow B's APPLY-on-merge (this
+# workspace) AND the Co-latro app CI/CD, from INSIDE the homelab so it can reach the
+# Proxmox API + MinIO + Nexus + Vault.
+#
+# SECURITY (PET-104): this box can reach the whole 192.168.50.0/24 and holds CI's path to
+# Vault, so PR-controlled code must NEVER run on it. .github/workflows/terraform.yml now
+# runs PRs on a GitHub-HOSTED runner (no creds, no LAN) and keeps only push-to-main
+# (post-merge, trusted) on this self-hosted runner; the github-actions Vault role
+# (vault-config/auth.tf) binds main-push only. Two hardening layers remain OPERATOR-only
+# (out of scope for IaC here): (a) repo Settings → Actions → "Require approval for all
+# outside collaborators" on EVERY repo this org runner serves; (b) an ACL/VLAN limiting
+# runner-232 to just Proxmox/MinIO/Vault/Nexus rather than the whole /24. Until (a)/(b)
+# land, the org-scoping (PET-79) means every PeteDio-Labs repo is an entry point.
 #
 # PET-79: re-registered from petedio-iac-REPO scope to ORG scope so it serves all
 # PeteDio-Labs repos, and Docker was installed (configure-runner-docker.yml) so app

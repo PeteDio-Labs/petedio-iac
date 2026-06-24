@@ -51,22 +51,23 @@ resource "vault_jwt_auth_backend" "github" {
 # github-actions role → ci-read policy. role_type MUST be "jwt": the provider
 # default is "oidc", and bound_audiences is required for jwt-type roles.
 #
-# CLAIM BINDING (PET-29 — tightened from repository-only): we bind the OIDC `sub`
-# to EXACTLY the two events CI legitimately runs from, so no other branch/tag/
-# workflow/environment in this repo (and no other repo) can mint a CI token:
+# CLAIM BINDING — MAIN-PUSH ONLY (PET-104; was two-sub under PET-29). We bind the
+# OIDC `sub` to EXACTLY the one event that legitimately needs homelab creds:
 #   - push to main → sub = "repo:<repo>:ref:refs/heads/main"   (apply-on-merge)
-#   - pull_request → sub = "repo:<repo>:pull_request"          (plan-on-PR)
-# Both terraform jobs (plan + apply) need the backend/provider creds, so BOTH
-# subs must be allowed — binding only main would break plan-on-PR.
+# The `pull_request` sub was REMOVED. This is a PUBLIC repo and the apply runner is
+# self-hosted inside the homelab, so minting backend/provider creds on a PR run
+# (which executes PR-controlled terraform/workflow code) put arbitrary code next to
+# live creds. The PR job is now a GitHub-HOSTED, no-Vault fmt/validate
+# (.github/workflows/terraform.yml), so nothing on a PR needs — or may mint — a token
+# here. Matches the openfaas-ci role's main-only pattern below.
 #
-# bound_claims_type = "string" → EXACT match (not glob): these two subs are fixed
-# strings with no wildcard. A single claim value may carry multiple comma-separated
-# allowed values with OR semantics ("a,b" matches a OR b) — per the hashicorp/vault
-# provider docs — so we list both subs in one comma-joined string.
+# bound_claims_type = "string" → EXACT match (not glob): the sub is a fixed string
+# with no wildcard.
 #
-# NOTE (follow-up risk, out of scope): this is a PUBLIC repo on a self-hosted
-# runner. Fork pull_requests on self-hosted runners are a known exposure
-# (untrusted code on a runner that can reach Vault) — track separately.
+# NOTE (sibling exposure, separate issues): media-ci and colatro-ci below still bind
+# their `pull_request` subs, and the SAME org-scoped runner (PET-79) serves them — same
+# risk, same fix needed in petedio-media-iac / co-latro. Not changed here: dropping their
+# PR sub without updating those repos' PR workflows would break them (one repo per PR).
 resource "vault_jwt_auth_backend_role" "github_actions" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "github-actions"
@@ -75,7 +76,7 @@ resource "vault_jwt_auth_backend_role" "github_actions" {
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
   bound_claims = {
-    sub = "repo:${var.github_repo}:ref:refs/heads/main,repo:${var.github_repo}:pull_request"
+    sub = "repo:${var.github_repo}:ref:refs/heads/main"
   }
   token_policies = [vault_policy.ci_read.name]
   token_ttl      = 900
