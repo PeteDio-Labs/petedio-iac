@@ -5,7 +5,7 @@
 # GPUs: GTX 1660 SUPER (6GB) + RTX 3060 Ti (8GB).
 # WORKER INFERENCE LAYOUT (PET-132): each model is pinned ENTIRELY to one GPU via
 # CUDA_VISIBLE_DEVICES (two single-GPU ollama services) — the coder on the 3060 Ti
-# (:11434), gemma4:e4b on the 1660 SUPER (:11435). See the worker-layout block below.
+# (:11434), qwen2.5:3b on the 1660 SUPER (:11435). See the worker-layout block below.
 # NIC: eth0, MAC 2c:f0:5d:a2:7f:4f — WoL enabled (magic packet).
 wol_interface: eth0
 wol_mac: "2c:f0:5d:a2:7f:4f"
@@ -22,7 +22,7 @@ ansible_user: ansible
 ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pedro
 
 # ── Worker inference layout (PET-132) ─────────────────────────────────────────
-# Coder served on :11434 pinned to the RTX 3060 Ti; gemma4:e4b kept resident on the
+# Coder served on :11434 pinned to the RTX 3060 Ti; qwen2.5:3b kept resident on the
 # GTX 1660 SUPER via a second pinned instance on :11435. The worker hits :11434.
 ollama_coder_model: "qwen3:8b"   # Q4_K_M, 5.2 GB, tools+thinking (verified ollama.com/library)
 
@@ -31,12 +31,12 @@ ollama_coder_model: "qwen3:8b"   # Q4_K_M, 5.2 GB, tools+thinking (verified olla
 #   …RTX 3060 Ti (UUID: GPU-xxxx…)    -> ollama_coder_gpu
 #   …GTX 1660 SUPER (UUID: GPU-yyyy…) -> ollama_gemma_gpu
 # The ollama-service role asserts these no longer contain REPLACE_WITH before applying.
-ollama_coder_gpu: "GPU-REPLACE_WITH_3060TI_UUID"
-ollama_gemma_gpu: "GPU-REPLACE_WITH_1660S_UUID"
+ollama_coder_gpu: "GPU-0141644f-f1c4-d527-121f-ae96af5372ed"   # RTX 3060 Ti (8GB) — nvidia-smi -L, 2026-06-23
+ollama_gemma_gpu: "GPU-bdefa4ac-8c14-9baa-db1b-c94bb471b027"   # GTX 1660 SUPER (6GB) — nvidia-smi -L, 2026-06-23
 
-# Pull the coder alongside gemma (shared model store → one pull serves both instances).
+# Pull the coder alongside the 1660S utility model (shared store → one pull per instance).
 ollama_base_models:
-  - gemma4:e4b
+  - qwen2.5:3b
   - "{{ ollama_coder_model }}"
 
 # PRIMARY service (:11434) — pinned to the 3060 Ti, tuned for the coder: q8_0 KV-cache
@@ -49,11 +49,12 @@ ollama_extra_env:
   - "OLLAMA_CONTEXT_LENGTH=32768"
   - "OLLAMA_KEEP_ALIVE=-1"
 
-# SECOND pinned instance (:11435) — the 1660 SUPER, keeps gemma4:e4b resident.
+# SECOND pinned instance (:11435) — the 1660 SUPER, keeps qwen2.5:3b resident. (gemma4:e4b
+# is ~9.6 GB and does NOT fit the 6 GB 1660S — PET-132 fix; qwen2.5:3b is ~1.9 GB.)
 ollama_extra_instances:
   - name: ollama-1660s
     port: 11435
-    description: "Ollama (GTX 1660 SUPER) — keeps gemma4:e4b resident (PET-132)"
+    description: "Ollama (GTX 1660 SUPER) — keeps qwen2.5:3b resident (PET-132)"
     env:
       - "CUDA_VISIBLE_DEVICES={{ ollama_gemma_gpu }}"
       - "OLLAMA_KEEP_ALIVE=-1"
@@ -62,5 +63,5 @@ ollama_extra_instances:
 ollama_resident_models:
   - model: "{{ ollama_coder_model }}"
     port: 11434
-  - model: gemma4:e4b
+  - model: qwen2.5:3b
     port: 11435
