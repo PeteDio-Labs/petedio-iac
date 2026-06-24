@@ -1,0 +1,27 @@
+---
+# configure-palworld.yml — prep the Palworld 1.0 dedicated-server LXC (234 / .234)
+# to "ready for binaries". (PET-157)
+#
+# Brings the host from a bare LXC to: SteamCMD installed, `steam` service user +
+# install tree, a Palworld systemd unit (installed, NOT enabled — no binaries yet),
+# a templated PalWorldSettings.ini, and the game port open over the LAN. Idempotent.
+#
+# OPERATOR launch-day steps (deliberately NOT automated — the 1.0 build doesn't exist
+# until 2026-07-10, so there's nothing to download until then):
+#   sudo -u steam ~steam/steamcmd/steamcmd.sh +force_install_dir ~steam/palworld \
+#     +login anonymous +app_update 2394010 validate +quit
+#   systemctl enable --now palworld
+#
+# Optional secrets (admin/server passwords): no defaults in the repo. Pass them as a
+# no_log @file extra-var if you want them set, the repo convention:
+#   ansible-playbook playbooks/configure-palworld.yml \
+#     -e '{"palworld_admin_password":"…","palworld_server_password":"…"}'
+#
+# Inventory: the `palworld` group -> 192.168.50.234, root over the TF-installed key.
+
+- name: Prep the Palworld dedicated-server LXC (ready for binaries)
+  hosts: palworld
+  become: true
+
+  roles:
+    - palworld

@@ -1,0 +1,38 @@
+---
+# palworld role defaults (PET-157). Everything to make the LXC "ready for binaries";
+# the binaries themselves (SteamCMD app 2394010) are an operator launch-day step.
+
+# Service account the dedicated server + SteamCMD run as (never root).
+palworld_user: steam
+palworld_group: steam
+palworld_home: /home/steam
+
+# Install layout under the steam user.
+palworld_steamcmd_dir: "{{ palworld_home }}/steamcmd"
+palworld_server_dir: "{{ palworld_home }}/palworld" # app 2394010 installs here
+palworld_steam_app_id: 2394010
+
+# The systemd unit is installed but deliberately NOT enabled/started — there are no
+# binaries yet. The operator flips `systemctl enable --now palworld` on launch day.
+palworld_service_name: palworld
+# AppExec path the unit launches; lives under the server dir once binaries land.
+palworld_server_exec: "{{ palworld_server_dir }}/PalServer.sh"
+
+# --- PalWorldSettings.ini tunables (exposed so the .ini stays declarative) --------
+palworld_server_name: "PeteDio Palworld"
+palworld_server_description: "Managed by petedio-iac (PET-157)"
+palworld_max_players: 32
+palworld_public_port: 8211
+# Admin/server passwords: leave empty here (no secrets in the repo). The operator
+# supplies them as no_log extra-vars at run time if wanted — see the play header.
+palworld_admin_password: ""
+palworld_server_password: ""
+palworld_rcon_enabled: false
+palworld_rcon_port: 25575
+
+# --- Firewall -------------------------------------------------------------------
+# Access is intended over Tailscale, so the PUBLIC LAN/WAN rule is off by default.
+# Turn on only if you really want the game port reachable on the LAN.
+palworld_firewall_enabled: true
+palworld_open_public_port: false
+palworld_firewall_subnet: 192.168.50.0/24
