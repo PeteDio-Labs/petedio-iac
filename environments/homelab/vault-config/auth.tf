@@ -84,9 +84,10 @@ resource "vault_jwt_auth_backend_role" "github_actions" {
 
 # media-ci role → media-ci policy. Same JWT backend, separate role so petedio-
 # media-iac CI gets ONLY the media-ci policy (minio/proxmox/lxc-ssh + services/
-# media), never the broader iac ci-read scope. Binds main + pull_request subs for
-# the media repo — same two-sub exact-match pattern as github-actions
-# (plan-on-PR + apply-on-merge both need the backend/provider creds).
+# media), never the broader iac ci-read scope. MAIN-PUSH ONLY (PET-163; was
+# two-sub): the pull_request sub was dropped now that media-iac's PR job is a
+# GitHub-hosted, no-Vault validate (terraform.yml split) — nothing on a PR needs
+# or may mint media-ci. Matches the github-actions role above.
 resource "vault_jwt_auth_backend_role" "media_ci" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "media-ci"
@@ -95,7 +96,7 @@ resource "vault_jwt_auth_backend_role" "media_ci" {
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
   bound_claims = {
-    sub = "repo:${var.media_repo}:ref:refs/heads/main,repo:${var.media_repo}:pull_request"
+    sub = "repo:${var.media_repo}:ref:refs/heads/main"
   }
   token_policies = [vault_policy.media_ci.name]
   token_ttl      = 900
