@@ -1,6 +1,8 @@
 ---
-# palworld role defaults (PET-157). Everything to make the LXC "ready for binaries";
-# the binaries themselves (SteamCMD app 2394010) are an operator launch-day step.
+# palworld role defaults (PET-157). Fully provisions the LXC incl. the SteamCMD server
+# binaries (app 2394010) and an enabled+started systemd unit, so launch day is just a
+# power-on + the auto-pulled 1.0 update. Flip palworld_install_binaries=false for the
+# old "ready-for-binaries" behavior (binaries left as an operator launch-day step).
 
 # Service account the dedicated server + SteamCMD run as (never root).
 palworld_user: steam
@@ -12,11 +14,17 @@ palworld_steamcmd_dir: "{{ palworld_home }}/steamcmd"
 palworld_server_dir: "{{ palworld_home }}/palworld" # app 2394010 installs here
 palworld_steam_app_id: 2394010
 
-# The systemd unit is installed but deliberately NOT enabled/started — there are no
-# binaries yet. The operator flips `systemctl enable --now palworld` on launch day.
+# The systemd unit is installed and — when palworld_enable_service — enabled + started
+# once the binaries are present, so the server auto-starts on container/host boot.
 palworld_service_name: palworld
 # AppExec path the unit launches; lives under the server dir once binaries land.
 palworld_server_exec: "{{ palworld_server_dir }}/PalServer.sh"
+
+# Install/update the SteamCMD server binaries (app 2394010) during the play, and
+# enable+start the unit — so the box is fully launch-ready (power on + go) and the
+# launch-day converge auto-pulls the 1.0 build. Set false for "ready-for-binaries" only.
+palworld_install_binaries: true
+palworld_enable_service: true
 
 # --- PalWorldSettings.ini tunables (exposed so the .ini stays declarative) --------
 palworld_server_name: "PeteDio Palworld"

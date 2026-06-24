@@ -1,16 +1,16 @@
 ---
-# configure-palworld.yml — prep the Palworld 1.0 dedicated-server LXC (234 / .234)
-# to "ready for binaries". (PET-157)
+# configure-palworld.yml — fully provision the Palworld 1.0 dedicated-server LXC
+# (234 / .234). (PET-157)
 #
-# Brings the host from a bare LXC to: SteamCMD installed, `steam` service user +
-# install tree, a Palworld systemd unit (installed, NOT enabled — no binaries yet),
-# a templated PalWorldSettings.ini, and the game port open over the LAN. Idempotent.
+# Brings the host from a bare LXC to a running server: SteamCMD installed, `steam`
+# service user + install tree, a templated PalWorldSettings.ini, the game port open
+# over the LAN (+ the .86 mesh, PET-168), the server BINARIES installed (SteamCMD app
+# 2394010), and the systemd unit enabled + started. Idempotent — `app_update` is a
+# no-op when current, so re-running just converges (and pulls 1.0 on/after launch).
 #
-# OPERATOR launch-day steps (deliberately NOT automated — the 1.0 build doesn't exist
-# until 2026-07-10, so there's nothing to download until then):
-#   sudo -u steam ~steam/steamcmd/steamcmd.sh +force_install_dir ~steam/palworld \
-#     +login anonymous +app_update 2394010 validate +quit
-#   systemctl enable --now palworld
+# Launch day (2026-07-10): nothing manual required beyond a converge — the binaries
+# task re-runs `app_update 2394010 validate` and pulls the 1.0 build. To fall back to
+# "ready-for-binaries" only, run with `-e palworld_install_binaries=false`.
 #
 # Optional secrets (admin/server passwords): no defaults in the repo. Pass them as a
 # no_log @file extra-var if you want them set, the repo convention:
