@@ -40,18 +40,30 @@ VAULT_TOKEN="$(vault write -field=token auth/approle/login \
   role_id=@"$ROLE_ID_FILE" secret_id=@"$SECRET_ID_FILE")" || die "AppRole login failed"
 export VAULT_TOKEN
 
-# Take the snapshot.
+# --- External-dependency PRECONDITIONS (PET-151) -------------------------------------
+# Verify the MinIO creds + destination bucket BEFORE doing any work, so a missing external
+# dependency fails fast with an actionable pointer — not mid-run after the snapshot is already
+# taken (the PR #58 lesson: the bucket was assumed to exist). Read MinIO creds (by reference)
+# and hand them to mc via MC_HOST_ env — not argv, not persisted to ~/.mc. -field returns just
+# the value, never logged.
+mc_key="$(vault kv get -field=access_key "$CREDS_PATH")" ||
+  die "MinIO access_key unreadable at ${CREDS_PATH} — is the vault-snapshots svcacct seeded? See docs/runbooks/vault-resilience.md."
+mc_sec="$(vault kv get -field=secret_key "$CREDS_PATH")" ||
+  die "MinIO secret_key unreadable at ${CREDS_PATH} — is the vault-snapshots svcacct seeded? See docs/runbooks/vault-resilience.md."
+export MC_HOST_${MC_ALIAS}="{{ vault_snapshot_minio_scheme }}://${mc_key}:${mc_sec}@{{ vault_snapshot_minio_hostport }}"
+unset mc_key mc_sec
+
+# The bucket is created out-of-band by the operator — assert it exists rather than letting a
+# later `mc cp` fail with an opaque error after the snapshot work is already done.
+"$MC" ls "${MC_ALIAS}/${BUCKET}" >/dev/null 2>&1 ||
+  die "MinIO bucket '${BUCKET}' missing or unreachable at ${MINIO_URL} — create it before the timer can store snapshots: 'mc mb <alias>/${BUCKET} && mc version enable <alias>/${BUCKET}'. See docs/runbooks/vault-resilience.md."
+
+# Dependencies verified — take the snapshot.
 vault operator raft snapshot save "$snap" || die "raft snapshot save failed"
 [ -s "$snap" ] || die "snapshot file is empty: $snap"
+unset VAULT_TOKEN
 
-# Read MinIO creds (by reference) and hand them to mc via MC_HOST_ env — not argv, not
-# persisted to ~/.mc. -field returns just the value, never logged.
-mc_key="$(vault kv get -field=access_key "$CREDS_PATH")" || die "read MinIO access_key failed"
-mc_sec="$(vault kv get -field=secret_key "$CREDS_PATH")" || die "read MinIO secret_key failed"
-export MC_HOST_${MC_ALIAS}="{{ vault_snapshot_minio_scheme }}://${mc_key}:${mc_sec}@{{ vault_snapshot_minio_hostport }}"
-unset mc_key mc_sec VAULT_TOKEN
-
-# Upload. mc makes the bucket path; the bucket itself is created out-of-band (operator).
+# Upload (bucket existence already asserted above; this die is the secondary guard).
 "$MC" cp --quiet "$snap" "${MC_ALIAS}/${BUCKET}/" >/dev/null || die "upload to MinIO failed"
 log "uploaded ${snap##*/} to ${MINIO_URL}/${BUCKET}/"
 
