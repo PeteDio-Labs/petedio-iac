@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+# Palworld 1.0 dedicated server (PET-157). Installed by the palworld role but NOT
+# enabled/started until the operator installs the binaries on launch day:
+#   sudo -u {{ palworld_user }} {{ palworld_steamcmd_dir }}/steamcmd.sh \
+#     +force_install_dir {{ palworld_server_dir }} +login anonymous \
+#     +app_update {{ palworld_steam_app_id }} validate +quit
+#   systemctl enable --now {{ palworld_service_name }}
+[Unit]
+Description=Palworld dedicated server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ palworld_user }}
+Group={{ palworld_group }}
+WorkingDirectory={{ palworld_server_dir }}
+# -useperfthreads/NoAsyncLoadingThread are Pocketpair's recommended perf flags for
+# the dedicated server; the port comes from the templated PalWorldSettings.ini.
+ExecStart={{ palworld_server_exec }} -useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS
+Restart=on-failure
+RestartSec=5
+# Give the server time to flush saves on stop rather than getting SIGKILLed.
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

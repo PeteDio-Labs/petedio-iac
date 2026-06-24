@@ -1,0 +1,126 @@
+---
+# palworld role (PET-157) — prep a Palworld 1.0 dedicated-server LXC to the point
+# where launch day is just "install binaries + enable the unit". Idempotent: a
+# converged host re-runs to no changes. Native SteamCMD server (no Docker).
+#
+# NOT done here (operator, launch day — the 1.0 build doesn't exist until then):
+#   sudo -u steam {{ palworld_steamcmd_dir }}/steamcmd.sh +force_install_dir \
+#     {{ palworld_server_dir }} +login anonymous +app_update 2394010 validate +quit
+#   systemctl enable --now palworld
+
+- name: Enable i386 multiarch (SteamCMD is 32-bit)
+  ansible.builtin.command:
+    cmd: dpkg --add-architecture i386
+    creates: /var/lib/dpkg/arch
+  notify: Update apt cache
+
+- name: Flush handlers so the apt cache reflects i386 before installing
+  ansible.builtin.meta: flush_handlers
+
+- name: Install SteamCMD prerequisites + server runtime libs
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - tar
+      - lib32gcc-s1 # SteamCMD + the dedicated server need the 32-bit gcc runtime
+      - libc6-i386
+      - ufw
+    state: present
+    update_cache: true
+
+- name: Create the steam service group
+  ansible.builtin.group:
+    name: "{{ palworld_group }}"
+    system: true
+
+- name: Create the steam service user (no login shell needed for a service account)
+  ansible.builtin.user:
+    name: "{{ palworld_user }}"
+    group: "{{ palworld_group }}"
+    home: "{{ palworld_home }}"
+    shell: /bin/bash # SteamCMD scripts expect a real shell
+    system: true
+    create_home: true
+
+- name: Lay down the install directory structure (steam-owned)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ palworld_user }}"
+    group: "{{ palworld_group }}"
+    mode: "0755"
+  loop:
+    - "{{ palworld_steamcmd_dir }}"
+    - "{{ palworld_server_dir }}"
+
+- name: Fetch the SteamCMD bootstrap tarball
+  ansible.builtin.get_url:
+    url: https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
+    dest: "{{ palworld_steamcmd_dir }}/steamcmd_linux.tar.gz"
+    owner: "{{ palworld_user }}"
+    group: "{{ palworld_group }}"
+    mode: "0644"
+
+- name: Unpack SteamCMD (idempotent — skips once steamcmd.sh is present)
+  ansible.builtin.unarchive:
+    src: "{{ palworld_steamcmd_dir }}/steamcmd_linux.tar.gz"
+    dest: "{{ palworld_steamcmd_dir }}"
+    remote_src: true
+    owner: "{{ palworld_user }}"
+    group: "{{ palworld_group }}"
+    creates: "{{ palworld_steamcmd_dir }}/steamcmd.sh"
+
+# PalWorldSettings.ini lives in the server's save tree. We create the dir tree the
+# server expects so the templated config is in place before first boot; the server
+# reads/writes it from here.
+- name: Create the PalWorldSettings config directory
+  ansible.builtin.file:
+    path: "{{ palworld_server_dir }}/Pal/Saved/Config/LinuxServer"
+    state: directory
+    owner: "{{ palworld_user }}"
+    group: "{{ palworld_group }}"
+    mode: "0755"
+
+- name: Template PalWorldSettings.ini (tunables from role vars)
+  ansible.builtin.template:
+    src: PalWorldSettings.ini.j2
+    dest: "{{ palworld_server_dir }}/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini"
+    owner: "{{ palworld_user }}"
+    group: "{{ palworld_group }}"
+    mode: "0644"
+
+- name: Install the Palworld systemd unit
+  ansible.builtin.template:
+    src: palworld.service.j2
+    dest: "/etc/systemd/system/{{ palworld_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+# Deliberately NOT enabled/started: no binaries yet. Just make sure systemd has
+# picked up the unit file so launch day's `enable --now` works immediately.
+- name: Reload systemd so the new unit is known (not enabled/started — no binaries yet)
+  ansible.builtin.meta: flush_handlers
+
+- name: Allow the Palworld game port over the LAN (UFW)
+  community.general.ufw:
+    rule: allow
+    port: "{{ palworld_public_port }}"
+    proto: udp
+    from_ip: "{{ palworld_firewall_subnet }}"
+    comment: "Palworld game port - homelab LAN (PET-157)"
+  when: palworld_firewall_enabled | bool
+
+# Public exposure is OFF by default — access is over Tailscale. Only opens the port
+# to any source when explicitly turned on.
+- name: Allow the Palworld game port publicly (only when explicitly enabled)
+  community.general.ufw:
+    rule: allow
+    port: "{{ palworld_public_port }}"
+    proto: udp
+    comment: "Palworld game port - PUBLIC (PET-157)"
+  when:
+    - palworld_firewall_enabled | bool
+    - palworld_open_public_port | bool

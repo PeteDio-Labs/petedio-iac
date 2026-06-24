@@ -76,6 +76,7 @@
     # docker-group membership. The unit name follows the actions/runner svc.sh convention.
     - name: Restart the actions runner
       ansible.builtin.shell: |
+        set -o pipefail
         set -e
         svc=$(systemctl list-units --type=service --all --no-legend 'actions.runner.*' \
               | awk '{print $1}' | head -1)
