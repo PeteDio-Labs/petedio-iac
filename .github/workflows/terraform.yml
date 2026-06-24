@@ -36,6 +36,12 @@ env:
   VAULT_ADDR: https://192.168.50.223:8200
   VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
 
+  # pool.tf gate (PET-160). Drives BOTH terraform (var.manage_resource_pool) and the preflight
+  # below, from one repo variable so they can't drift. Default false → the pool is a no-op and
+  # the preflight is skipped. Flip the repo var MANAGE_RESOURCE_POOL=true AFTER granting
+  # Pool.Allocate (PET-159 runbook); the preflight then gates the change on the priv at PR time.
+  TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
+
 permissions:
   contents: read
   pull-requests: write # to post the plan as a PR comment
@@ -93,6 +99,15 @@ jobs:
             kv/data/iac/proxmox api_token | TF_VAR_proxmox_api_token ;
             kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key ;
             kv/data/iac/cloudflare api_token | TF_VAR_cloudflare_api_token
+
+      # Preflight (PET-160): when the pool is being managed, prove the IaC token actually holds
+      # Pool.Allocate/Pool.Audit BEFORE plan/apply — so a missing privilege fails LOUD here (on
+      # the PR and on merge) with the fix, instead of a green plan-on-PR that 403s deep in apply
+      # (the PET-159 poison pill). Read-only `/access/permissions` introspection; no writes. Only
+      # runs when the pool gate is on, so it never blocks unrelated PRs while the pool is off.
+      - name: Proxmox preflight permissions (pool)
+        if: env.TF_VAR_manage_resource_pool == 'true'
+        run: ../../scripts/proxmox-preflight-perms.sh --require Pool.Allocate --require Pool.Audit --path /pool/homelab
 
       - name: Init
         run: terraform init -input=false

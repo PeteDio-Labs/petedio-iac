@@ -20,6 +20,19 @@ variable "target_node" {
   default     = "pve01"
 }
 
+variable "manage_resource_pool" {
+  description = <<-EOT
+    Gate for pool.tf (PET-160, after the PET-159 poison-pill incident). FALSE until the IaC
+    token (petedio@pam!iac) holds Pool.Allocate on /pool/homelab — granted out-of-band per the
+    PET-159 runbook. While false the pool + memberships are a no-op (count 0 / empty for_each),
+    so a missing pool privilege can't fail apply-on-merge for the whole workspace. Set the repo
+    var MANAGE_RESOURCE_POOL=true after the grant; CI's preflight then verifies Pool.Allocate at
+    PR time before the change can merge.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "ssh_public_key" {
   description = "SSH public key installed for root inside each LXC (matches the key Ansible logs in with)."
   type        = string
