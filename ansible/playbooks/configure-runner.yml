@@ -1,0 +1,167 @@
+---
+# configure-runner.yml — fully provision a self-hosted GitHub Actions runner LXC
+# (runner-232 / runner-233) from IaC: Docker (imported) + the actions-runner install
+# AND its ORG registration. (PET-80)
+#
+# WHY: runner.tf owns only the LXC; the runner REGISTRATION was out-of-band (a manual
+# `config.sh` with an org reg token). If a runner box is rebuilt, CI silently has no
+# runner until someone re-registers it by hand — exactly the hidden, un-IaC'd state the
+# "graduate to AWS by variable-swap" North Star forbids. This play makes the runner's
+# identity/labels/scope live in git.
+#
+# SECRET (REQUIRED, no committed default): `github_runner_pat` — a fine-grained PAT (or
+# GitHub App token) with permission to manage the PeteDio-Labs org's self-hosted runners
+# ("Organization self-hosted runners: Read and write" / classic `admin:org`). Resolve it
+# from Vault and pass it as a no_log extra-var via a 0600 JSON @file — the repo convention
+# (mirrors configure-minio.yml / configure-postgres.yml). The PAT is used ONLY to mint a
+# short-lived (~1h) org registration token at runtime (mint-at-runtime — a pre-minted token
+# would expire between resolve and run); it is never written to disk. For example:
+#
+#   umask 077
+#   vault kv get -format=json kv/iac/github-runner-pat | \
+#     jq '{github_runner_pat: .data.data.pat}' > /tmp/runner-secret.json
+#   ansible-playbook playbooks/configure-runner.yml -e @/tmp/runner-secret.json
+#   shred -u /tmp/runner-secret.json
+#
+# Vault path kv/iac/github-runner-pat (field `pat`) is referenced BY NAME only — see
+# docs/runbooks/runner-232-rebuild.md for the one-time operator step that seeds it.
+#
+# IDEMPOTENT: the install task is guarded by `creates:`; registration runs only when the
+# box is not already configured (the `.runner` marker is absent) — so a converged runner
+# is a no-op. To force a re-register (new labels/scope), pass `-e runner_force_reconfigure=true`.
+#
+# SCOPE: the `runner` inventory group is BOTH runner-232 (pve01) and runner-233 (pve02);
+# each registers under its own `inventory_hostname` with the same org + labels (runner.tf:
+# both are org-scoped, labels self-hosted,linux,x64,homelab). Limit with `--limit runner-233`
+# for a single box. Authoring only — the operator runs it; the loop never runs Ansible
+# against live hosts (run with `--check`/`--syntax-check` here; a real run is a no-apply
+# window task).
+
+# Fold in Docker so one play fully provisions the runner (app CI needs the daemon).
+- name: Provision Docker on the runner (imported)
+  import_playbook: configure-runner-docker.yml
+
+- name: Register the self-hosted GitHub Actions runner with the PeteDio-Labs org
+  hosts: runner
+  become: true
+
+  vars:
+    runner_user: runner
+    runner_home: /home/runner/actions-runner
+    runner_org_url: https://github.com/PeteDio-Labs
+    runner_labels: self-hosted,linux,x64,homelab
+    # Pinned (NOT 'latest') — supply-chain hygiene, mirrors PET-111. CONFIRM/bump to the
+    # current actions/runner release before a rebuild run; leave runner_sha256 empty to
+    # skip the checksum, or set it to the release's published x64 SHA-256 to verify.
+    runner_version: "2.328.0"
+    runner_sha256: ""
+
+  tasks:
+    - name: Require the org-runner PAT (resolved from Vault, passed as a no_log extra-var)
+      ansible.builtin.assert:
+        that:
+          - github_runner_pat is defined
+          - github_runner_pat | length > 0
+        fail_msg: >-
+          github_runner_pat is required — resolve it from Vault (kv/iac/github-runner-pat,
+          field `pat`) and pass it as a no_log @file extra-var. See this play's header.
+        quiet: true
+
+    - name: Ensure the unprivileged runner user exists
+      ansible.builtin.user:
+        name: "{{ runner_user }}"
+        system: false
+        create_home: true
+
+    - name: Create the actions-runner install directory
+      ansible.builtin.file:
+        path: "{{ runner_home }}"
+        state: directory
+        owner: "{{ runner_user }}"
+        group: "{{ runner_user }}"
+        mode: "0755"
+
+    - name: Download the pinned actions-runner tarball
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz
+        dest: "/tmp/actions-runner-{{ runner_version }}.tar.gz"
+        checksum: "{{ ('sha256:' + runner_sha256) if (runner_sha256 | length > 0) else omit }}"
+        mode: "0644"
+
+    - name: Extract the actions-runner (idempotent — skips once config.sh is present)
+      ansible.builtin.unarchive:
+        src: "/tmp/actions-runner-{{ runner_version }}.tar.gz"
+        dest: "{{ runner_home }}"
+        remote_src: true
+        owner: "{{ runner_user }}"
+        group: "{{ runner_user }}"
+        creates: "{{ runner_home }}/config.sh"
+
+    - name: Install the runner's OS dependencies (./bin/installdependencies.sh)
+      ansible.builtin.command:
+        cmd: ./bin/installdependencies.sh
+        chdir: "{{ runner_home }}"
+        creates: "{{ runner_home }}/bin/installdependencies.sh.done"
+      # The script is idempotent but slow; the marker keeps re-runs fast.
+      notify: Mark dependencies installed
+
+    - name: Check whether this box is already registered
+      ansible.builtin.stat:
+        path: "{{ runner_home }}/.runner"
+      register: runner_config
+
+    # Mint a SHORT-LIVED org registration token at runtime from the PAT. no_log: the token
+    # (and the PAT in the Authorization header) must never hit the log. Only needed when we
+    # are about to (re)configure — skipped on a converged box.
+    - name: Mint an org runner registration token
+      ansible.builtin.uri:
+        url: https://api.github.com/orgs/PeteDio-Labs/actions/runners/registration-token
+        method: POST
+        headers:
+          Authorization: "Bearer {{ github_runner_pat }}"
+          Accept: application/vnd.github+json
+          X-GitHub-Api-Version: "2022-11-28"
+        status_code: 201
+      register: runner_reg_token
+      no_log: true
+      when: (not runner_config.stat.exists) or (runner_force_reconfigure | default(false) | bool)
+
+    - name: Configure (register) the runner with the org
+      ansible.builtin.command:
+        cmd: >-
+          ./config.sh --unattended --replace
+          --url {{ runner_org_url }}
+          --token {{ runner_reg_token.json.token }}
+          --name {{ inventory_hostname }}
+          --labels {{ runner_labels }}
+        chdir: "{{ runner_home }}"
+      # config.sh refuses to run as root; run as the unprivileged runner user.
+      become: true
+      become_user: "{{ runner_user }}"
+      no_log: true
+      # A registration always mutates the runner's config when it runs (it's guarded by the
+      # when: below to only run when (re)configuring), so report changed.
+      changed_when: true
+      when: (not runner_config.stat.exists) or (runner_force_reconfigure | default(false) | bool)
+
+    - name: Install the runner systemd service (svc.sh install)
+      ansible.builtin.command:
+        cmd: "./svc.sh install {{ runner_user }}"
+        chdir: "{{ runner_home }}"
+        creates: "/etc/systemd/system/actions.runner.PeteDio-Labs.{{ inventory_hostname }}.service"
+
+    - name: Ensure the runner service is started and enabled
+      ansible.builtin.systemd:
+        name: "actions.runner.PeteDio-Labs.{{ inventory_hostname }}.service"
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Mark dependencies installed
+      ansible.builtin.file:
+        path: "{{ runner_home }}/bin/installdependencies.sh.done"
+        state: touch
+        owner: "{{ runner_user }}"
+        group: "{{ runner_user }}"
+        mode: "0644"

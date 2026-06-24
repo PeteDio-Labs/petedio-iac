@@ -16,9 +16,11 @@
 # PET-79: re-registered from petedio-iac-REPO scope to ORG scope so it serves all
 # PeteDio-Labs repos, and Docker was installed (configure-runner-docker.yml) so app
 # CI can build images + use service containers. The legacy org runner ci-runner
-# (LXC 116, no Docker, not in IaC) was deregistered + stopped. FOLLOW-UP: the runner
-# REGISTRATION is still out-of-band (org reg token + config.sh) — TF owns only the
-# LXC; an IaC-managed registration is not yet wired.
+# (LXC 116, no Docker, not in IaC) was deregistered + stopped. PET-80: the runner
+# REGISTRATION is now codified — ../../ansible/playbooks/configure-runner.yml folds in
+# Docker and registers the runner with the org (mint-at-runtime reg token from a
+# Vault-stored PAT). TF owns the LXC; that play owns everything inside. Rebuild/register
+# path: ../../docs/runbooks/runner-232-rebuild.md.
 #
 # PLAN calls this "VM 232"; we implement it as an LXC — the old ci-runner (116)
 # proved the native-runner-in-LXC pattern (no Docker, no features needed, the
@@ -90,7 +92,8 @@ output "runner_id" {
 #
 # Out-of-band prerequisites (operator — see the PR Manual steps): SDN.Use for the IaC token
 # on pve02's vmbr0 SDN zone (new-NIC create 403s otherwise — GOTCHAS); `pct set 233
-# --features nesting=1,keyctl=1` for Docker; the .233 DHCP reservation; runner registration.
+# --features nesting=1,keyctl=1` for Docker; the .233 DHCP reservation. Runner registration
+# is codified — `ansible-playbook configure-runner.yml --limit runner-233` (PET-80).
 module "runner_2" {
   source = "../../modules/proxmox-lxc"
 
