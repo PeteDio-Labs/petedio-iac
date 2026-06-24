@@ -124,3 +124,17 @@
   when:
     - palworld_firewall_enabled | bool
     - palworld_open_public_port | bool
+
+# Mesh ingress (PET-168): allow the game port from the 192.168.86.x segment, so clients
+# on the mesh reach the server over the eth1 dual-home NIC. Gated on palworld_mesh_enabled
+# (the palworld inventory group sets it true).
+- name: Allow the Palworld game port from the .86 mesh (UFW)
+  community.general.ufw:
+    rule: allow
+    port: "{{ palworld_public_port }}"
+    proto: udp
+    from_ip: "{{ palworld_mesh_subnet }}"
+    comment: "Palworld game port - .86 mesh (PET-168)"
+  when:
+    - palworld_firewall_enabled | bool
+    - palworld_mesh_enabled | bool

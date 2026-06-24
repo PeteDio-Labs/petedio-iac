@@ -41,6 +41,23 @@ module "palworld" {
   # and defer NVMe to a follow-up. See header.
   datastore_id = "sdb3-storage"
   description  = "Palworld 1.0 dedicated server (PET-157). Managed by Terraform."
+
+  # PET-168: dual-home onto the 192.168.86.x mesh for local-LAN play, ALONGSIDE the
+  # platform-LAN NIC (eth0, .50.234) and the Tailscale path — those are untouched. No
+  # gateway here: the default route stays on eth0. The launch-day install/enable is still
+  # the operator's (PET-157 carryover).
+  # >>> OPERATOR — confirm before apply (loop can't see the node; never applies):
+  #   - bridge: the Proxmox bridge for the .86 mesh on pve01. pve01 has vmbr1 (LAN .50 +
+  #     gateway) and vmbr0 (no gateway) — set this to whichever bridges the .86 mesh
+  #     segment (`ip -br link` / `cat /etc/network/interfaces` on pve01). Placeholder vmbr0.
+  #   - ipv4_address + the STATIC DHCP lease on the .86 mesh (router/DHCP = hard rule 6,
+  #     operator). .34 is a placeholder — confirm a free mesh address.
+  secondary_network_interface = {
+    name         = "eth1"
+    bridge       = "vmbr0"
+    ipv4_address = "192.168.86.34/24"
+    # no ipv4_gateway — default route stays on eth0 (platform LAN)
+  }
 }
 
 output "palworld_id" {

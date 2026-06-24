@@ -151,3 +151,29 @@ variable "description" {
   type        = string
   default     = "Managed by Terraform."
 }
+
+variable "secondary_network_interface" {
+  description = <<-EOT
+    Optional SECOND NIC for dual-homing the container onto another segment (e.g. the
+    192.168.86.x mesh, PET-168). Default null = single-NIC, so adding this variable is a
+    no-op for every existing consumer (the module renders net1 + its ip_config only when
+    this is set). Give it no ipv4_gateway: the default route must stay on the primary NIC
+    (net0); a second gateway creates two default routes.
+
+      name          guest-side interface name (eth1).
+      bridge        Proxmox bridge for the segment (e.g. the .86 mesh bridge).
+      ipv4_address  CIDR (e.g. "192.168.86.34/24") or "dhcp".
+      ipv4_gateway  usually omitted/null for a secondary NIC.
+      firewall      Proxmox NIC-level firewall on net1 (default false).
+      mac_address   pin the hwaddr if needed (default null = provider-computed).
+  EOT
+  type = object({
+    name         = optional(string, "eth1")
+    bridge       = string
+    ipv4_address = string
+    ipv4_gateway = optional(string)
+    firewall     = optional(bool, false)
+    mac_address  = optional(string)
+  })
+  default = null
+}

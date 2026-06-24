@@ -36,3 +36,9 @@ palworld_rcon_port: 25575
 palworld_firewall_enabled: true
 palworld_open_public_port: false
 palworld_firewall_subnet: 192.168.50.0/24
+
+# Mesh (192.168.86.x) ingress — PET-168. Off by default (the dual-home NIC is opt-in);
+# the palworld inventory group flips palworld_mesh_enabled on. Opens 8211/udp from the
+# mesh subnet so clients on that segment can reach the server over the eth1 NIC.
+palworld_mesh_enabled: false
+palworld_mesh_subnet: 192.168.86.0/24
