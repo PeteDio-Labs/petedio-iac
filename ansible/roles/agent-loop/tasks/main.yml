@@ -167,12 +167,13 @@
 
 # --- Claude Code user settings (default model) -------------------------------------
 
-# Role-manage ~/.claude/settings.json so the default model is declarative desired-state,
-# not whatever the interactive login last persisted (it left opus-4-7, with no model key in
-# settings — the default came from ~/.claude.json). Auth/session state live in ~/.claude.json
-# + the OAuth token and are UNTOUCHED here; settings.json is config only (model, theme, env),
-# so templating it can't disturb the login. The `cc` --model flag is the hard guarantee for
-# the verdict model; this sets the default for any ad-hoc `claude` on the box too.
+# Role-manage the default model in ~/.claude/settings.json. We MERGE, never overwrite:
+# settings.json may also carry an operator-added `permissions.allow` allowlist — the loop
+# runs WITHOUT --dangerously-skip-permissions, so that allowlist is how commands get
+# pre-approved, and a blind template write would silently drop it. Auth/session state lives
+# in ~/.claude.json + the OAuth token (untouched here), so editing settings.json can't
+# disturb the login. The `cc` --model flag is the hard guarantee for the verdict model; this
+# sets the default for any ad-hoc `claude` on the box too.
 - name: Ensure ~/.claude exists for {{ agent_loop_user }}
   ansible.builtin.file:
     path: "{{ agent_loop_home }}/.claude"
@@ -183,13 +184,31 @@
   become: true
   become_user: "{{ agent_loop_user }}"
 
-- name: Pin the Claude Code default model in ~/.claude/settings.json
-  ansible.builtin.template:
-    src: claude-settings.json.j2
+- name: Read existing ~/.claude/settings.json if present (to preserve operator keys)
+  ansible.builtin.slurp:
+    src: "{{ agent_loop_home }}/.claude/settings.json"
+  register: agent_loop_claude_settings_raw
+  failed_when: false
+  changed_when: false
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Pin the Claude Code default model in ~/.claude/settings.json (merge, never clobber)
+  ansible.builtin.copy:
     dest: "{{ agent_loop_home }}/.claude/settings.json"
+    content: "{{ existing | combine(managed, recursive=true) | to_nice_json }}\n"
     owner: "{{ agent_loop_user }}"
     group: "{{ agent_loop_user }}"
     mode: "0644"
+  vars:
+    existing: >-
+      {{ (agent_loop_claude_settings_raw.content | b64decode | from_json)
+         if (agent_loop_claude_settings_raw.content | default('') | b64decode | trim | length > 0)
+         else {} }}
+    managed:
+      model: "{{ agent_loop_claude_model }}"
+      env:
+        TZ: "{{ agent_loop_timezone }}"
   become: true
   become_user: "{{ agent_loop_user }}"
 
