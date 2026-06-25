@@ -1,13 +1,21 @@
 # Worker loop — agent-worker (PET-179)
 
-The **worker half** of the two-agent system. A small, cheap local model (`gemma4:e4b` served
-by Ollama at `http://192.168.50.12:11434`, OpenAI-compatible `/v1`) drives the
-[OpenCode](https://opencode.ai) harness on the loop host to AUTHOR one Co-latro issue at a
-time: it picks a `worker-ok` + Todo issue, branches `pet-<n>-<slug>` off clean `main`,
+The **worker half** of the two-agent system. On the loop host it AUTHORS one Co-latro issue at
+a time: picks a `worker-ok` + Todo issue, branches `pet-<n>-<slug>` off clean `main`,
 implements the change, runs the **additive guardrail** + `bun test`, pushes, and opens a PR
 (**draft when tests are red**). It **never merges, never reviews, never mutates Linear
 status, never touches Vault writes / TF state / live hosts.** The reviewer loop
 (`docs/runbooks/reviewer-loop.md`) judges the PR; Pedro merges.
+
+**Authoring mode (`WORKER_AUTHOR_MODE`, PET-182).** Default is **`patch`** — a constrained
+single-shot **patch-apply** core (`worker-patch-author.sh`, model `qwen2.5-coder:7b` via Ollama
+`/api/chat` at `http://192.168.50.12:11434`): ONE add-only-diff call, keep only the `+` lines,
+**deterministic anchor-insert** of the new catalog entry + a mirrored test. This is the only path
+the homelab's local models author *reliably* — proven by a bake-off + 3-agent diagnostic: every
+local model fails opencode's agentic edit loop (coder templates emit tool-calls as **text** →
+no-op; general models **overwrite**, not append). The legacy `opencode` mode (`gemma4:e4b`
+agentic editing) is kept behind `WORKER_AUTHOR_MODE=opencode` for the record only. Set
+`WORKER_MODEL=ollama/<tag>` to override the authoring model.
 
 Authoritative protocol: the Linear docs **[Worker Operations — agent-worker]** and the
 shared **[Agent Loop Operations]** (hard rules apply verbatim). This runbook is the on-host
@@ -18,7 +26,9 @@ operational companion — the scripts, the standing prompt, and Pedro's one-time
 | Script | Role | Mutates? |
 |---|---|---|
 | `worker-candidates.sh` | List `worker-ok` + **Todo** Co-latro issues the worker may pick, annotated `{key,title,repo,branch_slug}` (JSON). Uses the Linear GraphQL API **if** a token is reachable (env `LINEAR_API_KEY` or Vault `kv/services/linear:api_key`); else prints `[]` and tells Claude to enumerate via the Linear MCP. | No (read-only) |
-| `worker-run.sh PET-<n> --repo <owner/repo> --spec-file <f>` | The core wrapper: reset clean `main` → write the prompt → run `opencode run --pure -m ollama/gemma4:e4b` → guardrail → `bun install`+`bun test` → push **own `pet-*` branch** (force-with-lease) → open **draft PR if tests fail / normal PR if green** → emit lifecycle events → append the worker eval row. | Pushes its own branch, opens a PR, appends to MinIO. **Never merges.** |
+| `worker-run.sh PET-<n> --repo <owner/repo> --spec-file <f>` | The core wrapper: reset clean `main` → AUTHOR the change (default `patch` mode → `worker-patch-author.sh`; legacy `opencode` mode) → guardrail → `bun install`+`bun test` → push **own `pet-*` branch** (force-with-lease) → open **draft PR if tests fail / normal PR if green** → emit lifecycle events → append the worker eval row. | Pushes its own branch, opens a PR, appends to MinIO. **Never merges.** |
+| `worker-patch-author.sh <clone> <ollama-tag>` | The **authoring core** (patch mode). Operates on an already-cloned checkout in place: parse the spec (catalog file + new id + sibling, sibling validated against the real catalog) → locate anchors → ONE constrained add-only-diff model call → keep `+` lines → deterministic brace-balanced anchor-insert. Shared by `worker-run.sh` and the test harness. | Mutates the given clone's working tree only. No clone/push. |
+| `worker-patch-run.sh <ollama-tag>` | Standalone **test harness** around the authoring core: clone → `worker-patch-author.sh` → guard → `bun test`. Emits a per-model JSON verdict. No push/PR. | Throwaway clone only. |
 | `worker-guard-additive.sh` | The guardrail. Reads a unified diff; **exit 2 / "blocked"** when the net count of catalog entries (`id:` rows) or test cases (`test(`/`it(`) **DROPS** — the 8B overwrite-not-append failure. `--self-test` feeds a synthetic delete-not-append diff and asserts it's caught. `WORKER_GUARD_ALLOW_SHRINK=1` for a genuinely subtractive issue. | No (read-only check) |
 | `templates/worker-prompt.md.tmpl` | Harness task-prompt skeleton (the "ADD, never delete" framing). | — |
 | `templates/pr-body.md.tmpl` | Worker PR-body skeleton (tests result, guardrail verdict, head). | — |
