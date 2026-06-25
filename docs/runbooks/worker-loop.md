@@ -94,9 +94,11 @@ These are operator-only — the loop is author-only and never does them.
 3. **`bun` on the host** + the **local Postgres** the Co-latro suite needs (PET-178) — both
    installed by `roles/agent-loop`; the suite is GREEN at baseline, so a `bun test` failure
    in a worker run is REAL, not an env gap.
-4. **GitHub token** — the scoped loop PAT (push branches + open PRs, **no merge**) at Vault
-   `kv/services/agent-loop:github_token`, served via the Vault Agent token on disk (same as
-   `rebase-loop-prs.sh`). `worker-run.sh` reads it the same way; never inline it.
+4. **GitHub identity** — the worker authors as the **`petedio-worker[bot]`** GitHub App
+   (PET-176), not Pedro's PAT. `worker-run.sh` mints a 1-hour installation token on demand
+   via `scripts/worker/worker-mint-token.sh` (push + open-PR scope, **structurally cannot
+   merge**); the App PEM lives in Vault `kv/services/agent-loop:worker_app_pem`, served via
+   the Vault Agent token on disk. Nothing long-lived on the host; never inline the token.
 5. **`mc` alias + eval bucket** — same as the reviewer (`docs/runbooks/reviewer-loop.md`):
    the worker appends its run rows to `agent-evals/worker-runs.jsonl` (a sibling of the
    reviewer's `verdicts.jsonl`) and emits lifecycle events to `agent-evals/events.jsonl`
