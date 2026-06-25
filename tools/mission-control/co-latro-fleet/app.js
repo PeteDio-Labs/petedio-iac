@@ -38,7 +38,10 @@ const FILES = { verdicts: "verdicts.jsonl", worker: "worker-runs.jsonl", engine:
 // /whoami gate so the lanes render standalone. This is DEV CONVENIENCE ONLY — the real access
 // boundary is Authentik, never this client-side check (README spells this out).
 const PARAMS = new URLSearchParams(location.search);
-const DEV = PARAMS.has("dev") || location.protocol === "file:";
+// Dev mode reads local ./fixtures and skips the gate. Honored ONLY on a local origin
+// (file:// or localhost) so `?dev` can never bypass anything on the live, Access-gated host.
+const DEV = location.protocol === "file:"
+  || (PARAMS.has("dev") && (location.hostname === "localhost" || location.hostname === "127.0.0.1"));
 const DATA_BASE = DEV ? "./fixtures" : DATA_BASE_PROD;
 
 // ---- tiny helpers ---------------------------------------------------------------------

@@ -49,6 +49,12 @@ resource "cloudflare_dns_record" "route" {
   content = var.tunnel_cname
   proxied = true
   ttl     = 1 # required to be 1 (automatic) when proxied
+
+  # Fail-closed: a public CNAME must not exist before its Access gate. If the Access app
+  # apply fails (missing Zero Trust org / token scope), no hostname resolves at the edge —
+  # better than briefly exposing the origin ungated. Access apps exist only for access=true
+  # routes; ordering all CNAMEs after them is harmless for the non-gated ones.
+  depends_on = [cloudflare_zero_trust_access_application.route]
 }
 
 # Cloudflare Access (optional, per route). The Authentik OIDC IdP referenced by
@@ -60,11 +66,15 @@ resource "cloudflare_zero_trust_access_policy" "route" {
   name       = "${each.key} — allow"
   decision   = "allow"
 
-  include = [
+  # Precedence: explicit emails (one or more people) > email domain > everyone. Provider v5
+  # uses attribute syntax ({ email = { email = ... } }), not v4's nested include {} blocks.
+  include = length(each.value.access_emails) > 0 ? [
+    for e in each.value.access_emails : { email = { email = e } }
+    ] : (
     each.value.access_email_domain != null
-    ? { email_domain = { domain = each.value.access_email_domain } }
-    : { everyone = {} }
-  ]
+    ? [{ email_domain = { domain = each.value.access_email_domain } }]
+    : [{ everyone = {} }]
+  )
 }
 
 resource "cloudflare_zero_trust_access_application" "route" {
@@ -78,5 +88,8 @@ resource "cloudflare_zero_trust_access_application" "route" {
   allowed_idps              = each.value.allowed_idps
   auto_redirect_to_identity = length(each.value.allowed_idps) > 0
 
-  policies = [cloudflare_zero_trust_access_policy.route[each.key].id]
+  # v5 `policies` is a list of objects (ListNestedAttribute), not bare IDs. A bare-string
+  # element passes `terraform validate` (the for_each .id is unknown at validate time) but
+  # FAILS the apply plan with "object required, but have string". Use the { id = ... } form.
+  policies = [{ id = cloudflare_zero_trust_access_policy.route[each.key].id }]
 }

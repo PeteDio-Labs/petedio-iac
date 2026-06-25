@@ -59,16 +59,18 @@ fields are ignored and missing fields tolerated; one malformed line never crashe
 
 ## Access — restricted to `pedro`
 
-Two layers. **The real boundary is layer 1 (Authentik); this page cannot be a security boundary.**
+**The real boundary is Cloudflare Access at the edge — this static page cannot be one.**
 
-1. **Authentik (Manual, Pedro — the boundary):** bind the application/provider to user `pedro`
-   only (policy `user == pedro`), mirroring the `vault.pdlab.dev` gate (PET-38). Every other
-   authenticated user is 403'd upstream.
-2. **In-page (built here — UX + defense-in-depth):** on load the page calls
-   `fetch('/whoami', {credentials:'same-origin'})`, expecting `{"username": "..."}` (the proxy
-   echoes `X-authentik-username` — a Manual step). `ALLOWED_USER = 'pedro'`. If the fetch fails
-   **or** `username !== ALLOWED_USER`, it renders a **"Not authorized"** locked state and loads
-   **zero** fleet data.
+1. **Cloudflare Access (the boundary):** `fleet.pdlab.dev` is fronted by a Cloudflare Access
+   application whose policy allows only `pedelgadillo@gmail.com` (One-Time PIN login); every
+   other identity is blocked at the edge before the origin is reached. Codified in IaC — see
+   [`docs/runbooks/fleet-activity-view.md`](../../../docs/runbooks/fleet-activity-view.md).
+2. **In-page (UX + defense-in-depth):** on load the page calls `fetch('/whoami')`, expects
+   `{"username": "..."}`, and renders a **"Not authorized"** locked state unless it equals
+   `ALLOWED_USER = 'pedro'`. In the live deployment nginx returns a static `{"username":"pedro"}`
+   (reachable only *after* Access lets you through), so this layer is cosmetic — Access is what
+   actually gates. The page stays auth-agnostic: front it with Authentik forward-auth instead and
+   `/whoami` can echo the real `X-authentik-username`.
 
 ## Behavior
 
@@ -81,19 +83,21 @@ Two layers. **The real boundary is layer 1 (Authentik); this page cannot be a se
   per-file empty/error banner. Any file missing / empty / unreachable → that lane shows an
   empty/error state, never a crash.
 
-## Manual steps for Pedro (live infra / SSO / hosting — not done here)
+## Deploying it live
 
-Authoring only. **No** Authentik/SSO changes, **no** MinIO bucket-policy changes, **no** Vault
-reads, **no** secrets embedded. To deploy:
+The live deployment (Cloudflare Access edge gate + nginx origin on LXC 242) is codified in IaC —
+see the runbook [`docs/runbooks/fleet-activity-view.md`](../../../docs/runbooks/fleet-activity-view.md)
+for the full ordered procedure. In short:
 
-1. **Authentik single-user gate** — bind this app to user `pedro` (layer 1 above).
-2. **`/whoami` endpoint** on the Authentik-fronted reverse proxy — echo `X-authentik-username`
-   (and `-email`) as JSON `{"username": "..."}`.
-3. **Host the static files** via the MinIO static-site-behind-Authentik pattern (PET-87) + a
-   route from the URL factory (PET-35).
-4. **Expose `agent-evals/*.jsonl` same-origin** behind the same auth (a `/agent-evals` proxy path
-   or a read-only bucket policy) so the page fetches with no creds. Service-account / Vault paths
-   by **name only** (`kv/services/agent-loop`) — never embed a key.
+- **Terraform** (`environments/homelab/cloudflare-routes.tf`): the `fleet.pdlab.dev` route with
+  `access = true` + `access_emails = ["pedelgadillo@gmail.com"]` → Cloudflare creates the proxied
+  CNAME, the tunnel ingress, and the Access application/policy on merge (apply-on-merge).
+- **Ansible** (`ansible/playbooks/configure-fleet.yml`): nginx on `242:8090` serving these files +
+  a same-origin `mc mirror` of the `agent-evals` bucket + the static `/whoami`.
+- **Pedro's one-time prerequisites** (Cloudflare dashboard, *before* merge): a Zero Trust org /
+  team domain exists, One-Time PIN login is enabled, and the API token has *Access: Apps and
+  Policies → Edit*. Then complete the OTP login (the code is emailed to you).
 
-If a future requirement seems to need a server/backend, that's the wrong design for this page —
-stop and reconsider, don't add one here.
+Secrets stay in Vault (`kv/services/agent-loop`, `kv/iac/cloudflare`), referenced by name — never
+embedded. The page reads only same-origin relative paths; no creds, no backend. If a future
+requirement seems to need a server/backend, that's the wrong design for this page.

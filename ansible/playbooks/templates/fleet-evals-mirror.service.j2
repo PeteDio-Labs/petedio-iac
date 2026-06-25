@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# Fleet agent-evals mirror (PET-187) — one-shot `mc mirror` pulling homelab/agent-evals
+# into the fleet web root so the JSONL eval logs are served same-origin by nginx. Read-only
+# pull (no --remove) — never mutates the bucket. Driven by fleet-evals-mirror.timer (~45s).
+[Unit]
+Description=Mirror MinIO agent-evals bucket into the fleet web root (PET-187)
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# mc reads its alias config from $HOME/.mc; set HOME so the root-owned `homelab` alias resolves.
+Environment=HOME=/root
+ExecStart=/usr/local/bin/mc mirror --overwrite homelab/agent-evals /var/www/fleet/agent-evals
+ExecStartPost=/usr/bin/chown -R www-data:www-data /var/www/fleet/agent-evals
