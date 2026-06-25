@@ -7,14 +7,17 @@
 # ALREADY-CLONED, already-checked-out working tree in place. It does NOT clone, guard, test, or
 # push (the caller owns those).
 #
-# Proven mechanics (UNCHANGED from the bake-off-validated harness):
+# Mechanics — TEMPLATE-INSERT (PET-182). The original two-hunk-diff approach failed on 7B
+# models (they emit one hunk and drop the other — the catalog add went missing); authoring is
+# now content-substitution off a verbatim sibling template, which small models copy reliably:
 #   * parse the spec generically (catalog file + new id + sibling id, sibling validated against
 #     the real catalog);
 #   * locate anchors (the sibling's catalog-array close "];" and the sibling test's enclosing
-#     describe close);
-#   * ONE constrained model call (add-only unified diff, /api/chat, temp 0, num_ctx 8192);
-#   * take ONLY the model's "+" lines, then deterministic ANCHOR-INSERT (git apply tried first),
-#     brace-balancing the inserted catalog object (small models sometimes emit "{" as context).
+#     describe close) AND extract the sibling's catalog object + test block VERBATIM;
+#   * TWO focused model calls (/api/chat, temp 0, num_ctx 8192): "copy this sibling object →
+#     emit ONLY the new object", "copy this sibling test → emit ONLY the new it(...) block";
+#   * clean each to its balanced block, re-indent to the sibling, validate both carry the new
+#     id, then ATOMICALLY insert both at the anchors (both blocks or NEITHER — never a half-write).
 #
 # Usage:  worker-patch-author.sh <clone-dir> <ollama-model-tag>
 # Env:    SPEC_FILE (required, path to the task spec), OLLAMA_URL (default homelab ollama),
@@ -176,182 +179,179 @@ PY
 eval "$ANCH"
 add_note "anchors: cat_close=$CAT_CLOSE_LINE sib_test=$SIB_TEST_LINE sib_describe=$SIB_DESC_LINE describe_close=$DESC_CLOSE_LINE"
 
-# Build prompt context windows from the located anchors.
-CAT_CTX="$(python3 -c '
-import sys
-src=open(sys.argv[1]).read().splitlines(); close=int(sys.argv[2])
-start=max(0, close-30)
-print("\n".join(src[start:close]))' "$CATALOG" "$CAT_CLOSE_LINE")"
-TEST_CTX="$(python3 -c '
-import sys
-src=open(sys.argv[1]).read().splitlines(); a=int(sys.argv[2])-1; b=int(sys.argv[3])
-print("\n".join(src[a:b]))' "$TESTF" "$SIB_DESC_LINE" "$DESC_CLOSE_LINE")"
+# (2c) Extract the SIBLING templates VERBATIM. Authoring is then a content-substitution the
+#      model copies (reliable on 7B) rather than multi-hunk diff geometry (which 7B models drop
+#      — PET-182 bake-off: the model emitted the test hunk but left the catalog hunk empty).
+SIB_OBJ="$SCRATCH/sib_obj.txt"; SIB_TESTB="$SCRATCH/sib_test.txt"
+python3 - "$CATALOG" "$TESTF" "$SIBLING_ID" "$SIB_TEST_LINE" "$SIB_OBJ" "$SIB_TESTB" <<'PY'
+import sys, re
+cat_path, test_path, sib, sib_test_line, obj_out, test_out = sys.argv[1:7]
+sib_test_line = int(sib_test_line)
+cat = open(cat_path).read().splitlines()
+# Catalog object: entry whose body has  id: "sib". Opener = nearest '{'-only line above; closer
+# = brace-match down to depth 0.
+sid = next((i for i, s in enumerate(cat)
+            if re.search(r'id\s*:\s*["\']' + re.escape(sib) + r'["\']', s)), None)
+obj = []
+if sid is not None:
+    op = next((i for i in range(sid, -1, -1) if cat[i].strip() == '{'), sid)
+    depth = 0
+    for i in range(op, len(cat)):
+        depth += cat[i].count('{') - cat[i].count('}')
+        obj.append(cat[i])
+        if i > op and depth <= 0: break
+open(obj_out, 'w').write("\n".join(obj) + "\n")
+# Test block: from the sibling it(...) opener (1-based) brace-match to its close ('});').
+test = open(test_path).read().splitlines()
+tb = []
+if sib_test_line > 0:
+    st = sib_test_line - 1
+    depth = 0; started = False
+    for i in range(st, len(test)):
+        depth += test[i].count('{') - test[i].count('}')
+        tb.append(test[i])
+        if '{' in test[i]: started = True
+        if started and depth <= 0: break
+open(test_out, 'w').write("\n".join(tb) + "\n")
+PY
+[ -s "$SIB_OBJ" ]   || { add_note "could not extract sibling catalog object for $SIBLING_ID"; emit false none; }
+[ -s "$SIB_TESTB" ] || { add_note "could not extract sibling test block for $SIBLING_ID"; emit false none; }
 
-# (3) ONE constrained model call -> unified diff
-PROMPT_FILE="$SCRATCH/prompt.txt"
-cat >"$PROMPT_FILE" <<EOF
-You are a precise patch generator. Output ONLY a unified diff, nothing else.
-
-TASK (mechanical, ADD-ONLY): $SPEC
-
-You are adding ONE new entry with id "$NEW_ID" to $CATALOG_REL, copying the shape of the
-existing "$SIBLING_ID" entry, and ONE new test to $TEST_REL mirroring the existing
-"$SIBLING_ID" test.
-
-Produce a unified diff with EXACTLY TWO hunks (one per file). It is PURELY ADDITIVE: every
-content line in each hunk is either an UNCHANGED context line (leading single space, copied
-VERBATIM from the file below) or an ADDED line (leading "+"). There are ZERO "-" lines.
-
-HUNK 1 — $CATALOG_REL
-The array ends with the LAST entry then a line "];". Anchor on the lines shown below. Insert
-the new "$NEW_ID" object (added "+" lines) AFTER the last entry's closing "}," / "}" and BEFORE
-the "];" line. Do NOT reprint or modify any existing entry — existing lines you show must be
-unchanged context (leading space), byte-for-byte.
-
-HUNK 2 — $TEST_REL
-Inside the describe(...) block shown below (the one holding the "$SIBLING_ID" test), AFTER the
-"$SIBLING_ID" test block's closing "});" and BEFORE the describe's own closing "});", insert a
-NEW it(...) block (added "+" lines) that mirrors the "$SIBLING_ID" test for "$NEW_ID". Show the
-sibling test block's last lines as unchanged context, byte-for-byte.
-
-FORMAT (follow this skeleton EXACTLY; "@@ @@" with no line numbers is fine — the applier
-recounts):
---- a/$CATALOG_REL
-+++ b/$CATALOG_REL
-@@ @@
- <unchanged context line copied verbatim>
- <unchanged context line copied verbatim>
-+    {
-+      id: "$NEW_ID",
-+      ...added lines...
-+    },
- ];
---- a/$TEST_REL
-+++ b/$TEST_REL
-@@ @@
- <unchanged context line copied verbatim>
-+
-+  it("...$NEW_ID...", () => {
-+    ...added lines...
-+  });
- });
-
-RULES: output starts immediately with "--- a/". No prose, no markdown fences. Context lines
-copied EXACTLY (same indentation/punctuation). Only "+" and " " lines, never "-".
-
-=== CONTEXT of $CATALOG_REL (ends at the array close — anchor your first hunk here) ===
-$CAT_CTX
-
-=== CONTEXT of $TEST_REL (the describe block holding the "$SIBLING_ID" test — anchor hunk 2 here) ===
-$TEST_CTX
-
-Now output ONLY the unified diff.
-EOF
-
-err "calling model $MODEL (cold-load may take up to 120s)..."
-REQ_FILE="$SCRATCH/req.json"
-python3 - "$MODEL" "$PROMPT_FILE" >"$REQ_FILE" <<'PY'
+# (3) Two FOCUSED model calls: emit ONLY the new catalog object, and ONLY the new test block,
+#     each copying the corresponding sibling template. No diff format (small models botch it).
+call_model() {  # $1 system  $2 user-prompt-file  $3 tag  $4 out-file (raw message content)
+  local req="$SCRATCH/req.$3.json" resp="$SCRATCH/resp.$3.json"
+  python3 - "$MODEL" "$1" "$2" >"$req" <<'PY'
 import json, sys
 print(json.dumps({"model": sys.argv[1], "stream": False,
     "options": {"temperature": 0, "num_ctx": 8192},
-    "messages": [
-        {"role": "system", "content": "You output only unified diffs. No prose. No code fences."},
-        {"role": "user", "content": open(sys.argv[2]).read()}]}))
+    "messages": [{"role": "system", "content": sys.argv[2]},
+                 {"role": "user", "content": open(sys.argv[3]).read()}]}))
 PY
-RESP_FILE="$SCRATCH/resp.json"; RAW=""
-for attempt in 1 2; do
-  if curl -s --max-time 120 "$OLLAMA_URL/api/chat" -d @"$REQ_FILE" >"$RESP_FILE" 2>/dev/null; then
-    RAW="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["message"]["content"])' "$RESP_FILE" 2>/dev/null)"
-    [ -n "$RAW" ] && break
-  fi
-  add_note "model call attempt $attempt empty/failed; retrying"; sleep 2
-done
-[ -z "$RAW" ] && { add_note "no response from model after 2 attempts"; emit false none; }
+  : >"$4"
+  for attempt in 1 2; do
+    if curl -s --max-time 120 "$OLLAMA_URL/api/chat" -d @"$req" >"$resp" 2>/dev/null; then
+      python3 -c 'import json,sys; open(sys.argv[2],"w").write(json.load(open(sys.argv[1]))["message"]["content"])' "$resp" "$4" 2>/dev/null
+      [ -s "$4" ] && break
+    fi
+    sleep 2
+  done
+}
 
-# (3b) extract diff straight from resp.json
-DIFF_FILE="$SCRATCH/model.diff"
-python3 - "$RESP_FILE" >"$DIFF_FILE" <<'PY'
-import sys, re, json
-raw = json.load(open(sys.argv[1]))["message"]["content"]
-raw = re.sub(r'^```[a-zA-Z]*\s*$', '', raw, flags=re.M).replace('```', '')
-lines = raw.splitlines(); start = 0
-for i, l in enumerate(lines):
-    if l.startswith('diff --git') or l.startswith('--- a/') or l.startswith('--- '):
-        start = i; break
-sys.stdout.write("\n".join(lines[start:]).rstrip() + "\n")
-PY
-grep -q '^---\|^diff --git' "$DIFF_FILE" || { add_note "model output contained no diff markers"; emit false none; }
+UOBJ="$SCRATCH/u_obj.txt"
+cat >"$UOBJ" <<EOF
+TASK (mechanical, ADD-ONLY): $SPEC
 
-# (4) apply: git apply ladder -> deterministic anchor-insert (the reliable path for small models)
+Here is the existing "$SIBLING_ID" entry from $CATALOG_REL:
+
+$(cat "$SIB_OBJ")
+
+Produce ONE new entry for id "$NEW_ID" by copying this entry's EXACT shape and changing ONLY
+what the task requires (id, name, and the specific field(s) the task names). Keep every other
+field identical. Output ONLY the new TypeScript object literal — start with "{" and end with
+"}," — no prose, no markdown fences, no diff markers, no surrounding array brackets.
+EOF
+
+UTEST="$SCRATCH/u_test.txt"
+cat >"$UTEST" <<EOF
+TASK (mechanical, ADD-ONLY): $SPEC
+
+Here is the existing "$SIBLING_ID" test from $TEST_REL:
+
+$(cat "$SIB_TESTB")
+
+Produce ONE new test for "$NEW_ID" that mirrors this test EXACTLY, changing ONLY the id/name
+string(s) and the asserted value(s) the task requires. Output ONLY the new it(...) block —
+start with "it(" and end with "});" — no prose, no markdown fences, no diff markers.
+EOF
+
+err "calling model $MODEL for the new catalog entry + test (cold-load may take up to 120s)..."
+NEW_OBJ="$SCRATCH/new_obj.txt"; NEW_TESTB="$SCRATCH/new_test.txt"
+call_model "You output only a single TypeScript object literal. No prose, no code fences, no diff." \
+           "$UOBJ" obj "$NEW_OBJ"
+call_model "You output only a single it(...) test block. No prose, no code fences, no diff." \
+           "$UTEST" test "$NEW_TESTB"
+{ [ -s "$NEW_OBJ" ] && [ -s "$NEW_TESTB" ]; } || { add_note "model returned an empty block (obj or test)"; emit false none; }
+
+# (4) clean + validate + ATOMIC insert (both blocks or NEITHER — never a half-write).
 APPLY_METHOD="none"; APPLIED=false
-for opts in "" "--recount" "--ignore-whitespace" "--recount --ignore-whitespace" "--3way" "--recount --3way"; do
-  if git -C "$CLONE" apply --whitespace=nowarn $opts "$DIFF_FILE" >/dev/null 2>&1; then
-    APPLIED=true; APPLY_METHOD="git apply ${opts:-(plain)}"; add_note "applied with: $APPLY_METHOD"; break
-  fi
-done
-
-if [ "$APPLIED" != true ]; then
-  add_note "git apply failed for all strategies; trying deterministic anchor-insert"
-  if python3 - "$DIFF_FILE" "$CATALOG" "$TESTF" "$CATALOG_REL" "$TEST_REL" "$NEW_ID" "$CAT_CLOSE_LINE" "$DESC_CLOSE_LINE" <<'PY'
-import sys
-diff_path, catalog_path, test_path, cat_rel, test_rel, new_id, cat_close, desc_close = sys.argv[1:9]
+if python3 - "$CATALOG" "$TESTF" "$NEW_OBJ" "$NEW_TESTB" "$SIB_OBJ" "$SIB_TESTB" "$NEW_ID" "$CAT_CLOSE_LINE" "$DESC_CLOSE_LINE" <<'PY'
+import sys, re
+cat_path, test_path, obj_raw_p, test_raw_p, sib_obj_p, sib_test_p, new_id, cat_close, desc_close = sys.argv[1:10]
 cat_close = int(cat_close); desc_close = int(desc_close)
-cat_base = cat_rel.split('/')[-1]; test_base = test_rel.split('/')[-1]
 
-lines = open(diff_path, errors="replace").read().splitlines()
-added = {}; cur = None
-for l in lines:
-    if l.startswith('+++ '):
-        p = l[4:].strip(); p = p[2:] if p.startswith('b/') else p
-        cur = p; added.setdefault(cur, []); continue
-    if l.startswith('--- ') or l.startswith('diff ') or l.startswith('@@'): continue
-    if cur is None: continue
-    if l.startswith('+'): added[cur].append(l[1:])
+def defence(txt):
+    return txt.replace('```', '')
 
-ok = True
-cat_add  = next((v for k, v in added.items() if k.endswith(cat_base)), [])
-test_add = next((v for k, v in added.items() if k.endswith(test_base)), [])
-
-if not cat_add or not any(new_id in x for x in cat_add):
-    sys.stderr.write(f"fallback: no '{new_id}' added-lines for {cat_base}\n"); ok = False
-else:
-    src = open(catalog_path).read().splitlines()
-    idx = cat_close - 1  # insert BEFORE the array-close line
-    if idx < 0 or idx > len(src) or src[idx].strip() != '];':
-        closes = [i for i, s in enumerate(src) if s.strip() == '];']
-        idx = closes[-1] if closes else len(src)
-    # Brace-balance the added entry block (small models sometimes emit the object's opening
-    # "{" or closing "}," as a CONTEXT line, so it never reaches cat_add → a malformed entry).
-    _nb = [x for x in cat_add if x.strip()]
-    if _nb:
-        _op = sum(x.count('{') for x in cat_add); _cl = sum(x.count('}') for x in cat_add)
-        _first, _last = _nb[0], _nb[-1]
-        _ind = _first[:len(_first) - len(_first.lstrip())]
-        _par = _ind[:-2] if len(_ind) >= 2 else _ind
-        if _cl > _op and not _first.lstrip().startswith('{'):
-            cat_add = [_par + '{'] + cat_add
-        elif _op > _cl and not _last.rstrip().rstrip(',').endswith('}'):
-            cat_add = cat_add + [_par + '},']
-    open(catalog_path, 'w').write("\n".join(src[:idx] + cat_add + src[idx:]) + "\n")
-
-if not test_add or not any(new_id in x for x in test_add):
-    sys.stderr.write(f"fallback: no '{new_id}' added-lines for {test_base}\n"); ok = False
-else:
-    src = open(test_path).read().splitlines()
-    idx = desc_close - 1  # insert BEFORE the describe-close line
-    if idx < 0 or idx >= len(src):
-        sys.stderr.write("fallback: describe close out of range\n"); ok = False
+def extract_braced(txt, start_pat=None):
+    lines = defence(txt).splitlines()
+    if start_pat:
+        s = next((i for i, l in enumerate(lines) if start_pat.search(l)), None)
     else:
-        open(test_path, 'w').write("\n".join(src[:idx] + test_add + src[idx:]) + "\n")
+        s = next((i for i, l in enumerate(lines) if '{' in l), None)
+    if s is None:
+        return None
+    depth = 0; started = False; out = []
+    for i in range(s, len(lines)):
+        l = lines[i]
+        depth += l.count('{') - l.count('}')
+        out.append(l)
+        if '{' in l: started = True
+        if started and depth <= 0:
+            return out
+    return None
 
-sys.exit(0 if ok else 1)
+def base_indent(l):
+    return len(l) - len(l.lstrip())
+
+def reindent(block, target):
+    first = next((l for l in block if l.strip()), block[0])
+    delta = target - base_indent(first)
+    out = []
+    for l in block:
+        if not l.strip():
+            out.append(l)
+        elif delta >= 0:
+            out.append(' ' * delta + l)
+        else:
+            out.append(l[min(-delta, base_indent(l)):])
+    return out
+
+sib_obj = open(sib_obj_p).read().splitlines()
+sib_test = open(sib_test_p).read().splitlines()
+obj = extract_braced(open(obj_raw_p).read())
+test = extract_braced(open(test_raw_p).read(), re.compile(r'\b(it|test)\s*\('))
+
+ok = obj is not None and test is not None
+if ok and not any(new_id in l for l in obj):  sys.stderr.write("new catalog object missing the new id\n"); ok = False
+if ok and not any(new_id in l for l in test): sys.stderr.write("new test missing the new id\n"); ok = False
+if not ok:
+    sys.exit(1)
+
+while obj and not obj[-1].strip(): obj.pop()
+if obj and not obj[-1].rstrip().endswith(','):       # ensure the entry ends with "},"
+    obj[-1] = obj[-1].rstrip() + ','
+while test and not test[-1].strip(): test.pop()
+
+obj = reindent(obj, base_indent(sib_obj[0]) if sib_obj else 2)
+test = [''] + reindent(test, base_indent(sib_test[0]) if sib_test else 2)  # blank line before the new test
+
+csrc = open(cat_path).read().splitlines()
+ci = cat_close - 1
+if ci < 0 or ci > len(csrc) or csrc[ci].strip() != '];':
+    closes = [i for i, s in enumerate(csrc) if s.strip() == '];']
+    ci = closes[-1] if closes else len(csrc)
+tsrc = open(test_path).read().splitlines()
+ti = desc_close - 1
+if ti < 0 or ti > len(tsrc):
+    sys.stderr.write("describe close out of range\n"); sys.exit(1)
+
+# Both validated → write BOTH (atomic).
+open(cat_path, 'w').write("\n".join(csrc[:ci] + obj + csrc[ci:]) + "\n")
+open(test_path, 'w').write("\n".join(tsrc[:ti] + test + tsrc[ti:]) + "\n")
+sys.exit(0)
 PY
-  then APPLIED=true; APPLY_METHOD="deterministic anchor-insert"; add_note "applied with: $APPLY_METHOD"; fi
-fi
-if [ "$APPLIED" != true ]; then
-  add_note "all apply strategies failed (incl. anchor-insert)"
-  err "----- model diff that failed to apply -----"; cat "$DIFF_FILE" >&2; err "-------------------------------------------"
-  emit false none
-fi
+then APPLIED=true; APPLY_METHOD="template-insert"; add_note "applied (template-insert): new entry + test for $NEW_ID"
+else add_note "template extraction/validation failed — wrote nothing (atomic)"; emit false none; fi
 
 emit "$APPLIED" "$APPLY_METHOD"
