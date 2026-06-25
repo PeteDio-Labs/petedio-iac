@@ -71,7 +71,14 @@ function costTitle(row){
 }
 
 function linearUrl(issue){ return LINEAR_BASE + encodeURIComponent(issue); }
-function ghPrUrl(repo, pr){ return `https://github.com/${GITHUB_ORG}/${repo}/pull/${pr}`; }
+// repo may be org-qualified ("PeteDio-Labs/co-latro-backend", the live worker-runs shape) or
+// bare ("co-latro-backend"). repoName() is the trailing name; ghPrUrl only prepends the org
+// when the value is bare.
+function repoName(repo){ return String(repo || "").split("/").pop(); }
+function ghPrUrl(repo, pr){
+  const full = String(repo).includes("/") ? repo : `${GITHUB_ORG}/${repo}`;
+  return `https://github.com/${full}/pull/${pr}`;
+}
 
 // JSONL → rows; one bad line never kills a lane (counted + skipped).
 function parseJSONL(text){
@@ -140,7 +147,7 @@ function normEngine(r){
 }
 
 // ---- the Co-latro filter (made obvious, per the issue) -------------------------------
-const isCoLatroRepo = (repo) => CO_LATRO_REPOS.includes(repo);
+const isCoLatroRepo = (repo) => CO_LATRO_REPOS.includes(repoName(repo));
 
 // Worker/engine rows carry `repo`, so we map PET-issue → repo from them. Reviewer verdicts
 // have no `repo`, so we decide their Co-latro membership by joining on that PET key. A
@@ -208,7 +215,7 @@ function rowHTML(row){
   const mh      = row.model ? `${esc(row.model)}${row.harness?` <span class="sub">/ ${esc(row.harness)}</span>`:""}` : dash();
   return `<tr>
     <td>${petCell(row)}</td>
-    <td class="repo">${row.repo?esc(row.repo):dash()}</td>
+    <td class="repo">${row.repo?esc(repoName(row.repo)):dash()}</td>
     <td>${prCell(row)}</td>
     <td>${mh}</td>
     <td>${testsCell(row)}</td>

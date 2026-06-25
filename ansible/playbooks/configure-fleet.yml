@@ -163,8 +163,9 @@
       ansible.builtin.systemd:
         daemon_reload: true
 
-    # Validate AND reload in one handler so a bad config never reloads (matches
-    # configure-poker-api.yml's Reload nginx handler).
+    # Validate AND reload in one handler so a bad config never reloads. Uses `shell`
+    # (not `command`) because `&&` is a shell operator — `command` would pass it to
+    # nginx as a literal arg and fail ("nginx: invalid option: &&").
     - name: Reload nginx
-      ansible.builtin.command: nginx -t && systemctl reload nginx
+      ansible.builtin.shell: nginx -t && systemctl reload nginx
       changed_when: true
