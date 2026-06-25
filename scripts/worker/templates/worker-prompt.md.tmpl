@@ -1,6 +1,6 @@
 <!--
   Worker task-prompt template (PET-179). The wrapper (worker-run.sh) builds this prompt
-  from the issue spec and hands it to `opencode run --pure -m ollama/qwen3:8b`. Claude (or
+  from the issue spec and hands it to `opencode run --pure -m ollama/gemma4:e4b`. Claude (or
   the caller) supplies {{SPEC}} from the Linear issue body — the wrapper does NOT read Linear.
   The "ADD, never delete" framing is load-bearing: it's the prompt-side half of the additive
   guardrail (worker-guard-additive.sh is the enforcement-side half). Drop this HTML comment.

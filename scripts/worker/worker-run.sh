@@ -6,7 +6,7 @@
 #      human's working tree);
 #   2. writes the task spec to a prompt file (the issue body, supplied via --spec-file or
 #      stdin — this script does NOT reach Linear; Claude/MCP or the caller supplies the spec);
-#   3. runs the harness — `opencode run --pure -m ollama/qwen3:8b "<task>"` (PET-133) —
+#   3. runs the harness — `opencode run --pure -m ollama/gemma4:e4b "<task>"` (PET-133) —
 #      capturing tokens + wall time (opencode `--format json` event stream when available,
 #      else a timed run with best-effort parsing);
 #   4. creates branch `pet-<n>-<slug>`;
@@ -31,7 +31,7 @@
 #   echo "<task spec>" | scripts/worker/worker-run.sh PET-74 --repo PeteDio-Labs/co-latro-backend --spec -
 #
 # Env (optional):
-#   WORKER_MODEL          harness model (default: ollama/qwen3:8b).
+#   WORKER_MODEL          harness model (default: ollama/gemma4:e4b).
 #   WORKER_OPENCODE_CMD   base opencode invocation (default: "opencode run --pure").
 #   WORKER_HARNESS        harness name for the eval row (default: opencode).
 #   WORKER_BASE           base branch (default: main).
@@ -74,7 +74,7 @@ NUM="${ISSUE#PET-}"
 
 for t in gh git python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
 
-MODEL="${WORKER_MODEL:-ollama/qwen3:8b}"
+MODEL="${WORKER_MODEL:-ollama/gemma4:e4b}"
 OPENCODE_CMD="${WORKER_OPENCODE_CMD:-opencode run --pure}"
 HARNESS="${WORKER_HARNESS:-opencode}"
 BASE="${WORKER_BASE:-main}"
