@@ -6,9 +6,13 @@
 #      human's working tree);
 #   2. writes the task spec to a prompt file (the issue body, supplied via --spec-file or
 #      stdin — this script does NOT reach Linear; Claude/MCP or the caller supplies the spec);
-#   3. runs the harness — `opencode run --pure -m ollama/gemma4:e4b "<task>"` (PET-133) —
-#      capturing tokens + wall time (opencode `--format json` event stream when available,
-#      else a timed run with best-effort parsing);
+#   3. AUTHORS the change (WORKER_AUTHOR_MODE):
+#        * `patch` (DEFAULT, PET-182) — the constrained single-shot patch-apply core
+#          (worker-patch-author.sh, qwen2.5-coder:7b): the only path local models author
+#          reliably. Deterministic anchor-insert of an additive catalog entry + mirrored test.
+#        * `opencode` (legacy) — `opencode run --pure -m <model>` agentic editing (PET-133).
+#          Kept for the record; local models do NOT author through it (template tool-call gap).
+#      Either way we capture wall time (and, for opencode, best-effort tokens);
 #   4. creates branch `pet-<n>-<slug>`;
 #   5. runs the GUARDRAIL (scripts/worker/worker-guard-additive.sh) on the diff — a net drop
 #      in catalog entries / test cases (the 8B overwrite-not-append failure) BLOCKS the run;
@@ -74,9 +78,18 @@ NUM="${ISSUE#PET-}"
 
 for t in gh git python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
 
-MODEL="${WORKER_MODEL:-ollama/gemma4:e4b}"
+# Authoring mode: `patch` (constrained patch-apply, the working path) is the DEFAULT; `opencode`
+# is the legacy agentic path (kept for the record — local models can't author through it).
+AUTHOR_MODE="${WORKER_AUTHOR_MODE:-patch}"
+if [ "$AUTHOR_MODE" = patch ]; then
+  MODEL="${WORKER_MODEL:-ollama/qwen2.5-coder:7b}"
+  HARNESS="${WORKER_HARNESS:-patch-apply}"
+else
+  MODEL="${WORKER_MODEL:-ollama/gemma4:e4b}"
+  HARNESS="${WORKER_HARNESS:-opencode}"
+fi
 OPENCODE_CMD="${WORKER_OPENCODE_CMD:-opencode run --pure}"
-HARNESS="${WORKER_HARNESS:-opencode}"
+OLLAMA_URL="${WORKER_OLLAMA_URL:-http://192.168.50.12:11434}"
 BASE="${WORKER_BASE:-main}"
 INSTALL_CMD="${WORKER_INSTALL_CMD:-bun install}"
 TEST_CMD="${WORKER_TEST_CMD:-bun test}"
@@ -85,8 +98,10 @@ AUTHOR_EMAIL="${WORKER_AUTHOR_EMAIL:-agent-worker@petedio.local}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARD="$SCRIPT_DIR/worker-guard-additive.sh"
+AUTHOR="$SCRIPT_DIR/worker-patch-author.sh"   # constrained patch-apply authoring core (patch mode)
 EVENT="$SCRIPT_DIR/../agent-event.sh"
 [ -x "$GUARD" ] || die "guardrail not found/executable: $GUARD"
+[ "$AUTHOR_MODE" != patch ] || [ -x "$AUTHOR" ] || die "patch authoring core not found/executable: $AUTHOR"
 
 # emit() — best-effort lifecycle event; a telemetry failure must NEVER fail the run.
 emit() { [ -x "$EVENT" ] && "$EVENT" --agent worker "$@" >/dev/null 2>&1 || true; }
@@ -193,12 +208,30 @@ PROMPT_FILE="$ART/.worker-prompt-${NUM}.md"
 
 TASK="$(cat "$PROMPT_FILE")"
 
-# --- run the harness (opencode) ---------------------------------------------------------
+# --- AUTHOR the change (patch-apply by default; opencode legacy) -------------------------
 RUN_LOG="$ART/.worker-run-${NUM}.log"
 TOKENS=0
 WALL_S=0
 if [ "$DRY_RUN" = true ]; then
-  info "[dry-run] would run: $OPENCODE_CMD -m $MODEL \"<task ${#TASK} chars>\""
+  info "[dry-run] would author via '$AUTHOR_MODE' (model=$MODEL)"
+elif [ "$AUTHOR_MODE" = patch ]; then
+  # Constrained patch-apply authoring (PET-182): the path local models author reliably.
+  # The author mutates the clone's working tree in place; we then guard/test/push it below.
+  command -v curl >/dev/null || die "curl not in PATH (patch authoring)."
+  SPEC_RAW="$ART/.worker-spec-${NUM}.md"
+  printf '%s\n' "$SPEC" >"$SPEC_RAW"
+  AUTHOR_TAG="${MODEL#ollama/}"                  # author wants the bare ollama tag
+  info "authoring (patch-apply): model=$AUTHOR_TAG ollama=$OLLAMA_URL"
+  START="$(date +%s)"
+  set +e
+  SPEC_FILE="$SPEC_RAW" OLLAMA_URL="$OLLAMA_URL" SCRATCH="$ART/author" \
+    "$AUTHOR" "$CLONE_DIR" "$AUTHOR_TAG" >"$RUN_LOG" 2>&1
+  ARC=$?
+  set -e
+  END="$(date +%s)"
+  WALL_S=$((END - START))
+  cat "$RUN_LOG" >&2 || true
+  [ "$ARC" -eq 0 ] || info "patch authoring did not apply (rc=$ARC) — git add -A below will find no change and exit without a PR."
 else
   command -v opencode >/dev/null || die "opencode not in PATH (worker harness; see roles/agent-loop)."
   info "running harness: $OPENCODE_CMD -m $MODEL  (model=$MODEL)"
