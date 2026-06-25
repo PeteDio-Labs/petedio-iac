@@ -4,6 +4,11 @@ Puts the static page at [`tools/mission-control/co-latro-fleet/`](../../tools/mi
 **live behind Cloudflare Access** at **`https://fleet.pdlab.dev`**, gated to a single user
 (Pedro) via One-Time PIN.
 
+> **Status: LIVE since 2026-06-25.** Gated by Cloudflare Access; the current login is
+> Cloudflare One-Time PIN. To move to Authentik SSO, see **Swap login to Authentik OIDC**
+> below (PET-38). The Deploy/prereq steps below are the canonical procedure for a re-deploy
+> or a second gated route.
+
 Architecture: `cloudflared tunnel → http://192.168.50.242:8090` (nginx on the agent-loop
 LXC) which serves the static page + a same-origin **mirror** of the MinIO `agent-evals`
 bucket. **Cloudflare Access** (edge) is the real boundary; the page's `/whoami` check is
@@ -89,6 +94,72 @@ Then open `https://fleet.pdlab.dev` in a browser → Access redirects → "Send 
 enter the One-Time PIN emailed to `pedelgadillo@gmail.com` → the fleet page loads. **Only
 Pedro can complete this** (the code goes to his inbox).
 
+## Swap login to Authentik OIDC (PET-38)
+
+Today's login is Cloudflare's One-Time PIN. To use **Authentik SSO** instead, add Authentik as
+a Cloudflare Access *login method* and opt the route in. Authentication moves to Authentik; the
+email allow-list still does *authorization* (defense-in-depth). The CF-Access plumbing is
+unchanged — this is additive and reverts by removing one line.
+
+**Plane split:** the Authentik app is created by hand (the loop can't mutate SSO LXC 119); the
+Cloudflare side is IaC.
+
+### Manual (Pedro) — Authentik + Cloudflare dashboards
+
+1. **Authentik → create one OAuth2/OpenID Provider + Application:**
+   - Authorization flow: **implicit-consent** (explicit-consent silently breaks CF's redirect).
+   - Client type **Confidential** → capture **Client ID + Secret**. App **slug `cloudflare-access`** (pin it — it's in the JWKS URL).
+   - Redirect URI (match mode **Strict**): `https://petedillo-labs.cloudflareaccess.com/cdn-cgi/access/callback`
+   - Scopes: `openid email profile`.
+2. **Cloudflare ZT → Settings → Authentication → Login methods → Add → OpenID Connect:**
+   | Field | Value |
+   |---|---|
+   | Auth URL | `https://auth.pdlab.dev/application/o/authorize/` *(global)* |
+   | Token URL | `https://auth.pdlab.dev/application/o/token/` *(global)* |
+   | Certificate URL | `https://auth.pdlab.dev/application/o/cloudflare-access/jwks/` *(**per-slug**)* |
+   | App ID / Client secret | from step 1; enable **PKCE** |
+
+   Click **Test** — it must round-trip an Authentik login. *Gate everything below on Test passing.*
+   (Confirm the strings first: `curl https://auth.pdlab.dev/application/o/cloudflare-access/.well-known/openid-configuration`.)
+
+### IaC (this repo)
+
+1. Seed Vault **`kv/iac/authentik`** with `oidc_client_id` / `oidc_client_secret` (new
+   `scripts/reseed-authentik-oidc-vault.sh`, modeled on `reseed-admin-secrets-vault.sh`).
+2. Grant the **`ci_read`** Vault policy `read` on `kv/data/iac/authentik`
+   (`environments/homelab/vault-config/policies.tf`) so apply-on-merge can read it.
+3. New **`environments/homelab/cloudflare-oidc.tf`**:
+   ```hcl
+   data "vault_kv_secret_v2" "authentik" { mount = "kv", name = "iac/authentik" }
+
+   resource "cloudflare_zero_trust_access_identity_provider" "authentik" {
+     account_id = local.cloudflare_account_id
+     name       = "authentik"
+     type       = "oidc"
+     config = {
+       client_id     = data.vault_kv_secret_v2.authentik.data["oidc_client_id"]
+       client_secret = data.vault_kv_secret_v2.authentik.data["oidc_client_secret"]
+       auth_url      = "https://auth.pdlab.dev/application/o/authorize/"
+       token_url     = "https://auth.pdlab.dev/application/o/token/"
+       certs_url     = "https://auth.pdlab.dev/application/o/cloudflare-access/jwks/"
+       scopes        = ["openid", "email", "profile"]
+       pkce_enabled  = true
+     }
+   }
+   ```
+4. In `cloudflare-routes.tf`, add to the `fleet.pdlab.dev` route:
+   `allowed_idps = [cloudflare_zero_trust_access_identity_provider.authentik.id]`.
+   The module then sets `auto_redirect_to_identity = true` (skips the OTP chooser). Keep `access_emails`.
+
+### Verify / rollback
+
+- `curl -sI https://fleet.pdlab.dev/ | grep -i location` → now points at **`auth.pdlab.dev`**
+  (Authentik), not the OTP page. Browser → straight to Authentik → page loads.
+- **Rollback = remove the `allowed_idps` line** (back to OTP). Do *not* delete the IdP resource
+  on rollback (it orphans the registration); just empty the list.
+- Once the IdP exists, every other `access=true` route (vault, admin/PET-87, …) is a one-line
+  `allowed_idps` add — the URL-factory payoff.
+
 ## Hazards
 
 - **Don't merge before the §prereqs.** A missing Zero Trust org / token scope makes the
@@ -98,5 +169,5 @@ Pedro can complete this** (the code goes to his inbox).
 - The `agent-evals` JSONL is LAN-reachable on `242:8090` (like the co-latro origin on 230) —
   the public boundary is Cloudflare Access. JWT-validation at the origin (njs/lua) is a
   possible hardening follow-up; not required for the single-user gate.
-- To gate by Authentik later (PET-38): create the OIDC IdP, then set `allowed_idps` on the
-  route — additive, no other change.
+- **Swap the login to Authentik SSO:** see *Swap login to Authentik OIDC* above (PET-38) —
+  additive (one `allowed_idps` line per route), reverts by removing it.
