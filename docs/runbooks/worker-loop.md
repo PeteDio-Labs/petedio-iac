@@ -1,6 +1,6 @@
 # Worker loop — agent-worker (PET-179)
 
-The **worker half** of the two-agent system. A small, cheap local model (`qwen3:8b` served
+The **worker half** of the two-agent system. A small, cheap local model (`gemma4:e4b` served
 by Ollama at `http://192.168.50.12:11434`, OpenAI-compatible `/v1`) drives the
 [OpenCode](https://opencode.ai) harness on the loop host to AUTHOR one Co-latro issue at a
 time: it picks a `worker-ok` + Todo issue, branches `pet-<n>-<slug>` off clean `main`,
@@ -18,7 +18,7 @@ operational companion — the scripts, the standing prompt, and Pedro's one-time
 | Script | Role | Mutates? |
 |---|---|---|
 | `worker-candidates.sh` | List `worker-ok` + **Todo** Co-latro issues the worker may pick, annotated `{key,title,repo,branch_slug}` (JSON). Uses the Linear GraphQL API **if** a token is reachable (env `LINEAR_API_KEY` or Vault `kv/services/linear:api_key`); else prints `[]` and tells Claude to enumerate via the Linear MCP. | No (read-only) |
-| `worker-run.sh PET-<n> --repo <owner/repo> --spec-file <f>` | The core wrapper: reset clean `main` → write the prompt → run `opencode run --pure -m ollama/qwen3:8b` → guardrail → `bun install`+`bun test` → push **own `pet-*` branch** (force-with-lease) → open **draft PR if tests fail / normal PR if green** → emit lifecycle events → append the worker eval row. | Pushes its own branch, opens a PR, appends to MinIO. **Never merges.** |
+| `worker-run.sh PET-<n> --repo <owner/repo> --spec-file <f>` | The core wrapper: reset clean `main` → write the prompt → run `opencode run --pure -m ollama/gemma4:e4b` → guardrail → `bun install`+`bun test` → push **own `pet-*` branch** (force-with-lease) → open **draft PR if tests fail / normal PR if green** → emit lifecycle events → append the worker eval row. | Pushes its own branch, opens a PR, appends to MinIO. **Never merges.** |
 | `worker-guard-additive.sh` | The guardrail. Reads a unified diff; **exit 2 / "blocked"** when the net count of catalog entries (`id:` rows) or test cases (`test(`/`it(`) **DROPS** — the 8B overwrite-not-append failure. `--self-test` feeds a synthetic delete-not-append diff and asserts it's caught. `WORKER_GUARD_ALLOW_SHRINK=1` for a genuinely subtractive issue. | No (read-only check) |
 | `templates/worker-prompt.md.tmpl` | Harness task-prompt skeleton (the "ADD, never delete" framing). | — |
 | `templates/pr-body.md.tmpl` | Worker PR-body skeleton (tests result, guardrail verdict, head). | — |
@@ -78,14 +78,14 @@ Each iteration:
 
 These are operator-only — the loop is author-only and never does them.
 
-1. **Ollama model on `.12`** — `qwen3:8b` pulled and served:
+1. **Ollama model on `.12`** — `gemma4:e4b` pulled and served:
    ```sh
    curl http://192.168.50.12:11434/api/version          # Ollama answering
-   curl http://192.168.50.12:11434/v1/models | grep qwen3   # the model is loaded
+   curl http://192.168.50.12:11434/v1/models | grep gemma4   # the model is loaded
    ```
 2. **OpenCode on the worker host**, pointed at Ollama's OpenAI-compatible endpoint
-   (`http://192.168.50.12:11434/v1`) with the `ollama/qwen3:8b` provider/model configured.
-   Verify: `opencode run --pure -m ollama/qwen3:8b "say hi"` returns a completion.
+   (`http://192.168.50.12:11434/v1`) with the `ollama/gemma4:e4b` provider/model configured.
+   Verify: `opencode run --pure -m ollama/gemma4:e4b "say hi"` returns a completion.
    > NOTE (PET-179): the spec's invocation is `opencode run --pure …`. Confirm the installed
    > OpenCode build accepts `--pure` and `--format json`; if a build renames a flag, override
    > the base invocation with `WORKER_OPENCODE_CMD` (and keep token capture via `--format
