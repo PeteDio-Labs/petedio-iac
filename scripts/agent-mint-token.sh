@@ -11,6 +11,9 @@
 #
 #   worker   -> petedio-worker[bot]   (contents:write, pull_requests:write) — push + open PR
 #   reviewer -> petedio-reviewer[bot] (contents:read,  pull_requests:write) — formal reviews
+# OPERATOR: worker_app_id and reviewer_app_id in Vault MUST be two DIFFERENT GitHub Apps —
+# identical IDs collapse the identities into one actor and GitHub's self-review block returns
+# (defeating the whole point of PET-176). Verify they differ when seeding kv/services/agent-loop.
 #
 # Usage:
 #   GH_TOKEN="$(scripts/agent-mint-token.sh worker)"   gh pr create ...
@@ -49,12 +52,18 @@ fi
 
 now="$(date +%s)"
 h="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
-p="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 540))" "$APP_ID" | b64url)"
+# iat back-dated 60s for clock skew; exp 480s out → a 540s window, safely under GitHub's
+# HARD 600s (exp-iat) ceiling (was exactly 600 = zero margin, a latent mint failure).
+p="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 480))" "$APP_ID" | b64url)"
 sig="$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -sign <(printf '%s' "$PEM") -binary | b64url)"
 jwt="${h}.${p}.${sig}"
 
-resp="$(curl -sS -X POST \
-  -H "Authorization: Bearer ${jwt}" \
+# The JWT is App-bearer-equivalent for its lifetime — keep it OFF curl's argv (where any
+# local `ps` / /proc/<pid>/cmdline could read it). printf is a bash builtin, so piping the
+# header via stdin (`-H @-`) never exposes the JWT on an external process's command line.
+# The token-exchange POST has no body, so stdin is free for the header.
+resp="$(printf 'Authorization: Bearer %s\n' "$jwt" | curl -sS -X POST \
+  -H @- \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
   "https://api.github.com/app/installations/${INSTALL_ID}/access_tokens")"
