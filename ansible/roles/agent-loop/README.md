@@ -34,7 +34,9 @@ What the role installs (idempotent; a second run reports no changes):
 - Dedicated loop user **`agent`** (the loop never runs as root — Claude Code refuses
   `--dangerously-skip-permissions` as root), with operator SSH keys
   (`agent_loop_authorized_keys`, for direct `ssh agent@…`) and a `cc` alias
-  (`agent_loop_cc_command`, default `claude`)
+  (`agent_loop_cc_command`, default `claude --model claude-opus-4-8` — the reviewer's
+  verdict model is pinned to that Opus build, never the ambient picker default or a
+  Mythos-class model; see `agent_loop_claude_model`)
 - **All active repos** cloned into a workspace mirroring `petedio-workspace` (see below;
   `update: false` — Ansible clones once, the loop owns syncing `main`, so a re-run never
   clobbers in-flight work)
@@ -100,7 +102,7 @@ prompt**, run as `agent` in a tmux session. Attach and start it:
 ssh -t agent@192.168.50.242 tmux attach -t loop
 # start the session (or cd) in the repo for the issue, e.g. a Platform issue:
 #   cd ~/work/petedio/iac
-# then run `cc` (= claude) and give it the loop prompt
+# then run `cc` (= claude --model claude-opus-4-8) and give it the loop prompt
 ```
 
 > [!IMPORTANT]

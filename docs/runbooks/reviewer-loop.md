@@ -27,7 +27,9 @@ approve/changes — is Claude's, driven by the standing prompt below.
 ## The reviewer standing prompt
 
 There is no `run-loop.sh` (same as the authoring loop). Run `cc` (Claude Code) as `agent`
-in a tmux session and give it this prompt:
+in a tmux session and give it this prompt. `cc` pins `--model claude-opus-4-8`
+(`agent_loop_cc_command`), so the verdict is always decided by that Opus build — never the
+ambient picker default, never a Mythos-class model (Fable 5 / Mythos 5).
 
 ```
 You are the REVIEWER half of the two-agent loop on agent-loop-242. Read the Linear docs
