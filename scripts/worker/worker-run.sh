@@ -123,18 +123,43 @@ elif [ -n "$SPEC_FILE" ]; then
 fi
 [ -n "$SPEC" ] || die "no task spec given. Pass --spec-file <path> or --spec - (stdin). This script does NOT read Linear; the spec comes from the issue body via Claude/MCP or the caller."
 
+# --- artifact dir (OUTSIDE the worktree) ------------------------------------------------
+# Every .worker-* file the run produces (prompt, harness log, guard output, test log, PR
+# body, mc temp) lives HERE, never in the clone — the harness log can contain arbitrary
+# model stdout, and `git add -A` must only ever stage the harness's real code change, never
+# one of ours. Removed on exit alongside the clone.
+ART="$(mktemp -d "${TMPDIR:-/tmp}/worker-art-${NUM}-XXXXXX")"
+
 # --- clean main checkout (the worker's OWN clone) ---------------------------------------
 # Default to a throwaway /tmp clone so a bare invocation never disturbs a live working tree.
-# A persistent --clone-dir is supported for the loop's pre-cloned workspace; either way we
-# hard-reset to origin/$BASE so each run starts from clean main (idempotent).
+# A persistent --clone-dir is supported for the loop's pre-cloned workspace — but we REFUSE
+# to hard-reset a path that isn't a CLEAN clone of THIS repo (the LXC-113 rule: never destroy
+# un-versioned work). Either way each run starts from a clean origin/$BASE.
 OWN_CLONE=false
 if [ -z "$CLONE_DIR" ]; then
   CLONE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/worker-${NUM}-XXXXXX")/repo"
   OWN_CLONE=true
   info "cloning $REPO fresh into $CLONE_DIR …"
   gh repo clone "$REPO" "$CLONE_DIR" >/dev/null 2>&1 || die "clone of $REPO failed (auth? repo exists?)."
+elif [ ! -e "$CLONE_DIR/.git" ]; then
+  # Provided path that isn't a clone yet → clone into it (caller-owned; not removed on exit).
+  info "cloning $REPO into $CLONE_DIR …"
+  gh repo clone "$REPO" "$CLONE_DIR" >/dev/null 2>&1 || die "clone of $REPO into $CLONE_DIR failed."
+else
+  # Provided EXISTING checkout — it MUST be a clean clone of $REPO before we reset/clean it.
+  _origin="$(git -C "$CLONE_DIR" remote get-url origin 2>/dev/null || true)"
+  _norm="$(printf '%s' "$_origin" | sed -E 's#^git@github\.com:#https://github.com/#; s#\.git$##; s#/$##')"
+  [ "$_norm" = "https://github.com/$REPO" ] ||
+    die "--clone-dir origin ('$_origin') is not $REPO — refusing to reset a foreign directory."
+  _dirty="$(git -C "$CLONE_DIR" status --porcelain --untracked-files=all | grep -vE '(^|/)\.worker-' || true)"
+  [ -z "$_dirty" ] ||
+    die "refusing to reset $CLONE_DIR: it has uncommitted/untracked changes. Hand the worker a CLEAN clone (LXC-113 rule: never destroy un-versioned work)."
 fi
-cleanup() { [ "$OWN_CLONE" = true ] && rm -rf "$(dirname "$CLONE_DIR")"; }
+cleanup() {
+  rm -rf "$ART"
+  [ "$OWN_CLONE" = true ] && rm -rf "$(dirname "$CLONE_DIR")"
+  return 0
+}
 trap cleanup EXIT
 
 cd "$CLONE_DIR"
@@ -142,8 +167,12 @@ git config user.name "$AUTHOR_NAME"
 git config user.email "$AUTHOR_EMAIL"
 git fetch --quiet origin "$BASE" || die "fetch origin/$BASE failed."
 git checkout --quiet -B "$BASE" "origin/$BASE"
-git reset --hard --quiet "origin/$BASE"   # clean main — discard any prior in-flight state
-git clean -fdq
+# Discard any prior in-flight state — skipped under --dry-run so a preview never mutates the
+# clone (and the clean-clone validation above already ruled out destroying real work).
+if [ "$DRY_RUN" = false ]; then
+  git reset --hard --quiet "origin/$BASE"
+  git clean -fdq
+fi
 
 emit --event issue_picked --issue "$ISSUE" --detail "$BRANCH"
 
@@ -151,7 +180,7 @@ emit --event issue_picked --issue "$ISSUE" --detail "$BRANCH"
 git checkout --quiet -B "$BRANCH" "origin/$BASE"
 
 # --- write the prompt file + build the harness task -------------------------------------
-PROMPT_FILE="$CLONE_DIR/.worker-prompt-${NUM}.md"
+PROMPT_FILE="$ART/.worker-prompt-${NUM}.md"
 {
   printf '# Task: %s\n\n' "$ISSUE"
   printf 'You are the WORKER. Implement ONLY this Co-latro issue in this repo. ADD content/tests;\n'
@@ -159,13 +188,13 @@ PROMPT_FILE="$CLONE_DIR/.worker-prompt-${NUM}.md"
   printf 'Run nothing destructive. Do not touch infra, Vault, or CI.\n\n'
   printf '## Spec\n\n%s\n' "$SPEC"
 } >"$PROMPT_FILE"
-# The prompt file is a build artifact — never commit it.
-echo ".worker-prompt-*.md" >>.git/info/exclude
+# (No .gitignore juggling needed — PROMPT_FILE and every other .worker-* artifact lives in
+# $ART, outside the worktree, so `git add -A` can never stage them.)
 
 TASK="$(cat "$PROMPT_FILE")"
 
 # --- run the harness (opencode) ---------------------------------------------------------
-RUN_LOG="$CLONE_DIR/.worker-run-${NUM}.log"
+RUN_LOG="$ART/.worker-run-${NUM}.log"
 TOKENS=0
 WALL_S=0
 if [ "$DRY_RUN" = true ]; then
@@ -237,10 +266,10 @@ fi
 # Diff the staged change against base; a net drop in catalog/test entries exits the guard 2.
 GUARD_VERDICT="ok"
 set +e
-git diff --cached "origin/$BASE" | "$GUARD" >"$CLONE_DIR/.worker-guard-${NUM}.json" 2>"$CLONE_DIR/.worker-guard-${NUM}.err"
+git diff --cached "origin/$BASE" | "$GUARD" >"$ART/.worker-guard-${NUM}.json" 2>"$ART/.worker-guard-${NUM}.err"
 GRC=$?
 set -e
-cat "$CLONE_DIR/.worker-guard-${NUM}.err" >&2 || true
+cat "$ART/.worker-guard-${NUM}.err" >&2 || true
 if [ "$GRC" -eq 2 ]; then
   GUARD_VERDICT="blocked"
   info "GUARDRAIL BLOCKED the change (delete-not-append). NOT committing/pushing. Worker must re-author additively."
@@ -261,7 +290,7 @@ HEAD_SHA="$(git rev-parse HEAD)"
 
 # --- install + test (ground truth — host has local Postgres, PET-178) -------------------
 TESTS=pass
-TEST_LOG="$CLONE_DIR/.worker-test-${NUM}.log"
+TEST_LOG="$ART/.worker-test-${NUM}.log"
 if [ "$DRY_RUN" = true ]; then
   info "[dry-run] skipping $INSTALL_CMD / $TEST_CMD."
   TESTS=skipped
@@ -287,7 +316,7 @@ else
 
   # Draft PR when tests fail (a red worker PR must not look mergeable); normal PR when green.
   PR_TITLE="${ISSUE}: $(printf '%s' "$SPEC" | head -1 | cut -c1-60)"
-  PR_BODY_FILE="$CLONE_DIR/.worker-pr-body-${NUM}.md"
+  PR_BODY_FILE="$ART/.worker-pr-body-${NUM}.md"
   # shellcheck disable=SC2016  # backticks in the format strings are markdown code spans, not shell.
   {
     printf '## Worker PR — %s\n\n' "$ISSUE"
@@ -353,7 +382,7 @@ if [ "$DRY_RUN" = false ] && [ "$NO_PUSH" = false ] && command -v mc >/dev/null 
   WPATH="${WORKER_RUNS_PATH:-agent-evals/worker-runs.jsonl}"
   TARGET="${ALIAS}/${WPATH}"
   if mc alias list "$ALIAS" >/dev/null 2>&1; then
-    TMP="$(mktemp)"; trap 'rm -f "$TMP"' EXIT
+    TMP="$ART/.worker-mc-${NUM}.tmp"   # in $ART so the single EXIT trap cleans it (no 2nd trap)
     if mc stat "$TARGET" >/dev/null 2>&1; then
       mc cat "$TARGET" >"$TMP" 2>/dev/null || true
       [ -s "$TMP" ] && [ "$(tail -c1 "$TMP")" != "" ] && printf '\n' >>"$TMP"

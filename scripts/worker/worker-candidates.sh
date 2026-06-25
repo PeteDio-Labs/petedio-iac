@@ -117,6 +117,14 @@ import json, re, sys
 
 resp = json.loads(sys.argv[1])
 import os
+
+# Linear's GraphQL returns HTTP 200 even on a query/scope error (an `errors` array in the
+# body, no `data`). `curl -f` can't see that, so without this check a broken query/token
+# would print `[]` — indistinguishable from "nothing to do". Surface it and exit non-zero.
+if isinstance(resp, dict) and resp.get("errors"):
+    msgs = "; ".join(str(e.get("message", e)) for e in resp["errors"])[:400]
+    sys.stderr.write("\033[1;31mLinear GraphQL error (NOT an empty queue): " + msgs + "\033[0m\n")
+    sys.exit(1)
 # Parse "substr=owner/repo;substr2=owner/repo2" into ordered (substr, repo) pairs.
 repo_pairs = []
 for part in os.environ.get("REPOS_MAP", "").split(";"):
@@ -146,13 +154,19 @@ nodes = (((resp or {}).get("data") or {}).get("issues") or {}).get("nodes") or [
 out = []
 for n in nodes:
     title = n.get("title", "") or ""
+    labels = [l.get("name", "") for l in ((n.get("labels") or {}).get("nodes") or [])]
+    # The script does the MECHANICAL filter only; the round-trip cap is Claude's judgment
+    # (see header). But `needs-human` is an unambiguous "do not pick" marker — drop it here
+    # so the headless path never hands back an escalated issue.
+    if "needs-human" in labels:
+        continue
     out.append({
         "key": n.get("identifier", ""),
         "title": title,
         "repo": repo_for(title),
         "branch_slug": slugify(title),
         "state": (n.get("state") or {}).get("name", ""),
-        "labels": [l.get("name", "") for l in ((n.get("labels") or {}).get("nodes") or [])],
+        "labels": labels,
     })
 
 json.dump(out, sys.stdout, indent=2)
