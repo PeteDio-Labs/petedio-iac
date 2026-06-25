@@ -321,9 +321,9 @@ else
   {
     printf '## Worker PR — %s\n\n' "$ISSUE"
     printf 'Authored by the **worker loop** (PET-179): `%s` via `%s`.\n\n' "$MODEL" "$HARNESS"
-    printf '- **Independent `bun test`:** %s\n' "$TESTS"
-    printf '- **Additive guardrail:** %s (no catalog/test entries dropped)\n' "$GUARD_VERDICT"
-    printf '- **Head:** `%s`\n\n' "$HEAD_SHA"
+    printf -- '- **Independent `bun test`:** %s\n' "$TESTS"
+    printf -- '- **Additive guardrail:** %s (no catalog/test entries dropped)\n' "$GUARD_VERDICT"
+    printf -- '- **Head:** `%s`\n\n' "$HEAD_SHA"
     printf 'Mentions %s. The worker NEVER merges — Pedro/the reviewer decides.\n' "$ISSUE"
     printf '\n<sub>🤖 Worker loop on agent-worker (PET-179/PET-133). Draft = tests red.</sub>\n'
   } >"$PR_BODY_FILE"
