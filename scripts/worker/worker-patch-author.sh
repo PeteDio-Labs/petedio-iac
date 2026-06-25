@@ -28,6 +28,7 @@ CLONE="${1:?usage: worker-patch-author.sh <clone-dir> <ollama-model-tag>}"
 MODEL="${2:?usage: worker-patch-author.sh <clone-dir> <ollama-model-tag>}"
 OLLAMA_URL="${OLLAMA_URL:-http://192.168.50.12:11434}"
 SCRATCH="${SCRATCH:-$(mktemp -d "${TMPDIR:-/tmp}/worker-author-XXXXXX")}"
+mkdir -p "$SCRATCH" 2>/dev/null || true   # a caller-supplied SCRATCH (e.g. $ART/author) may not exist yet
 err() { printf '[author] %s\n' "$*" >&2; }
 NOTES=""
 add_note() { NOTES="${NOTES:+$NOTES; }$1"; err "$1"; }
