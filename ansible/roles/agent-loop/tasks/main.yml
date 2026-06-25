@@ -165,6 +165,34 @@
   become: true
   become_user: "{{ agent_loop_user }}"
 
+# --- Claude Code user settings (default model) -------------------------------------
+
+# Role-manage ~/.claude/settings.json so the default model is declarative desired-state,
+# not whatever the interactive login last persisted (it left opus-4-7, with no model key in
+# settings — the default came from ~/.claude.json). Auth/session state live in ~/.claude.json
+# + the OAuth token and are UNTOUCHED here; settings.json is config only (model, theme, env),
+# so templating it can't disturb the login. The `cc` --model flag is the hard guarantee for
+# the verdict model; this sets the default for any ad-hoc `claude` on the box too.
+- name: Ensure ~/.claude exists for {{ agent_loop_user }}
+  ansible.builtin.file:
+    path: "{{ agent_loop_home }}/.claude"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Pin the Claude Code default model in ~/.claude/settings.json
+  ansible.builtin.template:
+    src: claude-settings.json.j2
+    dest: "{{ agent_loop_home }}/.claude/settings.json"
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0644"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
 # --- Loop user keys + workspace ----------------------------------------------------
 
 # Operator keys for direct `ssh {{ agent_loop_user }}@<host>` — skip the root + su hop

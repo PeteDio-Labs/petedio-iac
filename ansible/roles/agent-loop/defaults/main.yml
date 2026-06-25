@@ -48,9 +48,21 @@ agent_loop_nodejs_major: 22
 # agent's PATH (see the .bashrc block) so the user copy wins over /usr/bin. PET-139.
 agent_loop_npm_prefix: "{{ agent_loop_home }}/.npm-global"
 
-# What the `cc` shell alias runs. Plain `claude` by default; set to
-# "claude --dangerously-skip-permissions" once the host is trusted as a sandbox.
-agent_loop_cc_command: claude
+# The Claude Code model the REVIEWER's verdict runs on. Pinned to an Opus build so the
+# gate is never decided by the ambient picker default (it persisted to opus-4-7) and NEVER
+# by a Mythos-class model — Fable 5 / Mythos 5 are off-limits for the reviewer even though
+# this Claude Code build can select them. Bump deliberately (a future opus-4-9, say); the
+# `cc` command AND the managed ~/.claude/settings.json both read this one var.
+agent_loop_claude_model: claude-opus-4-8
+
+# Timezone for the loop user — feeds ~/.claude/settings.json `env.TZ` so verdict-log and
+# loop-log timestamps stay local (was unmanaged drift from the interactive login).
+agent_loop_timezone: America/Chicago
+
+# What the `cc` shell alias runs: `claude` pinned to {{ agent_loop_claude_model }} so every
+# reviewer launch is on that model regardless of any persisted picker state. Append
+# " --dangerously-skip-permissions" once the host is trusted as a sandbox.
+agent_loop_cc_command: "claude --model {{ agent_loop_claude_model }}"
 
 # --- IaC verify tooling (PET-131) --------------------------------------------------
 # The loop must be able to run fmt/validate/--syntax-check/lint on-host (it can't apply,
