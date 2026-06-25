@@ -81,12 +81,21 @@ catalog_re = re.compile(os.environ.get("WORKER_GUARD_CATALOG_RE")
                         or r'^\s*\{?\s*id\s*:')
 allow_shrink = os.environ.get("WORKER_GUARD_ALLOW_SHRINK", "0") == "1"
 
+# Identity extractors: the VALUE that NAMES an entry. Comparing the SET of names removed vs
+# re-added (not just counts) is what makes the guard robust:
+#   * a removed-then-re-added line (pure reindent/reformat) is NOT a deletion (same id);
+#   * a net-zero delete-AND-replace (drop greedy_joker+lusty_joker, add two new ids) IS
+#     caught — counts net to 0 but the dropped ids are gone. (The old net<0 check missed it.)
+cat_id_re = re.compile(r'''id\s*:\s*["']([^"']+)["']''')
+test_name_re = re.compile(r'''(?:test|it|Deno\.test)(?:\.\w+)?\s*\(\s*["'`]([^"'`]+)''')
+
 with open(sys.argv[1], "r", errors="replace") as _f:
-    diff_lines = _f.read().splitlines(keepends=True)
+    diff_lines = _f.read().splitlines()
 
 tests_added = tests_removed = cat_added = cat_removed = 0
-for raw in diff_lines:
-    line = raw.rstrip("\n")
+test_add, test_rem = set(), set()
+cat_add, cat_rem = set(), set()
+for line in diff_lines:
     if not line:
         continue
     # Skip the unified-diff FILE headers (+++ / ---) — they aren't content lines.
@@ -97,24 +106,36 @@ for raw in diff_lines:
         continue
     body = line[1:]               # the actual changed source line (strip the +/- marker)
     if test_re.search(body):
+        m = test_name_re.search(body)
         if sign == "+":
             tests_added += 1
+            if m: test_add.add(m.group(1))
         else:
             tests_removed += 1
+            if m: test_rem.add(m.group(1))
     if catalog_re.search(body):
+        m = cat_id_re.search(body)
         if sign == "+":
             cat_added += 1
+            if m: cat_add.add(m.group(1))
         else:
             cat_removed += 1
+            if m: cat_rem.add(m.group(1))
 
 tests_net = tests_added - tests_removed
 cat_net = cat_added - cat_removed
-# A DROP in either category is the delete-not-append signature.
-dropped = (tests_net < 0) or (cat_net < 0)
+# Entries present on a removed line but NOT re-added = genuinely deleted (identity-aware).
+deleted_catalog = sorted(cat_rem - cat_add)
+deleted_tests = sorted(test_rem - test_add)
+# Block on EITHER a NAMED deletion (catches net-zero delete-and-replace) OR a net drop
+# (catches drops whose entries we couldn't name — multi-line / unquoted ids).
+dropped = bool(deleted_catalog or deleted_tests or tests_net < 0 or cat_net < 0)
 
 verdict = {
-    "tests": {"added": tests_added, "removed": tests_removed, "net": tests_net},
-    "catalog": {"added": cat_added, "removed": cat_removed, "net": cat_net},
+    "tests": {"added": tests_added, "removed": tests_removed, "net": tests_net,
+              "deleted": deleted_tests},
+    "catalog": {"added": cat_added, "removed": cat_removed, "net": cat_net,
+                "deleted": deleted_catalog},
     "dropped": dropped,
     "allow_shrink": allow_shrink,
     "verdict": "shrink-allowed" if (dropped and allow_shrink)
@@ -123,23 +144,33 @@ verdict = {
 json.dump(verdict, sys.stdout, indent=2)
 sys.stdout.write("\n")
 
+def _why():
+    bits = []
+    if deleted_catalog:
+        bits.append("catalog removed " + ", ".join(deleted_catalog))
+    if deleted_tests:
+        bits.append("tests removed " + ", ".join(deleted_tests))
+    if not bits:
+        bits.append(f"net tests {tests_net}, catalog {cat_net}")
+    return "; ".join(bits)
+
 if dropped and not allow_shrink:
     sys.stderr.write(
-        "\033[1;31mGUARD BLOCKED: additive change DROPPED entries — "
-        f"tests net {tests_net}, catalog net {cat_net}. "
-        "The worker likely overwrote-instead-of-appended (the 8B failure mode). "
-        "Re-author additively or set WORKER_GUARD_ALLOW_SHRINK=1 for a genuine removal.\033[0m\n"
+        "\033[1;31mGUARD BLOCKED: additive change REMOVED existing entries — "
+        f"{_why()}. The worker likely overwrote-instead-of-appended (the 8B failure "
+        "mode). Re-author additively or set WORKER_GUARD_ALLOW_SHRINK=1 for a genuine "
+        "removal.\033[0m\n"
     )
     sys.exit(2)
 
 if dropped and allow_shrink:
     sys.stderr.write(
-        "\033[1;33mGUARD: net drop present but --allow-shrink set — "
-        f"tests net {tests_net}, catalog net {cat_net}. Allowed.\033[0m\n"
+        "\033[1;33mGUARD: entries removed but --allow-shrink set — "
+        f"{_why()}. Allowed.\033[0m\n"
     )
 else:
     sys.stderr.write(
-        "\033[1;32mGUARD OK: no net drop — "
+        "\033[1;32mGUARD OK: no entries removed — "
         f"tests net +{tests_net}, catalog net +{cat_net}.\033[0m\n"
     )
 PY
@@ -153,13 +184,14 @@ PY
 if [ "$SELF_TEST" = true ]; then
   printf '\033[1mworker-guard self-test\033[0m: feeding a synthetic delete-not-append diff…\n' >&2
 
-  # Synthetic diff: the worker was asked to ADD a joker + a test, but instead rewrote both
-  # files and dropped MORE entries than it added (3 catalog rows removed, 1 added; 2 tests
-  # removed, 1 added). The guard must BLOCK this (exit 2). Built into a temp file with a
-  # quoted heredoc so the diff body (which contains `(`/`)`/`[`) is never shell-parsed.
-  BAD_DIFF_FILE="$(mktemp "${TMPDIR:-/tmp}/worker-guard-selftest-XXXXXX.diff")"
-  trap 'rm -f "$BAD_DIFF_FILE"' EXIT
-  cat >"$BAD_DIFF_FILE" <<'DIFF'
+  # Two synthetic diffs, both delete-not-append, both must BLOCK (exit 2). Quoted heredocs so
+  # the diff bodies (which contain `(`/`)`/`[`) are never shell-parsed.
+  ST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/worker-guard-selftest-XXXXXX")"
+  trap 'rm -rf "$ST_DIR"' EXIT
+
+  # Case net-drop: rewrote both files, dropped more than it added (3 catalog removed, 1 added;
+  # 2 tests removed, 1 added) — net negative.
+  cat >"$ST_DIR/net-drop.diff" <<'DIFF'
 --- a/src/engine/jokers.ts
 +++ b/src/engine/jokers.ts
 @@ -58,10 +58,4 @@ export const JOKERS = [
@@ -175,28 +207,46 @@ if [ "$SELF_TEST" = true ]; then
 +  test("shiny new joker adds +9 mult", () => {});
 DIFF
 
-  # We expect exit 2 (blocked). Capture stdout (the JSON) and the exit code WITHOUT letting
-  # `set -e` abort on the intended non-zero.
-  set +e
-  OUT="$(run_guard <"$BAD_DIFF_FILE")"
-  RC=$?
-  set -e
-  printf '%s\n' "$OUT"
+  # Case net-zero: removed 2 EXISTING jokers, added 2 NEW ones (catalog net 0). The old net<0
+  # heuristic PASSED this; the identity check must still BLOCK (greedy_joker/lusty_joker gone).
+  cat >"$ST_DIR/net-zero.diff" <<'DIFF'
+--- a/src/engine/jokers.ts
++++ b/src/engine/jokers.ts
+@@ -58,4 +58,4 @@ export const JOKERS = [
+-  { id: "greedy_joker", name: "Greedy Joker", description: "+3 Mult per diamond" },
+-  { id: "lusty_joker", name: "Lusty Joker", description: "+3 Mult per heart" },
++  { id: "icy_joker", name: "Icy Joker", description: "+9 Chips" },
++  { id: "fiery_joker", name: "Fiery Joker", description: "+9 Mult" },
+DIFF
 
-  if [ "$RC" -eq 2 ]; then
-    # Confirm the JSON also says blocked with negative nets — belt and suspenders.
-    OUT="$OUT" python3 - <<'CHECK' || die "self-test: verdict JSON did not confirm a block."
+  st_fail=0
+  for tc in net-drop net-zero; do
+    set +e
+    OUT="$(run_guard <"$ST_DIR/${tc}.diff")"; RC=$?
+    set -e
+    printf '\033[1m-- case %s (rc=%s) --\033[0m\n%s\n' "$tc" "$RC" "$OUT" >&2
+    if [ "$RC" -ne 2 ]; then
+      printf '\033[1;31mSELF-TEST FAIL: case %s expected exit 2 (blocked), got %s.\033[0m\n' "$tc" "$RC" >&2
+      st_fail=1; continue
+    fi
+    # The identity check must NAME the dropped jokers in BOTH cases (net<0 and net==0).
+    OUT="$OUT" TC="$tc" python3 - <<'CHECK' || st_fail=1
 import json, os
-v = json.loads(os.environ["OUT"])
+v = json.loads(os.environ["OUT"]); tc = os.environ["TC"]
 assert v["dropped"] is True, "expected dropped=true"
 assert v["verdict"] == "blocked", "expected verdict=blocked, got " + str(v["verdict"])
-assert v["catalog"]["net"] < 0, "expected catalog net < 0"
-assert v["tests"]["net"] < 0, "expected tests net < 0"
+assert {"greedy_joker", "lusty_joker"} <= set(v["catalog"]["deleted"]), \
+    "expected greedy_joker+lusty_joker in catalog.deleted, got " + str(v["catalog"]["deleted"])
+if tc == "net-zero":
+    assert v["catalog"]["net"] == 0, "net-zero case should net 0, got " + str(v["catalog"]["net"])
 CHECK
-    printf '\033[1;32mSELF-TEST PASS: delete-not-append diff was caught (exit 2, verdict=blocked).\033[0m\n' >&2
+  done
+
+  if [ "$st_fail" -eq 0 ]; then
+    printf '\033[1;32mSELF-TEST PASS: both delete-not-append diffs caught (exit 2), incl. net-zero replace.\033[0m\n' >&2
     exit 0
   else
-    die "SELF-TEST FAIL: expected exit 2 (blocked), got $RC. The guard did NOT catch the delete-not-append diff."
+    die "SELF-TEST FAIL: see cases above — the guard did not catch a delete-not-append diff."
   fi
 fi
 
