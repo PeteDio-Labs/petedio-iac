@@ -24,6 +24,13 @@ The scripts do what shell does well (enumerate PRs, run tests, write the log). T
 **judgment** — reading the diff against the repo `CLAUDE.md`, writing findings, choosing
 approve/changes — is Claude's, driven by the standing prompt below.
 
+> **Test env (PET-178).** The host runs a **local throwaway Postgres** (`postgres` /
+> `colatro` on `localhost:5432`, role var `agent_loop_install_test_postgres`) matching
+> co-latro-backend's default `DATABASE_URL`, so `reviewer-checkout-test.sh`'s `bun test` is
+> **green at baseline** (verified: full suite 297 pass / 0 fail). Treat any failure as a
+> *real* regression — there is no longer an "ignore the N env DB/server fails" caveat (the
+> worker's authoring self-check gets the same clean signal).
+
 ## The reviewer standing prompt
 
 There is no `run-loop.sh` (same as the authoring loop). Run `cc` (Claude Code) as `agent`
