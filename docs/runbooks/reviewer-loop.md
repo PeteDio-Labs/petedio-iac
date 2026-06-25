@@ -54,8 +54,9 @@ Each iteration:
    GROUND TRUTH test result. Never substitute the worker's claim.
 4. Read the diff (`gh pr diff`) against the repo's CLAUDE.md + conventions; read the PR's
    verification-evidence block (PET-149).
-5. Fill `templates/pr-verdict.md.tmpl` and post it with
-   `gh pr review <pr> --approve|--request-changes --body-file <file>`.
+5. Fill `templates/pr-verdict.md.tmpl` and post it as the **`petedio-reviewer[bot]`**
+   identity — distinct from the PR author, so no self-review block (PET-176):
+   `GH_TOKEN="$(scripts/reviewer/reviewer-mint-token.sh)" gh pr review <pr> --approve|--request-changes --body-file <file>`.
 6. Fill `templates/linear-verdict.md.tmpl` and post it as a Linear comment. Set the label
    `agent-reviewed` (and `changes-requested` if requesting changes). DO NOT change status.
 7. Append the eval row:
@@ -80,7 +81,7 @@ These are operator-only — the loop is author-only and never does them.
    # as agent@242, with the Vault Agent token already on disk (~/.vault-token):
    AK=$(vault kv get -field=mc_access_key kv/services/agent-loop)
    SK=$(vault kv get -field=mc_secret_key kv/services/agent-loop)
-   mc alias set homelab https://192.168.50.221:9000 "$AK" "$SK"
+   mc alias set homelab http://192.168.50.221:9000 "$AK" "$SK"   # MinIO .221 serves http, not https
    ```
    The scoped svcacct only needs read/write on `agent-evals` — mint it bucket-scoped
    (same pattern as `scripts/reseed-minio-frontend-vault.sh`), not the tfstate credential

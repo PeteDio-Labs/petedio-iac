@@ -38,9 +38,9 @@
 #   WORKER_INSTALL_CMD    install command (default: "bun install").
 #   WORKER_TEST_CMD       test command (default: "bun test").
 #   WORKER_AUTHOR_NAME/EMAIL  git identity for the worker's commit.
-#   GH_TOKEN              loop PAT (push + open-PR scope, NO merge). If unset, read from
-#                         Vault kv/services/agent-loop:github_token (same as rebase-loop-prs.sh).
-#                         Never printed.
+#   GH_TOKEN              GitHub auth (push + open-PR scope, NO merge). If unset, minted as
+#                         the petedio-worker[bot] App token via worker-mint-token.sh
+#                         (PET-176). Never printed.
 #
 # Output (stdout): one JSON summary {issue,repo,branch,pr,tests,guard,tokens,wall_s,head_sha}.
 # Exit 0 on a completed run (PR opened, even draft-on-fail); non-zero only on a HARNESS error
@@ -92,13 +92,13 @@ EVENT="$SCRIPT_DIR/../agent-event.sh"
 emit() { [ -x "$EVENT" ] && "$EVENT" --agent worker "$@" >/dev/null 2>&1 || true; }
 
 # --- token (never printed) — env first, else Vault, mirroring rebase-loop-prs.sh --------
+# Mint the petedio-worker[bot] App token on demand (PET-176): push + open-PR scope,
+# structurally cannot merge. Nothing long-lived on the host (1-hour installation token).
+# An already-set GH_TOKEN (e.g. a test PAT) wins, so this only mints when unset.
 if [ -z "${GH_TOKEN:-}" ] && [ "$DRY_RUN" = false ]; then
-  if command -v vault >/dev/null 2>&1; then
-    export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
-    export VAULT_CACERT="${VAULT_CACERT:-$SCRIPT_DIR/../../environments/homelab/vault-ca.crt}"
-    GH_TOKEN="$(vault kv get -field=github_token kv/services/agent-loop 2>/dev/null || true)"
-    export GH_TOKEN
-  fi
+  GH_TOKEN="$("$SCRIPT_DIR/worker-mint-token.sh" 2>/dev/null || true)"
+  export GH_TOKEN
+  [ -n "$GH_TOKEN" ] || die "could not mint the petedio-worker[bot] token (worker-mint-token.sh). See docs/runbooks/worker-loop.md."
 fi
 
 # --- slug + branch ----------------------------------------------------------------------
