@@ -1,0 +1,6 @@
+---
+# Apply only our file — `sysctl --system` exits non-zero on read-only keys in an
+# unprivileged LXC (see tasks/main.yml for the full rationale).
+- name: Reload sysctl
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/99-tailscale.conf
+  changed_when: false

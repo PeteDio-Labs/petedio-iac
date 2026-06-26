@@ -24,10 +24,19 @@ The scripts do what shell does well (enumerate PRs, run tests, write the log). T
 **judgment** — reading the diff against the repo `CLAUDE.md`, writing findings, choosing
 approve/changes — is Claude's, driven by the standing prompt below.
 
+> **Test env (PET-178).** The host runs a **local throwaway Postgres** (`postgres` /
+> `colatro` on `localhost:5432`, role var `agent_loop_install_test_postgres`) matching
+> co-latro-backend's default `DATABASE_URL`, so `reviewer-checkout-test.sh`'s `bun test` is
+> **green at baseline** (verified: full suite 297 pass / 0 fail). Treat any failure as a
+> *real* regression — there is no longer an "ignore the N env DB/server fails" caveat (the
+> worker's authoring self-check gets the same clean signal).
+
 ## The reviewer standing prompt
 
 There is no `run-loop.sh` (same as the authoring loop). Run `cc` (Claude Code) as `agent`
-in a tmux session and give it this prompt:
+in a tmux session and give it this prompt. `cc` pins `--model claude-opus-4-8`
+(`agent_loop_cc_command`), so the verdict is always decided by that Opus build — never the
+ambient picker default, never a Mythos-class model (Fable 5 / Mythos 5).
 
 ```
 You are the REVIEWER half of the two-agent loop on agent-loop-242. Read the Linear docs
@@ -45,8 +54,9 @@ Each iteration:
    GROUND TRUTH test result. Never substitute the worker's claim.
 4. Read the diff (`gh pr diff`) against the repo's CLAUDE.md + conventions; read the PR's
    verification-evidence block (PET-149).
-5. Fill `templates/pr-verdict.md.tmpl` and post it with
-   `gh pr review <pr> --approve|--request-changes --body-file <file>`.
+5. Fill `templates/pr-verdict.md.tmpl` and post it as the **`petedio-reviewer[bot]`**
+   identity — distinct from the PR author, so no self-review block (PET-176):
+   `GH_TOKEN="$(scripts/reviewer/reviewer-mint-token.sh)" gh pr review <pr> --approve|--request-changes --body-file <file>`.
 6. Fill `templates/linear-verdict.md.tmpl` and post it as a Linear comment. Set the label
    `agent-reviewed` (and `changes-requested` if requesting changes). DO NOT change status.
 7. Append the eval row:
@@ -71,7 +81,7 @@ These are operator-only — the loop is author-only and never does them.
    # as agent@242, with the Vault Agent token already on disk (~/.vault-token):
    AK=$(vault kv get -field=mc_access_key kv/services/agent-loop)
    SK=$(vault kv get -field=mc_secret_key kv/services/agent-loop)
-   mc alias set homelab https://192.168.50.221:9000 "$AK" "$SK"
+   mc alias set homelab http://192.168.50.221:9000 "$AK" "$SK"   # MinIO .221 serves http, not https
    ```
    The scoped svcacct only needs read/write on `agent-evals` — mint it bucket-scoped
    (same pattern as `scripts/reseed-minio-frontend-vault.sh`), not the tfstate credential

@@ -146,6 +146,51 @@
     NPM_CONFIG_PREFIX: "{{ agent_loop_npm_prefix }}"
   when: agent_loop_install_bun | bool
 
+# --- Postgres for the Co-latro test gate (PET-178) ---------------------------------
+
+# A local throwaway Postgres so co-latro-backend `bun test` is GREEN at baseline — the
+# freshDb() tests (db/sessions, db/analytics, api/http) need a real pg. It matches
+# testdb.ts's default URL (user/db/password = postgres / colatro / postgres on
+# localhost:5432), so the suite connects with no env var. Native pg, no Docker (LXC).
+- name: Install PostgreSQL + psycopg2 (Co-latro test gate)
+  ansible.builtin.apt:
+    name:
+      - postgresql
+      - python3-psycopg2 # community.postgresql modules talk to pg through this
+    state: present
+    update_cache: true
+  when: agent_loop_install_test_postgres | bool
+
+- name: Ensure PostgreSQL is running and enabled
+  ansible.builtin.service:
+    name: postgresql
+    state: started
+    enabled: true
+  when: agent_loop_install_test_postgres | bool
+
+# Password on the `postgres` superuser so the suite reaches it over TCP (localhost:5432).
+# Run via the local socket as the postgres OS user (peer auth) — no password needed for
+# this admin step. Debian/Ubuntu's default pg_hba already allows `host 127.0.0.1/32
+# scram-sha-256` with listen_addresses='localhost', so once the password is set the
+# default URL authenticates with no further conf edits. Localhost-only; throwaway test DB.
+- name: Set the postgres role password (TCP auth for bun test)
+  community.postgresql.postgresql_user:
+    name: postgres
+    password: "{{ agent_loop_test_pg_password }}"
+  become: true
+  become_user: postgres
+  no_log: true
+  when: agent_loop_install_test_postgres | bool
+
+- name: Create the Co-latro test database
+  community.postgresql.postgresql_db:
+    name: "{{ agent_loop_test_pg_db }}"
+    owner: postgres
+    state: present
+  become: true
+  become_user: postgres
+  when: agent_loop_install_test_postgres | bool
+
 # Shell QoL for the loop user: `cc` shorthand for Claude Code, and PATH = the per-user npm
 # prefix bin ({{ agent_loop_npm_prefix }}/bin — claude, bun) FIRST so the agent-owned, self-
 # updatable claude wins over any /usr/bin/claude, then ~/.local/bin (pipx shims — ansible*,
@@ -162,6 +207,53 @@
     block: |
       export PATH="{{ agent_loop_npm_prefix }}/bin:$HOME/.local/bin:$PATH"
       alias cc='{{ agent_loop_cc_command }}'
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+# --- Claude Code user settings (default model) -------------------------------------
+
+# Role-manage the default model in ~/.claude/settings.json. We MERGE, never overwrite:
+# settings.json may also carry an operator-added `permissions.allow` allowlist — the loop
+# runs WITHOUT --dangerously-skip-permissions, so that allowlist is how commands get
+# pre-approved, and a blind template write would silently drop it. Auth/session state lives
+# in ~/.claude.json + the OAuth token (untouched here), so editing settings.json can't
+# disturb the login. The `cc` --model flag is the hard guarantee for the verdict model; this
+# sets the default for any ad-hoc `claude` on the box too.
+- name: Ensure ~/.claude exists for {{ agent_loop_user }}
+  ansible.builtin.file:
+    path: "{{ agent_loop_home }}/.claude"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Read existing ~/.claude/settings.json if present (to preserve operator keys)
+  ansible.builtin.slurp:
+    src: "{{ agent_loop_home }}/.claude/settings.json"
+  register: agent_loop_claude_settings_raw
+  failed_when: false
+  changed_when: false
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Pin the Claude Code default model in ~/.claude/settings.json (merge, never clobber)
+  ansible.builtin.copy:
+    dest: "{{ agent_loop_home }}/.claude/settings.json"
+    content: "{{ existing | combine(managed, recursive=true) | to_nice_json }}\n"
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0644"
+  vars:
+    existing: >-
+      {{ (agent_loop_claude_settings_raw.content | b64decode | from_json)
+         if (agent_loop_claude_settings_raw.content | default('') | b64decode | trim | length > 0)
+         else {} }}
+    managed:
+      model: "{{ agent_loop_claude_model }}"
+      env:
+        TZ: "{{ agent_loop_timezone }}"
   become: true
   become_user: "{{ agent_loop_user }}"
 

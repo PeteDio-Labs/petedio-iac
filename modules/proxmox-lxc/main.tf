@@ -35,7 +35,10 @@ resource "proxmox_virtual_environment_container" "this" {
       for_each = length(var.dns_servers) > 0 ? [1] : []
       content {
         servers = var.dns_servers
-        domain  = var.dns_domain
+        # null when empty so a container that sets a nameserver but NO searchdomain
+        # (e.g. Authentik 119) imports as a no-op instead of writing a searchdomain.
+        # The default dns_domain is non-empty, so greenfield consumers are unaffected.
+        domain = var.dns_domain != "" ? var.dns_domain : null
       }
     }
 
@@ -66,7 +69,7 @@ resource "proxmox_virtual_environment_container" "this" {
   network_interface {
     name     = var.network_interface_name
     bridge   = var.bridge
-    firewall = false
+    firewall = var.network_interface_firewall
     # null (default) → provider-computed, a no-op for greenfield consumers; a brownfield
     # capture pins the running hwaddr so the import doesn't rely on computed-value
     # preservation. See docs/GOTCHAS.md.

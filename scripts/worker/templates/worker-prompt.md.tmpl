@@ -1,0 +1,21 @@
+<!--
+  Worker task-prompt template (PET-179). The wrapper (worker-run.sh) builds this prompt
+  from the issue spec and hands it to `opencode run --pure -m ollama/gemma4:e4b`. Claude (or
+  the caller) supplies {{SPEC}} from the Linear issue body — the wrapper does NOT read Linear.
+  The "ADD, never delete" framing is load-bearing: it's the prompt-side half of the additive
+  guardrail (worker-guard-additive.sh is the enforcement-side half). Drop this HTML comment.
+-->
+# Task: {{ISSUE}}
+
+You are the WORKER. Implement ONLY this Co-latro issue in this repo.
+
+Hard constraints:
+- This change is **ADDITIVE**. ADD catalog entries (jokers/vouchers/…) and test cases.
+  **NEVER delete or overwrite existing catalog entries or existing test cases.** A net drop
+  in either is rejected by the guardrail before the PR is opened.
+- Touch only the files this issue needs. Do not modify infra, CI, Vault, or unrelated code.
+- Do not run destructive commands. Leave the working tree buildable.
+
+## Spec
+
+{{SPEC}}

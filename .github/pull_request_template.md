@@ -39,8 +39,9 @@ Closes **PET-____**.
 ## Gates
 
 - [ ] **Not `import-gated`.** If this is `import-gated` (a human `terraform import` is required
-      before merge), say so here and confirm the agreed gate: agents never advance it past PR,
-      and merge only after plan-on-PR / the operator's plan is a **no-op**. (PET-144)
+      before merge), add the **`import-gated` label** to this PR — the `import-gated-guard` check
+      then **blocks merge** until you run the import, confirm the operator's (post-merge) plan is
+      a **no-op**, and remove the label. Agents never advance an import-gated PR past PR. (PET-144)
 - [ ] **No secrets** in the diff or this description — Vault paths referenced by name only.
 - [ ] Touches **one repo** only (this one).
 

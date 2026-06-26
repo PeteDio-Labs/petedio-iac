@@ -38,6 +38,19 @@ agent_loop_log_dir: "{{ agent_loop_home }}/loop-logs"
 # deliberate (`npm update -g bun`), not on every play. Set false for an IaC-only host.
 agent_loop_install_bun: true
 
+# Local throwaway Postgres for the Co-latro test gate (PET-178). co-latro-backend's
+# `bun test` has tests (db/sessions, db/analytics, api/http) that call freshDb() — migrate
+# + truncate a Postgres — and fail "env-red" without one, muddying BOTH the worker's
+# authoring self-check and the reviewer's independent ground truth. testdb.ts defaults to
+# postgres://postgres:postgres@localhost:5432/colatro (TEST_DATABASE_URL/DATABASE_URL
+# override), so a local pg matching that URL makes the suite green at baseline with NO env
+# wiring — verified on the Mac: full suite 297 pass / 0 fail with this pg, 8 env-fails
+# without it. Native pg (242 is an LXC with no Docker; Docker-in-LXC would need
+# nesting/keyctl we don't grant). Set false for an IaC-only host. Localhost-only, throwaway.
+agent_loop_install_test_postgres: true
+agent_loop_test_pg_db: colatro
+agent_loop_test_pg_password: postgres
+
 # Node.js LTS major (NodeSource). 22 = active LTS ("jod").
 agent_loop_nodejs_major: 22
 
@@ -48,9 +61,21 @@ agent_loop_nodejs_major: 22
 # agent's PATH (see the .bashrc block) so the user copy wins over /usr/bin. PET-139.
 agent_loop_npm_prefix: "{{ agent_loop_home }}/.npm-global"
 
-# What the `cc` shell alias runs. Plain `claude` by default; set to
-# "claude --dangerously-skip-permissions" once the host is trusted as a sandbox.
-agent_loop_cc_command: claude
+# The Claude Code model the REVIEWER's verdict runs on. Pinned to an Opus build so the
+# gate is never decided by the ambient picker default (it persisted to opus-4-7) and NEVER
+# by a Mythos-class model — Fable 5 / Mythos 5 are off-limits for the reviewer even though
+# this Claude Code build can select them. Bump deliberately (a future opus-4-9, say); the
+# `cc` command AND the managed ~/.claude/settings.json both read this one var.
+agent_loop_claude_model: claude-opus-4-8
+
+# Timezone for the loop user — feeds ~/.claude/settings.json `env.TZ` so verdict-log and
+# loop-log timestamps stay local (was unmanaged drift from the interactive login).
+agent_loop_timezone: America/Chicago
+
+# What the `cc` shell alias runs: `claude` pinned to {{ agent_loop_claude_model }} so every
+# reviewer launch is on that model regardless of any persisted picker state. Append
+# " --dangerously-skip-permissions" once the host is trusted as a sandbox.
+agent_loop_cc_command: "claude --model {{ agent_loop_claude_model }}"
 
 # --- IaC verify tooling (PET-131) --------------------------------------------------
 # The loop must be able to run fmt/validate/--syntax-check/lint on-host (it can't apply,

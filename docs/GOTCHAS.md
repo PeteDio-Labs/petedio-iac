@@ -30,6 +30,17 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   — provider attributes import doesn't populate, not API mutations). Full procedure:
   `docs/runbooks/nexus-import.md`.
 
+- **More brownfield divergences, from the Authentik capture** (PET-123, LXC 119): not every
+  captured LXC is a community-scripts box, but the same "match it exactly" rule applies to
+  whatever the live config shows. Two new ones beyond the Nexus list: (a) **`net0
+  firewall=1`** — the module's NIC firewall defaults off, so a live container with the
+  Proxmox NIC firewall ON needs `network_interface_firewall = true` or the import plans to
+  **disable the firewall on a live host**; (b) a container that sets a **`nameserver` but no
+  `searchdomain`** (e.g. CT119) needs `dns_servers=[…]` **with** `dns_domain = ""` — the
+  module renders `domain = null` when empty so it doesn't write a searchdomain that wasn't
+  there. Also set `os_type` to the live `ostype` (CT119 is `ubuntu`, not the `debian`
+  default). Full procedure: `docs/runbooks/authentik-import.md`.
+
 - **Proxmox API tokens can't set LXC `features{}`.** The API enforces a hardcoded
   `user == root@pam` check for features other than bare `nesting`; an API token's
   username is `root@pam!tokenid`, not `root@pam`, so it fails — even for a PVEAdmin
@@ -271,3 +282,33 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   re-run that re-templates the config) can't re-auth and the token sink goes stale. The host
   needs the `vault` binary too (the CLI/`vault agent` are one binary) — the helper's Vault
   fallback was dead weight until this. PET-141.
+
+## Cloudflare — tunnel ingress + Access (PET-35/187/38)
+
+- **v5 `cloudflare_zero_trust_access_application.policies` is a list of OBJECTS, not IDs.**
+  `policies = [cloudflare_zero_trust_access_policy.route[k].id]` PASSES `terraform validate` (a
+  `for_each` resource id is unknown at validate time, so element typing is skipped) but **fails
+  the apply plan** with `Inappropriate value for attribute "policies": element 0: object
+  required, but have string` — the classic validate-green / apply-red trap, and it only surfaces
+  on the apply-on-merge runner. Use the object form:
+  `policies = [{ id = cloudflare_zero_trust_access_policy.route[k].id }]`. (`modules/cloudflare-ingress`.)
+
+- **Access policy `include` is v5 attribute syntax**, not v4 blocks:
+  `include = [{ email = { email = "x@y" } }]` / `[{ email_domain = { domain = "y" } }]` /
+  `[{ everyone = {} }]`. The v4 `include { email = [...] }` block form fails validate on `~> 5`.
+
+- **Fail-closed an Access-gated route.** A public CNAME must not be created before its Access
+  app, or a missing token scope / Zero-Trust-org error mid-apply leaves the hostname routed but
+  **ungated**. `cloudflare_dns_record.route` carries
+  `depends_on = [cloudflare_zero_trust_access_application.route]` so a failed Access create leaves
+  no resolvable hostname. Relatedly, the CF API token (`kv/iac/cloudflare`, the
+  `homelab-tunnel-management` token) needs **Account · Access: Apps and Policies · Edit** on top
+  of Tunnel + DNS — and the apply only fails on a missing Access scope AFTER merge.
+
+- **Authentik OIDC as a Cloudflare Access login method** (PET-38) has two traps: (1) the
+  Authentik provider's **authorization flow must be implicit-consent** — explicit-consent
+  silently breaks CF's machine redirect; (2) **endpoint path asymmetry** — `authorize`/`token`
+  are GLOBAL (`https://auth.pdlab.dev/application/o/...`) but `jwks`/`.well-known` are
+  **per-slug** (`.../application/o/<app-slug>/...`); wrong slug placement = login fails. CF's
+  callback is `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`. Full procedure:
+  `docs/runbooks/fleet-activity-view.md`.

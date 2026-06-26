@@ -28,6 +28,15 @@ module "cloudflare_ingress" {
     "docker.pdlab.dev"   = { service = "http://192.168.50.111:8082" } # Nexus (docker)
     "registry.pdlab.dev" = { service = "http://192.168.50.111:8081" } # Nexus (registry)
     "seer.pdlab.dev"     = { service = "http://192.168.50.33:5055" }  # Overseerr
+
+    # Mission Control — Co-latro fleet activity view (PET-187). nginx static origin on
+    # LXC 242 (agent-loop); gated by Cloudflare Access to a single user via One-Time PIN
+    # (allowed_idps left empty -> OTP; the Authentik OIDC IdP from PET-38 can be added later).
+    "fleet.pdlab.dev" = {
+      service       = "http://192.168.50.242:8090"
+      access        = true
+      access_emails = ["pedelgadillo@gmail.com"]
+    }
   }
 }
 

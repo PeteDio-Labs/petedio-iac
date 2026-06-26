@@ -1,0 +1,7 @@
+; {{ ansible_managed }}
+; Palworld dedicated-server settings (PET-157). Tunables come from the palworld role
+; vars (group_vars / -e), so this file stays declarative — edit the vars, re-run the
+; play, not this file by hand. Palworld reads the whole config from the single
+; OptionSettings=(...) line; keys omitted here fall back to the server's defaults.
+[/Script/Pal.PalGameWorldSettings]
+OptionSettings=(ServerName="{{ palworld_server_name }}",ServerDescription="{{ palworld_server_description }}",ServerPlayerMaxNum={{ palworld_max_players }},PublicPort={{ palworld_public_port }},AdminPassword="{{ palworld_admin_password }}",ServerPassword="{{ palworld_server_password }}",RCONEnabled={{ 'True' if palworld_rcon_enabled else 'False' }},RCONPort={{ palworld_rcon_port }})

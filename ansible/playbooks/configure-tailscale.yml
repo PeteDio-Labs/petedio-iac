@@ -1,0 +1,27 @@
+---
+# configure-tailscale.yml — configure the Tailscale subnet router (LXC 244). (PET-188)
+#
+# TF creates the LXC (environments/homelab/tailscale.tf) and scripts/lxc-tun-244.sh
+# adds /dev/net/tun out-of-band on the node. This play installs the tailscale daemon,
+# enables IP forwarding, and (when given an auth key) brings the node up advertising the
+# LAN route. roles/tailscale-router does the work.
+#
+# NO secrets in the repo: the auth key lives in Vault (kv/services/tailscale, field
+# auth_key). Pass it at runtime so `tailscale up` can register the node:
+#
+#   ansible-playbook -i ../inventory/hosts.yml configure-tailscale.yml \
+#     -e "tailscale_auth_key=$(vault kv get -field=auth_key kv/services/tailscale)"
+#
+# Without -e tailscale_auth_key the play still installs everything and enables
+# forwarding, but SKIPS `tailscale up` (so it is safe to run before the key exists).
+# After it comes up you MUST approve the advertised route in the Tailscale admin
+# console — see roles/tailscale-router/README.md.
+#
+# Inventory: the `tailscale` group -> 192.168.50.244, root over the TF-installed key.
+
+- name: Configure the Tailscale subnet router (LXC 244)
+  hosts: tailscale
+  become: true
+
+  roles:
+    - tailscale-router

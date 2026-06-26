@@ -1,0 +1,19 @@
+<!--
+  Worker PR-body template (PET-179). worker-run.sh fills these {{...}} and opens the PR with
+  `gh pr create` — **--draft when tests FAIL**, a normal PR when green (a red worker PR must
+  never look mergeable). Self-contained: the reviewer and Pedro read THIS, not the worker's
+  chain of thought. The worker NEVER merges. Drop this HTML comment when posting.
+-->
+## 🛠️ Worker PR — {{ISSUE}}
+
+Authored by the **worker loop** (PET-179): `{{MODEL}}` via `{{HARNESS}}`.
+
+- **Independent `bun test`:** {{TESTS_RESULT}}  <!-- pass ✅ / fail ❌ — run on the host (local Postgres, PET-178) -->
+- **Additive guardrail:** {{GUARD_VERDICT}}  <!-- ok = no catalog/test entries dropped (the 8B overwrite-not-append check) -->
+- **Head:** `{{HEAD_SHA}}`
+
+Mentions {{ISSUE}}. The worker NEVER merges and NEVER reviews — the reviewer loop posts a
+verdict and Pedro merges.
+
+---
+<sub>🤖 Automated authoring by the worker loop on agent-worker (PET-179 / PET-133). Draft = tests red. Max 2 round-trips, then `needs-human`.</sub>
