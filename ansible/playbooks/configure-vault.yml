@@ -84,17 +84,21 @@
         - /opt/vault/data
         - /opt/vault/tls
 
-    # Audit log directory (PET-109). MUST exist + be vault-writable BEFORE the
-    # vault-config `vault_audit` resource is applied — enabling a file audit device
-    # against an unwritable path fails, and once enabled Vault is fail-closed (it stops
-    # serving if it can't write the audit log). See docs/runbooks/vault-resilience.md.
-    - name: Ensure the Vault audit-log directory exists
+    # Audit log directory (PET-109 / PET-189). MUST exist + be writable by the `vault`
+    # user BEFORE the vault-config `vault_audit` resource is applied — enabling a file
+    # audit device against an unwritable path fails (PET-189: it failed on .223 because
+    # /opt/vault/logs was not vault-writable), and once enabled Vault is fail-closed (it
+    # stops serving if it can't write the audit log). See docs/runbooks/vault-resilience.md.
+    # The file module enforces owner/group/mode on every run, so re-running this corrects
+    # a mis-owned/mis-permissioned dir on a host that predates this task. Mode 0750: vault
+    # owns + writes it, group-readable, world has no access (audit logs are sensitive).
+    - name: Ensure the Vault audit-log directory exists (vault-owned, 0750)
       ansible.builtin.file:
         path: /opt/vault/logs
         state: directory
         owner: vault
         group: vault
-        mode: "0700"
+        mode: "0750"
 
     # Rotate the audit log via SIGHUP — Vault holds the file descriptor and reopens its
     # audit files on SIGHUP, so we must NOT copytruncate/rename out from under it (that
