@@ -50,8 +50,11 @@
       net.ipv6.conf.all.forwarding = 1
   notify: Reload sysctl
 
+# Apply ONLY our file, not `sysctl --system`: on an unprivileged LXC --system re-applies
+# every host config file and exits non-zero on read-only keys (kernel.*, fs.protected_*),
+# failing the play even though our forwarding keys set fine. `-p <file>` touches just ours.
 - name: Apply sysctl now (so the first `tailscale up` routes immediately)
-  ansible.builtin.command: sysctl --system
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/99-tailscale.conf
   changed_when: false
 
 - name: Enable and start tailscaled
