@@ -12,8 +12,9 @@ Full operational guide, the standing prompt, and Pedro's one-time setup:
 | Script | What it does |
 |---|---|
 | `worker-candidates.sh` | List `worker-ok` + **Todo** Co-latro issues the worker may pick (JSON). Linear GraphQL if a token is reachable; else `[]` + a note to enumerate via the Linear MCP (no Linear token is provisioned yet — PET-145/147). |
-| `worker-run.sh PET-<n> --repo <owner/repo> --spec-file <f>` | Reset clean `main` → run `opencode run --pure -m ollama/gemma4:e4b` → **guardrail** → `bun install`+`bun test` → push own `pet-*` branch → open **draft PR if tests fail / normal PR if green** → emit events → append the eval row. |
+| `worker-run.sh PET-<n> --repo <owner/repo> --spec-file <f>` | Reset clean `main` → author (patch-apply / opencode) → **guardrail** → `bun install`+`bun test` → on a red gate, the **assertion reconciler** (verify-or-revert) → push own `pet-*` branch → open **draft PR if still red / normal PR if green (incl. a reconciled green)** → emit events → append the eval row. |
 | `worker-guard-additive.sh` | The "green-but-wrong" guard. Exit 2 when a diff DROPS catalog entries / test cases (the 8B overwrite-not-append failure). `--self-test` proves it catches a synthetic delete-not-append diff. |
+| `worker-reconcile-asserts.sh` | **Verify-or-revert catalog-assertion reconciler** (runs ONLY on a red gate, between `bun test` and the draft PR). The additive author can break a *separate* existing test that ENUMERATES the catalog — it can't cross-edit it. Two patterns: **(A)** bump a `expect(<expr>.length).toBe(N)` count off by the added-entry delta (PET-175: 17→18); **(B)** append the new id to a hard-coded owned-id array (PET-173: `fortune_scale`). After the candidate edit it re-runs the FULL suite: green → keep + `TESTS=pass` (normal PR); still red / no confident fix → `git checkout --` revert + stay draft. Only ever edits `*.test.ts`, only bumps a numeric literal or appends an id — never deletes/skips/rewrites a test. |
 | `templates/worker-prompt.md.tmpl` | Harness task-prompt skeleton (additive framing). |
 | `templates/pr-body.md.tmpl` | Worker PR-body skeleton. |
 

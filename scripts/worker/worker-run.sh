@@ -18,8 +18,14 @@
 #      in catalog entries / test cases (the 8B overwrite-not-append failure) BLOCKS the run;
 #   6. runs `bun install` + `bun test` (the host now has a local Postgres, PET-178, so the
 #      suite is green at baseline — a failure here is REAL);
+#   6b. on a RED gate, runs the catalog-assertion RECONCILER (worker-reconcile-asserts.sh):
+#      a deterministic, verify-or-revert fix for the one remaining `guard=ok tests=fail` mode —
+#      an additive catalog add that breaks a SEPARATE enumerating test the author can't cross-
+#      edit (a count assertion / a hard-coded id array, PET-175/PET-173). Green after the fix →
+#      the edit is folded into the worker commit and TESTS flips to pass; otherwise it reverts
+#      itself and the draft behavior stands. It only edits test files and can never make it worse;
 #   7. pushes the branch (force-with-lease, ONLY its own `pet-*` branch — never a human's);
-#   8. opens a **DRAFT** PR when tests fail, a normal PR when green;
+#   8. opens a **DRAFT** PR when tests fail, a normal PR when green (incl. a reconciled green);
 #   9. emits lifecycle events via scripts/agent-event.sh (run_started → issue_picked →
 #      pr_opened → run_exited) and appends a worker eval-log row.
 #
@@ -99,6 +105,7 @@ AUTHOR_EMAIL="${WORKER_AUTHOR_EMAIL:-agent-worker@petedio.local}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARD="$SCRIPT_DIR/worker-guard-additive.sh"
 AUTHOR="$SCRIPT_DIR/worker-patch-author.sh"   # constrained patch-apply authoring core (patch mode)
+RECONCILE="$SCRIPT_DIR/worker-reconcile-asserts.sh"  # verify-or-revert catalog-assertion fixer
 EVENT="$SCRIPT_DIR/../agent-event.sh"
 [ -x "$GUARD" ] || die "guardrail not found/executable: $GUARD"
 [ "$AUTHOR_MODE" != patch ] || [ -x "$AUTHOR" ] || die "patch authoring core not found/executable: $AUTHOR"
@@ -212,6 +219,7 @@ TASK="$(cat "$PROMPT_FILE")"
 RUN_LOG="$ART/.worker-run-${NUM}.log"
 TOKENS=0
 WALL_S=0
+NEW_ID=""   # the catalog id the patch-author added; feeds the assertion reconciler on a red gate.
 if [ "$DRY_RUN" = true ]; then
   info "[dry-run] would author via '$AUTHOR_MODE' (model=$MODEL)"
 elif [ "$AUTHOR_MODE" = patch ]; then
@@ -232,6 +240,24 @@ elif [ "$AUTHOR_MODE" = patch ]; then
   WALL_S=$((END - START))
   cat "$RUN_LOG" >&2 || true
   [ "$ARC" -eq 0 ] || info "patch authoring did not apply (rc=$ARC) — git add -A below will find no change and exit without a PR."
+  # Capture the new catalog id from the author's JSON verdict (last line). The reconciler uses
+  # it to fix a separate enumerating test the additive author can't cross-edit (PET-175/173).
+  NEW_ID="$(RUN_LOG="$RUN_LOG" python3 <<'PY' 2>/dev/null || true
+import json, os
+nid = ""
+for line in open(os.environ["RUN_LOG"], errors="replace"):
+    line = line.strip()
+    if line.startswith("{"):
+        try:
+            v = json.loads(line)
+        except Exception:
+            continue
+        if v.get("new_id"):
+            nid = v["new_id"]
+print(nid)
+PY
+)"
+  [[ "$NEW_ID" =~ ^[a-z0-9_]+$ ]] || NEW_ID=""
 else
   command -v opencode >/dev/null || die "opencode not in PATH (worker harness; see roles/agent-loop)."
   info "running harness: $OPENCODE_CMD -m $MODEL  (model=$MODEL)"
@@ -323,6 +349,7 @@ HEAD_SHA="$(git rev-parse HEAD)"
 
 # --- install + test (ground truth — host has local Postgres, PET-178) -------------------
 TESTS=pass
+RECONCILED_NOTE=""   # set by the catalog-assertion reconciler below; surfaced in the PR body.
 TEST_LOG="$ART/.worker-test-${NUM}.log"
 if [ "$DRY_RUN" = true ]; then
   info "[dry-run] skipping $INSTALL_CMD / $TEST_CMD."
@@ -334,6 +361,38 @@ else
   set -e
   { [ "$IRC" -eq 0 ] && [ "$TRC" -eq 0 ]; } || TESTS=fail
   info "tests: $TESTS (install rc=$IRC, test rc=$TRC)"
+fi
+
+# --- catalog-assertion reconciler (verify-or-revert) ------------------------------------
+# The additive patch-author can break a SEPARATE existing test that ENUMERATES the catalog
+# (a count assertion, or a hard-coded id array) which it can't cross-edit — the one remaining
+# `guard=ok tests=fail` mode (PET-175/PET-173). Only on a RED gate, try a deterministic,
+# verify-or-revert fix: bump the count literal or append the new id, then re-run the FULL
+# suite. Green → amend the worker commit + flip TESTS=pass (normal PR); still red or no
+# confident fix → it reverts itself and we keep today's draft behavior. It can NEVER make
+# things worse, and only ever edits TEST files.
+if [ "$TESTS" = fail ] && [ "$DRY_RUN" = false ] && [ -x "$RECONCILE" ]; then
+  info "tests red — attempting the catalog-assertion reconciler (verify-or-revert)…"
+  RECON_JSON="$ART/.worker-reconcile-${NUM}.json"
+  RECON_ARGS=(--test-log "$TEST_LOG" --test-cmd "$TEST_CMD" \
+              --guard-json "$ART/.worker-guard-${NUM}.json")
+  [ -n "$NEW_ID" ] && RECON_ARGS+=(--new-id "$NEW_ID")
+  set +e
+  SCRATCH="$ART/reconcile" "$RECONCILE" "$CLONE_DIR" "${RECON_ARGS[@]}" >"$RECON_JSON"
+  RRC=$?
+  set -e
+  if [ "$RRC" -eq 0 ]; then
+    # The reconciler kept a test-file edit and the FULL suite is green. Fold it into the worker
+    # commit (the reviewer sees one coherent change), refresh HEAD_SHA, and flip the gate green.
+    RECONCILED_NOTE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("changes",""))' "$RECON_JSON" 2>/dev/null || true)"
+    git add -A
+    git commit --quiet --amend --no-edit
+    HEAD_SHA="$(git rev-parse HEAD)"
+    TESTS=pass
+    info "reconciler GREEN — folded into the worker commit, TESTS=pass. ($RECONCILED_NOTE)"
+  else
+    info "reconciler made no confident fix (or reverted) — keeping TESTS=fail / draft PR."
+  fi
 fi
 
 # --- push (force-with-lease, OWN pet-* branch ONLY) -------------------------------------
@@ -356,6 +415,7 @@ else
     printf 'Authored by the **worker loop** (PET-179): `%s` via `%s`.\n\n' "$MODEL" "$HARNESS"
     printf -- '- **Independent `bun test`:** %s\n' "$TESTS"
     printf -- '- **Additive guardrail:** %s (no catalog/test entries dropped)\n' "$GUARD_VERDICT"
+    [ -n "$RECONCILED_NOTE" ] && printf -- '- **Reconciled catalog assertion(s):** %s\n' "$RECONCILED_NOTE"
     printf -- '- **Head:** `%s`\n\n' "$HEAD_SHA"
     printf 'Mentions %s. The worker NEVER merges — Pedro/the reviewer decides.\n' "$ISSUE"
     printf '\n<sub>🤖 Worker loop on agent-worker (PET-179/PET-133). Draft = tests red.</sub>\n'
