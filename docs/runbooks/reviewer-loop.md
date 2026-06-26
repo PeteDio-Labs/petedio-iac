@@ -99,9 +99,17 @@ One JSON object per line (decided 2026-06-10):
 {"ts":"","issue":"PET-n","pr":"","worker_model":"","harness":"","worker_tests":"pass|fail","claude_verdict":"approve|changes","claude_findings":[],"pedro_verdict":"merge|kickback","round_trips":0,"tokens":0,"wall_s":0}
 ```
 
-The reviewer fills its fields; `pedro_verdict` (merge|kickback) is appended by Pedro on
-merge/kickback. This is the labeled eval set: worker success rate, reviewer precision/recall
-vs Pedro, and gold failures (bugs that slip both gates).
+The reviewer fills its fields; `pedro_verdict` (merge|kickback) is stamped onto the matching
+row by Pedro after he merges or kicks back the PR — run
+`scripts/reviewer/reviewer-stamp-pedro-verdict.sh --issue PET-<n> --verdict merge|kickback
+[--pr <pr>]` (PET-191; `--dry-run` first, `--pr` to disambiguate when one PET key has several
+rows). This is the labeled eval set: worker success rate, reviewer precision/recall vs Pedro,
+and gold failures (bugs that slip both gates).
+
+> Why a script and not a merge-triggered Action: worker PRs live in the Co-latro app repos
+> (not here), a merge event can only ever record `merge` and never `kickback`, and the eval
+> log is a single-operator serial-writer object with no lock — an operator-run stamp keeps
+> all three invariants.
 
 ## Hard limits (restated)
 
