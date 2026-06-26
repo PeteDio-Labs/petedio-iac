@@ -130,7 +130,10 @@ jobs:
             kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY ;
             kv/data/iac/proxmox api_token | TF_VAR_proxmox_api_token ;
             kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key ;
-            kv/data/iac/cloudflare api_token | TF_VAR_cloudflare_api_token
+            kv/data/iac/cloudflare api_token | TF_VAR_cloudflare_api_token ;
+            kv/data/iac/cloudflare account_id | TF_VAR_cloudflare_account_id ;
+            kv/data/iac/cloudflare zone_id | TF_VAR_cloudflare_zone_id ;
+            kv/data/iac/cloudflare tunnel_id | TF_VAR_cloudflare_tunnel_id
 
       # Preflight (PET-160): when the pool is being managed, prove the IaC token actually holds
       # Pool.Allocate/Pool.Audit BEFORE plan/apply — so a missing privilege fails LOUD here (on
