@@ -7,6 +7,9 @@
 # and grant ci-read/terraform read on kv/data/admin/* (vault-config/policies.tf) so CI can
 # resolve it at plan time. Unlike poker (created manually then imported), the `admin` db is
 # NEW — TF CREATES it, so no import is needed.
+#
+# SECRETS-IN-STATE (PET-107): like poker_db, this data source lands owner_password in
+# plaintext state. Same fix path (ephemeral read, vault provider v5). docs/secrets-in-state.md.
 
 data "vault_kv_secret_v2" "admin_db" {
   count = var.postgres_ready ? 1 : 0
