@@ -102,6 +102,8 @@ jobs:
           PY
           docker run --rm --network host \
             -v "$GITHUB_WORKSPACE/ansible:/ansible" -v "$CI:/ci:ro" -w /ansible \
-            -e ANSIBLE_HOST_KEY_CHECKING=False -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
+            -e ANSIBLE_HOST_KEY_CHECKING=True \
+            -e "ANSIBLE_SSH_ARGS=-o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=accept-new" \
+            -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
             "$ANSIBLE_IMAGE" sh -c \
             "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && pip install -q ansible-core && ansible-playbook -i inventory/hosts.yml playbooks/configure-openfaas.yml -e @/ci/evars.json"
