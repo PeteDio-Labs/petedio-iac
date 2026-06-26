@@ -42,6 +42,11 @@ module "postgres_host" {
 # kv/data/poker/db holds { DATABASE_URL, admin_password, poker_password } — the
 # exact keys PET-27 seeds (see docs/runbooks/vault-bootstrap.md).
 #
+# SECRETS-IN-STATE (PET-107): this data source persists its WHOLE payload (incl.
+# DATABASE_URL + admin_password) in plaintext state on the HTTP MinIO backend.
+# Closing that needs the ephemeral vault_kv_secret_v2 (vault provider v5; repo is
+# pinned ~> 4.0) — a deliberate 4->5 bump, not a drive-by. See docs/secrets-in-state.md.
+#
 # GATED on var.postgres_ready (same gate as the DB module + postgresql provider):
 # data sources are read at PLAN/refresh time, so an ungated read would hit live
 # Vault during phase-1 plan and fail (no Vault env, secret not seeded until

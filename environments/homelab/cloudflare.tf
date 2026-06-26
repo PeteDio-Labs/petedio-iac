@@ -16,6 +16,10 @@
 # before plan is clean (the terraform policy already covers kv/data/iac/*; ci-read
 # gets an explicit path in vault-config/policies.tf). `terraform validate` never
 # reads data sources, so validate stays green with no Vault.
+#
+# SECRETS-IN-STATE (PET-107): the api_token (the only secret of the four keys; the
+# IDs are non-secret) persists in plaintext state. Same fix path as the DB reads —
+# ephemeral vault_kv_secret_v2 on vault provider v5. See docs/secrets-in-state.md.
 data "vault_kv_secret_v2" "cloudflare" {
   mount = "kv"
   name  = "iac/cloudflare"

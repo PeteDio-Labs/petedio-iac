@@ -5,7 +5,13 @@
 #
 # The cyrilgdn/postgresql provider connects as a (non-super) admin role that
 # Ansible provisions on the host — see environments/homelab/providers.tf.
-
+#
+# SECRETS-IN-STATE (PET-107): `password` persists in this resource's state.
+# cyrilgdn/postgresql v1.26 (the locked version) offers write-only `password_wo` +
+# `password_wo_version` to keep it out of state — but the SAME secret is still in
+# state at the vault_kv_secret_v2 data-source layer (postgres.tf/admin.tf), so
+# password_wo only pays off bundled with the ephemeral vault read (provider v5).
+# Decision + options: docs/secrets-in-state.md.
 resource "postgresql_role" "owner" {
   name     = var.owner_role
   login    = true
