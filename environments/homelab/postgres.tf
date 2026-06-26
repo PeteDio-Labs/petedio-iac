@@ -42,25 +42,36 @@ module "postgres_host" {
 # kv/data/poker/db holds { DATABASE_URL, admin_password, poker_password } — the
 # exact keys PET-27 seeds (see docs/runbooks/vault-bootstrap.md).
 #
-# SECRETS-IN-STATE (PET-107): this data source persists its WHOLE payload (incl.
-# DATABASE_URL + admin_password) in plaintext state on the HTTP MinIO backend.
-# Closing that needs the ephemeral vault_kv_secret_v2 (vault provider v5; repo is
-# pinned ~> 4.0) — a deliberate 4->5 bump, not a drive-by. See docs/secrets-in-state.md.
+# SECRETS-IN-STATE FIX (PET-107 / PET-190): this is now an EPHEMERAL read (vault
+# provider v5). An ephemeral resource is never persisted to plan or state, so the
+# whole kv/poker/db payload (DATABASE_URL, admin_password, poker_password) stops
+# landing in plaintext state on the HTTP MinIO backend. The `.data` output is the
+# same string map the v4 data source exposed, so the downstream access pattern is
+# unchanged — only the keyword (data -> ephemeral) and the lifecycle differ.
 #
 # GATED on var.postgres_ready (same gate as the DB module + postgresql provider):
-# data sources are read at PLAN/refresh time, so an ungated read would hit live
-# Vault during phase-1 plan and fail (no Vault env, secret not seeded until
+# ephemeral resources are opened at PLAN and APPLY, so an ungated read would hit
+# live Vault during a phase-1 plan and fail (no Vault env, secret not seeded until
 # PET-27). With count=0 in phase 1 the read never happens. (`terraform validate`
-# never reads data sources, so validate is green regardless.)
-data "vault_kv_secret_v2" "poker_db" {
+# never opens ephemeral resources, so validate is green regardless.)
+ephemeral "vault_kv_secret_v2" "poker_db" {
   count = var.postgres_ready ? 1 : 0
   mount = "kv"
   name  = "poker/db"
 }
 
 # Resolve the DB secrets with a TF_VAR-first, Vault-fallback precedence so BOTH
-# phases work from one config:
-#   PHASE 1 (postgres_ready=false): data source absent → both resolve to null
+# phases work from one config. NB: poker_db_password / postgres_admin_password now
+# reference an EPHEMERAL resource, so these locals are themselves ephemeral and may
+# only be consumed in ephemeral-valid contexts:
+#   - postgres_admin_password -> the postgresql provider's `password` (provider
+#     config is always an ephemeral-valid context — re-evaluated each operation,
+#     never stored);
+#   - poker_db_password -> module.poker_db owner_password (ephemeral=true) ->
+#     postgresql_role.password_wo (a write-only argument).
+# Neither may flow into a normal resource arg or an output (Terraform errors at
+# validate if it does — a useful guard).
+#   PHASE 1 (postgres_ready=false): ephemeral resource absent → both resolve to null
 #     (the var defaults). Nothing is required, nothing reads Vault. These locals
 #     ARE evaluated in phase-1 (the postgresql provider references the admin one),
 #     so the expression MUST tolerate everything being null — hence NOT coalesce(),
@@ -70,24 +81,27 @@ locals {
   poker_db_password = (
     var.poker_db_password != null
     ? var.poker_db_password
-    : try(data.vault_kv_secret_v2.poker_db[0].data["poker_password"], null)
+    : try(ephemeral.vault_kv_secret_v2.poker_db[0].data["poker_password"], null)
   )
   postgres_admin_password = (
     var.postgres_admin_password != null
     ? var.postgres_admin_password
-    : try(data.vault_kv_secret_v2.poker_db[0].data["admin_password"], null)
+    : try(ephemeral.vault_kv_secret_v2.poker_db[0].data["admin_password"], null)
   )
 }
 
 # Gated logical layer: the database + owner role + grants. count = 0 until
 # var.postgres_ready flips to true (phase 2), keeping phase-1 applies host-only.
+# owner_password is now write-only (password_wo); owner_password_version gates when
+# a rotated Vault password is re-applied (the ephemeral value is diff-invisible).
 module "poker_db" {
   source = "../../modules/postgres-db"
   count  = var.postgres_ready ? 1 : 0
 
-  db_name        = "poker"
-  owner_role     = "poker"
-  owner_password = local.poker_db_password
+  db_name                = "poker"
+  owner_role             = "poker"
+  owner_password         = local.poker_db_password
+  owner_password_version = var.poker_db_password_version
 }
 
 output "postgres_host_id" {

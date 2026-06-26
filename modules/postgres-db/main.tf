@@ -6,16 +6,22 @@
 # The cyrilgdn/postgresql provider connects as a (non-super) admin role that
 # Ansible provisions on the host — see environments/homelab/providers.tf.
 #
-# SECRETS-IN-STATE (PET-107): `password` persists in this resource's state.
-# cyrilgdn/postgresql v1.26 (the locked version) offers write-only `password_wo` +
-# `password_wo_version` to keep it out of state — but the SAME secret is still in
-# state at the vault_kv_secret_v2 data-source layer (postgres.tf/admin.tf), so
-# password_wo only pays off bundled with the ephemeral vault read (provider v5).
+# SECRETS-IN-STATE (PET-107 / PET-190): the role password is now WRITE-ONLY.
+# cyrilgdn/postgresql v1.26+ (locked) offers `password_wo` + `password_wo_version`,
+# which keep the password out of this resource's state. password_wo is fed an
+# EPHEMERAL value (var.owner_password, ephemeral=true) sourced from the ephemeral
+# vault_kv_secret_v2 reads in postgres.tf/admin.tf — so the secret no longer lands
+# in state at EITHER the role layer or the (formerly data-source) Vault-read layer.
+#
+# password_wo and password are MUTUALLY EXCLUSIVE — `password` is removed. Because a
+# write-only value is invisible to the diff, password_wo_version (var.owner_password_version)
+# is what gates re-application: bump it to push a rotated Vault password through.
 # Decision + options: docs/secrets-in-state.md.
 resource "postgresql_role" "owner" {
-  name     = var.owner_role
-  login    = true
-  password = var.owner_password
+  name                = var.owner_role
+  login               = true
+  password_wo         = var.owner_password
+  password_wo_version = var.owner_password_version
 }
 
 resource "postgresql_database" "this" {
