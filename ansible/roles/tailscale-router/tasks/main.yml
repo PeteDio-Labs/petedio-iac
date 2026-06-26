@@ -1,0 +1,86 @@
+---
+# tailscale-router tasks (PET-188) — install the tailscale daemon and turn LXC 244 into
+# a subnet router for 192.168.50.0/24. Idempotent: apt/key/repo/sysctl all converge, and
+# `tailscale up` is a no-op when already up with the same flags. NO secrets here — the
+# auth key is passed at runtime (see README / the playbook header).
+#
+# PRECONDITION: scripts/lxc-tun-244.sh has added /dev/net/tun on the node. Without it
+# tailscaled fails with "CreateTUN ... operation not permitted".
+
+- name: Install prerequisites (curl, gnupg, ca-certificates)
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      - ca-certificates
+    state: present
+    update_cache: true
+
+# --- Tailscale apt repo (official, codename-matched) -----------------------------
+# Keyring + sources keyed to the running distro release ({{ ansible_distribution_release }},
+# e.g. "trixie" on Debian 13) so this works on whatever the LXC template ships.
+
+- name: Add the Tailscale apt signing key
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/stable/debian/{{ ansible_distribution_release }}.noarmor.gpg"
+    dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    mode: "0644"
+
+- name: Add the Tailscale apt repository
+  ansible.builtin.get_url:
+    url: "https://pkgs.tailscale.com/stable/debian/{{ ansible_distribution_release }}.tailscale-keyring.list"
+    dest: /etc/apt/sources.list.d/tailscale.list
+    mode: "0644"
+
+- name: Install tailscale
+  ansible.builtin.apt:
+    name: tailscale
+    state: present
+    update_cache: true
+
+# --- IP forwarding (required for a subnet router to route LAN traffic) -------------
+
+- name: Enable IPv4/IPv6 forwarding for subnet routing
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-tailscale.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/tailscale-router) — required for Tailscale subnet routing.
+      net.ipv4.ip_forward = 1
+      net.ipv6.conf.all.forwarding = 1
+  notify: Reload sysctl
+
+- name: Apply sysctl now (so the first `tailscale up` routes immediately)
+  ansible.builtin.command: sysctl --system
+  changed_when: false
+
+- name: Enable and start tailscaled
+  ansible.builtin.systemd:
+    name: tailscaled
+    enabled: true
+    state: started
+
+# --- Bring the node up as a subnet router (only when an auth key is provided) -------
+
+- name: Bring up tailscale as a subnet router
+  ansible.builtin.command:
+    argv:
+      - tailscale
+      - up
+      - "--advertise-routes={{ tailscale_advertise_routes }}"
+      - "--accept-dns={{ tailscale_accept_dns | lower }}"
+      - "--hostname={{ tailscale_hostname }}"
+      - "--authkey={{ tailscale_auth_key }}"
+  no_log: true # auth key
+  when: tailscale_auth_key is defined and tailscale_auth_key | length > 0
+  register: ts_up
+  changed_when: "'Success' in ts_up.stdout or ts_up.rc == 0"
+
+- name: Reminder when no auth key was supplied
+  ansible.builtin.debug:
+    msg: >-
+      tailscale installed + forwarding enabled, but `tailscale up` was SKIPPED (no
+      tailscale_auth_key). Re-run with
+      -e "tailscale_auth_key=$(vault kv get -field=auth_key kv/services/tailscale)",
+      then approve the {{ tailscale_advertise_routes }} route in the Tailscale admin console.
+  when: tailscale_auth_key is not defined or tailscale_auth_key | length == 0
