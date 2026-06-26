@@ -13,6 +13,7 @@ Full operational guide, the standing prompt, and Pedro's one-time setup:
 | `reviewer-candidates.sh` | Read-only: list open, non-draft Co-latro PRs not authored by the reviewer, with the parsed `PET-<n>` key (JSON). |
 | `reviewer-checkout-test.sh <owner/repo> <pr>` | Clone in `/tmp`, detached-checkout the PR head, run `bun install` + `bun test` independently, print pass/fail + output tail (JSON). |
 | `reviewer-log-verdict.sh …` | Append one schema-valid JSONL row to `agent-evals/verdicts.jsonl` in MinIO (`--dry-run` to preview). |
+| `reviewer-stamp-pedro-verdict.sh …` | Stamp Pedro's `merge\|kickback` verdict onto the matching existing row (join on PET key + PR). Operator-run after merge/kickback; `--dry-run` to preview (PET-191). |
 | `templates/pr-verdict.md.tmpl` | PR-review body skeleton. |
 | `templates/linear-verdict.md.tmpl` | Linear-comment skeleton. |
 
