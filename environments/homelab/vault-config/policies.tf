@@ -2,6 +2,13 @@
 # secret values live under kv/data/<path> and listing/metadata under
 # kv/metadata/<path>. All three policies are READ + LIST only — no create/update/
 # delete — so a leaked token can read scoped secrets but never mutate the store.
+#
+# PET-112: each policy's kv/metadata LIST grant is scoped to the SAME top-level
+# prefixes it can read (iac/poker/admin/services), not a blanket kv/metadata/*.
+# A blanket grant let any leaked CI token enumerate every secret PATH NAME across
+# tenants (e.g. `vault kv list kv/` showing poker/admin/services). Per-prefix list
+# keeps same-tenant listing working while removing cross-tenant name enumeration;
+# `vault kv list kv/` (= LIST kv/metadata/) is no longer permitted.
 
 # ci-read: the policy GitHub Actions gets via the JWT/OIDC role. Narrow read scope
 # limited to the secrets CI actually needs (Proxmox/MinIO/LXC-SSH creds + poker app).
@@ -33,7 +40,15 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
-    path "kv/metadata/*" {
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/poker/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/admin/*" {
       capabilities = ["list"]
     }
   EOT
@@ -56,7 +71,15 @@ resource "vault_policy" "terraform" {
       capabilities = ["read"]
     }
 
-    path "kv/metadata/*" {
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/poker/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/admin/*" {
       capabilities = ["list"]
     }
   EOT
@@ -87,7 +110,11 @@ resource "vault_policy" "colatro_ci" {
       capabilities = ["read"]
     }
 
-    path "kv/metadata/*" {
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/iac/*" {
       capabilities = ["list"]
     }
   EOT
@@ -110,7 +137,15 @@ resource "vault_policy" "ansible" {
       capabilities = ["read"]
     }
 
-    path "kv/metadata/*" {
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/admin/*" {
       capabilities = ["list"]
     }
   EOT
@@ -141,7 +176,11 @@ resource "vault_policy" "media_ci" {
       capabilities = ["read"]
     }
 
-    path "kv/metadata/*" {
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/media/*" {
       capabilities = ["list"]
     }
   EOT
@@ -163,7 +202,11 @@ resource "vault_policy" "openfaas_ci" {
       capabilities = ["read"]
     }
 
-    path "kv/metadata/*" {
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
       capabilities = ["list"]
     }
   EOT
