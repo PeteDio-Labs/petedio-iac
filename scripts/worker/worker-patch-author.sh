@@ -14,10 +14,17 @@
 #     the real catalog);
 #   * locate anchors (the sibling's catalog-array close "];" and the sibling test's enclosing
 #     describe close) AND extract the sibling's catalog object + test block VERBATIM;
-#   * TWO focused model calls (/api/chat, temp 0, num_ctx 8192): "copy this sibling object →
-#     emit ONLY the new object", "copy this sibling test → emit ONLY the new it(...) block";
-#   * clean each to its balanced block, re-indent to the sibling, validate both carry the new
-#     id, then ATOMICALLY insert both at the anchors (both blocks or NEITHER — never a half-write).
+#   * focused model calls (/api/chat, temp 0, num_ctx 8192): "copy this sibling object → emit
+#     ONLY the new object", and (only when the sibling HAS a standalone test) "copy this sibling
+#     test → emit ONLY the new it(...) block";
+#   * clean each to its balanced block, re-indent to the sibling, validate it carries the new id,
+#     then ATOMICALLY insert at the anchors (both blocks or NEITHER — never a half-write).
+#   * NO-SIBLING-TEST case: when the chosen sibling is covered ONLY by the catalog-enumeration
+#     test (no standalone it(...) to mirror, SIB_TEST_LINE=0), SKIP the per-id test entirely and
+#     author ONLY the catalog entry — never ask the 7B model to invent a test with no template
+#     (it hallucinates a broken one, e.g. `getTarotById is not defined`, which fails the suite and
+#     blocks the reconciler). The new entry stays covered by the catalog-enumeration test, which
+#     worker-reconcile-asserts.sh bumps. Guard stays OK: tests net 0, never negative. (PET-179.)
 #
 # Usage:  worker-patch-author.sh <clone-dir> <ollama-model-tag>
 # Env:    SPEC_FILE (required, path to the task spec), OLLAMA_URL (default homelab ollama),
@@ -215,7 +222,20 @@ if sib_test_line > 0:
 open(test_out, 'w').write("\n".join(tb) + "\n")
 PY
 [ -s "$SIB_OBJ" ]   || { add_note "could not extract sibling catalog object for $SIBLING_ID"; emit false none; }
-[ -s "$SIB_TESTB" ] || { add_note "could not extract sibling test block for $SIBLING_ID"; emit false none; }
+
+# EMIT_TEST: only author a per-id acceptance test when the sibling HAS a standalone it(...) test
+# to copy (SIB_TEST_LINE>0 AND a non-empty extracted template). When the sibling is covered ONLY
+# by the catalog-enumeration test (no standalone test — e.g. the_hierophant), there is no
+# template to mirror; asking the 7B model to invent one makes it HALLUCINATE a broken test
+# (`getTarotById is not defined` etc.) that fails the suite and blocks the reconciler. In that
+# case we SKIP the test entirely and author ONLY the catalog entry — the new id stays covered by
+# the catalog-enumeration test (which the reconciler bumps). Guard stays OK: tests net 0 (a no-op
+# on the test count), never negative. (242 end-to-end finding, PET-179.)
+EMIT_TEST=true
+if [ "${SIB_TEST_LINE:-0}" -eq 0 ] || [ ! -s "$SIB_TESTB" ]; then
+  EMIT_TEST=false
+  add_note "no standalone test for sibling $SIBLING_ID — skipping per-id test; entry covered by the catalog-enumeration test"
+fi
 
 # (3) Two FOCUSED model calls: emit ONLY the new catalog object, and ONLY the new test block,
 #     each copying the corresponding sibling template. No diff format (small models botch it).
@@ -265,20 +285,33 @@ string(s) and the asserted value(s) the task requires. Output ONLY the new it(..
 start with "it(" and end with "});" — no prose, no markdown fences, no diff markers.
 EOF
 
-err "calling model $MODEL for the new catalog entry + test (cold-load may take up to 120s)..."
 NEW_OBJ="$SCRATCH/new_obj.txt"; NEW_TESTB="$SCRATCH/new_test.txt"
+: >"$NEW_TESTB"   # empty by default; only filled when EMIT_TEST=true
+if [ "$EMIT_TEST" = true ]; then
+  err "calling model $MODEL for the new catalog entry + test (cold-load may take up to 120s)..."
+else
+  err "calling model $MODEL for the new catalog entry ONLY (no sibling test to mirror)..."
+fi
 call_model "You output only a single TypeScript object literal. No prose, no code fences, no diff." \
            "$UOBJ" obj "$NEW_OBJ"
-call_model "You output only a single it(...) test block. No prose, no code fences, no diff." \
-           "$UTEST" test "$NEW_TESTB"
-{ [ -s "$NEW_OBJ" ] && [ -s "$NEW_TESTB" ]; } || { add_note "model returned an empty block (obj or test)"; emit false none; }
+if [ "$EMIT_TEST" = true ]; then
+  call_model "You output only a single it(...) test block. No prose, no code fences, no diff." \
+             "$UTEST" test "$NEW_TESTB"
+fi
+# The catalog object is always required; the test only when we chose to emit one.
+[ -s "$NEW_OBJ" ] || { add_note "model returned an empty catalog object"; emit false none; }
+if [ "$EMIT_TEST" = true ] && [ ! -s "$NEW_TESTB" ]; then
+  add_note "model returned an empty test block"; emit false none
+fi
 
-# (4) clean + validate + ATOMIC insert (both blocks or NEITHER — never a half-write).
+# (4) clean + validate + ATOMIC insert. When EMIT_TEST=true: both blocks or NEITHER (never a
+#     half-write). When EMIT_TEST=false: ONLY the catalog entry (no test to write).
 APPLY_METHOD="none"; APPLIED=false
-if python3 - "$CATALOG" "$TESTF" "$NEW_OBJ" "$NEW_TESTB" "$SIB_OBJ" "$SIB_TESTB" "$NEW_ID" "$CAT_CLOSE_LINE" "$DESC_CLOSE_LINE" <<'PY'
-import sys, re
+if EMIT_TEST="$EMIT_TEST" python3 - "$CATALOG" "$TESTF" "$NEW_OBJ" "$NEW_TESTB" "$SIB_OBJ" "$SIB_TESTB" "$NEW_ID" "$CAT_CLOSE_LINE" "$DESC_CLOSE_LINE" <<'PY'
+import os, sys, re
 cat_path, test_path, obj_raw_p, test_raw_p, sib_obj_p, sib_test_p, new_id, cat_close, desc_close = sys.argv[1:10]
 cat_close = int(cat_close); desc_close = int(desc_close)
+emit_test = os.environ.get("EMIT_TEST", "true") == "true"
 
 def defence(txt):
     return txt.replace('```', '')
@@ -318,40 +351,58 @@ def reindent(block, target):
     return out
 
 sib_obj = open(sib_obj_p).read().splitlines()
-sib_test = open(sib_test_p).read().splitlines()
 obj = extract_braced(open(obj_raw_p).read())
-test = extract_braced(open(test_raw_p).read(), re.compile(r'\b(it|test)\s*\('))
 
-ok = obj is not None and test is not None
+# The catalog object is always required and must carry the new id.
+ok = obj is not None
 if ok and not any(new_id in l for l in obj):  sys.stderr.write("new catalog object missing the new id\n"); ok = False
-if ok and not any(new_id in l for l in test): sys.stderr.write("new test missing the new id\n"); ok = False
+
+# The test is OPTIONAL: only when a sibling standalone test existed to mirror (emit_test).
+test = None
+if emit_test:
+    sib_test = open(sib_test_p).read().splitlines()
+    test = extract_braced(open(test_raw_p).read(), re.compile(r'\b(it|test)\s*\('))
+    if ok and test is None:
+        sys.stderr.write("emit_test set but no test block extracted\n"); ok = False
+    if ok and not any(new_id in l for l in test): sys.stderr.write("new test missing the new id\n"); ok = False
 if not ok:
     sys.exit(1)
 
 while obj and not obj[-1].strip(): obj.pop()
 if obj and not obj[-1].rstrip().endswith(','):       # ensure the entry ends with "},"
     obj[-1] = obj[-1].rstrip() + ','
-while test and not test[-1].strip(): test.pop()
-
 obj = reindent(obj, base_indent(sib_obj[0]) if sib_obj else 2)
-test = [''] + reindent(test, base_indent(sib_test[0]) if sib_test else 2)  # blank line before the new test
 
 csrc = open(cat_path).read().splitlines()
 ci = cat_close - 1
 if ci < 0 or ci > len(csrc) or csrc[ci].strip() != '];':
     closes = [i for i, s in enumerate(csrc) if s.strip() == '];']
     ci = closes[-1] if closes else len(csrc)
-tsrc = open(test_path).read().splitlines()
-ti = desc_close - 1
-if ti < 0 or ti > len(tsrc):
-    sys.stderr.write("describe close out of range\n"); sys.exit(1)
 
-# Both validated → write BOTH (atomic).
-open(cat_path, 'w').write("\n".join(csrc[:ci] + obj + csrc[ci:]) + "\n")
-open(test_path, 'w').write("\n".join(tsrc[:ti] + test + tsrc[ti:]) + "\n")
+if test is not None:
+    sib_test = open(sib_test_p).read().splitlines()
+    while test and not test[-1].strip(): test.pop()
+    test = [''] + reindent(test, base_indent(sib_test[0]) if sib_test else 2)  # blank line before the new test
+    tsrc = open(test_path).read().splitlines()
+    ti = desc_close - 1
+    if ti < 0 or ti > len(tsrc):
+        sys.stderr.write("describe close out of range\n"); sys.exit(1)
+    # Both validated → write BOTH (atomic): catalog entry + per-id test.
+    open(cat_path, 'w').write("\n".join(csrc[:ci] + obj + csrc[ci:]) + "\n")
+    open(test_path, 'w').write("\n".join(tsrc[:ti] + test + tsrc[ti:]) + "\n")
+else:
+    # No sibling test to mirror → write ONLY the catalog entry. The test file is untouched, so
+    # the test count is unchanged (guard net 0 on tests, never negative).
+    open(cat_path, 'w').write("\n".join(csrc[:ci] + obj + csrc[ci:]) + "\n")
 sys.exit(0)
 PY
-then APPLIED=true; APPLY_METHOD="template-insert"; add_note "applied (template-insert): new entry + test for $NEW_ID"
+then
+  APPLIED=true
+  if [ "$EMIT_TEST" = true ]; then
+    APPLY_METHOD="template-insert"; add_note "applied (template-insert): new entry + test for $NEW_ID"
+  else
+    APPLY_METHOD="template-insert-entry-only"; add_note "applied (entry-only): new catalog entry for $NEW_ID (no per-id test — covered by the catalog-enumeration test)"
+  fi
 else add_note "template extraction/validation failed — wrote nothing (atomic)"; emit false none; fi
 
 emit "$APPLIED" "$APPLY_METHOD"

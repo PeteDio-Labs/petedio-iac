@@ -22,6 +22,18 @@
 # positive costs a human glance; a false negative ships a regression the worker's own green
 # tests hid). Tune the openers via env if a repo's shape differs.
 #
+# KNOWN OVER-COUNT (catalog.added): the catalog-row regex matches an `id:`-opening line ANYWHERE
+# in the diff, INCLUDING test files — so a worker's mirrored test that asserts on a multi-line
+# object literal (e.g. `toMatchObject({ \n id: "the_star", \n kind: "tarot" })`) inflates
+# catalog.added by 1 per such object. ONE new tarot can therefore report catalog.added=2 (the
+# real entry + the test fixture). This does NOT affect the drop/block verdict (the identity-aware
+# delete check is unaffected), but it makes catalog.added an UNRELIABLE "entries added" count.
+# Consumers MUST NOT treat catalog.added as an exact entry count — worker-reconcile-asserts.sh
+# uses it only as a loose UPPER bound (max(delta, CAP)) for its count-bump gate, never an
+# equality. Left as-is on purpose: scoping the count to non-test files would touch the same
+# pass that computes the block verdict, and the reconciler's verify-or-revert already neutralizes
+# the noise. (242 end-to-end finding, PET-179.)
+#
 # Usage:
 #   # from a file or stdin (a unified diff):
 #   git diff main...HEAD | scripts/worker/worker-guard-additive.sh
