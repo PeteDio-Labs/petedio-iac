@@ -36,10 +36,19 @@ provider "postgresql" {
 # from the "Vault — mint creds via OIDC" step (vault-action `exportToken: true`);
 # locally the operator exports the same three.
 #
+# PROVIDER v5 (PET-190): bumped 4 -> 5 to get the EPHEMERAL vault_kv_secret_v2
+# resource, which reads secrets without persisting them to state (PET-107). The
+# provider config is unchanged — skip_child_token is still a v5 argument, and
+# address/token still come from VAULT_ADDR/VAULT_TOKEN env (v5 only stops PROMPTING
+# for them when unset; it still errors if neither env nor config supplies them, so
+# the existing "validate needs VAULT_ADDR" gotcha is unchanged).
+#
 # PHASE-1 SAFETY: an empty provider block does NOT open a connection, and
 # `terraform validate` never contacts providers — so phase-1 validate works with
-# no live Vault. The only Vault read (vault_kv_secret_v2.poker_db, postgres.tf)
-# is gated on var.postgres_ready, so phase-1 PLAN never touches Vault either.
+# no live Vault. The Vault reads are now EPHEMERAL (ephemeral.vault_kv_secret_v2.*,
+# in postgres.tf/admin.tf/cloudflare.tf); the DB ones are gated on var.postgres_ready,
+# so phase-1 PLAN never touches Vault either. (Ephemeral resources, like data
+# sources, are not opened during `terraform validate`.)
 #
 # skip_child_token: by default the provider mints a short-lived CHILD token from
 # VAULT_TOKEN, which needs the token-create capability. In CI the token is the
@@ -54,11 +63,18 @@ provider "vault" {
 # Vault-first (local.cloudflare_api_token) with a TF_VAR_cloudflare_api_token
 # break-glass fallback — the same precedence as local.postgres_admin_password.
 #
+# PET-190: local.cloudflare_api_token is now EPHEMERAL (it reads the ephemeral
+# vault_kv_secret_v2.cloudflare). Provider configuration is an ephemeral-VALID
+# context — it is re-evaluated each operation and never written to state — so the
+# token can flow straight in. This is exactly why the IDs were split out to plain
+# TF_VARs: they feed the cloudflare_zone data source + outputs, which are NOT
+# ephemeral-valid, so they cannot ride the ephemeral read.
+#
 # The scoped Cloudflare API token lives at kv/iac/cloudflare (distinct from the
 # cloudflared *daemon* token at kv/services/cloudflare/tunnel_token that Ansible
 # consumes — a different credential). An unset token leaves the provider
 # effectively unconfigured; `terraform validate` never contacts it. The
-# data-source reads DO require Vault live + kv/iac/cloudflare seeded + the
+# ephemeral read DOES require Vault live + kv/iac/cloudflare seeded + the
 # ci-read policy granted that path.
 provider "cloudflare" {
   api_token = local.cloudflare_api_token

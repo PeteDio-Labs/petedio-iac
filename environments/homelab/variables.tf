@@ -69,6 +69,16 @@ variable "poker_db_password" {
   default     = null
 }
 
+variable "poker_db_password_version" {
+  description = <<-EOT
+    password_wo_version for the `poker` owner role (PET-190). The role password is
+    write-only/ephemeral and so diff-invisible — bump this integer to push a rotated
+    kv/poker/db value through to Postgres on the next apply. Leave unchanged otherwise.
+  EOT
+  type        = number
+  default     = 1
+}
+
 variable "postgres_ready" {
   description = <<-EOT
     Two-phase gate for the Postgres "RDS".
@@ -103,6 +113,16 @@ variable "admin_db_password" {
   default     = null
 }
 
+variable "admin_db_password_version" {
+  description = <<-EOT
+    password_wo_version for the `admin` owner role (PET-190). Same role as
+    poker_db_password_version: bump to push a rotated kv/admin/db value through to
+    Postgres on the next apply (the write-only password is otherwise diff-invisible).
+  EOT
+  type        = number
+  default     = 1
+}
+
 variable "cloudflare_api_token" {
   description = <<-EOT
     Cloudflare API token the cloudflare provider authenticates with to READ the
@@ -116,5 +136,32 @@ variable "cloudflare_api_token" {
   EOT
   type        = string
   sensitive   = true
+  default     = null
+}
+
+# Non-secret Cloudflare IDs (PET-190). Previously read from the kv/iac/cloudflare
+# data source alongside api_token — but a vault_kv_secret_v2 *data source* persists
+# its WHOLE payload (incl. api_token) in state, so we could not keep it just for the
+# IDs without re-leaking the token. The token now comes from an EPHEMERAL read
+# (cloudflare.tf), and these IDs — which are NOT secret and must feed non-ephemeral
+# contexts (the cloudflare_zone data-source arg + outputs) — move to plain TF_VARs.
+# Seed them in CI from kv/iac/cloudflare (TF_VAR_cloudflare_{account,zone,tunnel}_id)
+# the same way TF_VAR_cloudflare_api_token is seeded. They default to null so
+# validate degrades cleanly with no Vault/CI env.
+variable "cloudflare_account_id" {
+  description = "Cloudflare account ID (non-secret). From kv/iac/cloudflare via TF_VAR in CI."
+  type        = string
+  default     = null
+}
+
+variable "cloudflare_zone_id" {
+  description = "pdlab.dev zone ID (non-secret). From kv/iac/cloudflare via TF_VAR in CI."
+  type        = string
+  default     = null
+}
+
+variable "cloudflare_tunnel_id" {
+  description = "Existing cloudflared tunnel UUID (non-secret). From kv/iac/cloudflare via TF_VAR in CI."
+  type        = string
   default     = null
 }

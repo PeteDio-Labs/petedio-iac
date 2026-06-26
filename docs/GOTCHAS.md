@@ -173,6 +173,45 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   fallback secrets ONLY after a Vault-only apply is green on `main` — never in the same
   change that removes their last reference.
 
+## Vault provider v5 — ephemeral reads + write-only (PET-190 / PET-107)
+
+- **v5 needs Terraform ≥ 1.11 and `data` on `vault_kv_secret_v2` is deprecated.** The 4→5
+  bump multiplexes the provider onto the Plugin Framework; `required_version` must be
+  `>= 1.11` (the floor for ephemeral resources + `*_wo` args). Read a secret with
+  `ephemeral "vault_kv_secret_v2"` instead of `data "..."` — its `.data` is the **same
+  `map(string)`**, so only the keyword and lifecycle change; the `try(...data["key"])`
+  access pattern carries over verbatim. `skip_child_token` and the `VAULT_ADDR`/`VAULT_TOKEN`
+  env config are unchanged in v5 (v5 only stops *prompting* for address/token — it still
+  errors if neither env nor config sets them, so the "validate needs VAULT_ADDR" rule holds).
+
+- **Ephemeral values are context-restricted — that's the whole point, and it bites.** A
+  value that references an ephemeral resource (directly or via a `local`) is itself
+  ephemeral and may ONLY flow into: a **provider config** argument, a **write-only** (`*_wo`)
+  resource argument, an `ephemeral = true` variable/output, or another ephemeral resource.
+  Put it in a normal resource arg or a plain `output` and `terraform validate` hard-errors.
+  Consequences for this repo: (a) the Postgres role password goes through
+  `module owner_password` (declared `ephemeral = true`) into `postgresql_role.password_wo`,
+  NOT `password` (the two are mutually exclusive); (b) the Cloudflare `api_token` (ephemeral)
+  feeds only `provider "cloudflare" { api_token }`, while the **non-secret** account/zone/tunnel
+  IDs had to MOVE OUT of the KV read to plain `TF_VAR`s — a KV v2 read is all-or-nothing, so
+  keeping a `data` source just for the IDs would re-leak the token into state, and the IDs feed
+  a data-source arg + outputs (non-ephemeral contexts) so they can't ride the ephemeral read.
+
+- **Write-only passwords are diff-invisible → `password_wo_version` is the rotation lever.**
+  `postgresql_role.password_wo` (cyrilgdn/postgresql ≥ 1.26) is never in the plan, so changing
+  the Vault value alone does NOT trigger a re-apply. Bump the paired
+  `password_wo_version` (here `var.poker_db_password_version` / `var.admin_db_password_version`)
+  to push a rotated password through. This is a behaviour change from the v4 data-source model,
+  where a rotated Vault value flowed through automatically on the next apply.
+
+- **`terraform init -upgrade` collapses the lockfile to the LOCAL platform only.** Running
+  it on macOS rewrote each provider's hashes down to `darwin_arm64`, dropping the
+  `linux_amd64` entry the self-hosted runner needs — a green local validate that would fail
+  `init` on the CI runner. After an upgrade, restore multi-platform coverage with
+  `terraform providers lock -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64`
+  in every root whose lock changed (registry-only, no LAN/Vault). Verify ≥1 `h1:` per provider
+  per platform before committing.
+
 ## App rollout — Co-latro / poker-api 230 (PET-12/43/44)
 
 - **The `ansible` Vault policy can't read `kv/poker/*` — by design.** Least-privilege:
