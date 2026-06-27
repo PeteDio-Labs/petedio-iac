@@ -98,12 +98,17 @@ def push(x):
 sib_env = os.environ.get("SIBLING_ID", "").strip()
 if sib_env:
     push(sib_env)
-for m in re.finditer(r'(?:cop(?:y|ying)|mirror(?:ing)?|shape of|sibling)\b([^.\n]{0,60})', spec):
+# case-insensitive — "Copy the existing ..." at a sentence start was missed by the old
+# case-sensitive regex, so the real sibling never became a candidate (PET-200 test run).
+for m in re.finditer(r'(?:cop(?:y|ying)|mirror(?:ing)?|shape of|sibling)\b([^.\n]{0,60})', spec, re.IGNORECASE):
     for tok in re.findall(r'["\x27]?([a-z][a-z0-9_]+)["\x27]?', m.group(1)):
         push(tok)
-for m in re.finditer(r'\bexisting\s+([a-z][a-z0-9_]+)\b', spec):
+# allow a quote after "existing" (e.g. existing "bull") — the bare \s+ form missed it.
+for m in re.finditer(r'\bexisting\s+["\x27]?([a-z][a-z0-9_]+)\b', spec, re.IGNORECASE):
     push(m.group(1))
-for m in re.finditer(r'["\x27]([a-z][a-z0-9]+(?:_[a-z0-9]+)+)["\x27]', spec):
+# ANY quoted lowercase identifier, not just snake_case: a single-word id like "bull" was
+# otherwise never captured, leaving only the quoted effect-kind ("per_5_dollars_mult").
+for m in re.finditer(r'["\x27]([a-z][a-z0-9_]*)["\x27]', spec):
     push(m.group(1))
 for x in re.findall(r'id\s*:\s*["\x27]([a-z0-9_]+)["\x27]', spec):
     push(x)
@@ -113,7 +118,10 @@ out("SIBLING_ID", cands[0] if cands else "")
 PY
 )"
 eval "$PARSE"
-# Validate the sibling against the REAL catalog file: prefer the first candidate that exists.
+# Validate the sibling against the REAL catalog file. AUTHORITATIVE: the sibling MUST be a
+# real catalog id. If no candidate resolves to one, clear SIBLING_ID so the guard below
+# fails loudly — never proceed with a non-id (e.g. an effect-kind string), which yields an
+# empty sibling template and a mis-indented col-0 insert (PET-200 test run).
 CATALOG="$CLONE/$CATALOG_REL"
 if [ -f "$CATALOG" ] && [ -n "${SIBLING_CANDS:-}" ]; then
   RESOLVED="$(python3 - "$CATALOG" "$SIBLING_CANDS" <<'PY'
@@ -125,10 +133,10 @@ for c in sys.argv[2].split("|"):
         print(c); break
 PY
 )"
-  [ -n "$RESOLVED" ] && SIBLING_ID="$RESOLVED"
+  SIBLING_ID="$RESOLVED"   # authoritative — a non-id candidate never survives validation
 fi
 [ -n "$NEW_ID" ] || { add_note "could not parse a new entry id from the spec"; emit false none; }
-[ -n "$SIBLING_ID" ] || { add_note "could not parse a sibling id from the spec"; emit false none; }
+[ -n "$SIBLING_ID" ] || { add_note "no spec candidate matched a real catalog id — refusing to author without a valid sibling template (was the sibling named and spelled like a real catalog id?)"; emit false none; }
 add_note "target: catalog=$CATALOG_REL test=$TEST_REL new_id=$NEW_ID sibling=$SIBLING_ID"
 
 TESTF="$CLONE/$TEST_REL"
