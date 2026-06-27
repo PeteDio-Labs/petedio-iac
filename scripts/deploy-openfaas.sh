@@ -63,4 +63,9 @@ GW="$(ssh -i "$OPENFAAS_SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectT
 GATEWAY_PASSWORD="$GW" "$SCRIPT_DIR/reseed-openfaas-vault.sh"
 
 step "Done — faasd up on $OPENFAAS_HOST; Nexus pull auth configured; gateway password captured."
-echo "Gateway: http://$OPENFAAS_HOST:8080 (loopback on the box; expose publicly via PET-35/87)."
+# PET-203 (F1): the faasd compose binds the gateway 0.0.0.0:8080 (it loopback-binds prometheus but
+# NOT the gateway), and 241 has no host/NIC firewall — so the full OpenFaaS CONTROL PLANE is reachable
+# by anything on 192.168.50.0/24 with the basic-auth (confirmed: 241:8080/system/functions -> 401 from
+# a non-230 LAN host). This is NOT loopback-only. Restrict :8080 to 192.168.50.230 (Proxmox VNIC
+# firewall) or loopback-bind + reverse-proxy only /function/invites — tracked in the PET-203 follow-up.
+echo "Gateway: http://$OPENFAAS_HOST:8080 (LAN-exposed *:8080 — restrict to 230; see PET-203)."
