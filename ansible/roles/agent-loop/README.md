@@ -55,9 +55,10 @@ What the role installs (idempotent; a second run reports no changes):
   `scripts/rebase-loop-prs.sh` as the loop user to rebase the loop's **own** open PRs onto
   `main` and force-push them (loop branches only — the script enforces a `^pet-` **and**
   loop-author guard, and only ever works in a throwaway `/tmp` clone), so plan-on-PR always
-  reflects a fresh base. It self-serves `GH_TOKEN` from Vault (`kv/services/agent-loop`,
-  field `github_token`) via the Vault Agent token, so no env secret is needed. The push uses
-  the loop PAT (not the Actions `GITHUB_TOKEN`) specifically so it **re-triggers** plan-on-PR.
+  reflects a fresh base. It takes `GH_TOKEN` from the loop user's own gh login
+  (`gh auth token`) — petedio-iac PRs are authored by that account, not a bot App — so no env
+  secret is needed. The push uses that user PAT (not the Actions `GITHUB_TOKEN`) specifically
+  so it **re-triggers** plan-on-PR.
 - **Auto-stamp timer** (PET-199, toggle `agent_loop_stamp_poll_timer_enabled`) — a systemd
   timer (`agent_loop_stamp_poll_oncalendar`, default every 15 min) that runs
   `scripts/reviewer/reviewer-stamp-poll.sh` as the loop user to stamp `pedro_verdict` onto
