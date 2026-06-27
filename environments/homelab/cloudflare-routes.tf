@@ -40,12 +40,12 @@ module "cloudflare_ingress" {
 
     # Co-latro — the game, prealpha (PET-58). nginx on VM-230 (poker-api) serves the frontend
     # dist/ and reverse-proxies /api to the backend on :3020 (same origin, relative API calls).
-    # Edge-gated by Cloudflare Access to Pedro for now — expand access_emails as testers are
-    # added. The in-app invite code (PET-59) is the separate, app-level gate on account creation.
+    # PET-206: edge CF Access DROPPED. The app now has real auth — invite-gated signup (PET-59) +
+    # argon2id password login — so the app IS the gate; the CF Access email-allowlist only blocked
+    # testers (no OTP unless allow-listed). Public URL, useless without an admin-issued invite +
+    # account. (Removing access=true destroys this hostname's Access application/policy on apply.)
     "co-latro.pdlab.dev" = {
-      service       = "http://192.168.50.230:80"
-      access        = true
-      access_emails = ["pedelgadillo@gmail.com"]
+      service = "http://192.168.50.230:80"
     }
   }
 }
