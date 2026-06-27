@@ -42,7 +42,7 @@ fields are ignored and missing fields tolerated; one malformed line never crashe
 
 | Lane | File | Writer | Schema (verified against the writer) |
 |---|---|---|---|
-| **Reviewer** | `verdicts.jsonl` | `scripts/reviewer/reviewer-log-verdict.sh` (PET-135) | `{ts, issue, pr, worker_model, harness, worker_tests:pass\|fail, claude_verdict:approve\|changes, claude_findings:[], pedro_verdict:merge\|kickback\|"", round_trips, tokens, wall_s}` |
+| **Reviewer** | `verdicts.jsonl` | `scripts/reviewer/reviewer-log-verdict.sh` (PET-135) | `{ts, issue, pr, worker_model, harness, reviewer_model, worker_tests:pass\|fail, claude_verdict:approve\|changes, claude_findings:[], pedro_verdict:merge\|kickback\|"", round_trips, tokens, wall_s}` — `worker_model`/`harness` = the PR under review; `reviewer_model` (PET-199) = the model that decided the verdict (the lane's `model` column shows this, reviewed worker model/harness in its tooltip) |
 | **Worker** | `worker-runs.jsonl` | `scripts/worker/worker-run.sh` (worker-loop.md) | `{ts, issue, repo, branch, pr:int\|null, worker_model, harness, tests:pass\|fail\|skipped\|none, guard:ok\|blocked, tokens, wall_s, head_sha}` |
 | **Engine** | `engine-runs.jsonl` | *(none yet — forward-compat, PET-184)* | TBD → lane shows an empty-state until the file exists |
 
@@ -75,8 +75,9 @@ fields are ignored and missing fields tolerated; one malformed line never crashe
 ## Behavior
 
 - **Three lanes**, each with a *latest* card (most recent run) + a *history* table (newest first):
-  PET-id → Linear, PR → GitHub, `worker_model`/`harness`, test result, verdict, `pedro_verdict`,
-  round-trips, age. Cells a lane doesn't have render as `—`.
+  PET-id → Linear, PR → GitHub, `model`/`harness` (the lane agent's own — reviewer rows show
+  `reviewer_model`, with the reviewed worker model/harness in the cell tooltip), test result,
+  verdict, `pedro_verdict`, round-trips, age. Cells a lane doesn't have render as `—`.
 - **Roll-up (Co-latro only):** worker runs + success rate, reviewer approve/changes, Pedro
   merge/kickback/pending, and the round-trip distribution.
 - **Auto-refresh** every ~20s (pauses when the tab is hidden); shows *last updated* and a

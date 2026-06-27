@@ -12,8 +12,10 @@ Full operational guide, the standing prompt, and Pedro's one-time setup:
 |---|---|
 | `reviewer-candidates.sh` | Read-only: list open, non-draft Co-latro PRs not authored by the reviewer, with the parsed `PET-<n>` key (JSON). |
 | `reviewer-checkout-test.sh <owner/repo> <pr>` | Clone in `/tmp`, detached-checkout the PR head, run `bun install` + `bun test` independently, print pass/fail + output tail (JSON). |
-| `reviewer-log-verdict.sh …` | Append one schema-valid JSONL row to `agent-evals/verdicts.jsonl` in MinIO (`--dry-run` to preview). |
-| `reviewer-stamp-pedro-verdict.sh …` | Stamp Pedro's `merge\|kickback` verdict onto the matching existing row (join on PET key + PR). Operator-run after merge/kickback; `--dry-run` to preview (PET-191). |
+| `reviewer-round-trips.sh <owner/repo> <pr>` | Read-only: count prior `CHANGES_REQUESTED` reviews on the PR — the value for `reviewer-log-verdict.sh --round-trips` (PET-199). |
+| `reviewer-log-verdict.sh …` | Append one schema-valid JSONL row to `agent-evals/verdicts.jsonl` in MinIO (`--dry-run` to preview). Pass `--reviewer-model` so the row records the verdict's deciding model, not just the worker's (PET-199). |
+| `reviewer-stamp-pedro-verdict.sh …` | Stamp Pedro's `merge\|kickback` verdict onto the matching existing row (join on PET key + PR). Manual override / `--dry-run` to preview (PET-191). |
+| `reviewer-stamp-poll.sh [--dry-run]` | Auto-stamp `pedro_verdict` on closed worker PRs (merged → merge, closed-unmerged → kickback) via the PET-191 writer. Runs on a 242 systemd timer (PET-199); touches only empty-`pedro_verdict` rows. |
 | `templates/pr-verdict.md.tmpl` | PR-review body skeleton. |
 | `templates/linear-verdict.md.tmpl` | Linear-comment skeleton. |
 

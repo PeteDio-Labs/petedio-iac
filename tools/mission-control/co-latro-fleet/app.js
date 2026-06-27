@@ -8,9 +8,14 @@
 
   Sources (same-origin behind the Authentik proxy; see README for the host wiring):
     - verdicts.jsonl    Reviewer lane. Schema (PET-135, scripts/reviewer/reviewer-log-verdict.sh):
-        {ts,issue,pr,worker_model,harness,worker_tests:pass|fail,claude_verdict:approve|changes,
-         claude_findings:[],pedro_verdict:merge|kickback|"",round_trips,tokens,wall_s}
+        {ts,issue,pr,worker_model,harness,reviewer_model,worker_tests:pass|fail,
+         claude_verdict:approve|changes,claude_findings:[],pedro_verdict:merge|kickback|"",
+         round_trips,tokens,wall_s}
         NOTE: a verdict row carries NO `repo` — only the PR number string + the PET issue key.
+        `worker_model`/`harness` describe the PR UNDER REVIEW; `reviewer_model` (PET-199) is
+        the model that DECIDED the verdict — the reviewer lane's `model` column shows THAT,
+        with the reviewed worker model/harness moved to its tooltip (so it can't misread as
+        the reviewer's). Older rows predating PET-199 have no reviewer_model → model shows "—".
     - worker-runs.jsonl Worker lane. Schema (worker-loop.md, scripts/worker/worker-run.sh):
         {ts,issue,repo,branch,pr:int|null,worker_model,harness,tests:pass|fail|skipped|none,
          guard:ok|blocked,tokens,wall_s,head_sha}
@@ -124,13 +129,18 @@ async function getIdentity(){
 function normWorker(r){
   return { source:"worker", ts:str(r.ts), issue:str(r.issue), repo:str(r.repo),
     pr:(r.pr==null||r.pr===""?null:r.pr), model:str(r.worker_model), harness:str(r.harness),
-    tests:str(r.tests)||null, guard:str(r.guard)||null, verdict:null, pedro:null,
+    modelTitle:"", tests:str(r.tests)||null, guard:str(r.guard)||null, verdict:null, pedro:null,
     roundTrips:null, findings:null, tokens:num(r.tokens), wall:num(r.wall_s),
     headSha:str(r.head_sha), raw:r };
 }
 function normVerdict(r){
+  // The reviewer lane's `model` is the REVIEWER's model (who decided the verdict), not the
+  // worker's — `worker_model`/`harness` describe the PR under review, so they move to the
+  // model cell's tooltip (PET-199). reviewer has no patch harness of its own → harness "".
+  const workerMH = [str(r.worker_model), str(r.harness)].filter(Boolean).join(" / ");
   return { source:"reviewer", ts:str(r.ts), issue:str(r.issue), repo:str(r.repo||""), // repo normally absent
-    pr:(r.pr==null||r.pr===""?null:r.pr), model:str(r.worker_model), harness:str(r.harness),
+    pr:(r.pr==null||r.pr===""?null:r.pr), model:str(r.reviewer_model), harness:"",
+    modelTitle:workerMH ? `reviewed worker: ${workerMH}` : "",
     tests:str(r.worker_tests)||null, guard:null, verdict:str(r.claude_verdict)||null,
     pedro:str(r.pedro_verdict)||null, roundTrips:num(r.round_trips),
     findings:Array.isArray(r.claude_findings)?r.claude_findings:[], tokens:num(r.tokens),
@@ -140,7 +150,7 @@ function normEngine(r){
   // engine-runs schema is TBD (PET-184) — best-effort: accept worker-ish OR verdict-ish keys.
   return { source:"engine", ts:str(r.ts), issue:str(r.issue), repo:str(r.repo||""),
     pr:(r.pr==null||r.pr===""?null:r.pr), model:str(r.worker_model||r.model), harness:str(r.harness),
-    tests:str(r.tests||r.worker_tests)||null, guard:str(r.guard)||null,
+    modelTitle:"", tests:str(r.tests||r.worker_tests)||null, guard:str(r.guard)||null,
     verdict:str(r.claude_verdict||r.verdict)||null, pedro:str(r.pedro_verdict)||null,
     roundTrips:num(r.round_trips), findings:Array.isArray(r.claude_findings)?r.claude_findings:null,
     tokens:num(r.tokens), wall:num(r.wall_s), headSha:str(r.head_sha), raw:r };
@@ -212,7 +222,12 @@ function rowHTML(row){
   const verdict = row.verdict ? verdictPill(row.verdict) + findingsTag(row) : dash();
   const pedro   = row.pedro   ? pedroPill(row.pedro) : dash();
   const rt      = row.roundTrips == null ? dash() : esc(String(row.roundTrips));
-  const mh      = row.model ? `${esc(row.model)}${row.harness?` <span class="sub">/ ${esc(row.harness)}</span>`:""}` : dash();
+  // model cell shows the lane agent's own model; row.modelTitle (e.g. the worker a verdict
+  // reviewed) rides along as a tooltip so it's visible without misreading as the lane agent's.
+  const tt      = row.modelTitle ? ` title="${esc(row.modelTitle)}"` : "";
+  const mh      = row.model
+    ? `<span${tt}>${esc(row.model)}${row.harness?` <span class="sub">/ ${esc(row.harness)}</span>`:""}</span>`
+    : (row.modelTitle ? `<span class="sub"${tt}>—</span>` : dash());
   return `<tr>
     <td>${petCell(row)}</td>
     <td class="repo">${row.repo?esc(repoName(row.repo)):dash()}</td>
@@ -235,7 +250,8 @@ function latestCard(row){
   if (!row) return `<div class="latest none">No runs yet.</div>`;
   const bit = (k,v) => `<span><span class="lk">${k}</span> ${v}</span>`;
   const out = [ bit("issue", petCell(row)), bit("pr", prCell(row)) ];
-  if (row.model)            out.push(bit("model", esc(row.model) + (row.harness?` / ${esc(row.harness)}`:"")));
+  if (row.model)            out.push(bit("model", `<span${row.modelTitle?` title="${esc(row.modelTitle)}"`:""}>${esc(row.model)}${row.harness?` / ${esc(row.harness)}`:""}</span>`));
+  else if (row.modelTitle)  out.push(bit("model", `<span class="sub" title="${esc(row.modelTitle)}">—</span>`));
   if (row.tests || row.guard!=null) out.push(bit("tests", testsCell(row)));
   if (row.verdict)          out.push(bit("verdict", verdictPill(row.verdict) + findingsTag(row)));
   if (row.pedro)            out.push(bit("pedro", pedroPill(row.pedro)));
