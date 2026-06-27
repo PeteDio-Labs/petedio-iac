@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# Periodic schedule for reviewer-stamp-poll.service (PET-199). The fleet view's `pedro`
+# column should fill within a cron interval of a merge/close, so this runs often, not daily.
+# A modest cadence + RandomizedDelaySec keeps the second writer to the lock-free verdict log
+# from racing the reviewer's append (see the script's RACE NOTE).
+[Unit]
+Description=Periodic auto-stamp of pedro_verdict on closed worker PRs (PET-199)
+
+[Timer]
+OnCalendar={{ agent_loop_stamp_poll_oncalendar }}
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

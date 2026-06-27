@@ -163,3 +163,20 @@ agent_loop_rebase_oncalendar: "*:0/15"
 # The script lives in the loop's own iac clone (cloned by this role). It clones a fresh
 # throwaway copy into /tmp at runtime, so running it from the live clone is safe.
 agent_loop_rebase_script: "{{ agent_loop_workspace }}/iac/scripts/rebase-loop-prs.sh"
+
+# --- Auto-stamp pedro_verdict on closed worker PRs (PET-199) -------------------------
+# A systemd timer runs scripts/reviewer/reviewer-stamp-poll.sh as the loop user. It reads
+# each recently-closed worker PR's final state and stamps the matching verdict row's
+# pedro_verdict (merged → merge, closed-unmerged → kickback) via the PET-191 stamp script —
+# so the fleet view's `pedro` column fills without Pedro running the stamp by hand. It only
+# touches rows the reviewer already logged with an empty pedro_verdict (never a human PR,
+# never an already-stamped row). Reads GH_TOKEN from Vault like the rebase timer, and writes
+# MinIO via the operator-seeded `mc` alias. Set false for an IaC-only host or one that never
+# runs the reviewer (mc/reviewer scripts absent). Manual stamping still works for overrides.
+agent_loop_stamp_poll_timer_enabled: true
+# OnCalendar for the timer. Every 15 min — the `pedro` column should reflect a merge/close
+# within a cron interval; RandomizedDelaySec spreads load off the reviewer's append window.
+agent_loop_stamp_poll_oncalendar: "*:0/15"
+# The script lives in the loop's own iac clone (cloned by this role); it only reads GitHub
+# and delegates the MinIO write to the sibling stamp script — safe to run from the live clone.
+agent_loop_stamp_poll_script: "{{ agent_loop_workspace }}/iac/scripts/reviewer/reviewer-stamp-poll.sh"

@@ -58,6 +58,15 @@ What the role installs (idempotent; a second run reports no changes):
   reflects a fresh base. It self-serves `GH_TOKEN` from Vault (`kv/services/agent-loop`,
   field `github_token`) via the Vault Agent token, so no env secret is needed. The push uses
   the loop PAT (not the Actions `GITHUB_TOKEN`) specifically so it **re-triggers** plan-on-PR.
+- **Auto-stamp timer** (PET-199, toggle `agent_loop_stamp_poll_timer_enabled`) — a systemd
+  timer (`agent_loop_stamp_poll_oncalendar`, default every 15 min) that runs
+  `scripts/reviewer/reviewer-stamp-poll.sh` as the loop user to stamp `pedro_verdict` onto
+  closed worker PRs (merged → `merge`, closed-unmerged → `kickback`) via the PET-191 writer,
+  so the fleet view's `pedro` column fills without a manual step. It only touches verdict
+  rows with an empty `pedro_verdict`, reads `GH_TOKEN` from Vault like the rebase timer, and
+  writes MinIO through the operator-seeded `mc` alias. A 242-side poller, not a GitHub Action
+  (see the script header) — and a second writer to the lock-free verdict log, so the cadence
+  is modest and the bucket is versioned. Set false on a host that never runs the reviewer.
 
 Run the role:
 

@@ -4,11 +4,13 @@
 # The REVIEWER half of the two-agent system (PET-135): the labeled eval dataset. One row
 # per reviewed PR, appended to a flat JSONL object (`agent-evals/verdicts.jsonl`) so we
 # can later measure worker success rate and reviewer precision/recall vs Pedro. Schema
-# (decided 2026-06-10):
-#   {"ts","issue","pr","worker_model","harness","worker_tests","claude_verdict",
-#    "claude_findings":[],"pedro_verdict","round_trips","tokens","wall_s"}
-# The reviewer fills its fields now; Pedro's `pedro_verdict` (merge|kickback) is appended
-# on merge/kickback — left "" here.
+# (decided 2026-06-10; `reviewer_model` added 2026-06-26, PET-199):
+#   {"ts","issue","pr","worker_model","harness","reviewer_model","worker_tests",
+#    "claude_verdict","claude_findings":[],"pedro_verdict","round_trips","tokens","wall_s"}
+# `worker_model`/`harness` describe the PR UNDER REVIEW (the worker that authored it);
+# `reviewer_model` is the model that DECIDED the verdict (the Claude Opus build the reviewer
+# loop pins — see roles/agent-loop agent_loop_claude_model). The reviewer fills its fields
+# now; Pedro's `pedro_verdict` (merge|kickback) is stamped on merge/kickback — left "" here.
 #
 # Object stores can't append in place, so this does download -> append a line -> upload
 # via `mc`. There is exactly ONE serial reviewer, so no lock is needed (same single-
@@ -23,7 +25,7 @@
 #   scripts/reviewer/reviewer-log-verdict.sh \
 #     --issue PET-42 --pr 17 \
 #     --worker-tests pass|fail --claude-verdict approve|changes \
-#     [--worker-model MODEL] [--harness NAME] \
+#     [--worker-model MODEL] [--harness NAME] [--reviewer-model MODEL] \
 #     [--findings-json '["finding one","finding two"]'] \
 #     [--round-trips N] [--tokens N] [--wall-s N] \
 #     [--pedro-verdict merge|kickback] \
@@ -32,11 +34,17 @@
 # Env (optional):
 #   REVIEWER_MC_ALIAS       mc alias for the homelab MinIO (default: homelab)
 #   REVIEWER_VERDICTS_PATH  bucket/key for the log (default: agent-evals/verdicts.jsonl)
+#   REVIEWER_MODEL          default reviewer model when --reviewer-model is omitted
+#                           (default: claude-opus-4-8 — the loop's pinned Opus build)
 set -euo pipefail
 
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
+# reviewer_model defaults to the pinned Opus build (roles/agent-loop agent_loop_claude_model)
+# so the field is populated even if a caller forgets --reviewer-model; override per-run with
+# the flag or globally with REVIEWER_MODEL.
 ISSUE="" PR="" WORKER_MODEL="" HARNESS="" WORKER_TESTS="" CLAUDE_VERDICT=""
+REVIEWER_MODEL="${REVIEWER_MODEL:-claude-opus-4-8}"
 FINDINGS_JSON="[]" PEDRO_VERDICT="" ROUND_TRIPS="0" TOKENS="0" WALL_S="0" DRY_RUN=false
 
 while [ $# -gt 0 ]; do
@@ -45,6 +53,7 @@ while [ $# -gt 0 ]; do
     --pr) PR="$2"; shift 2 ;;
     --worker-model) WORKER_MODEL="$2"; shift 2 ;;
     --harness) HARNESS="$2"; shift 2 ;;
+    --reviewer-model) REVIEWER_MODEL="$2"; shift 2 ;;
     --worker-tests) WORKER_TESTS="$2"; shift 2 ;;
     --claude-verdict) CLAUDE_VERDICT="$2"; shift 2 ;;
     --findings-json) FINDINGS_JSON="$2"; shift 2 ;;
@@ -74,7 +83,7 @@ TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Build the row with python so JSON escaping + the findings-array parse are correct.
 ROW="$(
-  ISSUE="$ISSUE" PR="$PR" WORKER_MODEL="$WORKER_MODEL" HARNESS="$HARNESS" \
+  ISSUE="$ISSUE" PR="$PR" WORKER_MODEL="$WORKER_MODEL" HARNESS="$HARNESS" REVIEWER_MODEL="$REVIEWER_MODEL" \
   WORKER_TESTS="$WORKER_TESTS" CLAUDE_VERDICT="$CLAUDE_VERDICT" FINDINGS_JSON="$FINDINGS_JSON" \
   PEDRO_VERDICT="$PEDRO_VERDICT" ROUND_TRIPS="$ROUND_TRIPS" TOKENS="$TOKENS" WALL_S="$WALL_S" TS="$TS" \
   python3 <<'PY'
@@ -93,6 +102,7 @@ row = {
     "pr": os.environ["PR"],
     "worker_model": os.environ["WORKER_MODEL"],
     "harness": os.environ["HARNESS"],
+    "reviewer_model": os.environ["REVIEWER_MODEL"],
     "worker_tests": os.environ["WORKER_TESTS"],
     "claude_verdict": os.environ["CLAUDE_VERDICT"],
     "claude_findings": findings,
