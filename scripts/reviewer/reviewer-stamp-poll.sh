@@ -42,9 +42,9 @@
 #   REVIEWER_CLOSED_LIMIT   how many recently-closed PRs to scan per repo (default: 50)
 #   REVIEWER_MC_ALIAS       mc alias for the homelab MinIO (default: homelab)
 #   REVIEWER_VERDICTS_PATH  bucket/key for the log (default: agent-evals/verdicts.jsonl)
-#   GH_TOKEN                read scope. If unset, read from Vault kv/services/agent-loop
-#                           field github_token (same pattern as rebase-loop-prs.sh). Never
-#                           printed.
+#   GH_TOKEN                read scope. If unset, the petedio-reviewer[bot] App token is
+#                           minted via reviewer-mint-token.sh (contents:read + pr:write — read
+#                           is all that's needed; the stamp write is mc→MinIO). Never printed.
 set -euo pipefail
 
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -65,16 +65,17 @@ ALIAS="${REVIEWER_MC_ALIAS:-homelab}"
 VPATH="${REVIEWER_VERDICTS_PATH:-agent-evals/verdicts.jsonl}"
 TARGET="${ALIAS}/${VPATH}"
 
-# --- token (never printed) — env first, else Vault, mirroring rebase-loop-prs.sh ---------
+# --- token (never printed) — env first, else mint the reviewer[bot] App token -----------
+# kv/services/agent-loop holds NO plain github_token: the bots are GitHub Apps (PET-176), so
+# the secret is reviewer_app_id/pem, not a PAT. Mint the reviewer installation token (scope:
+# contents:read + pr:write) — read is all the poller needs from gh; the stamp WRITE goes to
+# MinIO via mc, not gh. reviewer-mint-token.sh self-serves its Vault auth (Agent token on
+# disk, VAULT_ADDR/CACERT defaulted). (242 test run caught the old github_token read failing.)
 if [ -z "${GH_TOKEN:-}" ]; then
-  command -v vault >/dev/null || die "GH_TOKEN unset and vault not in PATH."
-  export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
-  export VAULT_CACERT="${VAULT_CACERT:-$SCRIPT_DIR/../../environments/homelab/vault-ca.crt}"
-  GH_TOKEN="$(vault kv get -field=github_token kv/services/agent-loop 2>/dev/null)" ||
-    die "could not read github_token from kv/services/agent-loop (Vault Agent token present?)."
+  GH_TOKEN="$("$SCRIPT_DIR/reviewer-mint-token.sh" 2>/dev/null || true)"
   export GH_TOKEN
 fi
-[ -n "${GH_TOKEN:-}" ] || die "empty GH_TOKEN."
+[ -n "${GH_TOKEN:-}" ] || die "could not mint the petedio-reviewer[bot] token (reviewer-mint-token.sh; Vault Agent token present?)."
 
 mc alias list "$ALIAS" >/dev/null 2>&1 ||
   die "mc alias '$ALIAS' not configured. Seed it from Vault kv/services/agent-loop (see docs/runbooks/reviewer-loop.md)."

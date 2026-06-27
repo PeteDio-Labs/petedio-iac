@@ -578,10 +578,11 @@
 # --- Auto-stamp pedro_verdict on closed worker PRs (PET-199) -------------------------
 # A systemd timer runs scripts/reviewer/reviewer-stamp-poll.sh as the loop user, stamping
 # pedro_verdict (merge|kickback, read from each closed PR's final state) onto the matching
-# verdict row so the fleet view's `pedro` column fills automatically. The script self-serves
-# GH_TOKEN from Vault (kv/services/agent-loop) via the Vault Agent token on disk and writes
-# MinIO through the operator-seeded `mc` alias — no env secret here. A 242-side poller, not a
-# GitHub Action, on purpose (see the script header for the three reasons).
+# verdict row so the fleet view's `pedro` column fills automatically. The script mints the
+# petedio-reviewer[bot] App token (reviewer-mint-token.sh, self-serving Vault auth via the
+# Agent token on disk) for the gh reads, and writes MinIO through the operator-seeded `mc`
+# alias — no env secret here. A 242-side poller, not a GitHub Action, on purpose (see the
+# script header for the three reasons).
 - name: Auto-stamp timer for closed worker PRs
   when: agent_loop_stamp_poll_timer_enabled | bool
   block:
