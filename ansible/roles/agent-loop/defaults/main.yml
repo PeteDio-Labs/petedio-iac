@@ -153,9 +153,9 @@ agent_loop_vault_secret_id_file: "{{ playbook_dir }}/../../.secrets/agent-loop.s
 # --- Auto-rebase loop PRs (PET-148) --------------------------------------------------
 # A systemd timer runs scripts/rebase-loop-prs.sh as the loop user, rebasing the loop's
 # OWN open PRs onto main + force-pushing (loop branches only — see the script's two guards)
-# so a fresh plan-on-PR is always what Pedro reviews. The script self-serves GH_TOKEN from
-# Vault (kv/services/agent-loop, field github_token) via the Vault Agent token on disk, so
-# it needs no env secret. Set false for an IaC-only/offline host or to disable the timer.
+# so a fresh plan-on-PR is always what Pedro reviews. The script takes GH_TOKEN from the loop
+# user's own gh login (`gh auth token`) — petedio-iac PRs are authored by that account, not a
+# bot App — so it needs no env secret. Set false for an IaC-only/offline host or to disable.
 agent_loop_rebase_timer_enabled: true
 # OnCalendar for the timer. Every 15 min — the AC is "up to date within the cron interval";
 # RandomizedDelaySec spreads load and avoids racing a just-finished merge's plan run.

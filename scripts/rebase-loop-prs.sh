@@ -26,9 +26,8 @@
 #   REBASE_REPO        owner/repo to operate on (default: PeteDio-Labs/petedio-iac)
 #   REBASE_BRANCH_RE   egrep branch guard (default: ^pet-)
 #   REBASE_BASE        base branch to rebase onto (default: main)
-#   GH_TOKEN           loop PAT (push + open-PR scope). If unset, read from Vault
-#                      kv/services/agent-loop field github_token (same pattern as
-#                      scripts/proxmox-ro-config.sh). Never printed.
+#   GH_TOKEN           loop PAT (push + open-PR scope). If unset, taken from the loop
+#                      user's own gh login (`gh auth token`). Never printed.
 set -euo pipefail
 
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -43,17 +42,17 @@ REPO="${REBASE_REPO:-PeteDio-Labs/petedio-iac}"
 BRANCH_RE="${REBASE_BRANCH_RE:-^pet-}"
 BASE="${REBASE_BASE:-main}"
 
-# --- token (never printed) — env first, else Vault, mirroring proxmox-ro-config.sh ---
+# --- token (never printed) — env first, else the loop user's gh login --------------------
+# The loop's IaC PRs are authored by the `petedillo` gh account, and the loop user is
+# `gh auth login`'d as it — so derive the token from gh itself. NOT a Vault `github_token`
+# field: that doesn't exist (kv/services/agent-loop holds GitHub App creds, PET-176), and the
+# worker/reviewer Apps are installed on the co-latro repos only, not petedio-iac. A push with
+# this user PAT re-triggers plan-on-PR (the Actions GITHUB_TOKEN would not) — the whole point.
 if [ -z "${GH_TOKEN:-}" ]; then
-  command -v vault >/dev/null || die "GH_TOKEN unset and vault not in PATH."
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
-  export VAULT_CACERT="${VAULT_CACERT:-$SCRIPT_DIR/../environments/homelab/vault-ca.crt}"
-  GH_TOKEN="$(vault kv get -field=github_token kv/services/agent-loop 2>/dev/null)" ||
-    die "could not read github_token from kv/services/agent-loop (Vault Agent token present?)."
+  GH_TOKEN="$(gh auth token 2>/dev/null || true)"
   export GH_TOKEN
 fi
-[ -n "${GH_TOKEN:-}" ] || die "empty GH_TOKEN."
+[ -n "${GH_TOKEN:-}" ] || die "GH_TOKEN unset and the loop user isn't gh-authenticated (run 'gh auth login' as the loop user, or export GH_TOKEN)."
 
 # Whose PRs are "ours" — the second guard. Resolve once.
 SELF="$(gh api user --jq .login 2>/dev/null)" || die "gh api user failed (token valid?)."
