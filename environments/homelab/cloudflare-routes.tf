@@ -37,6 +37,16 @@ module "cloudflare_ingress" {
       access        = true
       access_emails = ["pedelgadillo@gmail.com"]
     }
+
+    # Co-latro — the game, prealpha (PET-58). nginx on VM-230 (poker-api) serves the frontend
+    # dist/ and reverse-proxies /api to the backend on :3020 (same origin, relative API calls).
+    # Edge-gated by Cloudflare Access to Pedro for now — expand access_emails as testers are
+    # added. The in-app invite code (PET-59) is the separate, app-level gate on account creation.
+    "co-latro.pdlab.dev" = {
+      service       = "http://192.168.50.230:80"
+      access        = true
+      access_emails = ["pedelgadillo@gmail.com"]
+    }
   }
 }
 
