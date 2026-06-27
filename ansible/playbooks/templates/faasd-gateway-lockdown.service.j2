@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+# PET-204/F1 — restrict the faasd gateway (:8080) to the co-latro backend only.
+#
+# WHY: faasd binds the gateway on 0.0.0.0:8080 and does NOT authenticate function invokes
+# (/function/*) — only the /system/* control plane is behind basic-auth. So anything on the LAN
+# can call /function/invites (mint/list/validate) with ZERO credentials, and reach the control
+# plane with the shared basic-auth. There is no host/NIC firewall on this LXC.
+#
+# HOW: a single idempotent rule in mangle PREROUTING, which every ingress packet on the LAN
+# interface traverses BEFORE the nat/DNAT and routing decision — so it works whether the gateway
+# port is host-bound or DNAT'd to the gateway container (a filter INPUT rule would miss the DNAT
+# path; a FORWARD policy would risk faasd's CNI). Scope is dport {{ faasd_gateway_port }} on
+# {{ faasd_lan_iface }} only: SSH and CNI/loopback traffic are untouched, so this cannot lock out
+# the host. Reversible (ExecStop deletes the rule).
+[Unit]
+Description=Restrict faasd gateway :{{ faasd_gateway_port }} to {{ faasd_gateway_allow_src }} (PET-204/F1)
+After=faasd.service
+Wants=faasd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'iptables -t mangle -C PREROUTING -i {{ faasd_lan_iface }} -p tcp --dport {{ faasd_gateway_port }} ! -s {{ faasd_gateway_allow_src }} -j DROP 2>/dev/null || iptables -t mangle -I PREROUTING -i {{ faasd_lan_iface }} -p tcp --dport {{ faasd_gateway_port }} ! -s {{ faasd_gateway_allow_src }} -j DROP'
+ExecStop=/bin/sh -c 'iptables -t mangle -D PREROUTING -i {{ faasd_lan_iface }} -p tcp --dport {{ faasd_gateway_port }} ! -s {{ faasd_gateway_allow_src }} -j DROP 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target
