@@ -1,8 +1,9 @@
 # {{ ansible_managed }}
 # Auto-stamp pedro_verdict onto closed worker PRs (PET-199). Triggered by
-# reviewer-stamp-poll.timer. Runs AS the loop user so it uses the loop's gh config, the
-# Vault Agent token at ~/.vault-token (the script reads GH_TOKEN from kv/services/agent-loop),
-# and the `mc` alias the operator seeded for this user (the stamp write goes to MinIO).
+# reviewer-stamp-poll.timer. Runs AS the loop user so it uses the Vault Agent token at
+# ~/.vault-token (the script mints the petedio-reviewer[bot] App token via reviewer-mint-token.sh
+# for its gh reads) and the `mc` alias the operator seeded for this user (the stamp write goes
+# to MinIO).
 [Unit]
 Description=Auto-stamp pedro_verdict onto closed worker PRs (PET-199)
 After=network-online.target vault-agent.service

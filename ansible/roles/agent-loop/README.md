@@ -63,8 +63,9 @@ What the role installs (idempotent; a second run reports no changes):
   `scripts/reviewer/reviewer-stamp-poll.sh` as the loop user to stamp `pedro_verdict` onto
   closed worker PRs (merged → `merge`, closed-unmerged → `kickback`) via the PET-191 writer,
   so the fleet view's `pedro` column fills without a manual step. It only touches verdict
-  rows with an empty `pedro_verdict`, reads `GH_TOKEN` from Vault like the rebase timer, and
-  writes MinIO through the operator-seeded `mc` alias. A 242-side poller, not a GitHub Action
+  rows with an empty `pedro_verdict`, mints the `petedio-reviewer[bot]` App token
+  (`reviewer-mint-token.sh`) for its gh reads, and writes MinIO through the operator-seeded
+  `mc` alias. A 242-side poller, not a GitHub Action
   (see the script header) — and a second writer to the lock-free verdict log, so the cadence
   is modest and the bucket is versioned. Set false on a host that never runs the reviewer.
 
