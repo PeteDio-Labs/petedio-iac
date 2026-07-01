@@ -221,3 +221,17 @@ agent_loop_engine_loop_script: "{{ agent_loop_workspace }}/iac/scripts/engine/en
 # not in /usr/bin) and the pipx shims. ~ does not expand in a systemd Environment=, so this is
 # spelled absolute. Override if agent_loop_npm_prefix is non-default.
 agent_loop_engine_path: "{{ agent_loop_home }}/.npm-global/bin:{{ agent_loop_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+# --- Worker auto-launch loop (PET-184 S1) --------------------------------------------
+# The worker is the FREE local tier (Ollama), so its auto-launch needs no cc-slot/off-hours —
+# just a single-instance lock + a PAUSED sentinel. worker-loop.sh polls worker-candidates.sh
+# (Todo + worker-ok, needs the read-only Linear key at kv/services/linear + the agent-loop
+# policy grant on that path) and runs ONE issue per tick. Timer defaults OFF (S0 = hand-run);
+# flip true for S1 once the Linear key + the policy grant are in place.
+agent_loop_worker_loop_timer_enabled: false
+agent_loop_worker_loop_oncalendar: "*:0/20"
+# Per-issue launch cooldown (min): don't re-pick an issue within this window, so the GitHub→
+# Linear status lag can move it out of Todo before the next tick fires.
+agent_loop_worker_launch_cooldown_min: 30
+agent_loop_worker_home: "{{ agent_loop_home }}/worker"
+agent_loop_worker_loop_script: "{{ agent_loop_workspace }}/iac/scripts/worker/worker-loop.sh"

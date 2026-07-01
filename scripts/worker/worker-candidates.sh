@@ -85,7 +85,7 @@ command -v curl >/dev/null || die "curl not in PATH (needed for the Linear Graph
 # Keep the query small and let python do the shaping. We filter by state name + label name
 # server-side; the team scope is by key. `first: 50` is plenty for a candidate poll.
 # shellcheck disable=SC2016  # $teamKey/$state/$label are GraphQL variables — literal on purpose.
-QUERY='query($teamKey:String!,$state:String!,$label:String!){issues(first:50,filter:{team:{key:{eq:$teamKey}},state:{name:{eq:$state}},labels:{name:{eq:$label}}}){nodes{identifier title state{name} labels{nodes{name}}}}}'
+QUERY='query($teamKey:String!,$state:String!,$label:String!){issues(first:50,filter:{team:{key:{eq:$teamKey}},state:{name:{eq:$state}},labels:{name:{eq:$label}}}){nodes{identifier title description state{name} labels{nodes{name}}}}}'
 
 REQ_BODY="$(
   TEAM_KEY="$TEAM_KEY" TODO_STATE="$TODO_STATE" OK_LABEL="$OK_LABEL" QUERY="$QUERY" \
@@ -138,8 +138,8 @@ def slugify(title):
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return s[:50].rstrip("-") or "issue"
 
-def repo_for(title):
-    t = title.lower()
+def repo_for(text):
+    t = (text or "").lower()
     # Body-level backend/frontend hints win; else first matching map substring; else "".
     if "frontend" in t:
         return "PeteDio-Labs/co-latro-frontend"
@@ -154,6 +154,7 @@ nodes = (((resp or {}).get("data") or {}).get("issues") or {}).get("nodes") or [
 out = []
 for n in nodes:
     title = n.get("title", "") or ""
+    desc = n.get("description", "") or ""
     labels = [l.get("name", "") for l in ((n.get("labels") or {}).get("nodes") or [])]
     # The script does the MECHANICAL filter only; the round-trip cap is Claude's judgment
     # (see header). But `needs-human` is an unambiguous "do not pick" marker — drop it here
@@ -163,10 +164,13 @@ for n in nodes:
     out.append({
         "key": n.get("identifier", ""),
         "title": title,
-        "repo": repo_for(title),
+        "repo": repo_for(title + "\n" + desc),
         "branch_slug": slugify(title),
         "state": (n.get("state") or {}).get("name", ""),
         "labels": labels,
+        # description = the issue body = the authoring SPEC (auto-launch loop feeds this to
+        # worker-run.sh --spec-file; the interactive path can ignore it). PET-184 S1.
+        "description": desc,
     })
 
 json.dump(out, sys.stdout, indent=2)
