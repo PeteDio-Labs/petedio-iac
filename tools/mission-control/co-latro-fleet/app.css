@@ -59,6 +59,43 @@ code { background:var(--bg); padding:1px 4px; border-radius:4px; border:1px soli
 .bars .b { flex:1; background:var(--blue); border-radius:2px 2px 0 0; min-height:2px; opacity:.85; }
 .bars .lbl { display:flex; gap:3px; margin-top:3px; }
 .bars .lbl span { flex:1; text-align:center; color:var(--muted); font-size:10px; }
+svg.spark { width:100%; height:26px; display:block; margin:7px 0 3px; overflow:visible; }
+
+/* --- PET-220: live status cards --- */
+.statuscards { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:10px;
+               margin:8px 0 4px; }
+.statuscard { background:var(--panel); border:1px solid var(--border); border-left-width:3px;
+              border-radius:8px; padding:11px 13px; }
+.statuscard.run   { border-left-color:var(--blue); }
+.statuscard.idle  { border-left-color:var(--muted); }
+.statuscard.none  { border-left-color:var(--border); opacity:.65; }
+.statuscard.alert { border-left-color:var(--red); background:#2a1315; }
+.sc-head { font-size:14px; display:flex; align-items:center; gap:7px; }
+.sc-badge { margin-left:auto; font-size:11px; padding:1px 8px; border-radius:10px;
+            border:1px solid var(--border); color:var(--muted); white-space:nowrap; }
+.statuscard.run   .sc-badge { color:var(--blue);  border-color:var(--blue); }
+.statuscard.alert .sc-badge { color:var(--red);   border-color:var(--red); }
+.sc-body { margin-top:8px; display:flex; flex-direction:column; gap:3px; font-size:12px; }
+.sc-body .lk  { color:var(--muted); text-transform:uppercase; font-size:10px; margin-right:3px; }
+.sc-body .val { color:var(--fg); }
+.sc-detail { color:var(--muted); font-size:11px; margin-top:2px; }
+
+/* --- PET-220: per-issue pipeline (kanban) --- */
+.kanban { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; }
+.kcol   { background:var(--panel); border:1px solid var(--border); border-radius:8px; min-height:64px; }
+.khead  { font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted);
+          padding:7px 9px; border-bottom:1px solid var(--border); }
+.kbody  { padding:8px; display:flex; flex-direction:column; gap:6px; }
+.kchip  { display:block; padding:5px 8px; border-radius:6px; border:1px solid var(--border);
+          font-size:12px; text-decoration:none; }
+.kchip:hover { filter:brightness(1.2); text-decoration:none; }
+.kchip.green  { border-color:var(--green);  color:var(--green); }
+.kchip.blue   { border-color:var(--blue);   color:var(--blue); }
+.kchip.yellow { border-color:var(--yellow); color:var(--yellow); }
+.kchip.alert  { border-color:var(--red);    color:var(--red); background:#2a1315; }
+.kempty { color:var(--border); font-size:12px; text-align:center; padding:4px 0; }
+@media (max-width:900px){ .kanban { grid-template-columns:repeat(3,1fr); } }
+@media (max-width:560px){ .kanban { grid-template-columns:repeat(2,1fr); } }
 
 /* --- lanes --- */
 .lanes { display:flex; flex-direction:column; gap:6px; }

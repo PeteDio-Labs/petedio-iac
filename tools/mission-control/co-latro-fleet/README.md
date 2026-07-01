@@ -45,6 +45,7 @@ fields are ignored and missing fields tolerated; one malformed line never crashe
 | **Reviewer** | `verdicts.jsonl` | `scripts/reviewer/reviewer-log-verdict.sh` (PET-135) | `{ts, issue, pr, worker_model, harness, reviewer_model, worker_tests:pass\|fail, claude_verdict:approve\|changes, claude_findings:[], pedro_verdict:merge\|kickback\|"", round_trips, tokens, wall_s}` — `worker_model`/`harness` = the PR under review; `reviewer_model` (PET-199) = the model that decided the verdict (the lane's `model` column shows this, reviewed worker model/harness in its tooltip) |
 | **Worker** | `worker-runs.jsonl` | `scripts/worker/worker-run.sh` (worker-loop.md) | `{ts, issue, repo, branch, pr:int\|null, worker_model, harness, tests:pass\|fail\|skipped\|none, guard:ok\|blocked, tokens, wall_s, head_sha}` |
 | **Engine** | `engine-runs.jsonl` | `scripts/engine/engine-run.sh` (engine-loop.md, PET-184) | `{ts, issue, repo, branch, pr:int\|null, engine_model, harness:claude-code-headless, tests:pass\|fail\|skipped\|none, guard:green\|red\|n/a (the gate verdict), tokens, wall_s, head_sha}` — the lane's `model` column shows `engine_model`; a cap-paused run exits before logging (no row), so a red row means the gate failed, not that the engine gave up |
+| **Live views** | `events.jsonl` | `scripts/agent-event.sh` (PET-154) | `{ts, agent:worker\|reviewer\|loop\|engine, event, issue:"PET-n"\|null, pr:int\|null, detail}` — the unified lifecycle stream. events: `run_started · issue_picked · pr_opened · verdict_posted · changes_requested · stalled · escalated_needs_human · run_exited`. **Carries no `repo`** (unlike the run logs), so status cards are fleet-wide and the pipeline joins on the PET key. Missing/empty → the live views degrade to idle + a runs-only pipeline, never a crash |
 
 ### Co-latro filter (made obvious in `app.js`)
 
@@ -72,6 +73,29 @@ fields are ignored and missing fields tolerated; one malformed line never crashe
    actually gates. The page stays auth-agnostic: front it with Authentik forward-auth instead and
    `/whoami` can echo the real `X-authentik-username`.
 
+## Live views (PET-220) — built from `events.jsonl`
+
+Three views render **what's happening now** from the unified lifecycle stream, above the ledger:
+
+1. **Live status cards** — one per agent (worker · engine · reviewer · loop). State is **inferred
+   from the last event**: an open run (a `run_started`/`issue_picked` with no later `run_exited`)
+   ⇒ **running** (current issue + time-in-state); a `stalled`/`escalated_needs_human` last event ⇒
+   **stalled / needs-human** (red alert); otherwise **idle** (time since last activity). The `model`
+   is read from the latest matching run/verdict row (events don't carry it). **Limitation:** there
+   is **no heartbeat** — we stay no-backend, so "running" means *last event was a start*, not a live
+   liveness probe; a crashed loop that never emitted `run_exited` reads as running until the next
+   event. Age is your tell. This is the "is the loop hung?" glance.
+2. **Pipeline (kanban)** — each recently-active Co-latro issue sits in the furthest stage it has
+   reached across **Todo → authoring → gate → PR → review → merge**, joining `events.jsonl` (author
+   lifecycle) with `verdicts.jsonl` (`claude_verdict`/`pedro_verdict`) and the run logs on the PET
+   key. Chips are coloured green (merged) / blue (in-flight) / yellow (changes or gate-fail) / red
+   (stalled). `loop` (IaC) events are excluded; a non-Co-latro issue is dropped. The "where is
+   PET-N stuck?" view.
+3. **Trends** — `ts` bucketed by day: worker pass-rate, engine gate-green rate, reviewer approve
+   rate (each with a sparkline), engine tokens/day, and the round-trip distribution. **Cost data is
+   thin** — worker & reviewer log `tokens:0` today, only the engine logs real tokens; the tokens
+   sparkline reflects only what exists.
+
 ## Behavior
 
 - **Three lanes**, each with a *latest* card (most recent run) + a *history* table (newest first):
@@ -94,7 +118,10 @@ for the full ordered procedure. In short:
   `access = true` + `access_emails = ["pedelgadillo@gmail.com"]` → Cloudflare creates the proxied
   CNAME, the tunnel ingress, and the Access application/policy on merge (apply-on-merge).
 - **Ansible** (`ansible/playbooks/configure-fleet.yml`): nginx on `242:8090` serving these files +
-  a same-origin `mc mirror` of the `agent-evals` bucket + the static `/whoami`.
+  a same-origin `mc mirror` of the `agent-evals` bucket + the static `/whoami`. **`events.jsonl`
+  needs no mirror change** — the mirror is a *whole-bucket* `mc mirror homelab/agent-evals`, so the
+  stream is served the moment `scripts/agent-event.sh` writes it; only `index.html`/`app.css`/`app.js`
+  (the `fleet_static_files` list) are pushed by the copy task, and this change touches only those.
 - **Pedro's one-time prerequisites** (Cloudflare dashboard, *before* merge): a Zero Trust org /
   team domain exists, One-Time PIN login is enabled, and the API token has *Access: Apps and
   Policies → Edit*. Then complete the OTP login (the code is emailed to you).

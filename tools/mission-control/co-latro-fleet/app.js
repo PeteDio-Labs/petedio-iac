@@ -35,7 +35,8 @@ const CO_LATRO_REPOS = ["co-latro-backend", "co-latro-frontend"];
 const DEFAULT_REPO  = "co-latro-backend";   // for a verdict PR link when the repo can't be joined
 const LINEAR_BASE   = "https://linear.app/petedillo/issue/";
 const REFRESH_MS    = 20000;                 // auto-refresh cadence (~15–30s per the issue)
-const FILES = { verdicts: "verdicts.jsonl", worker: "worker-runs.jsonl", engine: "engine-runs.jsonl" };
+const FILES = { verdicts: "verdicts.jsonl", worker: "worker-runs.jsonl", engine: "engine-runs.jsonl",
+                events: "events.jsonl" };   // PET-220: the unified lifecycle stream (PET-154)
 
 // ---- dev mode -------------------------------------------------------------------------
 // In prod the page lives behind Authentik and reads /agent-evals same-origin. For local dev
@@ -156,6 +157,202 @@ function normEngine(r){
     verdict:str(r.claude_verdict||r.verdict)||null, pedro:str(r.pedro_verdict)||null,
     roundTrips:num(r.round_trips), findings:Array.isArray(r.claude_findings)?r.claude_findings:null,
     tokens:num(r.tokens), wall:num(r.wall_s), headSha:str(r.head_sha), raw:r };
+}
+
+// ======================================================================================
+// PET-220 — LIVE views over the unified events.jsonl lifecycle stream (PET-154).
+// The lanes below stay the audit ledger; these three views render "what's happening now".
+// events.jsonl schema: {ts, agent:"worker|reviewer|loop|engine", event, issue:"PET-n"|null,
+// pr:int|null, detail}. events carry NO repo (unlike runs) — state is inferred from the last
+// event's age (no heartbeat; we stay no-backend), so RUNNING really means "last event was a
+// start with no matching exit", not a live liveness probe. Noted in the UI + README.
+// ======================================================================================
+const EVENT_AGENTS = ["worker", "engine", "reviewer", "loop"];   // render order for status cards
+const RUN_START = new Set(["run_started", "issue_picked"]);      // opens a run
+const ALERT_EV  = new Set(["stalled", "escalated_needs_human"]); // needs-a-human events
+const AGENT_META = {
+  worker:   { icon:"🔧", title:"Worker" },
+  engine:   { icon:"⚙️", title:"Engine" },
+  reviewer: { icon:"🔎", title:"Reviewer" },
+  loop:     { icon:"🔁", title:"Loop (IaC)" },
+};
+const STATE_META = {
+  running:       { cls:"run",   label:"● running" },
+  stalled:       { cls:"alert", label:"■ stalled" },
+  "needs-human": { cls:"alert", label:"✋ needs human" },
+  idle:          { cls:"idle",  label:"idle" },
+  none:          { cls:"none",  label:"no events" },
+};
+
+function normEvent(r){
+  return { ts:str(r.ts), agent:str(r.agent), event:str(r.event),
+    issue:(r.issue==null||r.issue===""?null:str(r.issue)),
+    pr:(r.pr==null||r.pr===""?null:r.pr), detail:str(r.detail), raw:r };
+}
+
+// Infer one agent's current state from its events (newest-first). See the block header for the
+// RUNNING/STALLED/idle rules — they mirror the issue's spec exactly.
+function agentStatus(agent, allEvents, model){
+  const evs = allEvents.filter(e => e.agent === agent).sort(byTsDesc);
+  if (!evs.length) return { agent, state:"none", model };
+  const last = evs[0];
+  if (ALERT_EV.has(last.event))
+    return { agent, state: last.event === "stalled" ? "stalled" : "needs-human",
+      issue:last.issue, pr:last.pr, since:last.ts, detail:last.detail, model };
+  const lastStart = evs.find(e => RUN_START.has(e.event));
+  const lastExit  = evs.find(e => e.event === "run_exited");
+  const running   = lastStart && (!lastExit || tsVal(lastStart.ts) >= tsVal(lastExit.ts));
+  if (running){
+    // current issue = the newest issue_picked inside the open run, else the opening event's issue
+    const picked = evs.find(e => e.event === "issue_picked" && (!lastExit || tsVal(e.ts) > tsVal(lastExit.ts)));
+    const withPr = evs.find(e => e.pr != null && (!lastExit || tsVal(e.ts) > tsVal(lastExit.ts)));
+    return { agent, state:"running", issue:(picked && picked.issue) || lastStart.issue || null,
+      pr:(withPr ? withPr.pr : null), since:lastStart.ts, detail:last.detail, model };
+  }
+  return { agent, state:"idle", issue:last.issue, pr:last.pr, since:last.ts, model };
+}
+
+function statusCardHTML(st){
+  const m  = AGENT_META[st.agent]  || { icon:"•", title:st.agent };
+  const sm = STATE_META[st.state]  || STATE_META.none;
+  const rows = [];
+  if (st.issue) rows.push(`<div><span class="lk">issue</span> ${petCell({ issue:st.issue })}${st.pr!=null?` <span class="sub">#${esc(String(st.pr))}</span>`:""}</div>`);
+  if (st.model) rows.push(`<div><span class="lk">model</span> <span class="val">${esc(st.model)}</span></div>`);
+  if (st.since){
+    const lbl = st.state === "running" ? "in state" : st.state === "idle" ? "since last activity" : "since";
+    rows.push(`<div><span class="lk">${lbl}</span> <span class="val">${esc(ageStr(st.since))}</span></div>`);
+  }
+  if (st.detail && st.state !== "idle") rows.push(`<div class="sc-detail">${esc(st.detail)}</div>`);
+  if (st.state === "none") rows.push(`<div class="sc-detail">no lifecycle events yet</div>`);
+  return `<div class="statuscard ${sm.cls}">
+    <div class="sc-head">${m.icon} ${esc(m.title)} <span class="sc-badge">${sm.label}</span></div>
+    <div class="sc-body">${rows.join("")}</div>
+  </div>`;
+}
+
+// ---- View 2: per-issue pipeline (Todo -> authoring -> gate -> PR -> review -> merge) ---
+const STAGES = ["Todo", "authoring", "gate", "PR", "review", "merge"];
+// Join runs + verdicts + events on the PET key. Each issue lands in the FURTHEST stage it has
+// reached; stalls/kickbacks/gate-fails colour it. Scoped to Co-latro like the lanes: an issue
+// whose repo joins to a non-Co-latro repo is dropped; `loop` (IaC) events are excluded.
+function buildPipeline(worker, engine, reviewer, events, issueMap){
+  const issues = new Map();
+  const get = (issue) => {
+    if (!issues.has(issue)) issues.set(issue, { issue, stageIdx:0, latestTs:0, latestIso:"",
+      pr:null, stalled:false, changes:false, gateFail:false, note:"" });
+    return issues.get(issue);
+  };
+  const bump  = (a, i) => { if (i > a.stageIdx) a.stageIdx = i; };
+  const touch = (a, ts) => { const t = tsVal(ts); if (t > a.latestTs){ a.latestTs = t; a.latestIso = ts; } };
+
+  for (const r of worker.concat(engine)){
+    if (!r.issue) continue;
+    const a = get(r.issue); bump(a, 1);
+    if (r.guard){ bump(a, 2); if (r.guard === "red" || r.guard === "blocked") a.gateFail = true; }
+    if (r.pr != null){ bump(a, 3); if (a.pr == null) a.pr = r.pr; }
+    touch(a, r.ts);
+  }
+  for (const v of reviewer){
+    if (!v.issue) continue;
+    const a = get(v.issue);
+    if (v.pr != null){ bump(a, 3); if (a.pr == null) a.pr = v.pr; }
+    if (v.verdict){ bump(a, 4); if (v.verdict === "changes") a.changes = true; }
+    if (v.pedro === "merge")    bump(a, 5);
+    if (v.pedro === "kickback") a.changes = true;
+    touch(a, v.ts);
+  }
+  for (const e of events){
+    if (!e.issue || e.agent === "loop") continue;                  // loop = IaC, off the Co-latro board
+    const rep = issueMap.get(e.issue);
+    if (rep !== undefined && !isCoLatroRepo(rep)) continue;         // resolvable, non-Co-latro -> drop
+    const a = get(e.issue);
+    if (RUN_START.has(e.event)) bump(a, 1);
+    if (e.event === "pr_opened" || e.pr != null){ bump(a, 3); if (a.pr == null) a.pr = e.pr; }
+    if (e.event === "verdict_posted") bump(a, 4);
+    if (e.event === "changes_requested"){ bump(a, 4); a.changes = true; }
+    if (ALERT_EV.has(e.event)){ a.stalled = true; a.note = e.detail || e.event; }
+    touch(a, e.ts);
+  }
+  // Drop issues that only ever came from a non-Co-latro run (defensive; runs are already filtered).
+  const out = [...issues.values()].filter(a => { const r = issueMap.get(a.issue); return r === undefined || isCoLatroRepo(r); });
+  for (const a of out){
+    if (a.stalled)            a.status = "stalled";
+    else if (a.stageIdx >= 5) a.status = "merged";
+    else if (a.changes || a.gateFail) a.status = "attention";
+    else                      a.status = "active";
+  }
+  return out.sort((x, y) => y.latestTs - x.latestTs);
+}
+
+function pipeChipHTML(a){
+  const cls = { merged:"green", stalled:"alert", attention:"yellow", active:"blue" }[a.status] || "blue";
+  const pr  = a.pr != null ? ` <span class="sub">#${esc(String(a.pr))}</span>` : "";
+  const tip = (a.note ? a.note + " · " : "") + "updated " + ageStr(a.latestIso);
+  return `<a class="kchip ${cls}" href="${esc(linearUrl(a.issue))}" target="_blank" rel="noopener" title="${esc(tip)}">${esc(a.issue)}${pr}</a>`;
+}
+function pipelineHTML(items){
+  if (!items.length) return `<div class="empty">No active issues in <code>events.jsonl</code> yet.</div>`;
+  const cols = STAGES.map((s, i) => {
+    const here  = items.filter(a => a.stageIdx === i);
+    const chips = here.map(pipeChipHTML).join("") || `<div class="kempty">—</div>`;
+    return `<div class="kcol"><div class="khead">${esc(s)} <span class="sub">${here.length}</span></div>
+      <div class="kbody">${chips}</div></div>`;
+  }).join("");
+  return `<div class="kanban">${cols}</div>`;
+}
+
+// ---- View 3: pass-rate + trend sparklines (bucket ts by day) --------------------------
+const dayKey = (iso) => str(iso).slice(0, 10);                     // YYYY-MM-DD
+function dailyRate(rows, okFn, inFn){                              // -> [{d, rate, ok, tot}]
+  const b = new Map();
+  for (const r of rows){ if (!inFn(r)) continue; const k = dayKey(r.ts);
+    const c = b.get(k) || { ok:0, tot:0 }; c.tot++; if (okFn(r)) c.ok++; b.set(k, c); }
+  return [...b.keys()].sort().map(d => ({ d, rate:b.get(d).ok / b.get(d).tot, ok:b.get(d).ok, tot:b.get(d).tot }));
+}
+function dailySum(rows, valFn){                                    // -> [{d, val}]
+  const b = new Map();
+  for (const r of rows){ const v = valFn(r); if (v == null) continue; const k = dayKey(r.ts); b.set(k, (b.get(k) || 0) + v); }
+  return [...b.keys()].sort().map(d => ({ d, val:b.get(d) }));
+}
+function sparkSVG(values, max){
+  if (!values.length) return "";
+  const W = 120, H = 26, P = 2, mx = (max != null ? max : Math.max(...values)) || 1;
+  const step = values.length > 1 ? (W - 2 * P) / (values.length - 1) : 0;
+  const pts = values.map((v, i) => `${(P + i * step).toFixed(1)},${(H - P - Math.max(0, v) / mx * (H - 2 * P)).toFixed(1)}`).join(" ");
+  const dots = values.length === 1 ? `<circle cx="${W/2}" cy="${(H - P - values[0] / mx * (H - 2*P)).toFixed(1)}" r="2" fill="var(--blue)"/>` : "";
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <polyline points="${pts}" fill="none" stroke="var(--blue)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>${dots}</svg>`;
+}
+function rateCard(title, series){
+  const tot = series.reduce((s, p) => s + p.tot, 0), ok = series.reduce((s, p) => s + p.ok, 0);
+  const pct = tot ? Math.round(100 * ok / tot) : null;
+  return `<div class="stat"><div class="k">${esc(title)}</div>
+    <div class="v">${pct == null ? "—" : pct + "%"}</div>
+    ${sparkSVG(series.map(p => p.rate), 1)}
+    <div class="d">${tot ? `${ok}/${tot} · ${series.length}d` : "no data"}</div></div>`;
+}
+function sumCard(title, series){
+  if (!series.length) return statCard(title, "—", "no data");
+  const total = series.reduce((s, p) => s + p.val, 0);
+  return `<div class="stat"><div class="k">${esc(title)}</div>
+    <div class="v">${fmtInt(Math.round(total / series.length))}</div>
+    ${sparkSVG(series.map(p => p.val))}
+    <div class="d">avg/day · ${series.length}d</div></div>`;
+}
+function trendsHTML(worker, reviewer, engine){
+  const wr = dailyRate(worker,   r => r.tests === "pass",   r => r.tests === "pass" || r.tests === "fail");
+  const er = dailyRate(engine,   r => r.guard === "green",  r => r.guard === "green" || r.guard === "red");
+  const rr = dailyRate(reviewer, r => r.verdict === "approve", r => r.verdict === "approve" || r.verdict === "changes");
+  const et = dailySum(engine,    r => r.tokens);
+  const dist = {};
+  for (const r of reviewer) if (r.roundTrips != null) dist[r.roundTrips] = (dist[r.roundTrips] || 0) + 1;
+  return `<div class="rollup">
+    ${rateCard("worker pass-rate", wr)}
+    ${rateCard("engine gate-green", er)}
+    ${rateCard("reviewer approve", rr)}
+    ${sumCard("engine tokens/day", et)}
+    ${barsCard(dist)}
+  </div>`;
 }
 
 // ---- the Co-latro filter (made obvious, per the issue) -------------------------------
@@ -312,8 +509,8 @@ function rollupHTML(worker, reviewer, engine){
 function renderBanners(states){
   const b = [];
   if (DEV) b.push(["warn", `<strong>DEV MODE</strong> — reading local <code>./fixtures</code> and bypassing the <code>/whoami</code> gate. This is dev convenience only; Authentik is the real access boundary.`]);
-  const fileLabel = { v:"verdicts.jsonl", w:"worker-runs.jsonl", e:"engine-runs.jsonl" };
-  for (const key of ["v","w","e"]){
+  const fileLabel = { v:"verdicts.jsonl", w:"worker-runs.jsonl", e:"engine-runs.jsonl", ev:"events.jsonl" };
+  for (const key of ["v","w","e","ev"]){
     const st = states[key];
     if (st.status === "error") b.push(["err", `Could not load <code>${fileLabel[key]}</code> — ${esc(st.detail)}.`]);
     if (st.bad > 0)            b.push(["warn", `${st.bad} malformed line(s) skipped in <code>${fileLabel[key]}</code>.`]);
@@ -350,20 +547,30 @@ async function load(){
   $("content").style.display = "";
   setStatus("loading…");
 
-  const [v, w, e] = await Promise.all([
-    fetchJSONL(FILES.verdicts), fetchJSONL(FILES.worker), fetchJSONL(FILES.engine),
+  const [v, w, e, ev] = await Promise.all([
+    fetchJSONL(FILES.verdicts), fetchJSONL(FILES.worker), fetchJSONL(FILES.engine), fetchJSONL(FILES.events),
   ]);
 
   const workerAll  = w.rows.map(normWorker);
   const engineAll  = e.rows.map(normEngine);
   const verdictAll = v.rows.map(normVerdict);
+  const eventsAll  = ev.rows.map(normEvent);   // fleet-wide: events carry no repo (see PET-220 block)
 
   const issueMap = buildIssueRepoMap(workerAll, engineAll);
   const worker   = workerAll.filter(r => isCoLatroRepo(r.repo));
   const engine   = engineAll.filter(r => isCoLatroRepo(r.repo));
   const { kept: reviewer, hidden } = filterVerdicts(verdictAll, issueMap);
 
-  renderBanners({ v, w, e, hidden });
+  renderBanners({ v, w, e, ev, hidden });
+
+  // ---- PET-220 live views (events.jsonl) ----------------------------------------------
+  const latestModel = (rows) => { const s = rows.slice().sort(byTsDesc); for (const r of s) if (r.model) return r.model; return ""; };
+  const modelByAgent = { worker:latestModel(worker), engine:latestModel(engine), reviewer:latestModel(reviewer), loop:"" };
+  $("status-cards").innerHTML = EVENT_AGENTS.map(a => statusCardHTML(agentStatus(a, eventsAll, modelByAgent[a]))).join("");
+  $("pipeline").innerHTML     = pipelineHTML(buildPipeline(worker, engine, reviewer, eventsAll, issueMap));
+  $("trends").innerHTML       = trendsHTML(worker, reviewer, engine);
+
+  // ---- ledger (unchanged: roll-up + the three history lanes) --------------------------
   $("rollup").innerHTML = rollupHTML(worker, reviewer, engine);
   $("lanes").innerHTML =
       laneHTML({ key:"worker",   title:"Worker",   icon:"🔧", sub:"authors green PRs",      file:FILES.worker },   worker,   w)
@@ -372,7 +579,7 @@ async function load(){
 
   setUpdated();
   const total = worker.length + reviewer.length + engine.length;
-  setStatus(`${total} Co-latro run(s) · ${reviewer.length} verdict(s)`);
+  setStatus(`${total} Co-latro run(s) · ${reviewer.length} verdict(s) · ${eventsAll.length} event(s)`);
 }
 
 // ---- auto-refresh + wiring ------------------------------------------------------------
