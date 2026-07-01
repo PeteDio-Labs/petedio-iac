@@ -77,8 +77,9 @@ fields are ignored and missing fields tolerated; one malformed line never crashe
 
 Three views render **what's happening now** from the unified lifecycle stream, above the ledger:
 
-1. **Live status cards** — one per agent (worker · engine · reviewer · loop). State is **inferred
-   from the last event**: an open run (a `run_started`/`issue_picked` with no later `run_exited`)
+1. **Live status cards** — one per Co-latro fleet agent (worker · engine · reviewer). *(The IaC
+   `loop` agent isn't instrumented and isn't Co-latro, so it has no card — PET-221.)* State is
+   **inferred from the last event**: an open run (a `run_started`/`issue_picked` with no later `run_exited`)
    ⇒ **running** (current issue + time-in-state); a `stalled`/`escalated_needs_human` last event ⇒
    **stalled / needs-human** (red alert); otherwise **idle** (time since last activity). The `model`
    is read from the latest matching run/verdict row (events don't carry it). **Limitation:** there
