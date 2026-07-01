@@ -105,6 +105,34 @@ fi
 flock -n 9 || { log "cc-slot busy (another automated cc session holds it) — exiting."; exit 0; }
 log "cc-slot acquired ($SLOT_LOCK)."
 
+# --- auto-enqueue: poll engine-candidates (engine-ok Todo) into the queue (S1) -----------
+# S0→S1: instead of only draining a hand-filled queue, poll engine-candidates.sh (engine-ok
+# Todo Co-latro issues, with their bodies) and enqueue any not already queued or in-flight
+# (a queue dir or a state sidecar for that key → skip). The GitHub→Linear link moves an issue
+# out of Todo once its PR opens, so it won't re-appear; READ-ONLY Linear.
+if [ -x "$SCRIPT_DIR/engine-candidates.sh" ]; then
+  ENG_CANDS="$("$SCRIPT_DIR/engine-candidates.sh" 2>/dev/null || echo '[]')"
+  ENQ="$(QUEUE_DIR="$QUEUE_DIR" STATE_DIR="$STATE_DIR" ENG_CANDS="$ENG_CANDS" python3 <<'PY'
+import json, os
+cands = json.loads(os.environ.get("ENG_CANDS") or "[]")
+qd, sd = os.environ["QUEUE_DIR"], os.environ["STATE_DIR"]
+n = 0
+for c in cands:
+    key = c.get("key", ""); repo = c.get("repo", ""); slug = c.get("branch_slug", ""); desc = c.get("description", "") or ""
+    if not key or not repo or not desc:
+        continue
+    if os.path.isdir(os.path.join(qd, key)) or os.path.exists(os.path.join(sd, key + ".json")):
+        continue  # already queued or in-flight/done — never double-enqueue
+    d = os.path.join(qd, key); os.makedirs(d, exist_ok=True)
+    open(os.path.join(d, "spec.md"), "w").write(desc)
+    open(os.path.join(d, "meta"), "w").write("repo=%s\nslug=%s\n" % (repo, slug))
+    n += 1
+print(n)
+PY
+)"
+  [ "${ENQ:-0}" -gt 0 ] && log "auto-enqueued $ENQ new engine-ok issue(s) from Linear."
+fi
+
 # --- select ONE unit of work (resume before new) ----------------------------------------
 NOW_TS="$(date -u +%s)"
 pick=""   # "PET-<n>"

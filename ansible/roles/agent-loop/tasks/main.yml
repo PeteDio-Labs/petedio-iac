@@ -645,3 +645,40 @@
         enabled: true
         state: started
         daemon_reload: true
+
+# --- Worker auto-launch workspace + timer (PET-184 S1) -------------------------------
+# The worker's home holds only launched-markers (per-issue cooldown). Created unconditionally
+# (harmless when the timer is off; used the moment worker-loop.sh runs). The TIMER is the S1
+# stage, gated on agent_loop_worker_loop_timer_enabled (default false = S0 hand-run).
+- name: Create the worker auto-launch home (launched-markers)
+  ansible.builtin.file:
+    path: "{{ agent_loop_worker_home }}/{{ item }}"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+  loop:
+    - ""
+    - launched
+
+- name: Worker auto-launch timer (S1)
+  when: agent_loop_worker_loop_timer_enabled | bool
+  block:
+    - name: Install the worker-loop systemd service + timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - worker-loop.service
+        - worker-loop.timer
+      notify: Reload systemd (agent-loop)
+
+    - name: Enable + start the worker-loop timer
+      ansible.builtin.systemd_service:
+        name: worker-loop.timer
+        enabled: true
+        state: started
+        daemon_reload: true
