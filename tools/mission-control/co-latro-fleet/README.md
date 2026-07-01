@@ -44,7 +44,7 @@ fields are ignored and missing fields tolerated; one malformed line never crashe
 |---|---|---|---|
 | **Reviewer** | `verdicts.jsonl` | `scripts/reviewer/reviewer-log-verdict.sh` (PET-135) | `{ts, issue, pr, worker_model, harness, reviewer_model, worker_tests:pass\|fail, claude_verdict:approve\|changes, claude_findings:[], pedro_verdict:merge\|kickback\|"", round_trips, tokens, wall_s}` — `worker_model`/`harness` = the PR under review; `reviewer_model` (PET-199) = the model that decided the verdict (the lane's `model` column shows this, reviewed worker model/harness in its tooltip) |
 | **Worker** | `worker-runs.jsonl` | `scripts/worker/worker-run.sh` (worker-loop.md) | `{ts, issue, repo, branch, pr:int\|null, worker_model, harness, tests:pass\|fail\|skipped\|none, guard:ok\|blocked, tokens, wall_s, head_sha}` |
-| **Engine** | `engine-runs.jsonl` | *(none yet — forward-compat, PET-184)* | TBD → lane shows an empty-state until the file exists |
+| **Engine** | `engine-runs.jsonl` | `scripts/engine/engine-run.sh` (engine-loop.md, PET-184) | `{ts, issue, repo, branch, pr:int\|null, engine_model, harness:claude-code-headless, tests:pass\|fail\|skipped\|none, guard:green\|red\|n/a (the gate verdict), tokens, wall_s, head_sha}` — the lane's `model` column shows `engine_model`; a cap-paused run exits before logging (no row), so a red row means the gate failed, not that the engine gave up |
 
 ### Co-latro filter (made obvious in `app.js`)
 

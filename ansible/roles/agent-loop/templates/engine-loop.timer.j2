@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# Periodic schedule for engine-loop.service (PET-184). Fires often; the loop's OWN guards
+# (off-hours window, PAUSED sentinel, reviewer-preempt, cc-slot flock) decide whether a tick
+# actually does work — so a frequent timer just means "resume/pick up work soon after it's
+# eligible", not "run the engine now". RandomizedDelaySec spreads load off the other timers.
+[Unit]
+Description=Periodic tick of the Co-latro engine loop (PET-184)
+
+[Timer]
+OnCalendar={{ agent_loop_engine_oncalendar }}
+Persistent=true
+RandomizedDelaySec=90
+
+[Install]
+WantedBy=timers.target
