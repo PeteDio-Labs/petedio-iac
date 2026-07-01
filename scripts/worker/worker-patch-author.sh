@@ -135,6 +135,71 @@ PY
 )"
   SIBLING_ID="$RESOLVED"   # authoritative — a non-id candidate never survives validation
 fi
+
+# --- PER-FILE catalog mode (PET-216) — jokers are ONE FILE PER ENTRY in src/engine/jokers/. ---
+# "Add an entry" = CREATE A NEW FILE (never edit a shared array), so additive worker PRs cannot
+# merge-conflict. Self-contained early path; the array logic below is untouched for other catalogs.
+# The sibling resolved from the array above is empty here (the array is gone), so re-resolve the
+# sibling to a real entry FILE from the parsed candidates.
+if [ "$CATALOG_REL" = "src/engine/jokers.ts" ] && [ -d "$CLONE/src/engine/jokers" ]; then
+  PF_SIB=""
+  for c in $(printf '%s' "${SIBLING_CANDS:-}" | tr '|' ' '); do
+    [ -f "$CLONE/src/engine/jokers/$c.ts" ] && { PF_SIB="$c"; break; }
+  done
+  [ -n "$NEW_ID" ] || { add_note "per-file: could not parse a new entry id from the spec"; emit false none; }
+  [ -n "$PF_SIB" ] || { add_note "per-file: no spec candidate matched an existing jokers/<id>.ts sibling"; emit false none; }
+  CATALOG_REL="src/engine/jokers/$NEW_ID.ts"; TEST_REL=""; SIBLING_ID="$PF_SIB"
+  SIB_FILE="$CLONE/src/engine/jokers/$PF_SIB.ts"
+  NEW_FILE="$CLONE/src/engine/jokers/$NEW_ID.ts"
+  [ -e "$NEW_FILE" ] && { add_note "per-file: jokers/$NEW_ID.ts already exists — refusing to overwrite"; emit false none; }
+  add_note "per-file target: create src/engine/jokers/$NEW_ID.ts from sibling $PF_SIB"
+  PF_REQ="$SCRATCH/pf_req.json"; PF_RESP="$SCRATCH/pf_resp.json"; PF_OUT="$SCRATCH/pf_out.txt"
+  python3 - "$MODEL" "$SPEC" "$PF_SIB" "$NEW_ID" "$(cat "$SIB_FILE")" >"$PF_REQ" <<'PY'
+import json, sys
+model, spec, sib, new_id, sib_mod = sys.argv[1:6]
+system = ("You output only a TypeScript module: an 'import type' line, a 'const def: JokerDef = {...};', "
+          "and 'export default def;'. No prose, no code fences.")
+user = (f"TASK (mechanical, ADD-ONLY): {spec}\n\nHere is the existing \"{sib}\" joker module:\n\n{sib_mod}\n\n"
+        f"Produce the FULL new module for id \"{new_id}\" by copying this module's EXACT shape and "
+        f"changing ONLY what the task requires (id, name, and the field(s) the task names). Keep the "
+        f"import line and 'export default def;' identical. Output ONLY the module text.")
+print(json.dumps({"model": model, "stream": False, "options": {"temperature": 0, "num_ctx": 8192},
+                  "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}))
+PY
+  err "per-file mode: calling $MODEL to author jokers/$NEW_ID.ts (cold-load may take up to 120s)..."
+  : >"$PF_OUT"
+  for attempt in 1 2; do
+    if curl -s --max-time 120 "$OLLAMA_URL/api/chat" -d @"$PF_REQ" >"$PF_RESP" 2>/dev/null; then
+      python3 -c 'import json,sys; open(sys.argv[2],"w").write(json.load(open(sys.argv[1]))["message"]["content"])' "$PF_RESP" "$PF_OUT" 2>/dev/null
+      [ -s "$PF_OUT" ] && break
+    fi
+    sleep 2
+  done
+  [ -s "$PF_OUT" ] || { add_note "per-file: model returned empty output"; emit false none; }
+  if python3 - "$PF_OUT" "$NEW_FILE" "$NEW_ID" <<'PY'
+import sys
+raw_p, out_p, new_id = sys.argv[1:4]
+txt = open(raw_p).read().replace('```typescript', '').replace('```ts', '').replace('```', '')
+lines = txt.splitlines()
+start = next((i for i, l in enumerate(lines) if l.strip()), None)
+end = next((i for i in range(len(lines) - 1, -1, -1) if 'export default' in lines[i]), None)
+if start is None or end is None:
+    sys.stderr.write("no module boundaries\n"); sys.exit(1)
+mod = "\n".join(lines[start:end + 1]).strip() + "\n"
+for cond, msg in [(new_id in mod, "missing new id"), ('export default' in mod, "missing export default"),
+                  ('JokerDef' in mod, "missing JokerDef"), (mod.count('{') == mod.count('}'), "unbalanced braces")]:
+    if not cond:
+        sys.stderr.write(msg + "\n"); sys.exit(1)
+open(out_p, 'w').write(mod); sys.exit(0)
+PY
+  then
+    add_note "applied (per-file): created src/engine/jokers/$NEW_ID.ts — no shared-array edit, conflict-free"
+    emit true per-file-create
+  else
+    add_note "per-file: model output failed validation — wrote nothing (atomic)"; emit false none
+  fi
+fi
+
 [ -n "$NEW_ID" ] || { add_note "could not parse a new entry id from the spec"; emit false none; }
 [ -n "$SIBLING_ID" ] || { add_note "no spec candidate matched a real catalog id — refusing to author without a valid sibling template (was the sibling named and spelled like a real catalog id?)"; emit false none; }
 add_note "target: catalog=$CATALOG_REL test=$TEST_REL new_id=$NEW_ID sibling=$SIBLING_ID"
