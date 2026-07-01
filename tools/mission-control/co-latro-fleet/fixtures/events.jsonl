@@ -1,0 +1,34 @@
+{"ts":"2026-06-24T15:05:00Z","agent":"loop","event":"run_started","issue":null,"pr":null,"detail":"iac authoring loop"}
+{"ts":"2026-06-24T15:08:00Z","agent":"worker","event":"run_started","issue":null,"pr":null,"detail":"worker-loop poll -> claimed worker-ok"}
+{"ts":"2026-06-24T15:09:00Z","agent":"worker","event":"issue_picked","issue":"PET-172","pr":null,"detail":"joker catalog row"}
+{"ts":"2026-06-24T18:00:00Z","agent":"worker","event":"pr_opened","issue":"PET-172","pr":41,"detail":"tests pass"}
+{"ts":"2026-06-24T18:40:00Z","agent":"reviewer","event":"verdict_posted","issue":"PET-172","pr":41,"detail":"approve"}
+{"ts":"2026-06-24T18:45:00Z","agent":"worker","event":"run_exited","issue":"PET-172","pr":41,"detail":"merged"}
+{"ts":"2026-06-24T19:00:00Z","agent":"worker","event":"issue_picked","issue":"PET-173","pr":null,"detail":"consumable row"}
+{"ts":"2026-06-24T20:10:00Z","agent":"worker","event":"pr_opened","issue":"PET-173","pr":42,"detail":"tests fail"}
+{"ts":"2026-06-24T20:55:00Z","agent":"reviewer","event":"changes_requested","issue":"PET-173","pr":42,"detail":"2 findings: failing tests, catalog index"}
+{"ts":"2026-06-24T21:00:00Z","agent":"worker","event":"run_exited","issue":"PET-173","pr":42,"detail":"changes requested"}
+{"ts":"2026-06-25T08:00:00Z","agent":"loop","event":"issue_picked","issue":"PET-182","pr":null,"detail":"worker template insert"}
+{"ts":"2026-06-25T08:20:00Z","agent":"loop","event":"pr_opened","issue":"PET-182","pr":95,"detail":"iac"}
+{"ts":"2026-06-25T08:40:00Z","agent":"loop","event":"run_exited","issue":"PET-182","pr":95,"detail":"merged"}
+{"ts":"2026-06-25T08:55:00Z","agent":"worker","event":"issue_picked","issue":"PET-173","pr":42,"detail":"retry after kickback"}
+{"ts":"2026-06-25T09:20:00Z","agent":"worker","event":"pr_opened","issue":"PET-173","pr":42,"detail":"tests pass"}
+{"ts":"2026-06-25T09:40:00Z","agent":"reviewer","event":"verdict_posted","issue":"PET-173","pr":42,"detail":"approve"}
+{"ts":"2026-06-25T09:45:00Z","agent":"worker","event":"run_exited","issue":"PET-173","pr":42,"detail":"awaiting pedro"}
+{"ts":"2026-06-25T11:00:00Z","agent":"worker","event":"issue_picked","issue":"PET-174","pr":null,"detail":"tag trigger row"}
+{"ts":"2026-06-25T11:30:00Z","agent":"worker","event":"pr_opened","issue":"PET-174","pr":43,"detail":"tests pass"}
+{"ts":"2026-06-25T11:48:00Z","agent":"reviewer","event":"verdict_posted","issue":"PET-174","pr":43,"detail":"approve"}
+{"ts":"2026-06-25T11:55:00Z","agent":"worker","event":"run_exited","issue":"PET-174","pr":43,"detail":"merged"}
+{"ts":"2026-06-25T12:20:00Z","agent":"worker","event":"issue_picked","issue":"PET-175","pr":null,"detail":"deck variant"}
+{"ts":"2026-06-25T12:33:00Z","agent":"worker","event":"stalled","issue":"PET-175","pr":null,"detail":"guard:blocked — deck array-style, needs human split"}
+{"ts":"2026-06-25T12:35:00Z","agent":"worker","event":"run_exited","issue":"PET-175","pr":null,"detail":"guard blocked"}
+{"ts":"2026-06-30T03:05:00Z","agent":"engine","event":"run_started","issue":null,"pr":null,"detail":"engine-loop poll -> claimed engine-ok"}
+{"ts":"2026-06-30T03:06:00Z","agent":"engine","event":"issue_picked","issue":"PET-220","pr":null,"detail":"new effect kind: retrigger-suit"}
+{"ts":"2026-06-30T03:12:00Z","agent":"engine","event":"pr_opened","issue":"PET-220","pr":58,"detail":"gate green"}
+{"ts":"2026-06-30T03:40:00Z","agent":"engine","event":"run_exited","issue":"PET-220","pr":58,"detail":"gate green — Bucket-B -> A flip"}
+{"ts":"2026-06-30T04:00:00Z","agent":"engine","event":"run_started","issue":null,"pr":null,"detail":"engine-loop poll -> claimed engine-ok"}
+{"ts":"2026-06-30T04:01:00Z","agent":"engine","event":"issue_picked","issue":"PET-221","pr":null,"detail":"new effect kind: per-discard-xmult"}
+{"ts":"2026-06-30T04:05:00Z","agent":"engine","event":"pr_opened","issue":"PET-221","pr":59,"detail":"gate red"}
+{"ts":"2026-06-30T04:10:00Z","agent":"engine","event":"escalated_needs_human","issue":"PET-221","pr":59,"detail":"gate red 2x — Bucket-B kind needs human"}
+{"ts":"2026-06-30T13:00:00Z","agent":"worker","event":"run_started","issue":null,"pr":null,"detail":"worker-loop poll -> claimed worker-ok"}
+{"ts":"2026-06-30T14:00:00Z","agent":"worker","event":"issue_picked","issue":"PET-176","pr":null,"detail":"additive joker catalog row (in flight)"}
