@@ -32,6 +32,12 @@
 # Env (optional):
 #   AGENT_EVENTS_MC_ALIAS   mc alias for the homelab MinIO (default: homelab)
 #   AGENT_EVENTS_PATH       bucket/key for the stream (default: agent-evals/events.jsonl)
+#
+# TESTING (PET-221): smoke/e2e/probe runs MUST NOT pollute the prod stream that fleet.pdlab.dev
+# reads. Either pass --dry-run (prints the row, no upload), or point AGENT_EVENTS_PATH at a
+# throwaway key, e.g. `AGENT_EVENTS_PATH=agent-evals/events.test.jsonl`. The fleet view reads
+# only `events.jsonl`, so a `.test.jsonl` sibling is invisible to it. (Fake PET keys like
+# PET-9999 / PET-105105 previously leaked in this way and had to be scrubbed by hand.)
 set -euo pipefail
 
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }

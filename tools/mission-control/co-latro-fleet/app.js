@@ -167,14 +167,16 @@ function normEngine(r){
 // event's age (no heartbeat; we stay no-backend), so RUNNING really means "last event was a
 // start with no matching exit", not a live liveness probe. Noted in the UI + README.
 // ======================================================================================
-const EVENT_AGENTS = ["worker", "engine", "reviewer", "loop"];   // render order for status cards
+// Status-card order. The Co-latro content fleet is worker/engine/reviewer; the IaC `loop`
+// agent isn't instrumented (no emitter) and isn't Co-latro, so it gets no card (PET-221).
+// `loop` events are still filtered out of the pipeline below.
+const EVENT_AGENTS = ["worker", "engine", "reviewer"];
 const RUN_START = new Set(["run_started", "issue_picked"]);      // opens a run
 const ALERT_EV  = new Set(["stalled", "escalated_needs_human"]); // needs-a-human events
 const AGENT_META = {
   worker:   { icon:"🔧", title:"Worker" },
   engine:   { icon:"⚙️", title:"Engine" },
   reviewer: { icon:"🔎", title:"Reviewer" },
-  loop:     { icon:"🔁", title:"Loop (IaC)" },
 };
 const STATE_META = {
   running:       { cls:"run",   label:"● running" },

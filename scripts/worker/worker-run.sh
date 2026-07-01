@@ -332,6 +332,10 @@ cat "$ART/.worker-guard-${NUM}.err" >&2 || true
 if [ "$GRC" -eq 2 ]; then
   GUARD_VERDICT="blocked"
   info "GUARDRAIL BLOCKED the change (delete-not-append). NOT committing/pushing. Worker must re-author additively."
+  # PET-221: flag the ISSUE as needing a human (non-additive change the guard won't pass) so the
+  # fleet pipeline shows it red. The worker loop itself moves on -> run_exited still follows, so
+  # the worker *status card* correctly reads idle, not hung.
+  emit --event escalated_needs_human --issue "$ISSUE" --detail "guard-blocked: non-additive change, needs human"
   emit --event run_exited --issue "$ISSUE" --detail "guard-blocked"
   printf '{"issue":"%s","repo":"%s","branch":"%s","pr":null,"tests":"not-run","guard":"blocked","tokens":%s,"wall_s":%s,"head_sha":null}\n' \
     "$ISSUE" "$REPO" "$BRANCH" "$TOKENS" "$WALL_S"

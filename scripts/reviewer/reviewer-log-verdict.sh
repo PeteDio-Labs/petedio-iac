@@ -40,6 +40,13 @@ set -euo pipefail
 
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
+# PET-221: mirror each verdict into the unified lifecycle stream (events.jsonl) so the fleet
+# view's Reviewer status + pipeline `review` stage populate from real activity, not just the
+# verdicts log. Best-effort (never blocks verdict logging); agent-event.sh sits one dir up.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EVENT="$SCRIPT_DIR/../agent-event.sh"
+emit() { [ -x "$EVENT" ] && "$EVENT" --agent reviewer "$@" >/dev/null 2>&1 || true; }
+
 # reviewer_model defaults to the pinned Opus build (roles/agent-loop agent_loop_claude_model)
 # so the field is populated even if a caller forgets --reviewer-model; override per-run with
 # the flag or globally with REVIEWER_MODEL.
@@ -81,6 +88,11 @@ done
 
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+# PET-221: map the verdict onto a lifecycle event — approve -> verdict_posted, changes ->
+# changes_requested (the pipeline colours the issue yellow on the latter).
+if [ "$CLAUDE_VERDICT" = approve ]; then EV_NAME=verdict_posted; EV_DETAIL=approve
+else                                     EV_NAME=changes_requested; EV_DETAIL=changes; fi
+
 # Build the row with python so JSON escaping + the findings-array parse are correct.
 ROW="$(
   ISSUE="$ISSUE" PR="$PR" WORKER_MODEL="$WORKER_MODEL" HARNESS="$HARNESS" REVIEWER_MODEL="$REVIEWER_MODEL" \
@@ -118,6 +130,8 @@ PY
 
 if [ "$DRY_RUN" = true ]; then
   printf '%s\n' "$ROW"
+  # Show the lifecycle event a real run would emit (agent-event.sh --dry-run prints, no mc).
+  [ -x "$EVENT" ] && "$EVENT" --agent reviewer --event "$EV_NAME" --issue "$ISSUE" --pr "$PR" --detail "$EV_DETAIL" --dry-run
   exit 0
 fi
 
@@ -143,3 +157,7 @@ printf '%s\n' "$ROW" >>"$TMP"
 
 mc pipe "$TARGET" <"$TMP" >/dev/null 2>&1 || die "upload to $TARGET failed (bucket exists? alias creds valid?)."
 printf '\033[1;32mappended verdict for %s (PR %s) to %s\033[0m\n' "$ISSUE" "$PR" "$TARGET" >&2
+
+# PET-221: emit the matching lifecycle event (best-effort — a telemetry hiccup must not fail
+# the verdict that was just logged above).
+emit --event "$EV_NAME" --issue "$ISSUE" --pr "$PR" --detail "$EV_DETAIL"

@@ -425,6 +425,10 @@ if [ "$DRY_RUN" = false ] && [ "$NO_PUSH" = false ] && command -v mc >/dev/null 
   fi
 fi
 
+# PET-221: a terminal gate-red means the new Bucket-B kind couldn't pass the ground-truth gate
+# — a human needs to look. Flag the ISSUE (pipeline red); run_exited still follows so the engine
+# status card reads idle (the loop moves to the next candidate), not falsely hung.
+[ "$GATE_VERDICT" = red ] && emit --event escalated_needs_human --issue "$ISSUE" --pr "$([ "$PR_NUMBER" = null ] && echo '' || echo "$PR_NUMBER")" --detail "gate-red: Bucket-B kind needs human"
 emit --event run_exited --issue "$ISSUE" --pr "$([ "$PR_NUMBER" = null ] && echo '' || echo "$PR_NUMBER")" --detail "gate=$GATE_VERDICT"
 
 printf '{"issue":"%s","repo":"%s","branch":"%s","pr":%s,"tests":"%s","gate":"%s","tokens":%s,"wall_s":%s,"head_sha":"%s","phase":"%s"}\n' \
