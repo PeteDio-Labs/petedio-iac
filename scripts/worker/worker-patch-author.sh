@@ -136,37 +136,38 @@ PY
   SIBLING_ID="$RESOLVED"   # authoritative — a non-id candidate never survives validation
 fi
 
-# --- PER-FILE catalog mode (PET-216) — jokers are ONE FILE PER ENTRY in src/engine/jokers/. ---
+# --- PER-FILE catalog mode (PET-216) — some catalogs are ONE FILE PER ENTRY in src/engine/<cat>/. ---
 # "Add an entry" = CREATE A NEW FILE (never edit a shared array), so additive worker PRs cannot
-# merge-conflict. Self-contained early path; the array logic below is untouched for other catalogs.
-# The sibling resolved from the array above is empty here (the array is gone), so re-resolve the
-# sibling to a real entry FILE from the parsed candidates.
-if [ "$CATALOG_REL" = "src/engine/jokers.ts" ] && [ -d "$CLONE/src/engine/jokers" ]; then
+# merge-conflict. Triggers whenever the target catalog src/engine/<cat>.ts has a matching
+# src/engine/<cat>/ directory (jokers/consumables/tags/vouchers today). Self-contained early path;
+# the array logic below is untouched for the array-style catalogs. The sibling resolved from the
+# array above is empty here (the array is gone), so re-resolve it to a real entry FILE.
+PF_DIR_REL="${CATALOG_REL%.ts}"   # src/engine/jokers.ts -> src/engine/jokers
+if [[ "$CATALOG_REL" =~ ^src/engine/[a-z_]+\.ts$ ]] && [ -d "$CLONE/$PF_DIR_REL" ]; then
   PF_SIB=""
   for c in $(printf '%s' "${SIBLING_CANDS:-}" | tr '|' ' '); do
-    [ -f "$CLONE/src/engine/jokers/$c.ts" ] && { PF_SIB="$c"; break; }
+    [ -f "$CLONE/$PF_DIR_REL/$c.ts" ] && { PF_SIB="$c"; break; }
   done
   [ -n "$NEW_ID" ] || { add_note "per-file: could not parse a new entry id from the spec"; emit false none; }
-  [ -n "$PF_SIB" ] || { add_note "per-file: no spec candidate matched an existing jokers/<id>.ts sibling"; emit false none; }
-  CATALOG_REL="src/engine/jokers/$NEW_ID.ts"; TEST_REL=""; SIBLING_ID="$PF_SIB"
-  SIB_FILE="$CLONE/src/engine/jokers/$PF_SIB.ts"
-  NEW_FILE="$CLONE/src/engine/jokers/$NEW_ID.ts"
-  [ -e "$NEW_FILE" ] && { add_note "per-file: jokers/$NEW_ID.ts already exists — refusing to overwrite"; emit false none; }
-  add_note "per-file target: create src/engine/jokers/$NEW_ID.ts from sibling $PF_SIB"
+  [ -n "$PF_SIB" ] || { add_note "per-file: no spec candidate matched an existing $PF_DIR_REL/<id>.ts sibling"; emit false none; }
+  SIBLING_ID="$PF_SIB"; SIB_FILE="$CLONE/$PF_DIR_REL/$PF_SIB.ts"; NEW_FILE="$CLONE/$PF_DIR_REL/$NEW_ID.ts"
+  CATALOG_REL="$PF_DIR_REL/$NEW_ID.ts"; TEST_REL=""
+  [ -e "$NEW_FILE" ] && { add_note "per-file: $PF_DIR_REL/$NEW_ID.ts already exists — refusing to overwrite"; emit false none; }
+  add_note "per-file target: create $PF_DIR_REL/$NEW_ID.ts from sibling $PF_SIB"
   PF_REQ="$SCRATCH/pf_req.json"; PF_RESP="$SCRATCH/pf_resp.json"; PF_OUT="$SCRATCH/pf_out.txt"
   python3 - "$MODEL" "$SPEC" "$PF_SIB" "$NEW_ID" "$(cat "$SIB_FILE")" >"$PF_REQ" <<'PY'
 import json, sys
 model, spec, sib, new_id, sib_mod = sys.argv[1:6]
-system = ("You output only a TypeScript module: an 'import type' line, a 'const def: JokerDef = {...};', "
+system = ("You output only a TypeScript module: an 'import type' line, a typed 'const def = {...};', "
           "and 'export default def;'. No prose, no code fences.")
-user = (f"TASK (mechanical, ADD-ONLY): {spec}\n\nHere is the existing \"{sib}\" joker module:\n\n{sib_mod}\n\n"
+user = (f"TASK (mechanical, ADD-ONLY): {spec}\n\nHere is the existing \"{sib}\" catalog-entry module:\n\n{sib_mod}\n\n"
         f"Produce the FULL new module for id \"{new_id}\" by copying this module's EXACT shape and "
         f"changing ONLY what the task requires (id, name, and the field(s) the task names). Keep the "
         f"import line and 'export default def;' identical. Output ONLY the module text.")
 print(json.dumps({"model": model, "stream": False, "options": {"temperature": 0, "num_ctx": 8192},
                   "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}))
 PY
-  err "per-file mode: calling $MODEL to author jokers/$NEW_ID.ts (cold-load may take up to 120s)..."
+  err "per-file mode: calling $MODEL to author $PF_DIR_REL/$NEW_ID.ts (cold-load may take up to 120s)..."
   : >"$PF_OUT"
   for attempt in 1 2; do
     if curl -s --max-time 120 "$OLLAMA_URL/api/chat" -d @"$PF_REQ" >"$PF_RESP" 2>/dev/null; then
@@ -187,13 +188,13 @@ if start is None or end is None:
     sys.stderr.write("no module boundaries\n"); sys.exit(1)
 mod = "\n".join(lines[start:end + 1]).strip() + "\n"
 for cond, msg in [(new_id in mod, "missing new id"), ('export default' in mod, "missing export default"),
-                  ('JokerDef' in mod, "missing JokerDef"), (mod.count('{') == mod.count('}'), "unbalanced braces")]:
+                  ('import type' in mod, "missing import type"), (mod.count('{') == mod.count('}'), "unbalanced braces")]:
     if not cond:
         sys.stderr.write(msg + "\n"); sys.exit(1)
 open(out_p, 'w').write(mod); sys.exit(0)
 PY
   then
-    add_note "applied (per-file): created src/engine/jokers/$NEW_ID.ts — no shared-array edit, conflict-free"
+    add_note "applied (per-file): created $PF_DIR_REL/$NEW_ID.ts — no shared-array edit, conflict-free"
     emit true per-file-create
   else
     add_note "per-file: model output failed validation — wrote nothing (atomic)"; emit false none
