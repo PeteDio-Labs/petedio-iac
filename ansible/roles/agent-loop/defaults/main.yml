@@ -181,3 +181,43 @@ agent_loop_stamp_poll_oncalendar: "*:0/15"
 # The script lives in the loop's own iac clone (cloned by this role); it only reads GitHub
 # and delegates the MinIO write to the sibling stamp script — safe to run from the live clone.
 agent_loop_stamp_poll_script: "{{ agent_loop_workspace }}/iac/scripts/reviewer/reviewer-stamp-poll.sh"
+
+# --- Engine loop (PET-184) -----------------------------------------------------------
+# The THIRD fleet tier: Claude Code (Sonnet-tier), headless, authoring NEW Bucket-B effect
+# `kind`s. It is the LOWEST-priority consumer of the shared Max quota (Pedro > reviewer >
+# engine), so it runs boxed + yielding via scripts/engine/engine-loop.sh (cc-slot flock +
+# pause/off-hours/reviewer guards). See docs/runbooks/engine-loop.md.
+#
+# The systemd TIMER is the S1 (unattended, off-hours) stage and defaults OFF: the engine
+# starts at S0 (Pedro runs engine-run.sh by hand, supervised). Flip this true to graduate to
+# S1 once the engine App identity is seeded (kv/services/agent-loop:engine_*), the model id is
+# validated on the host, and a few supervised runs look good.
+agent_loop_engine_timer_enabled: false
+# The pinned engine model. PET-184 decision: claude-sonnet-5 — asymmetrically WEAKER than the
+# reviewer's Opus so review stays the stronger gate. NB: validate this id on the host once
+# (`claude --model claude-sonnet-5 -p ok`); if that build isn't live, set the current Sonnet-
+# tier id here. One-var change — never let the engine match/exceed the reviewer's model.
+agent_loop_engine_model: claude-sonnet-5
+# "Low effort" lever: the extended-thinking token budget passed to the headless engine
+# (MAX_THINKING_TOKENS). Small = cheap/low-effort, which is what a boxed, one-kind task wants.
+agent_loop_engine_max_thinking_tokens: 4000
+# Headless turn cap (bounds cost if the Stop-hook gate keeps blocking an unfixable red) and a
+# hard wall-clock cap on a single claude -p authoring run.
+agent_loop_engine_max_turns: 40
+agent_loop_engine_timeout_s: 3600
+# Off-hours window "START-END" (24h). S1 runs the engine only here (the loop parks outside it).
+# Empty = anytime. Wraps midnight (22-7 = 22:00–06:59).
+agent_loop_engine_offhours: "22-7"
+# Timer cadence. Fires often; the loop's own guards (off-hours/pause/reviewer/flock) decide
+# whether a tick actually runs, so a frequent timer just means "check for work / resume soon".
+agent_loop_engine_oncalendar: "*:0/20"
+# The single cc-slot lock — one automated Claude Code session on 242 at a time. /run/lock is
+# world-writable on systemd hosts; the script falls back to ~/engine/cc-slot.lock if needed.
+agent_loop_engine_slot_lock: /run/lock/cc-slot
+# The engine's home (per-task clones, checkpoint state, queue) + its loop entrypoint script.
+agent_loop_engine_home: "{{ agent_loop_home }}/engine"
+agent_loop_engine_loop_script: "{{ agent_loop_workspace }}/iac/scripts/engine/engine-loop.sh"
+# PATH for the engine service — MUST include the per-user npm prefix (claude + bun live there,
+# not in /usr/bin) and the pipx shims. ~ does not expand in a systemd Environment=, so this is
+# spelled absolute. Override if agent_loop_npm_prefix is non-default.
+agent_loop_engine_path: "{{ agent_loop_home }}/.npm-global/bin:{{ agent_loop_home }}/.local/bin:/usr/local/bin:/usr/bin:/bin"

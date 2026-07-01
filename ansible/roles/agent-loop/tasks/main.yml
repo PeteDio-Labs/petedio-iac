@@ -604,3 +604,44 @@
         enabled: true
         state: started
         daemon_reload: true
+
+# --- Engine loop workspace + timer (PET-184) -----------------------------------------
+# The third fleet tier (Claude Code, Sonnet-tier, headless). The engine's home holds its
+# per-task clones (work/), checkpoint state (state/), and the curated task queue (queue/) —
+# all agent-owned. These dirs are created unconditionally (harmless when the timer is off, and
+# needed the moment Pedro runs engine-run.sh by hand at S0). The systemd TIMER is the S1
+# (unattended, off-hours) stage, gated on agent_loop_engine_timer_enabled (default false).
+- name: Create the engine home directories (per-task clones, checkpoint state, queue)
+  ansible.builtin.file:
+    path: "{{ agent_loop_engine_home }}/{{ item }}"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+  loop:
+    - ""
+    - work
+    - state
+    - queue
+
+- name: Engine loop timer (S1 — unattended, off-hours)
+  when: agent_loop_engine_timer_enabled | bool
+  block:
+    - name: Install the engine-loop systemd service + timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - engine-loop.service
+        - engine-loop.timer
+      notify: Reload systemd (agent-loop)
+
+    - name: Enable + start the engine-loop timer
+      ansible.builtin.systemd_service:
+        name: engine-loop.timer
+        enabled: true
+        state: started
+        daemon_reload: true

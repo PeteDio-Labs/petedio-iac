@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # agent-mint-token.sh — mint a short-lived GitHub App installation access token for a loop
-# bot identity (worker | reviewer) and print it to stdout (use as GH_TOKEN). (PET-176)
+# bot identity (worker | reviewer | engine) and print it to stdout (use as GH_TOKEN). (PET-176)
 #
-# The two-agent loop authors and reviews under DISTINCT least-privilege GitHub Apps so the
-# reviewer is never self-blocked from reviewing the worker's PR. Each App's token is minted
+# The fleet authors and reviews under DISTINCT least-privilege GitHub Apps so the
+# reviewer is never self-blocked from reviewing the worker's/engine's PR. Each App's token is minted
 # on demand — sign a <=10-min JWT with the App PEM, exchange it for a 1-hour installation
 # token — so NOTHING long-lived sits on the host. Identity facts come from Vault
 # kv/services/agent-loop (<role>_app_id / <role>_installation_id / <role>_app_pem), path
@@ -11,22 +11,26 @@
 #
 #   worker   -> petedio-worker[bot]   (contents:write, pull_requests:write) — push + open PR
 #   reviewer -> petedio-reviewer[bot] (contents:read,  pull_requests:write) — formal reviews
-# OPERATOR: worker_app_id and reviewer_app_id in Vault MUST be two DIFFERENT GitHub Apps —
-# identical IDs collapse the identities into one actor and GitHub's self-review block returns
-# (defeating the whole point of PET-176). Verify they differ when seeding kv/services/agent-loop.
+#   engine   -> petedio-engine[bot]   (contents:write, pull_requests:write) — push + open PR,
+#               NO merge (Bucket-B new-effect-kind authoring, PET-184; asymmetrically weaker
+#               model than the reviewer, so the reviewer stays the stronger gate)
+# OPERATOR: worker_app_id / reviewer_app_id / engine_app_id in Vault MUST be THREE DIFFERENT
+# GitHub Apps — identical IDs collapse the identities into one actor and GitHub's self-review
+# block returns (defeating PET-176/PET-184). Verify they differ when seeding kv/services/agent-loop.
 #
 # Usage:
 #   GH_TOKEN="$(scripts/agent-mint-token.sh worker)"   gh pr create ...
 #   GH_TOKEN="$(scripts/agent-mint-token.sh reviewer)" gh pr review ...
+#   GH_TOKEN="$(scripts/agent-mint-token.sh engine)"   gh pr create ...
 # Env overrides (UPPER role prefix): WORKER_APP_ID / WORKER_INSTALLATION_ID /
-#   WORKER_APP_PEM (contents) | WORKER_APP_PEM_FILE (path); same for REVIEWER_*.
+#   WORKER_APP_PEM (contents) | WORKER_APP_PEM_FILE (path); same for REVIEWER_* / ENGINE_*.
 # The token is printed once — capture it into GH_TOKEN, never log it.
 set -euo pipefail
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 
 ROLE="${1:-}"
-case "$ROLE" in worker | reviewer) ;; *) die "usage: $(basename "$0") <worker|reviewer>" ;; esac
+case "$ROLE" in worker | reviewer | engine) ;; *) die "usage: $(basename "$0") <worker|reviewer|engine>" ;; esac
 PREFIX="$(printf '%s' "$ROLE" | tr '[:lower:]' '[:upper:]')" # WORKER / REVIEWER
 
 for t in openssl curl python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done

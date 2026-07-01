@@ -147,9 +147,11 @@ function normVerdict(r){
     wall:num(r.wall_s), headSha:"", raw:r };
 }
 function normEngine(r){
-  // engine-runs schema is TBD (PET-184) — best-effort: accept worker-ish OR verdict-ish keys.
+  // engine-runs schema (PET-184): {ts,issue,repo,branch,pr,engine_model,harness,tests,guard,
+  // tokens,wall_s,head_sha} — `guard` carries the gate verdict (green|red). Stay lenient and
+  // also accept worker-ish/verdict-ish keys so older/hand-written rows still render.
   return { source:"engine", ts:str(r.ts), issue:str(r.issue), repo:str(r.repo||""),
-    pr:(r.pr==null||r.pr===""?null:r.pr), model:str(r.worker_model||r.model), harness:str(r.harness),
+    pr:(r.pr==null||r.pr===""?null:r.pr), model:str(r.engine_model||r.worker_model||r.model), harness:str(r.harness),
     modelTitle:"", tests:str(r.tests||r.worker_tests)||null, guard:str(r.guard)||null,
     verdict:str(r.claude_verdict||r.verdict)||null, pedro:str(r.pedro_verdict)||null,
     roundTrips:num(r.round_trips), findings:Array.isArray(r.claude_findings)?r.claude_findings:null,
