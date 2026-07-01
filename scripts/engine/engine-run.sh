@@ -236,11 +236,17 @@ if [ "$DRY_RUN" = true ]; then
 else
   command -v "$ENGINE_CLAUDE_CMD" >/dev/null || die "$ENGINE_CLAUDE_CMD not in PATH (install via roles/agent-loop)."
   THINK_ENV=(); [ -n "${ENGINE_MAX_THINKING_TOKENS:-}" ] && THINK_ENV=(env "MAX_THINKING_TOKENS=$ENGINE_MAX_THINKING_TOKENS")
+  # Hard wall-clock cap: GNU `timeout` on Linux/242, `gtimeout` (coreutils) on macOS, else none
+  # (a missing wall is a soft degradation — --max-turns still bounds the run). rc 124 = timed out.
+  TIMEOUT_PREFIX=()
+  if command -v timeout >/dev/null; then TIMEOUT_PREFIX=(timeout "$ENGINE_TIMEOUT_S")
+  elif command -v gtimeout >/dev/null; then TIMEOUT_PREFIX=(gtimeout "$ENGINE_TIMEOUT_S")
+  else info "no timeout/gtimeout in PATH — running claude without a hard wall (--max-turns still bounds it)."; fi
   info "authoring: $ENGINE_CLAUDE_CMD -p  model=$ENGINE_MODEL  (boxed: no push/gh; gate=Stop hook)"
   START="$(date +%s)"
   set +e
   # GH_TOKEN deliberately NOT in this env. --output-format json → one final result object we parse.
-  timeout "$ENGINE_TIMEOUT_S" "${THINK_ENV[@]}" \
+  "${TIMEOUT_PREFIX[@]}" "${THINK_ENV[@]}" \
     "$ENGINE_CLAUDE_CMD" -p "$(cat "$PROMPT_FILE")" \
       --model "$ENGINE_MODEL" \
       --output-format json \
