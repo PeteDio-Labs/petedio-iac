@@ -67,6 +67,17 @@ REPOS_MAP="${WORKER_REPOS_MAP:-co-latro=PeteDio-Labs/co-latro-backend}"
 # key is NOT fatal — it drops us into the MCP-delegation mode below.
 LINEAR_KEY="${LINEAR_API_KEY:-}"
 if [ -z "$LINEAR_KEY" ] && command -v vault >/dev/null 2>&1; then
+  # The `vault` CLI defaults to https://127.0.0.1:8200 with no VAULT_ADDR, so a bare call (not
+  # under the systemd service env) can't reach the homelab Vault. Set the homelab address + CA
+  # (on-box vault-agent CA, else the repo's homelab CA) so the poll self-serves regardless of
+  # the caller's environment. Mirrors agent-mint-token.sh.
+  export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
+  if [ -z "${VAULT_CACERT:-}" ]; then
+    for _c in "$HOME/.config/vault-agent/vault-ca.crt" \
+              "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)/environments/homelab/vault-ca.crt"; do
+      [ -f "$_c" ] && { export VAULT_CACERT="$_c"; break; }
+    done
+  fi
   # `vault kv get -field=` prints ONLY the field value; we capture it, never echo it.
   LINEAR_KEY="$(vault kv get -field=api_key "$VAULT_PATH" 2>/dev/null || true)"
 fi
