@@ -225,6 +225,13 @@ resource "vault_policy" "agent_loop" {
     path "kv/data/services/agent-loop" {
       capabilities = ["read"]
     }
+
+    # The fleet poller (worker/engine candidates) self-serves the READ-ONLY Linear API key to
+    # enumerate worker-ok/engine-ok Todo issues for auto-launch (PET-184 S1). Read-only path,
+    # read-only key — the loop never writes Linear (status flows via the GitHub-Linear link).
+    path "kv/data/services/linear" {
+      capabilities = ["read"]
+    }
   EOT
 }
 
