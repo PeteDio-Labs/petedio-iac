@@ -46,6 +46,10 @@
       - index.html
       - app.css
       - app.js
+    # PET-222: cache-bust the asset URLs with the deployed commit's short SHA so a new deploy is
+    # a new URL (fresh through Cloudflare — no purge, no hard-refresh). Resolved on the control
+    # node at parse time; falls back to a fixed string if git isn't available.
+    fleet_version: "{{ lookup('pipe', 'git -C ' ~ playbook_dir ~ '/../.. rev-parse --short HEAD 2>/dev/null || echo nover') }}"
 
   pre_tasks:
     - name: Require the agent-evals mc credentials (passed as no_log extra-vars)
@@ -97,6 +101,16 @@
         mode: "0644"
       loop: "{{ fleet_static_files }}"
       notify: Reload nginx
+
+    # PET-222: stamp `?v=<sha>` onto the app.js/app.css references in the DEPLOYED index.html
+    # (the repo copy stays clean so local dev still works). Idempotent — an existing `?v=…` is
+    # rewritten, never stacked. index.html is served no-cache, so the new pointers are seen on
+    # the next normal load.
+    - name: Cache-bust the asset URLs in the deployed index.html
+      ansible.builtin.replace:
+        path: "{{ fleet_web_root }}/index.html"
+        regexp: '(app\.(?:css|js))(?:\?v=[^"]*)?"'
+        replace: '\1?v={{ fleet_version }}"'
 
     - name: Drop the fleet nginx site
       ansible.builtin.copy:
