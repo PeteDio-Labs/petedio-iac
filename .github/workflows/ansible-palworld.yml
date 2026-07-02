@@ -13,6 +13,9 @@ on:
       - ansible/inventory/hosts.yml
       - .github/workflows/ansible-palworld.yml
       - .github/workflows/ansible-stack.yml
+  # NB: ansible-stack.yml is deliberately in pull_request.paths ONLY — shared-logic edits
+  # get each stack's syntax-check on the PR, but must NOT re-apply every stack's playbook to
+  # its live host on merge (a CI refactor is not a fleet-wide deploy).
   push:
     branches: [main]
     paths:
@@ -20,7 +23,6 @@ on:
       - ansible/roles/palworld/**
       - ansible/inventory/hosts.yml
       - .github/workflows/ansible-palworld.yml
-      - .github/workflows/ansible-stack.yml
 
 # Serialize runs of this workflow so two fast merges can't race two ansible applies
 # against host 234. Separate group from terraform.yml's tf-homelab and ansible-openfaas —
