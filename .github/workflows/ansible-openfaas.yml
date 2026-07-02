@@ -10,13 +10,15 @@ on:
       - ansible/inventory/hosts.yml
       - .github/workflows/ansible-openfaas.yml
       - .github/workflows/ansible-stack.yml
+  # NB: ansible-stack.yml is deliberately in pull_request.paths ONLY — shared-logic edits
+  # get each stack's syntax-check on the PR, but must NOT re-apply every stack's playbook to
+  # its live host on merge (a CI refactor is not a fleet-wide deploy).
   push:
     branches: [main]
     paths:
       - ansible/playbooks/configure-openfaas.yml
       - ansible/inventory/hosts.yml
       - .github/workflows/ansible-openfaas.yml
-      - .github/workflows/ansible-stack.yml
 
 # Serialize runs of this workflow: two fast merges would race two ansible applies
 # against the same host (241). Separate group from terraform.yml's tf-homelab —
