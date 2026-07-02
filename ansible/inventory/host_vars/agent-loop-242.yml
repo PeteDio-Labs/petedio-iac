@@ -1,0 +1,17 @@
+# agent-loop-242 — fleet S1 auto-launch go-live (PET-184). The worker + engine loop
+# timers were flipped LIVE on this host on 2026-07-02 (configure-agent-loop.yml run with
+# these vars). Pinned here so every future apply keeps the units installed + enabled
+# instead of skipping them — the role defaults stay false (= S0) for a fresh host.
+#
+# Preconditions verified at go-live: kv/services/linear:api_key readable via the host's
+# Vault Agent token; engine_* App identity seeded in kv/services/agent-loop; the engine's
+# pinned model proven by the PET-215 S0 run (phase=done).
+#
+# NB: the host clock is UTC, so agent_loop_engine_offhours "22-7" = 22:00–07:00 UTC
+# (= 17:00–02:00 America/Chicago). Adjust the window (or set TZ in the unit) if the
+# intent is Chicago nights.
+#
+# Reviewer S1 (PET-247) is still S0 (hand-run) — flip
+# agent_loop_reviewer_loop_timer_enabled: true here when it graduates.
+agent_loop_worker_loop_timer_enabled: true
+agent_loop_engine_timer_enabled: true
