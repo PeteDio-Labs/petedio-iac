@@ -1,0 +1,37 @@
+# import-gated merge guard (PET-144). Blocks merging a PR while it carries the
+# `import-gated` label — a human `terraform import` must happen BEFORE merge, or
+# apply-on-merge tries to CREATE the already-live resource (the PR #57 / PET-123 hazard).
+#
+# Post-PET-104 there is no plan-on-PR to inspect (PR runs are hosted, creds-less
+# `validate` only — terraform.yml), so this is a PROCESS gate, not a plan check: it
+# enforces "a human cleared the import gate" by requiring the `import-gated` label to be
+# removed before merge. Hosted, no creds, no LAN — safe against PR-controlled code.
+#
+# Re-evaluates on label add/remove (labeled/unlabeled), so removing the label after the
+# import session flips the check green. Make this a REQUIRED status check in branch
+# protection so a red gate actually blocks merge.
+name: import-gated-guard
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail while the import-gated label is present
+        if: contains(github.event.pull_request.labels.*.name, 'import-gated')
+        run: |
+          echo "::error title=import-gated::A human terraform import must be done BEFORE merge."
+          echo "This PR carries the 'import-gated' label. Merging now would make apply-on-merge"
+          echo "try to CREATE an already-live resource (the PR #57 / PET-123 hazard)."
+          echo "Do the import session, confirm the operator's plan is a no-op, then REMOVE the"
+          echo "'import-gated' label to clear this gate."
+          exit 1
+      - name: Clear — not import-gated
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'import-gated') }}
+        run: echo "No 'import-gated' label present — merge gate is clear."

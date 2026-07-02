@@ -173,6 +173,45 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   fallback secrets ONLY after a Vault-only apply is green on `main` — never in the same
   change that removes their last reference.
 
+## Vault provider v5 — ephemeral reads + write-only (PET-190 / PET-107)
+
+- **v5 needs Terraform ≥ 1.11 and `data` on `vault_kv_secret_v2` is deprecated.** The 4→5
+  bump multiplexes the provider onto the Plugin Framework; `required_version` must be
+  `>= 1.11` (the floor for ephemeral resources + `*_wo` args). Read a secret with
+  `ephemeral "vault_kv_secret_v2"` instead of `data "..."` — its `.data` is the **same
+  `map(string)`**, so only the keyword and lifecycle change; the `try(...data["key"])`
+  access pattern carries over verbatim. `skip_child_token` and the `VAULT_ADDR`/`VAULT_TOKEN`
+  env config are unchanged in v5 (v5 only stops *prompting* for address/token — it still
+  errors if neither env nor config sets them, so the "validate needs VAULT_ADDR" rule holds).
+
+- **Ephemeral values are context-restricted — that's the whole point, and it bites.** A
+  value that references an ephemeral resource (directly or via a `local`) is itself
+  ephemeral and may ONLY flow into: a **provider config** argument, a **write-only** (`*_wo`)
+  resource argument, an `ephemeral = true` variable/output, or another ephemeral resource.
+  Put it in a normal resource arg or a plain `output` and `terraform validate` hard-errors.
+  Consequences for this repo: (a) the Postgres role password goes through
+  `module owner_password` (declared `ephemeral = true`) into `postgresql_role.password_wo`,
+  NOT `password` (the two are mutually exclusive); (b) the Cloudflare `api_token` (ephemeral)
+  feeds only `provider "cloudflare" { api_token }`, while the **non-secret** account/zone/tunnel
+  IDs had to MOVE OUT of the KV read to plain `TF_VAR`s — a KV v2 read is all-or-nothing, so
+  keeping a `data` source just for the IDs would re-leak the token into state, and the IDs feed
+  a data-source arg + outputs (non-ephemeral contexts) so they can't ride the ephemeral read.
+
+- **Write-only passwords are diff-invisible → `password_wo_version` is the rotation lever.**
+  `postgresql_role.password_wo` (cyrilgdn/postgresql ≥ 1.26) is never in the plan, so changing
+  the Vault value alone does NOT trigger a re-apply. Bump the paired
+  `password_wo_version` (here `var.poker_db_password_version` / `var.admin_db_password_version`)
+  to push a rotated password through. This is a behaviour change from the v4 data-source model,
+  where a rotated Vault value flowed through automatically on the next apply.
+
+- **`terraform init -upgrade` collapses the lockfile to the LOCAL platform only.** Running
+  it on macOS rewrote each provider's hashes down to `darwin_arm64`, dropping the
+  `linux_amd64` entry the self-hosted runner needs — a green local validate that would fail
+  `init` on the CI runner. After an upgrade, restore multi-platform coverage with
+  `terraform providers lock -platform=linux_amd64 -platform=darwin_amd64 -platform=darwin_arm64`
+  in every root whose lock changed (registry-only, no LAN/Vault). Verify ≥1 `h1:` per provider
+  per platform before committing.
+
 ## App rollout — Co-latro / poker-api 230 (PET-12/43/44)
 
 - **The `ansible` Vault policy can't read `kv/poker/*` — by design.** Least-privilege:
@@ -282,3 +321,33 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   re-run that re-templates the config) can't re-auth and the token sink goes stale. The host
   needs the `vault` binary too (the CLI/`vault agent` are one binary) — the helper's Vault
   fallback was dead weight until this. PET-141.
+
+## Cloudflare — tunnel ingress + Access (PET-35/187/38)
+
+- **v5 `cloudflare_zero_trust_access_application.policies` is a list of OBJECTS, not IDs.**
+  `policies = [cloudflare_zero_trust_access_policy.route[k].id]` PASSES `terraform validate` (a
+  `for_each` resource id is unknown at validate time, so element typing is skipped) but **fails
+  the apply plan** with `Inappropriate value for attribute "policies": element 0: object
+  required, but have string` — the classic validate-green / apply-red trap, and it only surfaces
+  on the apply-on-merge runner. Use the object form:
+  `policies = [{ id = cloudflare_zero_trust_access_policy.route[k].id }]`. (`modules/cloudflare-ingress`.)
+
+- **Access policy `include` is v5 attribute syntax**, not v4 blocks:
+  `include = [{ email = { email = "x@y" } }]` / `[{ email_domain = { domain = "y" } }]` /
+  `[{ everyone = {} }]`. The v4 `include { email = [...] }` block form fails validate on `~> 5`.
+
+- **Fail-closed an Access-gated route.** A public CNAME must not be created before its Access
+  app, or a missing token scope / Zero-Trust-org error mid-apply leaves the hostname routed but
+  **ungated**. `cloudflare_dns_record.route` carries
+  `depends_on = [cloudflare_zero_trust_access_application.route]` so a failed Access create leaves
+  no resolvable hostname. Relatedly, the CF API token (`kv/iac/cloudflare`, the
+  `homelab-tunnel-management` token) needs **Account · Access: Apps and Policies · Edit** on top
+  of Tunnel + DNS — and the apply only fails on a missing Access scope AFTER merge.
+
+- **Authentik OIDC as a Cloudflare Access login method** (PET-38) has two traps: (1) the
+  Authentik provider's **authorization flow must be implicit-consent** — explicit-consent
+  silently breaks CF's machine redirect; (2) **endpoint path asymmetry** — `authorize`/`token`
+  are GLOBAL (`https://auth.pdlab.dev/application/o/...`) but `jwks`/`.well-known` are
+  **per-slug** (`.../application/o/<app-slug>/...`); wrong slug placement = login fails. CF's
+  callback is `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`. Full procedure:
+  `docs/runbooks/fleet-activity-view.md`.

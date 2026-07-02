@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# Periodic schedule for worker-loop.service (PET-184). ONE worker issue per tick; the loop's own
+# guards (PAUSED sentinel, single-instance lock, per-issue launch cooldown) decide whether a tick
+# actually does work. RandomizedDelaySec spreads load off the other fleet timers.
+[Unit]
+Description=Periodic tick of the Co-latro worker auto-launch (PET-184)
+
+[Timer]
+OnCalendar={{ agent_loop_worker_loop_oncalendar }}
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

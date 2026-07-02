@@ -1,0 +1,20 @@
+---
+# tailscale-router role defaults (PET-188). Installs the tailscale daemon on an
+# unprivileged Debian LXC and makes it a subnet router for the homelab LAN.
+
+# The CIDR(s) this node advertises into the tailnet. The whole LAN, so a single
+# subnet router fronts every homelab service by its 192.168.50.x address.
+tailscale_advertise_routes: "192.168.50.0/24"
+
+# Tailnet device name for this node (shows in the admin console / MagicDNS).
+tailscale_hostname: tailscale-244
+
+# Don't let the subnet router push its LAN DNS (192.168.50.1) onto the tailnet — clients
+# keep their own resolver; they just gain a route to the LAN. Flip true only if you want
+# the homelab DNS to follow.
+tailscale_accept_dns: false
+
+# Reusable auth key from the operator's tailnet, provided at runtime from Vault
+# (kv/services/tailscale, field auth_key) — NO default, never committed. When undefined
+# the role installs + enables everything but skips `tailscale up`.
+# tailscale_auth_key: "tskey-auth-..."

@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # agent-event.sh — append one lifecycle event to the unified JSONL stream (PET-154).
 #
-# Unified telemetry for all three agent roles (worker-243, reviewer-242, authoring loop 242):
-# the data layer for Mission Control v3 (PET-158 board / PET-155 viewer). Every agent emits
+# Unified telemetry for every agent role (worker-243, reviewer-242, authoring loop + engine
+# tier on 242): the data layer for Mission Control v3 (PET-158 board / PET-155 viewer). Every
+# agent emits
 # one JSONL row to `agent-evals/events.jsonl` (same MinIO bucket as the PET-135 verdict log)
 # at each lifecycle point. Built alongside PET-135 — same bucket + same append mechanism.
 #
 # Schema (one object per line):
-#   {"ts","agent":"worker|reviewer|loop","event","issue":"PET-n|null","pr":<int>|null,"detail"}
+#   {"ts","agent":"worker|reviewer|loop|engine","event","issue":"PET-n|null","pr":<int>|null,"detail"}
+#
+# `loop` = the Claude authoring loop (Platform/IaC); `engine` = the Bucket-B engine tier (PET-184)
+# authoring new effect kinds in the Co-latro repos. Same lifecycle events, distinct lane.
 #
 # Events: run_started · issue_picked · pr_opened · verdict_posted · changes_requested ·
 #         stalled · escalated_needs_human · run_exited
@@ -28,6 +32,12 @@
 # Env (optional):
 #   AGENT_EVENTS_MC_ALIAS   mc alias for the homelab MinIO (default: homelab)
 #   AGENT_EVENTS_PATH       bucket/key for the stream (default: agent-evals/events.jsonl)
+#
+# TESTING (PET-221): smoke/e2e/probe runs MUST NOT pollute the prod stream that fleet.pdlab.dev
+# reads. Either pass --dry-run (prints the row, no upload), or point AGENT_EVENTS_PATH at a
+# throwaway key, e.g. `AGENT_EVENTS_PATH=agent-evals/events.test.jsonl`. The fleet view reads
+# only `events.jsonl`, so a `.test.jsonl` sibling is invisible to it. (Fake PET keys like
+# PET-9999 / PET-105105 previously leaked in this way and had to be scrubbed by hand.)
 set -euo pipefail
 
 die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -49,7 +59,7 @@ done
 command -v python3 >/dev/null || die "python3 not in PATH (jq isn't on the loop host)."
 
 # --- validate the constrained fields (a bad row pollutes the telemetry set) ---
-case "$AGENT" in worker | reviewer | loop) ;; *) die "--agent must be worker|reviewer|loop (got '$AGENT')." ;; esac
+case "$AGENT" in worker | reviewer | loop | engine) ;; *) die "--agent must be worker|reviewer|loop|engine (got '$AGENT')." ;; esac
 case "$EVENT" in
   run_started | issue_picked | pr_opened | verdict_posted | changes_requested | stalled | escalated_needs_human | run_exited) ;;
   *) die "--event '$EVENT' is not a known lifecycle event (see --help)." ;;

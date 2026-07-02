@@ -34,7 +34,9 @@ What the role installs (idempotent; a second run reports no changes):
 - Dedicated loop user **`agent`** (the loop never runs as root — Claude Code refuses
   `--dangerously-skip-permissions` as root), with operator SSH keys
   (`agent_loop_authorized_keys`, for direct `ssh agent@…`) and a `cc` alias
-  (`agent_loop_cc_command`, default `claude`)
+  (`agent_loop_cc_command`, default `claude --model claude-opus-4-8` — the reviewer's
+  verdict model is pinned to that Opus build, never the ambient picker default or a
+  Mythos-class model; see `agent_loop_claude_model`)
 - **All active repos** cloned into a workspace mirroring `petedio-workspace` (see below;
   `update: false` — Ansible clones once, the loop owns syncing `main`, so a re-run never
   clobbers in-flight work)
@@ -53,9 +55,20 @@ What the role installs (idempotent; a second run reports no changes):
   `scripts/rebase-loop-prs.sh` as the loop user to rebase the loop's **own** open PRs onto
   `main` and force-push them (loop branches only — the script enforces a `^pet-` **and**
   loop-author guard, and only ever works in a throwaway `/tmp` clone), so plan-on-PR always
-  reflects a fresh base. It self-serves `GH_TOKEN` from Vault (`kv/services/agent-loop`,
-  field `github_token`) via the Vault Agent token, so no env secret is needed. The push uses
-  the loop PAT (not the Actions `GITHUB_TOKEN`) specifically so it **re-triggers** plan-on-PR.
+  reflects a fresh base. It takes `GH_TOKEN` from the loop user's own gh login
+  (`gh auth token`) — petedio-iac PRs are authored by that account, not a bot App — so no env
+  secret is needed. The push uses that user PAT (not the Actions `GITHUB_TOKEN`) specifically
+  so it **re-triggers** plan-on-PR.
+- **Auto-stamp timer** (PET-199, toggle `agent_loop_stamp_poll_timer_enabled`) — a systemd
+  timer (`agent_loop_stamp_poll_oncalendar`, default every 15 min) that runs
+  `scripts/reviewer/reviewer-stamp-poll.sh` as the loop user to stamp `pedro_verdict` onto
+  closed worker PRs (merged → `merge`, closed-unmerged → `kickback`) via the PET-191 writer,
+  so the fleet view's `pedro` column fills without a manual step. It only touches verdict
+  rows with an empty `pedro_verdict`, mints the `petedio-reviewer[bot]` App token
+  (`reviewer-mint-token.sh`) for its gh reads, and writes MinIO through the operator-seeded
+  `mc` alias. A 242-side poller, not a GitHub Action
+  (see the script header) — and a second writer to the lock-free verdict log, so the cadence
+  is modest and the bucket is versioned. Set false on a host that never runs the reviewer.
 
 Run the role:
 
@@ -100,7 +113,7 @@ prompt**, run as `agent` in a tmux session. Attach and start it:
 ssh -t agent@192.168.50.242 tmux attach -t loop
 # start the session (or cd) in the repo for the issue, e.g. a Platform issue:
 #   cd ~/work/petedio/iac
-# then run `cc` (= claude) and give it the loop prompt
+# then run `cc` (= claude --model claude-opus-4-8) and give it the loop prompt
 ```
 
 > [!IMPORTANT]

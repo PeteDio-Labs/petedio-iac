@@ -41,6 +41,12 @@
     openfaas_smoke_test: true
     smoke_function: nodeinfo
     nexus_registry: docker.pdlab.dev
+    # PET-204/F1: lock the LAN-exposed gateway down to the co-latro backend. faasd does NOT
+    # authenticate /function/* invokes, so without this anything on the LAN can mint/list/validate
+    # invites with no credential. See templates/faasd-gateway-lockdown.service.j2.
+    faasd_lan_iface: eth0
+    faasd_gateway_port: 8080
+    faasd_gateway_allow_src: 192.168.50.230
 
   pre_tasks:
     - name: Probe the kernel keyring (informational; keyctl CLI may be absent)
@@ -118,6 +124,28 @@
         mode: "0600"
       no_log: true
       notify: Restart faasd-provider
+
+    # ---- PET-204/F1: firewall the gateway to the backend only (BEFORE the smoke test, so the
+    #      validation below also proves loopback/CNI still work with the rule in place) ----
+    - name: Install the faasd gateway lockdown unit (mangle PREROUTING drop, :{{ faasd_gateway_port }} ← {{ faasd_gateway_allow_src }})
+      ansible.builtin.template:
+        src: faasd-gateway-lockdown.service.j2
+        dest: /etc/systemd/system/faasd-gateway-lockdown.service
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable + (re)start the gateway lockdown unit
+      ansible.builtin.systemd:
+        name: faasd-gateway-lockdown
+        enabled: true
+        state: restarted
+        daemon_reload: true
+
+    - name: Verify the lockdown rule is present in mangle PREROUTING
+      ansible.builtin.command:
+        cmd: iptables -t mangle -C PREROUTING -i {{ faasd_lan_iface }} -p tcp --dport {{ faasd_gateway_port }} ! -s {{ faasd_gateway_allow_src }} -j DROP
+      changed_when: false
 
     # ---- Validation: gateway health + login + a real function invoke (proves CNI) ----
     - name: Wait for the gateway to answer

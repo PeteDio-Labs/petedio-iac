@@ -1,0 +1,129 @@
+/*
+  Mission Control — Co-latro fleet activity view (PET-187).
+  Theme mirrors the PET-158 PR board (tools/mission-control/index.html): same GitHub-dark
+  tokens, monospace stack, sticky header, pills/banners/tables. Kept as a separate file
+  because PET-158 inlines its <style>; the palette below is copied verbatim so the two
+  Mission Control artifacts read as one tool.
+*/
+:root {
+  --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#8b949e;
+  --green:#3fb950; --yellow:#d29922; --red:#f85149; --blue:#58a6ff; --purple:#bc8cff;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg);
+       font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+
+header { padding:14px 18px; border-bottom:1px solid var(--border); background:var(--panel);
+         position:sticky; top:0; z-index:5; }
+h1 { margin:0 0 2px; font-size:16px; }
+.sub { color:var(--muted); font-size:12px; }
+.row2 { display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+button { background:#21262d; color:var(--fg); border:1px solid var(--border); border-radius:6px;
+         padding:7px 14px; font:inherit; cursor:pointer; }
+button.primary { background:#238636; border-color:#2ea043; }
+button:hover { filter:brightness(1.15); }
+
+main { padding:18px; max-width:1180px; margin:0 auto; }
+.banner { padding:9px 12px; border-radius:6px; margin-bottom:10px; font-size:13px;
+          border:1px solid var(--border); }
+.banner.err { background:#2d1214; border-color:var(--red); color:#ffb4ab; }
+.banner.warn { background:#2b2410; border-color:var(--yellow); color:#f0d58a; }
+.banner.info { background:#10202b; border-color:var(--blue); color:#a9d4ff; }
+
+h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+     border-bottom:1px solid var(--border); padding-bottom:5px; margin:22px 0 8px; }
+
+table { width:100%; border-collapse:collapse; }
+th,td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--border);
+        vertical-align:top; font-size:13px; }
+th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; }
+a { color:var(--blue); text-decoration:none; }
+a:hover { text-decoration:underline; }
+code { background:var(--bg); padding:1px 4px; border-radius:4px; border:1px solid var(--border); }
+
+.pill { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px;
+        border:1px solid var(--border); white-space:nowrap; }
+.pill.green{color:var(--green);border-color:var(--green)} .pill.red{color:var(--red);border-color:var(--red)}
+.pill.yellow{color:var(--yellow);border-color:var(--yellow)} .pill.blue{color:var(--blue);border-color:var(--blue)}
+.pill.purple{color:var(--purple);border-color:var(--purple)} .pill.muted{color:var(--muted)}
+.empty { color:var(--muted); padding:24px; text-align:center; }
+
+/* --- roll-up panel --- */
+.rollup { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px;
+          margin:8px 0 4px; }
+.stat { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:11px 13px; }
+.stat .k { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+.stat .v { font-size:22px; margin-top:3px; }
+.stat .d { color:var(--muted); font-size:11px; margin-top:2px; }
+.bars { display:flex; gap:3px; align-items:flex-end; height:34px; margin-top:6px; }
+.bars .b { flex:1; background:var(--blue); border-radius:2px 2px 0 0; min-height:2px; opacity:.85; }
+.bars .lbl { display:flex; gap:3px; margin-top:3px; }
+.bars .lbl span { flex:1; text-align:center; color:var(--muted); font-size:10px; }
+svg.spark { width:100%; height:26px; display:block; margin:7px 0 3px; overflow:visible; }
+
+/* --- PET-220: live status cards --- */
+.statuscards { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:10px;
+               margin:8px 0 4px; }
+.statuscard { background:var(--panel); border:1px solid var(--border); border-left-width:3px;
+              border-radius:8px; padding:11px 13px; }
+.statuscard.run   { border-left-color:var(--blue); }
+.statuscard.idle  { border-left-color:var(--muted); }
+.statuscard.none  { border-left-color:var(--border); opacity:.65; }
+.statuscard.alert { border-left-color:var(--red); background:#2a1315; }
+.sc-head { font-size:14px; display:flex; align-items:center; gap:7px; }
+.sc-badge { margin-left:auto; font-size:11px; padding:1px 8px; border-radius:10px;
+            border:1px solid var(--border); color:var(--muted); white-space:nowrap; }
+.statuscard.run   .sc-badge { color:var(--blue);  border-color:var(--blue); }
+.statuscard.alert .sc-badge { color:var(--red);   border-color:var(--red); }
+.sc-body { margin-top:8px; display:flex; flex-direction:column; gap:3px; font-size:12px; }
+.sc-body .lk  { color:var(--muted); text-transform:uppercase; font-size:10px; margin-right:3px; }
+.sc-body .val { color:var(--fg); }
+.sc-detail { color:var(--muted); font-size:11px; margin-top:2px; }
+
+/* --- PET-220: per-issue pipeline (kanban) --- */
+.kanban { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; }
+.kcol   { background:var(--panel); border:1px solid var(--border); border-radius:8px; min-height:64px; }
+.khead  { font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted);
+          padding:7px 9px; border-bottom:1px solid var(--border); }
+.kbody  { padding:8px; display:flex; flex-direction:column; gap:6px; }
+.kchip  { display:block; padding:5px 8px; border-radius:6px; border:1px solid var(--border);
+          font-size:12px; text-decoration:none; }
+.kchip:hover { filter:brightness(1.2); text-decoration:none; }
+.kchip.green  { border-color:var(--green);  color:var(--green); }
+.kchip.blue   { border-color:var(--blue);   color:var(--blue); }
+.kchip.yellow { border-color:var(--yellow); color:var(--yellow); }
+.kchip.alert  { border-color:var(--red);    color:var(--red); background:#2a1315; }
+.kempty { color:var(--border); font-size:12px; text-align:center; padding:4px 0; }
+@media (max-width:900px){ .kanban { grid-template-columns:repeat(3,1fr); } }
+@media (max-width:560px){ .kanban { grid-template-columns:repeat(2,1fr); } }
+
+/* --- lanes --- */
+.lanes { display:flex; flex-direction:column; gap:6px; }
+.lane { background:var(--panel); border:1px solid var(--border); border-radius:8px;
+        padding:12px 14px; margin-bottom:14px; }
+.lane h3 { margin:0; font-size:14px; display:flex; align-items:center; gap:8px; }
+.lane .lanesub { color:var(--muted); font-size:11px; margin:2px 0 8px; }
+.latest { background:var(--bg); border:1px solid var(--border); border-radius:6px;
+          padding:9px 11px; margin-bottom:8px; display:flex; flex-wrap:wrap; gap:6px 14px;
+          align-items:center; }
+.latest .lk { color:var(--muted); font-size:11px; text-transform:uppercase; }
+.latest.none { color:var(--muted); }
+details.hist { margin-top:2px; }
+details.hist > summary { cursor:pointer; color:var(--muted); font-size:12px; padding:4px 0;
+                        list-style:none; }
+details.hist > summary::-webkit-details-marker { display:none; }
+details.hist > summary:hover { color:var(--fg); }
+.findings { color:var(--muted); font-size:11px; max-width:340px; }
+
+/* --- locked / not-authorized state --- */
+.lock { max-width:520px; margin:14vh auto 0; text-align:center; padding:30px;
+        background:var(--panel); border:1px solid var(--red); border-radius:10px; }
+.lock h2 { color:var(--red); border:0; font-size:18px; text-transform:none; letter-spacing:0;
+           justify-content:center; margin:0 0 8px; }
+.lock p { color:var(--muted); font-size:13px; }
+
+.devbadge { color:var(--yellow); border:1px solid var(--yellow); border-radius:10px;
+            padding:1px 8px; font-size:11px; }
+.dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green);
+       margin-right:5px; vertical-align:middle; }
+.dot.off { background:var(--muted); }

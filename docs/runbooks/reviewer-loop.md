@@ -16,7 +16,9 @@ operational companion — the scripts, the standing prompt, and Pedro's one-time
 |---|---|---|
 | `reviewer-candidates.sh` | Read-only `gh`: list open, non-draft Co-latro PRs **not** authored by the reviewer's own account, annotated with the parsed `PET-<n>` key. | No (read-only) |
 | `reviewer-checkout-test.sh <owner/repo> <pr>` | Clone fresh in `/tmp`, check out the PR head **detached**, run `bun install` + `bun test`, print pass/fail + output tail as JSON. Temp dir always removed. | No (isolated /tmp; never pushes) |
+| `reviewer-round-trips.sh <owner/repo> <pr>` | Read-only `gh`: count the prior `CHANGES_REQUESTED` reviews the reviewer posted on the PR — the value for `--round-trips` (0 on a clean first approve, 1 after one kickback, …). | No (read-only) |
 | `reviewer-log-verdict.sh …` | Append one schema-valid JSONL row to `agent-evals/verdicts.jsonl` in MinIO via `mc` (download → append → upload). `--dry-run` prints the row without uploading. | Appends to MinIO only |
+| `reviewer-stamp-poll.sh [--dry-run]` | Auto-stamp `pedro_verdict` onto closed worker PRs (merged → merge, closed-unmerged → kickback) by delegating to `reviewer-stamp-pedro-verdict.sh`. Runs on a systemd timer (PET-199); only touches rows with an empty `pedro_verdict`. | Stamps MinIO (via the PET-191 writer) |
 | `templates/pr-verdict.md.tmpl` | PR-review body skeleton (tests result, findings, one-line merge rec). | — |
 | `templates/linear-verdict.md.tmpl` | Linear-comment skeleton (same, self-contained for Pedro's fast-merge filter). | — |
 
@@ -24,10 +26,19 @@ The scripts do what shell does well (enumerate PRs, run tests, write the log). T
 **judgment** — reading the diff against the repo `CLAUDE.md`, writing findings, choosing
 approve/changes — is Claude's, driven by the standing prompt below.
 
+> **Test env (PET-178).** The host runs a **local throwaway Postgres** (`postgres` /
+> `colatro` on `localhost:5432`, role var `agent_loop_install_test_postgres`) matching
+> co-latro-backend's default `DATABASE_URL`, so `reviewer-checkout-test.sh`'s `bun test` is
+> **green at baseline** (verified: full suite 297 pass / 0 fail). Treat any failure as a
+> *real* regression — there is no longer an "ignore the N env DB/server fails" caveat (the
+> worker's authoring self-check gets the same clean signal).
+
 ## The reviewer standing prompt
 
 There is no `run-loop.sh` (same as the authoring loop). Run `cc` (Claude Code) as `agent`
-in a tmux session and give it this prompt:
+in a tmux session and give it this prompt. `cc` pins `--model claude-opus-4-8`
+(`agent_loop_cc_command`), so the verdict is always decided by that Opus build — never the
+ambient picker default, never a Mythos-class model (Fable 5 / Mythos 5).
 
 ```
 You are the REVIEWER half of the two-agent loop on agent-loop-242. Read the Linear docs
@@ -45,16 +56,25 @@ Each iteration:
    GROUND TRUTH test result. Never substitute the worker's claim.
 4. Read the diff (`gh pr diff`) against the repo's CLAUDE.md + conventions; read the PR's
    verification-evidence block (PET-149).
-5. Fill `templates/pr-verdict.md.tmpl` and post it with
-   `gh pr review <pr> --approve|--request-changes --body-file <file>`.
+5. Fill `templates/pr-verdict.md.tmpl` and post it as the **`petedio-reviewer[bot]`**
+   identity — distinct from the PR author, so no self-review block (PET-176):
+   `GH_TOKEN="$(scripts/reviewer/reviewer-mint-token.sh)" gh pr review <pr> --approve|--request-changes --body-file <file>`.
 6. Fill `templates/linear-verdict.md.tmpl` and post it as a Linear comment. Set the label
    `agent-reviewed` (and `changes-requested` if requesting changes). DO NOT change status.
-7. Append the eval row:
+7. Append the eval row. Get the round-trip count first
+   (`scripts/reviewer/reviewer-round-trips.sh <owner/repo> <pr>`), and always pass
+   `--reviewer-model` (the model YOU are — the pinned Opus build) so the row records who
+   decided the verdict, not just the worker it reviewed:
    `scripts/reviewer/reviewer-log-verdict.sh --issue PET-<n> --pr <pr> \
       --worker-tests pass|fail --claude-verdict approve|changes \
-      --findings-json '[...]' --worker-model <model> --harness <harness>`
-   (`--dry-run` first to eyeball it.)
+      --findings-json '[...]' --worker-model <model> --harness <harness> \
+      --reviewer-model claude-opus-4-8 --round-trips <n>`
+   (`--dry-run` first to eyeball it. `--reviewer-model` defaults to `claude-opus-4-8`, so a
+   forgotten flag still records the pinned model — but pass it explicitly.)
 8. One PR per iteration. If anything is ambiguous or risky, comment and stop.
+
+You do **not** stamp `pedro_verdict` — that's the merge/kickback half, auto-filled by the
+`reviewer-stamp-poll.sh` timer after Pedro acts (below).
 ```
 
 ## Pedro's one-time setup (Manual steps)
@@ -71,7 +91,7 @@ These are operator-only — the loop is author-only and never does them.
    # as agent@242, with the Vault Agent token already on disk (~/.vault-token):
    AK=$(vault kv get -field=mc_access_key kv/services/agent-loop)
    SK=$(vault kv get -field=mc_secret_key kv/services/agent-loop)
-   mc alias set homelab https://192.168.50.221:9000 "$AK" "$SK"
+   mc alias set homelab http://192.168.50.221:9000 "$AK" "$SK"   # MinIO .221 serves http, not https
    ```
    The scoped svcacct only needs read/write on `agent-evals` — mint it bucket-scoped
    (same pattern as `scripts/reseed-minio-frontend-vault.sh`), not the tfstate credential
@@ -83,15 +103,34 @@ These are operator-only — the loop is author-only and never does them.
 
 ## Verdict log schema (`agent-evals/verdicts.jsonl`)
 
-One JSON object per line (decided 2026-06-10):
+One JSON object per line (decided 2026-06-10; `reviewer_model` added 2026-06-26, PET-199):
 
 ```json
-{"ts":"","issue":"PET-n","pr":"","worker_model":"","harness":"","worker_tests":"pass|fail","claude_verdict":"approve|changes","claude_findings":[],"pedro_verdict":"merge|kickback","round_trips":0,"tokens":0,"wall_s":0}
+{"ts":"","issue":"PET-n","pr":"","worker_model":"","harness":"","reviewer_model":"","worker_tests":"pass|fail","claude_verdict":"approve|changes","claude_findings":[],"pedro_verdict":"merge|kickback","round_trips":0,"tokens":0,"wall_s":0}
 ```
 
-The reviewer fills its fields; `pedro_verdict` (merge|kickback) is appended by Pedro on
-merge/kickback. This is the labeled eval set: worker success rate, reviewer precision/recall
-vs Pedro, and gold failures (bugs that slip both gates).
+`worker_model`/`harness` describe the PR **under review** (the worker that authored it);
+`reviewer_model` is the model that **decided** the verdict (the pinned Opus build — see
+`roles/agent-loop` `agent_loop_claude_model`). The reviewer fills its fields; `pedro_verdict`
+(merge|kickback) is the merge/kickback half. This is the labeled eval set: worker success
+rate, reviewer precision/recall vs Pedro, and gold failures (bugs that slip both gates).
+
+**`pedro_verdict` is auto-stamped (PET-199).** A systemd timer on 242 runs
+`scripts/reviewer/reviewer-stamp-poll.sh`, which reads each recently-closed worker PR's final
+state and stamps the matching row: **merged → `merge`, closed-unmerged → `kickback`**. It only
+touches rows with an empty `pedro_verdict`, so it never re-writes a manual stamp. Pedro can
+still stamp/override by hand —
+`scripts/reviewer/reviewer-stamp-pedro-verdict.sh --issue PET-<n> --verdict merge|kickback
+[--pr <pr>] [--allow-overwrite]` (PET-191; `--dry-run` first, `--pr` to disambiguate when one
+PET key has several rows).
+
+> A 242-side **poller**, not a merge-triggered GitHub Action — which dodges the three reasons
+> an Action was rejected: worker PRs live in the Co-latro app repos (the poller scans every
+> repo from one host, no per-repo Action), a merge event can only ever record `merge` and
+> never `kickback` (reading close-state captures both), and the eval log is a single-operator
+> serial-writer object with no lock (the timer stays the lone writer on the loop host). See
+> the script's RACE NOTE — it's a second automated writer; cadence is modest + MinIO is
+> versioned.
 
 ## Hard limits (restated)
 

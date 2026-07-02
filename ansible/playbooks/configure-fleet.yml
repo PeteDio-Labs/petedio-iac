@@ -1,0 +1,185 @@
+---
+# configure-fleet.yml — deploy the Mission Control "Co-latro fleet activity view" (PET-187)
+# onto the agent-loop LXC 242 as an nginx origin behind Cloudflare Access (fleet.pdlab.dev).
+#
+# The page (tools/mission-control/co-latro-fleet/) is a read-only static viewer over the
+# agent-evals JSONL eval logs. This play makes 242 serve it:
+#   nginx :8090  ->  /var/www/fleet (the 3 static files)
+#                    /agent-evals/*.jsonl SAME-ORIGIN from a local MinIO mirror
+#                    GET /whoami -> {"username":"pedro"} (in-page check only)
+#   systemd timer -> `mc mirror homelab/agent-evals` into the web root every ~45s
+#
+# 242 is chosen because it ALREADY has `mc` + the agent-evals read creds (kv/services/
+# agent-loop) from the reviewer/worker loop (PET-135) — no new credential surface. The
+# Cloudflare Access gate on fleet.pdlab.dev (environments/homelab/cloudflare-routes.tf) is
+# the real security boundary; /whoami is defense-in-depth only.
+#
+# SECRETS: resolved BEFORE the run and passed as no_log extra-vars (repo convention):
+#   minio_evals_ak / minio_evals_sk  (Vault kv/services/agent-loop mc_access_key / mc_secret_key)
+# Run via:
+#   export VAULT_ADDR=https://192.168.50.223:8200
+#   export VAULT_CACERT="$(git rev-parse --show-toplevel)/environments/homelab/vault-ca.crt"
+#   export VAULT_TOKEN=$(security find-generic-password -s vault-root-token -w)
+#   umask 077
+#   vault kv get -format=json kv/services/agent-loop \
+#     | jq '{minio_evals_ak:.data.data.mc_access_key, minio_evals_sk:.data.data.mc_secret_key}' \
+#     > /tmp/fleet-evars.json
+#   cd ansible && ansible-playbook playbooks/configure-fleet.yml -e @/tmp/fleet-evars.json
+#   shred -u /tmp/fleet-evars.json
+#
+# Inventory: the `agent-loop` group -> agent-loop-242 / 192.168.50.242, root over
+# ~/.ssh/id_ed25519_ansible. See docs/runbooks/fleet-activity-view.md.
+
+- name: Deploy the Mission Control fleet activity view (LXC 242)
+  hosts: agent-loop
+  become: true
+
+  vars:
+    fleet_web_root: /var/www/fleet
+    fleet_evals_dir: /var/www/fleet/agent-evals
+    fleet_src: "{{ playbook_dir }}/../../tools/mission-control/co-latro-fleet"
+    minio_evals_endpoint: "http://192.168.50.221:9000"
+    minio_evals_bucket: agent-evals
+    mc_alias: homelab
+    mc_bin: /usr/local/bin/mc
+    fleet_static_files:
+      - index.html
+      - app.css
+      - app.js
+    # PET-222: cache-bust the asset URLs with the deployed commit's short SHA so a new deploy is
+    # a new URL (fresh through Cloudflare — no purge, no hard-refresh). Resolved on the control
+    # node at parse time; falls back to a fixed string if git isn't available.
+    fleet_version: "{{ lookup('pipe', 'git -C ' ~ playbook_dir ~ '/../.. rev-parse --short HEAD 2>/dev/null || echo nover') }}"
+
+  pre_tasks:
+    - name: Require the agent-evals mc credentials (passed as no_log extra-vars)
+      ansible.builtin.assert:
+        that:
+          - minio_evals_ak is defined and (minio_evals_ak | length) > 0
+          - minio_evals_sk is defined and (minio_evals_sk | length) > 0
+        fail_msg: >-
+          minio_evals_ak / minio_evals_sk are required. Resolve them from Vault
+          kv/services/agent-loop and pass via -e @file (see the play header).
+      no_log: true
+
+    - name: Stat the MinIO client (installed by roles/agent-loop)
+      ansible.builtin.stat:
+        path: "{{ mc_bin }}"
+      register: mc_stat
+
+    - name: Fail fast if mc is missing
+      ansible.builtin.assert:
+        that:
+          - mc_stat.stat.exists
+        fail_msg: "{{ mc_bin }} not found — run the agent-loop role first (agent_loop_install_mc)."
+
+  tasks:
+    # ---- nginx ----
+    - name: Install nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+
+    - name: Create the fleet web root and the agent-evals mirror dir
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+      loop:
+        - "{{ fleet_web_root }}"
+        - "{{ fleet_evals_dir }}"
+
+    - name: Copy the static page files into the web root
+      ansible.builtin.copy:
+        src: "{{ fleet_src }}/{{ item }}"
+        dest: "{{ fleet_web_root }}/{{ item }}"
+        owner: www-data
+        group: www-data
+        mode: "0644"
+      loop: "{{ fleet_static_files }}"
+      notify: Reload nginx
+
+    # PET-222: stamp `?v=<sha>` onto the app.js/app.css references in the DEPLOYED index.html
+    # (the repo copy stays clean so local dev still works). Idempotent — an existing `?v=…` is
+    # rewritten, never stacked. index.html is served no-cache, so the new pointers are seen on
+    # the next normal load.
+    - name: Cache-bust the asset URLs in the deployed index.html
+      ansible.builtin.replace:
+        path: "{{ fleet_web_root }}/index.html"
+        regexp: '(app\.(?:css|js))(?:\?v=[^"]*)?"'
+        replace: '\1?v={{ fleet_version }}"'
+
+    - name: Drop the fleet nginx site
+      ansible.builtin.copy:
+        src: files/fleet-nginx.conf
+        dest: /etc/nginx/sites-available/fleet
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload nginx
+
+    - name: Enable the fleet site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/fleet
+        dest: /etc/nginx/sites-enabled/fleet
+        state: link
+      notify: Reload nginx
+
+    - name: Ensure nginx is started and enabled
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    # ---- agent-evals mirror (mc + systemd timer) ----
+    - name: Configure the mc alias for the agent-evals bucket
+      # Writes root's own mc alias (/root/.mc) to match the mirror unit's HOME=/root —
+      # deliberately independent of the agent user's reviewer-loop alias.
+      ansible.builtin.command:
+        cmd: >-
+          {{ mc_bin }} alias set {{ mc_alias }} {{ minio_evals_endpoint }}
+          {{ minio_evals_ak }} {{ minio_evals_sk }}
+      changed_when: false
+      no_log: true
+
+    - name: Install the agent-evals mirror service + timer
+      ansible.builtin.template:
+        src: "templates/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - fleet-evals-mirror.service
+        - fleet-evals-mirror.timer
+      notify: Reload systemd
+
+    # Seed the web root now so the page has data on first load. Tolerate a transient MinIO
+    # blip — the timer re-runs every ~45s and nginx is already serving the app shell.
+    - name: Run the mirror once now so the site has data on first load
+      ansible.builtin.systemd:
+        name: fleet-evals-mirror.service
+        state: started
+        daemon_reload: true
+      failed_when: false
+
+    - name: Enable and start the agent-evals mirror timer
+      ansible.builtin.systemd:
+        name: fleet-evals-mirror.timer
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    # Validate AND reload in one handler so a bad config never reloads. Uses `shell`
+    # (not `command`) because `&&` is a shell operator — `command` would pass it to
+    # nginx as a literal arg and fail ("nginx: invalid option: &&").
+    - name: Reload nginx
+      ansible.builtin.shell: nginx -t && systemctl reload nginx
+      changed_when: true

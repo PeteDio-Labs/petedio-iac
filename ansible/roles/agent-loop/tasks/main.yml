@@ -146,6 +146,51 @@
     NPM_CONFIG_PREFIX: "{{ agent_loop_npm_prefix }}"
   when: agent_loop_install_bun | bool
 
+# --- Postgres for the Co-latro test gate (PET-178) ---------------------------------
+
+# A local throwaway Postgres so co-latro-backend `bun test` is GREEN at baseline — the
+# freshDb() tests (db/sessions, db/analytics, api/http) need a real pg. It matches
+# testdb.ts's default URL (user/db/password = postgres / colatro / postgres on
+# localhost:5432), so the suite connects with no env var. Native pg, no Docker (LXC).
+- name: Install PostgreSQL + psycopg2 (Co-latro test gate)
+  ansible.builtin.apt:
+    name:
+      - postgresql
+      - python3-psycopg2 # community.postgresql modules talk to pg through this
+    state: present
+    update_cache: true
+  when: agent_loop_install_test_postgres | bool
+
+- name: Ensure PostgreSQL is running and enabled
+  ansible.builtin.service:
+    name: postgresql
+    state: started
+    enabled: true
+  when: agent_loop_install_test_postgres | bool
+
+# Password on the `postgres` superuser so the suite reaches it over TCP (localhost:5432).
+# Run via the local socket as the postgres OS user (peer auth) — no password needed for
+# this admin step. Debian/Ubuntu's default pg_hba already allows `host 127.0.0.1/32
+# scram-sha-256` with listen_addresses='localhost', so once the password is set the
+# default URL authenticates with no further conf edits. Localhost-only; throwaway test DB.
+- name: Set the postgres role password (TCP auth for bun test)
+  community.postgresql.postgresql_user:
+    name: postgres
+    password: "{{ agent_loop_test_pg_password }}"
+  become: true
+  become_user: postgres
+  no_log: true
+  when: agent_loop_install_test_postgres | bool
+
+- name: Create the Co-latro test database
+  community.postgresql.postgresql_db:
+    name: "{{ agent_loop_test_pg_db }}"
+    owner: postgres
+    state: present
+  become: true
+  become_user: postgres
+  when: agent_loop_install_test_postgres | bool
+
 # Shell QoL for the loop user: `cc` shorthand for Claude Code, and PATH = the per-user npm
 # prefix bin ({{ agent_loop_npm_prefix }}/bin — claude, bun) FIRST so the agent-owned, self-
 # updatable claude wins over any /usr/bin/claude, then ~/.local/bin (pipx shims — ansible*,
@@ -162,6 +207,53 @@
     block: |
       export PATH="{{ agent_loop_npm_prefix }}/bin:$HOME/.local/bin:$PATH"
       alias cc='{{ agent_loop_cc_command }}'
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+# --- Claude Code user settings (default model) -------------------------------------
+
+# Role-manage the default model in ~/.claude/settings.json. We MERGE, never overwrite:
+# settings.json may also carry an operator-added `permissions.allow` allowlist — the loop
+# runs WITHOUT --dangerously-skip-permissions, so that allowlist is how commands get
+# pre-approved, and a blind template write would silently drop it. Auth/session state lives
+# in ~/.claude.json + the OAuth token (untouched here), so editing settings.json can't
+# disturb the login. The `cc` --model flag is the hard guarantee for the verdict model; this
+# sets the default for any ad-hoc `claude` on the box too.
+- name: Ensure ~/.claude exists for {{ agent_loop_user }}
+  ansible.builtin.file:
+    path: "{{ agent_loop_home }}/.claude"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Read existing ~/.claude/settings.json if present (to preserve operator keys)
+  ansible.builtin.slurp:
+    src: "{{ agent_loop_home }}/.claude/settings.json"
+  register: agent_loop_claude_settings_raw
+  failed_when: false
+  changed_when: false
+  become: true
+  become_user: "{{ agent_loop_user }}"
+
+- name: Pin the Claude Code default model in ~/.claude/settings.json (merge, never clobber)
+  ansible.builtin.copy:
+    dest: "{{ agent_loop_home }}/.claude/settings.json"
+    content: "{{ existing | combine(managed, recursive=true) | to_nice_json }}\n"
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0644"
+  vars:
+    existing: >-
+      {{ (agent_loop_claude_settings_raw.content | b64decode | from_json)
+         if (agent_loop_claude_settings_raw.content | default('') | b64decode | trim | length > 0)
+         else {} }}
+    managed:
+      model: "{{ agent_loop_claude_model }}"
+      env:
+        TZ: "{{ agent_loop_timezone }}"
   become: true
   become_user: "{{ agent_loop_user }}"
 
@@ -479,6 +571,114 @@
     - name: Enable + start the rebase-loop-prs timer
       ansible.builtin.systemd_service:
         name: rebase-loop-prs.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+# --- Auto-stamp pedro_verdict on closed worker PRs (PET-199) -------------------------
+# A systemd timer runs scripts/reviewer/reviewer-stamp-poll.sh as the loop user, stamping
+# pedro_verdict (merge|kickback, read from each closed PR's final state) onto the matching
+# verdict row so the fleet view's `pedro` column fills automatically. The script mints the
+# petedio-reviewer[bot] App token (reviewer-mint-token.sh, self-serving Vault auth via the
+# Agent token on disk) for the gh reads, and writes MinIO through the operator-seeded `mc`
+# alias — no env secret here. A 242-side poller, not a GitHub Action, on purpose (see the
+# script header for the three reasons).
+- name: Auto-stamp timer for closed worker PRs
+  when: agent_loop_stamp_poll_timer_enabled | bool
+  block:
+    - name: Install the reviewer-stamp-poll systemd service + timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - reviewer-stamp-poll.service
+        - reviewer-stamp-poll.timer
+      notify: Reload systemd (agent-loop)
+
+    - name: Enable + start the reviewer-stamp-poll timer
+      ansible.builtin.systemd_service:
+        name: reviewer-stamp-poll.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+# --- Engine loop workspace + timer (PET-184) -----------------------------------------
+# The third fleet tier (Claude Code, Sonnet-tier, headless). The engine's home holds its
+# per-task clones (work/), checkpoint state (state/), and the curated task queue (queue/) —
+# all agent-owned. These dirs are created unconditionally (harmless when the timer is off, and
+# needed the moment Pedro runs engine-run.sh by hand at S0). The systemd TIMER is the S1
+# (unattended, off-hours) stage, gated on agent_loop_engine_timer_enabled (default false).
+- name: Create the engine home directories (per-task clones, checkpoint state, queue)
+  ansible.builtin.file:
+    path: "{{ agent_loop_engine_home }}/{{ item }}"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+  loop:
+    - ""
+    - work
+    - state
+    - queue
+
+- name: Engine loop timer (S1 — unattended, off-hours)
+  when: agent_loop_engine_timer_enabled | bool
+  block:
+    - name: Install the engine-loop systemd service + timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - engine-loop.service
+        - engine-loop.timer
+      notify: Reload systemd (agent-loop)
+
+    - name: Enable + start the engine-loop timer
+      ansible.builtin.systemd_service:
+        name: engine-loop.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+# --- Worker auto-launch workspace + timer (PET-184 S1) -------------------------------
+# The worker's home holds only launched-markers (per-issue cooldown). Created unconditionally
+# (harmless when the timer is off; used the moment worker-loop.sh runs). The TIMER is the S1
+# stage, gated on agent_loop_worker_loop_timer_enabled (default false = S0 hand-run).
+- name: Create the worker auto-launch home (launched-markers)
+  ansible.builtin.file:
+    path: "{{ agent_loop_worker_home }}/{{ item }}"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+  loop:
+    - ""
+    - launched
+
+- name: Worker auto-launch timer (S1)
+  when: agent_loop_worker_loop_timer_enabled | bool
+  block:
+    - name: Install the worker-loop systemd service + timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - worker-loop.service
+        - worker-loop.timer
+      notify: Reload systemd (agent-loop)
+
+    - name: Enable + start the worker-loop timer
+      ansible.builtin.systemd_service:
+        name: worker-loop.timer
         enabled: true
         state: started
         daemon_reload: true

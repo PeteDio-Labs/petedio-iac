@@ -1,6 +1,7 @@
 # Agent event stream — unified JSONL lifecycle telemetry (PET-154)
 
-One JSONL stream for **all three agent roles** (worker-243, reviewer-242, authoring loop 242),
+One JSONL stream for **every agent role** (worker-243, reviewer-242, authoring loop 242, and the
+Bucket-B **engine** tier on 242 — PET-184),
 appended to `agent-evals/events.jsonl` in MinIO — the **same bucket** as the PET-135 verdict log.
 This is the data layer for Mission Control v3 (PET-158 board, PET-155 viewer). Each agent emits
 one row at each lifecycle point via `scripts/agent-event.sh`; read it back with `mc cat`.
@@ -10,24 +11,30 @@ one row at each lifecycle point via `scripts/agent-event.sh`; read it back with 
 One object per line:
 
 ```json
-{"ts":"","agent":"worker|reviewer|loop","event":"","issue":"PET-n","pr":null,"detail":""}
+{"ts":"","agent":"worker|reviewer|loop|engine","event":"","issue":"PET-n","pr":null,"detail":""}
 ```
 
 `issue` and `pr` are nullable (`run_started` may have neither yet). `ts` is UTC ISO-8601, so the
-stream is **time-ordered** by `ts`.
+stream is **time-ordered** by `ts`. `loop` is the Claude authoring loop (Platform/IaC); `engine`
+is the Bucket-B engine tier (PET-184) authoring new effect kinds in the Co-latro repos — same
+events, distinct lane.
 
 ## Events + who emits them
 
-| Event | worker | reviewer | loop | When |
-|---|:--:|:--:|:--:|---|
-| `run_started` | ✓ | ✓ | ✓ | iteration begins (before picking) |
-| `issue_picked` | ✓ | ✓ | ✓ | after claiming / selecting the issue→PR |
-| `pr_opened` | ✓ |  | ✓ | a PR is opened |
-| `verdict_posted` |  | ✓ |  | reviewer posts approve/changes |
-| `changes_requested` |  | ✓ |  | reviewer kicks a PR back |
-| `stalled` |  |  | ✓ | stall sweep releases a stale claim (PET-147) |
-| `escalated_needs_human` | ✓ | ✓ | ✓ | an issue is set `needs-human` |
-| `run_exited` | ✓ | ✓ | ✓ | iteration ends (clean or aborted) |
+| Event | worker | reviewer | loop | engine | When |
+|---|:--:|:--:|:--:|:--:|---|
+| `run_started` | ✓ | ✓ | ✓ | ✓ | iteration begins (before picking) |
+| `issue_picked` | ✓ | ✓ | ✓ | ✓ | after claiming / selecting the issue→PR |
+| `pr_opened` | ✓ |  | ✓ | ✓ | a PR is opened |
+| `verdict_posted` |  | ✓ |  |  | reviewer posts approve/changes |
+| `changes_requested` |  | ✓ |  |  | reviewer kicks a PR back |
+| `stalled` |  |  | ✓ | ✓ | stall sweep releases a stale claim (PET-147) |
+| `escalated_needs_human` | ✓ | ✓ | ✓ | ✓ | an issue is set `needs-human` |
+| `run_exited` | ✓ | ✓ | ✓ | ✓ | iteration ends (clean or aborted) |
+
+> The `engine` lifecycle in `events.jsonl` is distinct from the fleet page's per-lane
+> `engine-runs.jsonl` run-log (PET-187 / schema TBD under PET-184) — the fleet view reads the
+> per-lane logs, this stream feeds the PET-155 lifecycle viewer.
 
 ## How each agent emits
 
@@ -39,6 +46,7 @@ scripts/agent-event.sh --agent loop --event run_started
 scripts/agent-event.sh --agent loop --event issue_picked --issue PET-42
 scripts/agent-event.sh --agent loop --event pr_opened --issue PET-42 --pr 64
 scripts/agent-event.sh --agent reviewer --event verdict_posted --issue PET-42 --pr 64 --detail approve
+scripts/agent-event.sh --agent engine --event issue_picked --issue PET-208
 scripts/agent-event.sh --agent loop --event escalated_needs_human --issue PET-144 --detail "PET-104 conflict"
 scripts/agent-event.sh --agent loop --event run_exited --issue PET-42 --pr 64
 ```
@@ -51,6 +59,21 @@ Add these calls to:
 - **Reviewer** — at run start, per PR (`verdict_posted` / `changes_requested`), and exit
   ([reviewer-loop.md](reviewer-loop.md), step after posting the verdict).
 - **Worker** — at run start, `issue_picked`, `pr_opened`, escalation, exit (Worker Operations doc).
+- **Engine** (Bucket-B tier, PET-184) — same lifecycle as the authoring loop, with `--agent engine`.
+
+### Crash-safe bracketing (run_started / run_exited)
+
+`run_exited` emitted at the model's discretion is lost if the run crashes mid-way. For the Claude
+loops that run `cc` from a bare prompt (authoring + engine), wrap the invocation in
+`scripts/agent-run-events.sh`, which brackets the command with `run_started` and a `run_exited`
+fired from an **EXIT trap** (so it lands even on crash/kill — the worker harness does the same):
+
+```sh
+scripts/agent-run-events.sh --agent engine --issue PET-208 -- cc --model claude-opus-4-8 -p "$PROMPT"
+```
+
+The wrapped agent still emits `issue_picked` / `pr_opened` itself from inside the run (it alone
+knows the issue#/PR#). Wiring this into the on-242 loop launch is an operator step.
 
 The verdict log (PET-135) and stall detection (PET-147) already produce most of these moments;
 this just standardizes them into one stream.

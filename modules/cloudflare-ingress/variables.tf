@@ -27,10 +27,11 @@ variable "routes" {
       {
         "vault.pdlab.dev" = {
           service             = "https://192.168.50.223:8200"
-          no_tls_verify       = true                  # self-signed origin
-          access              = true                  # gate via Cloudflare Access
-          allowed_idps        = ["<authentik-idp-id>"] # from PET-38
-          access_email_domain = "pdlab.dev"
+          no_tls_verify       = true                   # self-signed origin
+          access              = true                   # gate via Cloudflare Access
+          allowed_idps        = ["<authentik-idp-id>"] # from PET-38 (OIDC); empty -> OTP login
+          access_email_domain = "pdlab.dev"            # gate by email DOMAIN, or...
+          access_emails       = ["you@example.com"]    # ...gate to specific email(s) (takes precedence)
         }
       }
   EOT
@@ -41,6 +42,7 @@ variable "routes" {
     access              = optional(bool, false)
     allowed_idps        = optional(list(string), [])
     access_email_domain = optional(string)
+    access_emails       = optional(list(string), [])
     session_duration    = optional(string, "24h")
   }))
   default = {}
