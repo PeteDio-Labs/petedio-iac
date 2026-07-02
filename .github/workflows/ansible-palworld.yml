@@ -1,0 +1,108 @@
+# Workflow B (IaC) for Ansible host-config — provisions the Palworld dedicated-server
+# LXC (234). syntax-check on PR (cheap, no secrets, no host contact); APPLY on merge to
+# main. Mirrors ansible-openfaas.yml. (PET-157)
+#
+# The apply job runs on the self-hosted homelab runner (VM 232), SSHes to LXC 234, and
+# mints a short-lived Vault token via GitHub OIDC for the ansible SSH key (kv/iac/lxc-ssh).
+# It REUSES the openfaas-ci role (main-push-only sub; grants ONLY lxc-ssh + Nexus pull
+# creds) — the Palworld play uses just the SSH key, no Nexus. No game-server passwords:
+# access is over the .86 mesh / Tailscale, not the public internet
+# (palworld_open_public_port=false). Same committed playbook the operator would run — no
+# operator SSH. (A dedicated palworld-ci role is a possible least-privilege follow-up.)
+#
+# NB: the apply installs ~12-15 GB of server binaries via SteamCMD on 234 (the first run
+# is long); community.general is installed for the role's ufw tasks. ansible-core only
+# otherwise, in an official python:3.12-slim container (the runner ships no venv/pip).
+name: ansible-palworld
+
+on:
+  pull_request:
+    paths:
+      - ansible/playbooks/configure-palworld.yml
+      - ansible/roles/palworld/**
+      - ansible/inventory/hosts.yml
+      - .github/workflows/ansible-palworld.yml
+  push:
+    branches: [main]
+    paths:
+      - ansible/playbooks/configure-palworld.yml
+      - ansible/roles/palworld/**
+      - ansible/inventory/hosts.yml
+      - .github/workflows/ansible-palworld.yml
+
+# Serialize runs of this workflow so two fast merges can't race two ansible applies
+# against host 234. Separate group from terraform.yml's tf-homelab and ansible-openfaas —
+# a different host, and this workflow never touches Terraform state.
+concurrency:
+  group: ansible-palworld
+  cancel-in-progress: false
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+  ANSIBLE_IMAGE: python:3.12-slim
+
+permissions:
+  contents: read
+  id-token: write # mint the GitHub OIDC token vault-action exchanges for a Vault token
+
+jobs:
+  # PR: prove the play parses. No secrets, no host contact, no ssh.
+  syntax-check:
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, linux, x64, homelab]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Syntax check (ansible in Docker)
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE/ansible:/ansible" -w /ansible \
+            -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
+            "$ANSIBLE_IMAGE" sh -c \
+            "pip install -q ansible-core && ansible-galaxy collection install community.general && ansible-playbook -i inventory/hosts.yml --syntax-check playbooks/configure-palworld.yml"
+
+  # merge to main: apply the play to LXC 234.
+  apply:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: [self-hosted, linux, x64, homelab]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Vault — mint creds via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: openfaas-ci
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportEnv: true
+          secrets: |
+            kv/data/iac/lxc-ssh private_key | ANSIBLE_SSH_KEY
+
+      - name: Apply configure-palworld.yml to 234 (ansible in Docker)
+        shell: bash
+        run: |
+          umask 077
+          CI=/tmp/ci-palworld
+          rm -rf "$CI"; mkdir -p "$CI"
+          trap 'rm -rf "$CI"' EXIT
+          printf '%s\n' "$ANSIBLE_SSH_KEY" > "$CI/key"; chmod 600 "$CI/key"
+          # ansible_ssh_private_key_file as an extra-var (highest precedence) — overrides the
+          # inventory group var (~/.ssh/id_ed25519_ansible, absent in the container). python3
+          # stdlib (no pip) writes the @file so nothing sensitive lands on argv.
+          python3 - "$CI/evars.json" <<'PY'
+          import json, sys
+          json.dump({"ansible_ssh_private_key_file": "/ci/key"}, open(sys.argv[1], "w"))
+          PY
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/ansible:/ansible" -v "$CI:/ci:ro" -w /ansible \
+            -e ANSIBLE_HOST_KEY_CHECKING=False -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
+            "$ANSIBLE_IMAGE" sh -c \
+            "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && pip install -q ansible-core && ansible-galaxy collection install community.general && ansible-playbook -i inventory/hosts.yml playbooks/configure-palworld.yml -e @/ci/evars.json"

@@ -25,6 +25,21 @@ resource "proxmox_virtual_environment_container" "this" {
       }
     }
 
+    # Optional second ip_config, paired (by order) with the secondary network_interface
+    # below for dual-homing (e.g. Palworld onto the .86 mesh, PET-168). Default null →
+    # zero blocks → byte-identical to a single-NIC container for every other consumer.
+    # No gateway by design: the default route stays on the primary NIC (net0); a second
+    # gateway would create two default routes.
+    dynamic "ip_config" {
+      for_each = var.secondary_network_interface != null ? [var.secondary_network_interface] : []
+      content {
+        ipv4 {
+          address = ip_config.value.ipv4_address
+          gateway = ip_config.value.ipv4_gateway
+        }
+      }
+    }
+
     # DNS is optional: a brownfield container that sets no nameserver/searchdomain
     # (e.g. the Nexus registry 106, which inherits the host's resolv.conf) passes
     # dns_servers = [] so NO dns block is rendered — matching its live config keeps
@@ -74,6 +89,20 @@ resource "proxmox_virtual_environment_container" "this" {
     # capture pins the running hwaddr so the import doesn't rely on computed-value
     # preservation. See docs/GOTCHAS.md.
     mac_address = var.mac_address
+  }
+
+  # Optional SECOND NIC for dual-homing onto another segment (e.g. the .86 mesh, PET-168).
+  # Default null → no net1 → byte-identical to a single-NIC container for every existing
+  # consumer (opt-in, like the dns/firewall blocks above). Declared AFTER the primary so it
+  # is net1 (eth1); its ip_config is the dynamic one above, paired by order.
+  dynamic "network_interface" {
+    for_each = var.secondary_network_interface != null ? [var.secondary_network_interface] : []
+    content {
+      name        = network_interface.value.name
+      bridge      = network_interface.value.bridge
+      firewall    = network_interface.value.firewall
+      mac_address = network_interface.value.mac_address
+    }
   }
 
   lifecycle {

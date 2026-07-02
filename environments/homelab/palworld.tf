@@ -43,6 +43,25 @@ module "palworld" {
   # NVMe to a follow-up. See header.
   datastore_id = "sdb3-storage"
   description  = "Palworld 1.0 dedicated server (PET-157). Managed by Terraform."
+
+  # PET-168: dual-home onto the 192.168.86.x mesh for local-LAN play, ALONGSIDE the
+  # platform-LAN NIC (eth0, .50.234) and the Tailscale path — those are untouched. No
+  # gateway here: the default route stays on eth0.
+  #
+  # bridge = vmbr0: CONFIRMED the .86-mesh bridge on pve01 — Plex (CT103) is dual-homed at
+  # 192.168.86.140 over vmbr0 (Homelab Inventory & IP/VMID Scheme, §2). vmbr1 is the .50
+  # LAN/uplink (has the gateway); vmbr0 carries the mesh segment with no gateway, exactly
+  # what a secondary mesh NIC wants.
+  #
+  # >>> OPERATOR — confirm before apply (router/DHCP = hard rule 6, operator-only):
+  #   - .234 mirrors the VMID (234) and the LAN octet (.234). Confirm it's free on the .86
+  #     mesh and add the STATIC DHCP reservation on the router so it can't be re-leased.
+  secondary_network_interface = {
+    name         = "eth1"
+    bridge       = "vmbr0"
+    ipv4_address = "192.168.86.234/24"
+    # no ipv4_gateway — default route stays on eth0 (platform LAN)
+  }
 }
 
 output "palworld_id" {

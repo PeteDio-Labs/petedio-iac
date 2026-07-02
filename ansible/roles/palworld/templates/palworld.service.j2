@@ -1,10 +1,11 @@
 # {{ ansible_managed }}
-# Palworld 1.0 dedicated server (PET-157). Installed by the palworld role but NOT
-# enabled/started until the operator installs the binaries on launch day:
+# Palworld 1.0 dedicated server (PET-157). Installed AND (by default) enabled + started
+# by the palworld role, so the server auto-starts on container/host boot. Launch day just
+# needs the auto-pulled 1.0 update + a restart:
 #   sudo -u {{ palworld_user }} {{ palworld_steamcmd_dir }}/steamcmd.sh \
 #     +force_install_dir {{ palworld_server_dir }} +login anonymous \
 #     +app_update {{ palworld_steam_app_id }} validate +quit
-#   systemctl enable --now {{ palworld_service_name }}
+#   systemctl restart {{ palworld_service_name }}
 [Unit]
 Description=Palworld dedicated server
 After=network-online.target
