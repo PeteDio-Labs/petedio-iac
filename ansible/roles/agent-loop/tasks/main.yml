@@ -682,3 +682,41 @@
         enabled: true
         state: started
         daemon_reload: true
+
+# --- Reviewer auto-launch workspace + timer (PET-247 S1) ------------------------------
+# The reviewer's home holds launched-markers (per-PR cooldown) + run artifacts. Created
+# unconditionally (harmless when the timer is off; used the moment reviewer-loop.sh runs).
+# The TIMER is the S1 stage, gated on agent_loop_reviewer_loop_timer_enabled (default false).
+- name: Create the reviewer auto-launch home (launched-markers + artifacts)
+  ansible.builtin.file:
+    path: "{{ agent_loop_reviewer_home }}/{{ item }}"
+    state: directory
+    owner: "{{ agent_loop_user }}"
+    group: "{{ agent_loop_user }}"
+    mode: "0755"
+  loop:
+    - ""
+    - launched
+    - artifacts
+
+- name: Reviewer auto-launch timer (S1)
+  when: agent_loop_reviewer_loop_timer_enabled | bool
+  block:
+    - name: Install the reviewer-loop systemd service + timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - reviewer-loop.service
+        - reviewer-loop.timer
+      notify: Reload systemd (agent-loop)
+
+    - name: Enable + start the reviewer-loop timer
+      ansible.builtin.systemd_service:
+        name: reviewer-loop.timer
+        enabled: true
+        state: started
+        daemon_reload: true

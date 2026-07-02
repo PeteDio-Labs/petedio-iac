@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+# Periodic schedule for reviewer-loop.service (PET-247). ONE PR review per tick; the loop's own
+# guards (PAUSED sentinel, single-instance lock, cc-slot flock, In-Review gate, per-PR cooldown)
+# decide whether a tick actually spends quota. Reviews should be timely — a shorter cadence than
+# the engine is fine because a no-candidate tick is gh-reads only (no Claude call).
+# RandomizedDelaySec spreads load off the other fleet timers.
+[Unit]
+Description=Periodic tick of the fleet reviewer auto-launch (PET-247)
+
+[Timer]
+OnCalendar={{ agent_loop_reviewer_loop_oncalendar }}
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

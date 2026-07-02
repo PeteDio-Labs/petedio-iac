@@ -235,3 +235,20 @@ agent_loop_worker_loop_oncalendar: "*:0/20"
 agent_loop_worker_launch_cooldown_min: 30
 agent_loop_worker_home: "{{ agent_loop_home }}/worker"
 agent_loop_worker_loop_script: "{{ agent_loop_workspace }}/iac/scripts/worker/worker-loop.sh"
+
+# --- Reviewer auto-launch loop (PET-247 S1) -------------------------------------------
+# The third auto-launch: reviewer-loop.sh polls reviewer-candidates.sh (open worker/engine
+# PRs), gates in bash (PET key · not already bot-reviewed at head · Linear issue In Review —
+# read-only key at kv/services/linear · per-PR cooldown), then boxes ONE `claude -p` review
+# per tick. Shares the engine's cc-slot flock and holds REVIEWER_ACTIVE while working, so
+# Pedro > reviewer > engine holds. Model = agent_loop_claude_model (the pinned Opus — always
+# stronger than the engine's). Timer defaults OFF (S0 = hand-run); flip true for S1.
+agent_loop_reviewer_loop_timer_enabled: false
+agent_loop_reviewer_loop_oncalendar: "*:0/10"
+# Per-PR launch cooldown (min): don't re-pick a PR while the verdict/label propagation from
+# the previous run is still landing (or while Pedro is acting on a fresh verdict).
+agent_loop_reviewer_launch_cooldown_min: 60
+agent_loop_reviewer_max_turns: 60
+agent_loop_reviewer_timeout_s: 2400
+agent_loop_reviewer_home: "{{ agent_loop_home }}/reviewer"
+agent_loop_reviewer_loop_script: "{{ agent_loop_workspace }}/iac/scripts/reviewer/reviewer-loop.sh"

@@ -33,9 +33,32 @@ approve/changes — is Claude's, driven by the standing prompt below.
 > *real* regression — there is no longer an "ignore the N env DB/server fails" caveat (the
 > worker's authoring self-check gets the same clean signal).
 
-## The reviewer standing prompt
+## S1 auto-launch (PET-247) — `reviewer-loop.sh`
 
-There is no `run-loop.sh` (same as the authoring loop). Run `cc` (Claude Code) as `agent`
+The reviewer no longer *requires* a hand-started session: `scripts/reviewer/reviewer-loop.sh`
+is one systemd-timer tick (mirror of `worker-loop.sh`/`engine-loop.sh`). Per tick it polls
+`reviewer-candidates.sh`, applies the reviewability gates **in bash** (quota-free): PET key
+parsed · no `petedio-reviewer[bot]` review at the PR's current head · Linear issue **In
+Review** (read-only key from `kv/services/linear`, same self-serve as worker-candidates) ·
+per-PR launch cooldown — then boxes **one** `claude -p` review (pinned Opus, `--max-turns` +
+hard timeout, tool allowlist) with a one-PR-scoped version of the protocol below, emitting
+`run_started`/`run_exited` lifecycle events. It takes the engine's **cc-slot flock** and
+holds `~/engine/REVIEWER_ACTIVE` while working, so `Pedro > reviewer > engine` is enforced.
+Kill-switch: `touch ~/reviewer/PAUSED`. Status: `reviewer-loop.sh status`.
+
+Deploy: `roles/agent-loop` installs the units when `agent_loop_reviewer_loop_timer_enabled:
+true` (default **false** = S0 hand-run; the manual session below still works and takes the
+same cc-slot).
+
+> **In-Review hand-off (the other half of PET-247):** the loop's gate requires the issue to
+> be **In Review**, and the reviewer never forces status. The Linear↔GitHub integration must
+> advance `In Progress → In Review` when the worker/engine PR opens (Linear: Settings →
+> Integrations → GitHub → workflow automation, "PR opened → In Review"). Without that
+> mapping, unattended PRs deadlock at review — PET-219/PR #56 hit exactly this.
+
+## The reviewer standing prompt (S0 — manual session)
+
+The S0 fallback: run `cc` (Claude Code) as `agent`
 in a tmux session and give it this prompt. `cc` pins `--model claude-opus-4-8`
 (`agent_loop_cc_command`), so the verdict is always decided by that Opus build — never the
 ambient picker default, never a Mythos-class model (Fable 5 / Mythos 5).
