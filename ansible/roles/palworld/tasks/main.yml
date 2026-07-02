@@ -23,6 +23,7 @@
     name:
       - ca-certificates
       - curl
+      - sudo # become_user steam needs it; the minimal Debian LXC template ships without it
       - tar
       - lib32gcc-s1 # SteamCMD + the dedicated server need the 32-bit gcc runtime
       - libc6-i386
@@ -155,7 +156,7 @@
       +app_update {{ palworld_steam_app_id }} validate
       +quit
   register: palworld_steamcmd
-  changed_when: "'already up to date' not in palworld_steamcmd.stdout"
+  changed_when: "'already up to date' not in (palworld_steamcmd.stdout | default(''))"
   when: palworld_install_binaries | bool
 
 # Enable on boot + start now (binaries are present). Gated on the binaries being
