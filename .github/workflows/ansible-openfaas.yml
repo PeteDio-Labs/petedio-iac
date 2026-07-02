@@ -1,14 +1,6 @@
-# Workflow B (IaC) for Ansible host-config — the GitOps analog of deploy-openfaas.sh.
-# syntax-check on PR (cheap, no secrets, no host contact); APPLY on merge to main.
-#
-# The apply job runs on the self-hosted homelab runner (VM 232), which can SSH to LXC 241,
-# and mints a short-lived Vault token via GitHub OIDC (role openfaas-ci) for the ansible SSH
-# key (kv/iac/lxc-ssh) + the Nexus pull creds (kv/services/nexus). It runs the same committed
-# playbook the operator script does — no operator SSH. (PET-88)
-#
-# Ansible runs in an official python:3.12-slim container: the self-hosted runner ships a
-# minimal Python (no venv/pip), but it has Docker. No third-party image; openssh-client is
-# added for the apply. (TODO: bake an ansible image into Nexus to drop the per-run apt/pip.)
+# Workflow B (IaC) for the OpenFaaS host-config (LXC 241) — thin caller of the reusable
+# ansible-stack.yml (PET-250; the job logic used to be duplicated per stack). This file owns
+# only the triggers + the per-host serialization; see ansible-stack.yml for the jobs. (PET-88)
 name: ansible-openfaas
 
 on:
@@ -17,12 +9,14 @@ on:
       - ansible/playbooks/configure-openfaas.yml
       - ansible/inventory/hosts.yml
       - .github/workflows/ansible-openfaas.yml
+      - .github/workflows/ansible-stack.yml
   push:
     branches: [main]
     paths:
       - ansible/playbooks/configure-openfaas.yml
       - ansible/inventory/hosts.yml
       - .github/workflows/ansible-openfaas.yml
+      - .github/workflows/ansible-stack.yml
 
 # Serialize runs of this workflow: two fast merges would race two ansible applies
 # against the same host (241). Separate group from terraform.yml's tf-homelab —
@@ -31,79 +25,16 @@ concurrency:
   group: ansible-openfaas
   cancel-in-progress: false
 
-env:
-  VAULT_ADDR: https://192.168.50.223:8200
-  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
-  ANSIBLE_IMAGE: python:3.12-slim
-
 permissions:
   contents: read
   id-token: write # mint the GitHub OIDC token vault-action exchanges for a Vault token
 
 jobs:
-  # PR: prove the play parses. No secrets, no host contact, no ssh.
-  syntax-check:
-    if: github.event_name == 'pull_request'
-    runs-on: [self-hosted, linux, x64, homelab]
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - name: Syntax check (ansible in Docker)
-        run: |
-          docker run --rm -v "$GITHUB_WORKSPACE/ansible:/ansible" -w /ansible \
-            -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
-            "$ANSIBLE_IMAGE" sh -c \
-            "pip install -q ansible-core && ansible-playbook -i inventory/hosts.yml --syntax-check playbooks/configure-openfaas.yml"
-
-  # merge to main: apply the play to LXC 241.
-  apply:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: [self-hosted, linux, x64, homelab]
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Encode Vault CA
-        id: vault_ca
-        working-directory: environments/homelab
-        shell: bash
-        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
-
-      - name: Vault — mint creds via OIDC
-        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
-        with:
-          url: https://192.168.50.223:8200
-          method: jwt
-          path: jwt-github
-          role: openfaas-ci
-          jwtGithubAudience: https://github.com/PeteDio-Labs
-          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
-          exportEnv: true
-          secrets: |
-            kv/data/services/nexus username | NEXUS_USERNAME ;
-            kv/data/services/nexus admin_password | NEXUS_PASSWORD ;
-            kv/data/iac/lxc-ssh private_key | ANSIBLE_SSH_KEY
-
-      - name: Apply configure-openfaas.yml to 241 (ansible in Docker)
-        shell: bash
-        run: |
-          umask 077
-          CI=/tmp/ci-openfaas
-          rm -rf "$CI"; mkdir -p "$CI"
-          trap 'rm -rf "$CI"' EXIT
-          printf '%s\n' "$ANSIBLE_SSH_KEY" > "$CI/key"; chmod 600 "$CI/key"
-          # nexus creds via a JSON @file — never on argv, never logged. python3 stdlib (no pip).
-          python3 - "$CI/evars.json" <<'PY'
-          import json, os, sys
-          # ansible_ssh_private_key_file as an extra-var (highest precedence) — overrides the
-          # inventory group var (~/.ssh/id_ed25519_ansible, absent in the container); --private-key
-          # alone loses to the inventory var.
-          json.dump({"nexus_username": os.environ["NEXUS_USERNAME"],
-                     "nexus_password": os.environ["NEXUS_PASSWORD"],
-                     "ansible_ssh_private_key_file": "/ci/key"}, open(sys.argv[1], "w"))
-          PY
-          docker run --rm --network host \
-            -v "$GITHUB_WORKSPACE/ansible:/ansible" -v "$CI:/ci:ro" -w /ansible \
-            -e ANSIBLE_HOST_KEY_CHECKING=True \
-            -e "ANSIBLE_SSH_ARGS=-o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=accept-new" \
-            -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
-            "$ANSIBLE_IMAGE" sh -c \
-            "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && pip install -q ansible-core && ansible-playbook -i inventory/hosts.yml playbooks/configure-openfaas.yml -e @/ci/evars.json"
+  stack:
+    uses: ./.github/workflows/ansible-stack.yml
+    with:
+      playbook: playbooks/configure-openfaas.yml
+      stack: openfaas
+      with-nexus-creds: true
+      host-key-checking: "True"
+      ansible-ssh-args: "-o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=accept-new"
