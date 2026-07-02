@@ -1,0 +1,152 @@
+# Reusable Ansible stack workflow (PET-250) — the ONE copy of the syntax-check/apply logic
+# that ansible-openfaas.yml and ansible-palworld.yml used to duplicate (~109 lines each).
+# Per-stack workflows are now thin CALLERS: they own their `on.paths` triggers and their
+# per-host `concurrency` group (serialization semantics unchanged), and pass their playbook
+# + knobs here via `workflow_call` inputs. A new stack = a ~20-line caller, not a clone.
+#
+# Jobs (gated on the CALLER's event, which propagates to reusable workflows):
+#   syntax-check  pull_request — prove the play parses. No secrets, no host contact.
+#   apply         push to main — OIDC → Vault (openfaas-ci role: lxc-ssh + Nexus pull creds
+#                 only) → ansible-playbook against the live host, from the self-hosted
+#                 homelab runner (VM 232).
+#
+# Ansible runs in an official python:3.12-slim container: the runner ships a minimal Python
+# (no venv/pip), but it has Docker. openssh-client is added for the apply. (TODO: bake an
+# ansible image into Nexus to drop the per-run apt/pip.)
+name: ansible-stack
+
+on:
+  workflow_call:
+    inputs:
+      playbook:
+        description: "Playbook path relative to ansible/ (e.g. playbooks/configure-palworld.yml)"
+        required: true
+        type: string
+      stack:
+        description: "Short stack name — used for the temp-dir + log labels (e.g. palworld)"
+        required: true
+        type: string
+      collections:
+        description: "Space-separated ansible-galaxy collections to install (empty = none)"
+        required: false
+        type: string
+        default: ""
+      with-nexus-creds:
+        description: "Also mint Nexus pull creds and pass nexus_username/nexus_password extra-vars"
+        required: false
+        type: boolean
+        default: false
+      host-key-checking:
+        description: "ANSIBLE_HOST_KEY_CHECKING value for the apply"
+        required: false
+        type: string
+        default: "False"
+      ansible-ssh-args:
+        description: "Optional ANSIBLE_SSH_ARGS for the apply (e.g. ControlMaster/accept-new)"
+        required: false
+        type: string
+        default: ""
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+  ANSIBLE_IMAGE: python:3.12-slim
+
+jobs:
+  # PR: prove the play parses. No secrets, no host contact, no ssh.
+  syntax-check:
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, linux, x64, homelab]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Syntax check (ansible in Docker)
+        env:
+          COLLECTIONS: ${{ inputs.collections }}
+          PLAYBOOK: ${{ inputs.playbook }}
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE/ansible:/ansible" -w /ansible \
+            -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
+            "$ANSIBLE_IMAGE" sh -c \
+            "pip install -q ansible-core && \
+             { [ -z '$COLLECTIONS' ] || ansible-galaxy collection install $COLLECTIONS; } && \
+             ansible-playbook -i inventory/hosts.yml --syntax-check '$PLAYBOOK'"
+
+  # merge to main: apply the play to the stack's live host.
+  apply:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: [self-hosted, linux, x64, homelab]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      # The openfaas-ci role (main-push-only sub) grants ONLY lxc-ssh + the Nexus pull creds
+      # — every stack apply fits inside it. (Per-stack least-privilege roles = follow-up.)
+      - name: Vault — SSH key via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: openfaas-ci
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportEnv: true
+          secrets: |
+            kv/data/iac/lxc-ssh private_key | ANSIBLE_SSH_KEY
+
+      - name: Vault — Nexus pull creds via OIDC
+        if: inputs.with-nexus-creds
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: openfaas-ci
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportEnv: true
+          secrets: |
+            kv/data/services/nexus username | NEXUS_USERNAME ;
+            kv/data/services/nexus admin_password | NEXUS_PASSWORD
+
+      - name: Apply ${{ inputs.playbook }} (ansible in Docker)
+        shell: bash
+        env:
+          COLLECTIONS: ${{ inputs.collections }}
+          PLAYBOOK: ${{ inputs.playbook }}
+          STACK: ${{ inputs.stack }}
+          HOST_KEY_CHECKING: ${{ inputs.host-key-checking }}
+          SSH_ARGS: ${{ inputs.ansible-ssh-args }}
+        run: |
+          umask 077
+          CI="/tmp/ci-$STACK"
+          rm -rf "$CI"; mkdir -p "$CI"
+          trap 'rm -rf "$CI"' EXIT
+          printf '%s\n' "$ANSIBLE_SSH_KEY" > "$CI/key"; chmod 600 "$CI/key"
+          # Extra-vars via a JSON @file — never on argv, never logged. python3 stdlib (no pip).
+          # ansible_ssh_private_key_file as an extra-var (highest precedence) overrides the
+          # inventory group var (~/.ssh/id_ed25519_ansible, absent in the container). Nexus
+          # creds ride along only when the caller asked for them (env present).
+          python3 - "$CI/evars.json" <<'PY'
+          import json, os, sys
+          ev = {"ansible_ssh_private_key_file": "/ci/key"}
+          if os.environ.get("NEXUS_USERNAME"):
+              ev["nexus_username"] = os.environ["NEXUS_USERNAME"]
+              ev["nexus_password"] = os.environ["NEXUS_PASSWORD"]
+          json.dump(ev, open(sys.argv[1], "w"))
+          PY
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/ansible:/ansible" -v "$CI:/ci:ro" -w /ansible \
+            -e "ANSIBLE_HOST_KEY_CHECKING=$HOST_KEY_CHECKING" \
+            ${SSH_ARGS:+-e "ANSIBLE_SSH_ARGS=$SSH_ARGS"} \
+            -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
+            "$ANSIBLE_IMAGE" sh -c \
+            "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && \
+             pip install -q ansible-core && \
+             { [ -z '$COLLECTIONS' ] || ansible-galaxy collection install $COLLECTIONS; } && \
+             ansible-playbook -i inventory/hosts.yml '$PLAYBOOK' -e @/ci/evars.json"
