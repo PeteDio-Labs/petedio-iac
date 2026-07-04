@@ -23,7 +23,11 @@
 #   scripts/rebase-loop-prs.sh [--dry-run]
 #
 # Env (optional):
-#   REBASE_REPO        owner/repo to operate on (default: PeteDio-Labs/petedio-iac)
+#   REBASE_REPOS       space-separated owner/repo list (default: PeteDio-Labs/petedio-iac
+#                      PeteDio-Labs/co-latro-backend PeteDio-Labs/co-latro-frontend). Legacy
+#                      single-repo REBASE_REPO still honored (becomes the whole list).
+#   REBASE_AUTHORS     author allow-list (default: the gh login + petedio-worker[bot] +
+#                      petedio-engine[bot] — the fleet identities; PET-259)
 #   REBASE_BRANCH_RE   egrep branch guard (default: ^pet-)
 #   REBASE_BASE        base branch to rebase onto (default: main)
 #   GH_TOKEN           loop PAT (push + open-PR scope). If unset, taken from the loop
@@ -38,7 +42,10 @@ DRY_RUN=false
 
 for t in gh git python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
 
-REPO="${REBASE_REPO:-PeteDio-Labs/petedio-iac}"
+# PET-259: the fleet authors mostly co-latro PRs now — rebase every repo it opens PRs in.
+# Legacy single-repo REBASE_REPO is still honored (it becomes the whole list) so existing
+# units/invocations keep their exact behavior.
+REPOS="${REBASE_REPOS:-${REBASE_REPO:-PeteDio-Labs/petedio-iac PeteDio-Labs/co-latro-backend PeteDio-Labs/co-latro-frontend}}"
 BRANCH_RE="${REBASE_BRANCH_RE:-^pet-}"
 BASE="${REBASE_BASE:-main}"
 
@@ -57,47 +64,54 @@ fi
 # Whose PRs are "ours" — the second guard. Resolve once.
 SELF="$(gh api user --jq .login 2>/dev/null)" || die "gh api user failed (token valid?)."
 [ -n "$SELF" ] || die "could not resolve the loop's own GitHub login."
-info "repo=$REPO base=$BASE guard: head =~ $BRANCH_RE AND author == $SELF  (dry-run=$DRY_RUN)"
-
-# Eligible PRs: open, base == $BASE, head matches the prefix, authored by us. The branch +
-# author filter is applied here in python so the guard is in exactly one auditable place.
-PRS_JSON="$(gh pr list --repo "$REPO" --state open --base "$BASE" --limit 100 \
-  --json number,headRefName,author,baseRefName,isDraft 2>/dev/null)" ||
-  die "gh pr list failed for $REPO."
-
-mapfile -t BRANCHES < <(
-  REBASE_SELF="$SELF" REBASE_BRANCH_RE="$BRANCH_RE" python3 - "$PRS_JSON" <<'PY'
-import json, os, re, sys
-prs = json.loads(sys.argv[1] or "[]")
-self_login = os.environ["REBASE_SELF"]
-rx = re.compile(os.environ["REBASE_BRANCH_RE"])
-for pr in prs:
-    head = pr.get("headRefName", "") or ""
-    author = (pr.get("author") or {}).get("login", "") or ""
-    # BOTH guards — a branch missing either is silently left alone.
-    if rx.search(head) and author == self_login:
-        print(f"{pr['number']}\t{head}")
-PY
-)
-
-if [ "${#BRANCHES[@]}" -eq 0 ]; then
-  info "no eligible loop PRs to rebase."
-  exit 0
-fi
+# PET-259: co-latro fleet PRs are authored by the worker/engine App bots, not $SELF — the
+# author guard is an allow-list of OUR fleet identities (still ANDed with the branch prefix;
+# a human branch is never force-pushed).
+AUTHORS="${REBASE_AUTHORS:-$SELF petedio-worker[bot] petedio-engine[bot]}"
+info "repos=$REPOS base=$BASE guard: head =~ $BRANCH_RE AND author in [$AUTHORS]  (dry-run=$DRY_RUN)"
 
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/rebase-loop-XXXXXX")"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
+rebased=0 skipped=0 conflicted=0
+for REPO in $REPOS; do
+
+# Eligible PRs: open, base == $BASE, head matches the prefix, authored by one of our fleet
+# identities. The branch + author filter is applied here in python so the guard is in
+# exactly one auditable place.
+PRS_JSON="$(gh pr list --repo "$REPO" --state open --base "$BASE" --limit 100 \
+  --json number,headRefName,author,baseRefName,isDraft 2>/dev/null)" ||
+  { info "gh pr list failed for $REPO — skipping this repo."; continue; }
+
+mapfile -t BRANCHES < <(
+  REBASE_AUTHORS="$AUTHORS" REBASE_BRANCH_RE="$BRANCH_RE" python3 - "$PRS_JSON" <<'PY'
+import json, os, re, sys
+prs = json.loads(sys.argv[1] or "[]")
+authors = set(os.environ["REBASE_AUTHORS"].split())
+rx = re.compile(os.environ["REBASE_BRANCH_RE"])
+for pr in prs:
+    head = pr.get("headRefName", "") or ""
+    author = (pr.get("author") or {}).get("login", "") or ""
+    # BOTH guards — a branch missing either is silently left alone.
+    if rx.search(head) and author in authors:
+        print(f"{pr['number']}\t{head}")
+PY
+)
+
+if [ "${#BRANCHES[@]}" -eq 0 ]; then
+  info "$REPO: no eligible loop PRs to rebase."
+  continue
+fi
+
 # Fresh clone in /tmp — NEVER the loop's live working tree (which may be mid-iteration).
 # gh sets up the authenticated remote; full history (no --depth) so rebases resolve.
-gh repo clone "$REPO" "$WORKDIR/repo" >/dev/null 2>&1 || die "clone of $REPO failed."
-cd "$WORKDIR/repo"
+gh repo clone "$REPO" "$WORKDIR/${REPO##*/}" >/dev/null 2>&1 || { info "clone of $REPO failed — skipping this repo."; continue; }
+cd "$WORKDIR/${REPO##*/}"
 git config user.name "agent-loop" >/dev/null 2>&1 || true
 git config user.email "agent-loop@petedio.local" >/dev/null 2>&1 || true
 git fetch --quiet origin "$BASE"
 
-rebased=0 skipped=0 conflicted=0
 for entry in "${BRANCHES[@]}"; do
   num="${entry%%$'\t'*}"
   br="${entry#*$'\t'}"
@@ -142,6 +156,8 @@ for entry in "${BRANCHES[@]}"; do
     info "PR #$num ($br): force-push rejected (branch moved since fetch?) — skipping."
     skipped=$((skipped + 1))
   fi
-done
+done  # branches
+
+done  # repos
 
 info "done: rebased=$rebased skipped=$skipped conflicted=$conflicted"
