@@ -605,6 +605,34 @@
         state: started
         daemon_reload: true
 
+# --- Auto-merge Bucket-A worker PRs (PET-185) ------------------------------------------
+# scripts/automerge-poll.sh squash-merges worker PRs that pass EVERY gate (reviewer approve
+# in verdicts.jsonl + additive-guard ok on the exact head + green required check + per-file-
+# catalog paths only), under the dedicated petedio-merge[bot] identity — the reviewer never
+# merges, the author Apps structurally can't. Default-off; host_vars flips it after the
+# merge App is seeded in Vault (see defaults + docs/runbooks/automerge.md).
+- name: Auto-merge timer for gated Bucket-A worker PRs
+  when: agent_loop_automerge_timer_enabled | bool
+  block:
+    - name: Install the automerge-poll systemd service + timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - automerge-poll.service
+        - automerge-poll.timer
+      notify: Reload systemd (agent-loop)
+
+    - name: Enable + start the automerge-poll timer
+      ansible.builtin.systemd_service:
+        name: automerge-poll.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
 # --- Engine loop workspace + timer (PET-184) -----------------------------------------
 # The third fleet tier (Claude Code, Sonnet-tier, headless). The engine's home holds its
 # per-task clones (work/), checkpoint state (state/), and the curated task queue (queue/) —

@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+# Auto-merge Bucket-A worker PRs that pass every gate (PET-185). Triggered by
+# automerge-poll.timer. Runs AS the loop user so it uses the Vault Agent token at
+# ~/.vault-token (the script mints the petedio-merge[bot] App token via agent-mint-token.sh
+# merge) and the operator-seeded `mc` alias (the eval logs it reads + the auto_merged event
+# it appends both live in MinIO). The reviewer identity never merges; the predicate is the
+# gate — see the script header.
+[Unit]
+Description=Auto-merge gated Bucket-A worker PRs (PET-185)
+After=network-online.target vault-agent.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ agent_loop_user }}
+Group={{ agent_loop_user }}
+Environment=HOME={{ agent_loop_home }}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=VAULT_ADDR={{ agent_loop_vault_addr }}
+Environment=VAULT_CACERT={{ agent_loop_home }}/.config/vault-agent/vault-ca.crt
+ExecStart=/usr/bin/env bash {{ agent_loop_automerge_script }}
+NoNewPrivileges=true
