@@ -38,6 +38,34 @@ const REFRESH_MS    = 20000;                 // auto-refresh cadence (~15–30s 
 const FILES = { verdicts: "verdicts.jsonl", worker: "worker-runs.jsonl", engine: "engine-runs.jsonl",
                 events: "events.jsonl" };   // PET-220: the unified lifecycle stream (PET-154)
 
+// ---- PET-254: usage-driven trust fixes -------------------------------------------------
+// Probe/test rows (harness dry-runs like PET-9999 / reconciler-probe) pollute the pipeline
+// kanban; hide them by default behind a toggle. A real key is PET-<n>; anything else — or an
+// explicitly-known probe key — is a test row.
+const PROBE_ISSUES  = new Set(["PET-9999"]);                    // known harness probe keys
+const isProbeIssue  = (issue) => !!issue && (PROBE_ISSUES.has(issue) || !/^PET-\d{1,4}$/.test(issue));
+const SHOW_PROBES_KEY = "fleet.showProbes";                     // localStorage persistence
+let SHOW_PROBES = localStorage.getItem(SHOW_PROBES_KEY) === "1";
+
+// GitHub reality check (PET-249's mechanism fix): the page's "pending" piles are inferred
+// from verdict gaps, which lied to Pedro once ("we have 7 open prs" — GitHub had 1). We
+// cross-check each unresolved PR against api.github.com — public repos, UNauthenticated,
+// read-only GETs, so this stays zero-backend/no-secret. Budgeted hard against the 60 req/hr
+// anonymous limit: merged/closed are terminal (cached forever in localStorage), open states
+// re-check at most every GH_CHECK_MS, and at most GH_MAX_FETCH lookups fire per sweep.
+// Any failure (rate-limit, offline) degrades to "unverified" — never blocks the page.
+const GH_API        = "https://api.github.com";
+// 15 min: N open PRs cost N*4 req/hr — even 10 open PRs stay under the 60/hr anonymous cap.
+const GH_CHECK_MS   = 15 * 60 * 1000;        // re-check cadence for still-open PRs
+const GH_MAX_FETCH  = 8;                     // per-sweep lookup budget
+const GH_BACKOFF_MS = 10 * 60 * 1000;        // after a 403/429, stop calling GitHub for a while
+const GH_CACHE_KEY  = "fleet.ghpr";          // localStorage: { "<repo>#<pr>": {state, mergedAt, checkedAt} }
+
+// Data-freshness thresholds ("i don't see an update on the fleet ui"): page-refresh time is
+// NOT data age. We stamp the newest telemetry ts in the header and warn when it exceeds this
+// (mirror lag or a quiet fleet — the banner says which is more likely).
+const DATA_STALE_MS = 2 * 60 * 60 * 1000;    // 2h with no new rows/events -> warn
+
 // ---- dev mode -------------------------------------------------------------------------
 // In prod the page lives behind Authentik and reads /agent-evals same-origin. For local dev
 // (`?dev=1`, or opened straight from disk) it reads the bundled ./fixtures and skips the
@@ -373,15 +401,156 @@ function buildIssueRepoMap(workerRows, engineRows){
   return map;
 }
 // Keep a verdict only if its repo (its own, or joined by issue) is Co-latro. Anything we
-// can't confirm is hidden — but COUNTED, never silently dropped (surfaced as a banner).
+// can't confirm is hidden — but COUNTED and LISTED, never silently dropped (surfaced as an
+// expandable banner: Pedro asked "what does this mean" twice, so the banner now shows the
+// rows and how to fix them instead of a bare count — PET-254).
 function filterVerdicts(verdictRows, issueMap){
-  const kept = []; let hidden = 0;
+  const kept = [], hiddenRows = [];
   for (const r of verdictRows){
     const repo = r.repo || issueMap.get(r.issue) || "";
     if (isCoLatroRepo(repo)){ r.repo = repo; kept.push(r); }   // stamp the resolved repo for PR links
-    else hidden++;
+    else hiddenRows.push(r);
   }
-  return { kept, hidden };
+  return { kept, hidden: hiddenRows.length, hiddenRows };
+}
+
+// ======================================================================================
+// PET-254 — PR reality panel ("needs Pedro") + GitHub cross-check.
+// The verdict-gap inference lied once (PET-249): merged-but-unstamped PRs read "pending"
+// forever. This joins runs+verdicts per PR and, where possible, verifies against live
+// GitHub state, splitting the pile into what Pedro actually has to do:
+//   awaiting-review   run opened a PR, no reviewer verdict yet
+//   awaiting-decision reviewer verdict logged, pedro_verdict still ""
+//   unstamped         GitHub says MERGED but pedro_verdict was never stamped -> stamp it
+// Rows whose GitHub state can't be confirmed stay listed as "unverified", never hidden.
+// ======================================================================================
+let ghCache = {};
+try { ghCache = JSON.parse(localStorage.getItem(GH_CACHE_KEY) || "{}") || {}; } catch { ghCache = {}; }
+function ghCacheSave(){ try { localStorage.setItem(GH_CACHE_KEY, JSON.stringify(ghCache)); } catch {} }
+const ghKey = (repo, pr) => `${repoName(repo)}#${pr}`;
+
+// DEV: fixtures/gh-prs.json maps "repo#pr" -> {state:"open"|"merged"|"closed"} so the panel
+// (incl. the unstamped bucket) is exercisable offline with no GitHub calls.
+let devGhStates = null;
+async function ghStateDev(repo, pr){
+  if (devGhStates === null){
+    try { const r = await fetch(`${DATA_BASE}/gh-prs.json?_=${Date.now()}`, { cache:"no-store" });
+          devGhStates = r.ok ? await r.json() : {}; }
+    catch { devGhStates = {}; }
+  }
+  const hit = devGhStates[ghKey(repo, pr)];
+  return hit ? { state: hit.state, mergedAt: hit.mergedAt || null } : null;
+}
+
+// Resolve one PR's live state, cache-first. Returns {state:"open|merged|closed", checkedAt}
+// or null (unverified). Terminal states never refetch; open states refetch after GH_CHECK_MS;
+// a rate-limit response mutes ALL GitHub calls for GH_BACKOFF_MS (don't hammer a 403).
+let ghBackoffUntil = 0;
+async function ghPrState(repo, pr, budget){
+  const key = ghKey(repo, pr);
+  const hit = ghCache[key];
+  if (hit && (hit.state === "merged" || hit.state === "closed")) return hit;
+  if (hit && Date.now() - hit.checkedAt < GH_CHECK_MS) return hit;
+  if (DEV){
+    const d = await ghStateDev(repo, pr);
+    if (!d) return hit || null;
+    ghCache[key] = { ...d, checkedAt: Date.now() }; ghCacheSave(); return ghCache[key];
+  }
+  if (Date.now() < ghBackoffUntil) return hit || null;   // muted after a rate-limit
+  if (budget.n <= 0) return hit || null;                 // out of per-sweep budget -> best effort
+  budget.n--;
+  try {
+    const full = String(repo).includes("/") ? repo : `${GITHUB_ORG}/${repoName(repo)}`;
+    const r = await fetch(`${GH_API}/repos/${full}/pulls/${pr}`, { cache:"no-store" });
+    if (r.status === 403 || r.status === 429){            // rate-limited -> back off, unverified
+      ghBackoffUntil = Date.now() + GH_BACKOFF_MS;
+      return hit || null;
+    }
+    if (r.status === 404) return hit || null;             // private/missing -> unverified
+    if (!r.ok) return hit || null;
+    const j = await r.json();
+    const state = j.merged_at ? "merged" : (j.state === "open" ? "open" : "closed");
+    ghCache[key] = { state, mergedAt: j.merged_at || null, checkedAt: Date.now() };
+    ghCacheSave();
+    return ghCache[key];
+  } catch { return hit || null; }
+}
+
+// Join everything the telemetry knows per (repo, pr).
+function buildPrRecords(worker, engine, reviewer){
+  const recs = new Map();
+  const get = (repo, pr) => {
+    const k = ghKey(repo, pr);
+    if (!recs.has(k)) recs.set(k, { repo, pr, issue:null, lastTs:"", verdict:null, pedro:null, findings:0 });
+    return recs.get(k);
+  };
+  for (const r of worker.concat(engine)){
+    if (r.pr == null || !r.repo) continue;
+    const a = get(r.repo, r.pr);
+    if (!a.issue) a.issue = r.issue || null;
+    if (tsVal(r.ts) > tsVal(a.lastTs)) a.lastTs = r.ts;
+  }
+  // Ascending ts so the LATEST verdict row decides the PR's state — a round-2 re-review
+  // resets pedro to pending even if round 1 was a kickback.
+  for (const v of reviewer.slice().sort((a, b) => tsVal(a.ts) - tsVal(b.ts))){
+    if (v.pr == null) continue;
+    const a = get(v.repo || DEFAULT_REPO, v.pr);
+    if (!a.issue) a.issue = v.issue || null;
+    if (v.verdict) a.verdict = v.verdict;
+    a.pedro    = v.pedro || null;
+    a.findings = (v.findings && v.findings.length) || 0;
+    if (tsVal(v.ts) > tsVal(a.lastTs)) a.lastTs = v.ts;
+  }
+  return [...recs.values()];
+}
+
+// Classify each PR record against telemetry + (best-effort) GitHub truth.
+async function buildPrReality(worker, engine, reviewer){
+  const budget = { n: GH_MAX_FETCH };
+  const recs = buildPrRecords(worker, engine, reviewer)
+    .filter(a => !a.pedro)                     // stamped rows are settled — nothing for Pedro
+    .sort((x, y) => tsVal(y.lastTs) - tsVal(x.lastTs));
+  const out = [];
+  for (const a of recs){
+    const gh = await ghPrState(a.repo, a.pr, budget);
+    const ghState = gh ? gh.state : null;
+    if (ghState === "closed"){ continue; }     // closed-unmerged (kickback path) — settled
+    let bucket;
+    if (ghState === "merged")      bucket = "unstamped";
+    else if (a.verdict)            bucket = "decision";
+    else                           bucket = "review";
+    out.push({ ...a, ghState, bucket });
+  }
+  return out;
+}
+
+const NP_META = {
+  unstamped: { cls:"yellow", label:"merged — stamp verdict",
+    tip:(a)=>`GitHub says MERGED but pedro_verdict was never stamped — the row reads "pending" forever (PET-249).\nFix: scripts/reviewer/reviewer-stamp-pedro-verdict.sh --issue ${a.issue||"PET-?"} --pr ${a.pr} --verdict merge` },
+  decision:  { cls:"blue",  label:"awaiting your decision",
+    tip:()=>"Reviewer verdict logged; merge or kick back, then stamp pedro_verdict." },
+  review:    { cls:"muted", label:"awaiting review",
+    tip:()=>"PR opened by a run; no reviewer verdict yet. If this sits for hours, check the reviewer loop." },
+};
+function needsPedroHTML(items){
+  if (!items.length)
+    return `<div class="empty">Nothing needs you — every fleet PR is reviewed, decided, and stamped.</div>`;
+  const rows = items.map(a => {
+    const m = NP_META[a.bucket];
+    const ver = a.ghState ? `<span class="pill ${a.ghState==="merged"?"green":"blue"}" title="live GitHub state">${esc("gh: "+a.ghState)}</span>`
+                          : `<span class="pill muted" title="GitHub state not confirmed (rate-limit/offline) — inferred from telemetry only">gh: unverified</span>`;
+    return `<tr>
+      <td>${prCell(a)}</td>
+      <td class="repo">${esc(repoName(a.repo))}</td>
+      <td>${petCell(a)}</td>
+      <td><span class="pill ${m.cls}" title="${esc(m.tip(a))}">${esc(m.label)}</span>${a.verdict?` ${verdictPill(a.verdict)}`:""}${a.findings?` <span class="pill yellow">${a.findings} finding${a.findings>1?"s":""}</span>`:""}</td>
+      <td>${ver}</td>
+      <td class="repo">${esc(ageStr(a.lastTs))}</td>
+    </tr>`;
+  }).join("");
+  return `<table><thead><tr>
+    <th>PR</th><th>repo</th><th>PET</th><th>state</th><th>github</th><th>age</th>
+  </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // ---- pills / cells --------------------------------------------------------------------
@@ -517,7 +686,23 @@ function renderBanners(states){
     if (st.status === "error") b.push(["err", `Could not load <code>${fileLabel[key]}</code> — ${esc(st.detail)}.`]);
     if (st.bad > 0)            b.push(["warn", `${st.bad} malformed line(s) skipped in <code>${fileLabel[key]}</code>.`]);
   }
-  if (states.hidden > 0) b.push(["info", `${states.hidden} reviewer verdict(s) hidden — couldn't confirm a Co-latro repo (no matching worker run for the issue).`]);
+  // Freshness ("i don't see an update on the fleet ui"): the page refreshing is not the data
+  // moving. If the newest telemetry row is old, say so — and say which failure it smells like.
+  if (states.newestTs && Date.now() - tsVal(states.newestTs) > DATA_STALE_MS){
+    const age = ageStr(states.newestTs);
+    b.push(["warn", `No new telemetry for <strong>${esc(age)}</strong> (newest row ${esc(new Date(tsVal(states.newestTs)).toLocaleString())}). Either the fleet is idle, or the <code>mc mirror</code> on 242 / the loops are stuck — <code>systemctl list-timers worker-loop.timer engine-loop.timer reviewer-loop.timer</code> on 242 tells you which.`]);
+  }
+  // Hidden verdicts, now expandable: Pedro asked "what does this mean" twice. Show the rows,
+  // why the join failed, and the fix — never a bare count (PET-254).
+  if (states.hidden > 0){
+    const rows = (states.hiddenRows || []).map(r => `<tr>
+      <td>${petCell(r)}</td><td>${r.pr!=null?esc("#"+r.pr):"—"}</td>
+      <td>${r.verdict?esc(r.verdict):"—"}</td><td>${esc(ageStr(r.ts))}</td></tr>`).join("");
+    b.push(["info", `<details><summary>${states.hidden} reviewer verdict(s) hidden — no worker/engine run ties the PET key to a Co-latro repo, so the Co-latro filter can't confirm it. Click for the rows + fix.</summary>
+      <table class="mini"><thead><tr><th>PET</th><th>PR</th><th>verdict</th><th>age</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="sub" style="margin-top:6px">Usually a pre-harness or non-Co-latro row. If it IS Co-latro, stamp <code>repo</code> onto the verdict row in <code>agent-evals/verdicts.jsonl</code> (optional field — the filter honors it) and it will surface here.</div>
+    </details>`]);
+  }
   $("banners").innerHTML = b.map(([k,m]) => `<div class="banner ${k}">${m}</div>`).join("");
 }
 
@@ -539,7 +724,12 @@ function renderLocked(user){
 
 // ---- main load (gate → fetch → filter → render) --------------------------------------
 function setStatus(t){ $("status").textContent = t; }
-function setUpdated(){ $("updated").textContent = "· updated " + new Date().toLocaleTimeString(); }
+// "updated" = when the PAGE fetched; "data as of" = the newest telemetry row. Conflating the
+// two is exactly what made "i don't see an update on the fleet ui" undiagnosable (PET-254).
+function setUpdated(newestTs){
+  const dataBit = newestTs ? ` · data as of ${new Date(tsVal(newestTs)).toLocaleTimeString()} (${ageStr(newestTs)} ago)` : "";
+  $("updated").textContent = "· page updated " + new Date().toLocaleTimeString() + dataBit;
+}
 
 async function load(){
   const user = await getIdentity();
@@ -553,17 +743,24 @@ async function load(){
     fetchJSONL(FILES.verdicts), fetchJSONL(FILES.worker), fetchJSONL(FILES.engine), fetchJSONL(FILES.events),
   ]);
 
-  const workerAll  = w.rows.map(normWorker);
-  const engineAll  = e.rows.map(normEngine);
-  const verdictAll = v.rows.map(normVerdict);
-  const eventsAll  = ev.rows.map(normEvent);   // fleet-wide: events carry no repo (see PET-220 block)
+  // Probe hygiene (PET-254): harness dry-run rows (PET-9999 / malformed keys) are test data,
+  // not fleet activity — filtered everywhere unless the "show test rows" toggle is on.
+  const notProbe   = (r) => SHOW_PROBES || !isProbeIssue(r.issue);
+  const workerAll  = w.rows.map(normWorker).filter(notProbe);
+  const engineAll  = e.rows.map(normEngine).filter(notProbe);
+  const verdictAll = v.rows.map(normVerdict).filter(notProbe);
+  const eventsAll  = ev.rows.map(normEvent).filter(notProbe);   // fleet-wide: events carry no repo
 
   const issueMap = buildIssueRepoMap(workerAll, engineAll);
   const worker   = workerAll.filter(r => isCoLatroRepo(r.repo));
   const engine   = engineAll.filter(r => isCoLatroRepo(r.repo));
-  const { kept: reviewer, hidden } = filterVerdicts(verdictAll, issueMap);
+  const { kept: reviewer, hidden, hiddenRows } = filterVerdicts(verdictAll, issueMap);
 
-  renderBanners({ v, w, e, ev, hidden });
+  // Newest telemetry ts across every source — the page's honest "data as of".
+  const newestTs = [workerAll, engineAll, verdictAll, eventsAll].flat()
+    .reduce((acc, r) => tsVal(r.ts) > tsVal(acc) ? r.ts : acc, "");
+
+  renderBanners({ v, w, e, ev, hidden, hiddenRows, newestTs });
 
   // ---- PET-220 live views (events.jsonl) ----------------------------------------------
   const latestModel = (rows) => { const s = rows.slice().sort(byTsDesc); for (const r of s) if (r.model) return r.model; return ""; };
@@ -572,6 +769,13 @@ async function load(){
   $("pipeline").innerHTML     = pipelineHTML(buildPipeline(worker, engine, reviewer, eventsAll, issueMap));
   $("trends").innerHTML       = trendsHTML(worker, reviewer, engine);
 
+  // ---- PET-254: needs-Pedro panel (async — GitHub lookups may take a beat; the rest of
+  // the page never waits on it, and a failed sweep just leaves rows "gh: unverified").
+  $("needs-pedro").innerHTML = `<div class="empty">checking…</div>`;
+  buildPrReality(worker, engine, reviewer)
+    .then(items => { $("needs-pedro").innerHTML = needsPedroHTML(items); })
+    .catch(()   => { $("needs-pedro").innerHTML = needsPedroHTML([]); });
+
   // ---- ledger (unchanged: roll-up + the three history lanes) --------------------------
   $("rollup").innerHTML = rollupHTML(worker, reviewer, engine);
   $("lanes").innerHTML =
@@ -579,7 +783,7 @@ async function load(){
     + laneHTML({ key:"reviewer", title:"Reviewer", icon:"🔎", sub:"approve / request-changes", file:FILES.verdicts }, reviewer, v)
     + laneHTML({ key:"engine",   title:"Engine",   icon:"⚙️", sub:"3rd fleet tier (PET-184)", file:FILES.engine },   engine,   e);
 
-  setUpdated();
+  setUpdated(newestTs);
   const total = worker.length + reviewer.length + engine.length;
   setStatus(`${total} Co-latro run(s) · ${reviewer.length} verdict(s) · ${eventsAll.length} event(s)`);
 }
@@ -599,6 +803,13 @@ window.addEventListener("DOMContentLoaded", () => {
   if (DEV) $("devbadge").style.display = "";
   $("refresh").addEventListener("click", load);
   $("autohz").textContent = (REFRESH_MS / 1000) + "s";
+  const probes = $("showprobes");
+  probes.checked = SHOW_PROBES;
+  probes.addEventListener("change", () => {
+    SHOW_PROBES = probes.checked;
+    localStorage.setItem(SHOW_PROBES_KEY, SHOW_PROBES ? "1" : "0");
+    load();
+  });
   load();
   startTimer();
 });
