@@ -122,6 +122,16 @@ details.hist > summary:hover { color:var(--fg); }
            justify-content:center; margin:0 0 8px; }
 .lock p { color:var(--muted); font-size:13px; }
 
+/* --- PET-254: needs-Pedro panel + expandable banner + probe toggle --- */
+.needspedro { background:var(--panel); border:1px solid var(--border); border-radius:8px;
+              padding:6px 10px; }
+.needspedro .empty { padding:14px; }
+.banner details > summary { cursor:pointer; }
+.banner table.mini { margin-top:8px; }
+.banner table.mini th, .banner table.mini td { padding:4px 8px; font-size:12px; }
+label.toggle { display:inline-flex; align-items:center; gap:5px; cursor:pointer; }
+label.toggle input { accent-color:var(--blue); margin:0; }
+
 .devbadge { color:var(--yellow); border:1px solid var(--yellow); border-radius:10px;
             padding:1px 8px; font-size:11px; }
 .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green);

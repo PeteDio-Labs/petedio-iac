@@ -97,6 +97,26 @@ Three views render **what's happening now** from the unified lifecycle stream, a
    thin** — worker & reviewer log `tokens:0` today, only the engine logs real tokens; the tokens
    sparkline reflects only what exists.
 
+## Trust fixes (PET-254) — usage-driven
+
+- **Needs Pedro panel**: every fleet PR that still needs an action, split into *awaiting review*
+  (run opened a PR, no verdict), *awaiting your decision* (verdict logged, `pedro_verdict` empty),
+  and *merged — stamp verdict* (GitHub says merged but the row was never stamped — the PET-249
+  failure mode; the pill's tooltip carries the exact `reviewer-stamp-pedro-verdict.sh` command).
+  GitHub state comes from **unauthenticated, read-only** GETs to `api.github.com` (public repos —
+  no token, no backend): merged/closed results are terminal and cached forever in `localStorage`;
+  open PRs re-check every 15 min with a per-sweep budget of 8 lookups and a 10-min mute after any
+  rate-limit, so the page stays far under the 60 req/hr anonymous cap. If GitHub can't be reached
+  the row shows `gh: unverified` and the panel falls back to telemetry-only inference — it never
+  blocks or breaks the page. In dev, `fixtures/gh-prs.json` (`"repo#pr" → {state}`) plays GitHub.
+- **Freshness you can see**: the header shows *page updated* (fetch time) **and** *data as of*
+  (newest telemetry row). A banner warns when no new row/event has landed in >2h — that's mirror
+  lag or stuck loops, not "the page is broken".
+- **Hidden verdicts are expandable**: the "N reviewer verdict(s) hidden" banner opens to the
+  actual rows, why the Co-latro join failed, and the fix (stamp `repo` onto the verdict row).
+- **Probe hygiene**: harness dry-run rows (`PET-9999`, malformed keys) are filtered from every
+  view unless the header's *show test rows* toggle is on (persisted in `localStorage`).
+
 ## Behavior
 
 - **Three lanes**, each with a *latest* card (most recent run) + a *history* table (newest first):

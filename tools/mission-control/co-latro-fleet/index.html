@@ -30,6 +30,8 @@
     <button class="primary" id="refresh">↻ Refresh</button>
     <span class="sub"><span class="dot off" id="autodot"></span>auto-refresh <span id="autohz"></span></span>
     <span class="sub" id="status"></span>
+    <label class="sub toggle" title="Harness dry-run rows (PET-9999 / malformed keys) are hidden by default">
+      <input type="checkbox" id="showprobes" /> show test rows</label>
   </div>
 </header>
 <main>
@@ -38,6 +40,8 @@
   <div id="content">
     <h2>Live status <span class="sub">— inferred from the last event per agent (no heartbeat)</span></h2>
     <div id="status-cards" class="statuscards"></div>
+    <h2>Needs Pedro <span class="sub">— fleet PRs awaiting review, your decision, or a verdict stamp; cross-checked against live GitHub state (PET-254)</span></h2>
+    <div id="needs-pedro" class="needspedro"></div>
     <h2>Pipeline <span class="sub">— where each Co-latro issue sits</span></h2>
     <div id="pipeline"></div>
     <h2>Trends <span class="sub">— bucketed by day</span></h2>

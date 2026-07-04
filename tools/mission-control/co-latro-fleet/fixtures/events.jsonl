@@ -32,3 +32,4 @@
 {"ts":"2026-06-30T04:10:00Z","agent":"engine","event":"escalated_needs_human","issue":"PET-221","pr":59,"detail":"gate red 2x — Bucket-B kind needs human"}
 {"ts":"2026-06-30T13:00:00Z","agent":"worker","event":"run_started","issue":null,"pr":null,"detail":"worker-loop poll -> claimed worker-ok"}
 {"ts":"2026-06-30T14:00:00Z","agent":"worker","event":"issue_picked","issue":"PET-176","pr":null,"detail":"additive joker catalog row (in flight)"}
+{"ts":"2026-06-25T13:05:10Z","agent":"worker","event":"run_exited","issue":"PET-9999","pr":null,"detail":"reconciler-probe smoke row"}
