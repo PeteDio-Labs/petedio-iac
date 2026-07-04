@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# Periodic schedule for fleet-alert.service (PET-256). A stall should reach Pedro's phone
+# within minutes, not when he next opens the page; the dedupe state file means a modest
+# cadence never re-sends the same alert.
+[Unit]
+Description=Periodic fleet needs-human alert check (PET-256)
+
+[Timer]
+OnCalendar={{ agent_loop_fleet_alert_oncalendar }}
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

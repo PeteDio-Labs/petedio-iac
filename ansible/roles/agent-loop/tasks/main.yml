@@ -633,6 +633,33 @@
         state: started
         daemon_reload: true
 
+# --- Fleet needs-human push alerts (PET-256) --------------------------------------------
+# scripts/fleet-alert.sh reads the same eval logs the fleet page renders and pushes an
+# ntfy notification on stalled/escalated events or an unreviewed fleet PR past the
+# threshold — the push half of the pull-only dashboard. Default-off; host_vars flips it
+# after the ntfy topic is seeded in Vault (docs/runbooks/fleet-alerts.md).
+- name: Fleet needs-human alert timer
+  when: agent_loop_fleet_alert_timer_enabled | bool
+  block:
+    - name: Install the fleet-alert systemd service + timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - fleet-alert.service
+        - fleet-alert.timer
+      notify: Reload systemd (agent-loop)
+
+    - name: Enable + start the fleet-alert timer
+      ansible.builtin.systemd_service:
+        name: fleet-alert.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
 # --- Engine loop workspace + timer (PET-184) -----------------------------------------
 # The third fleet tier (Claude Code, Sonnet-tier, headless). The engine's home holds its
 # per-task clones (work/), checkpoint state (state/), and the curated task queue (queue/) —
