@@ -14,7 +14,9 @@
 # authoring new effect kinds in the Co-latro repos. Same lifecycle events, distinct lane.
 #
 # Events: run_started · issue_picked · pr_opened · verdict_posted · changes_requested ·
-#         stalled · escalated_needs_human · run_exited
+#         stalled · escalated_needs_human · run_exited · cap_paused · cap_resumed
+#         (cap_paused/cap_resumed, PET-257: a quota/off-hours/preempt park — informational,
+#          NOT a needs-human alert; the engine emits one per contiguous parked stretch)
 #
 # Object stores can't append in place, so this does download -> append a line -> upload via
 # `mc` (exactly like reviewer-log-verdict.sh). One serial writer per host, so no lock needed.
@@ -61,7 +63,7 @@ command -v python3 >/dev/null || die "python3 not in PATH (jq isn't on the loop 
 # --- validate the constrained fields (a bad row pollutes the telemetry set) ---
 case "$AGENT" in worker | reviewer | loop | engine) ;; *) die "--agent must be worker|reviewer|loop|engine (got '$AGENT')." ;; esac
 case "$EVENT" in
-  run_started | issue_picked | pr_opened | verdict_posted | changes_requested | stalled | escalated_needs_human | run_exited) ;;
+  run_started | issue_picked | pr_opened | verdict_posted | changes_requested | stalled | escalated_needs_human | run_exited | cap_paused | cap_resumed) ;;
   *) die "--event '$EVENT' is not a known lifecycle event (see --help)." ;;
 esac
 [ -z "$ISSUE" ] || [[ "$ISSUE" =~ ^PET-[0-9]+$ ]] || die "--issue must look like PET-<n> (got '$ISSUE')."

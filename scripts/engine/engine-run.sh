@@ -302,7 +302,7 @@ PY
     if ! git diff --cached --quiet; then git commit --quiet -m "wip(${ISSUE}): checkpoint before usage-cap pause"; fi
     HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
     write_state paused_cap "$RESET_AT"
-    emit --event stalled --issue "$ISSUE" --detail "usage-cap"
+    emit --event cap_paused --issue "$ISSUE" --detail "usage-cap — resume after $RESET_AT"
     printf '{"issue":"%s","repo":"%s","branch":"%s","pr":null,"tests":"paused","gate":"paused","tokens":%s,"wall_s":%s,"head_sha":"%s","phase":"paused_cap"}\n' \
       "$ISSUE" "$REPO" "$BRANCH" "$TOKENS" "$WALL_S" "${HEAD_SHA:-}"
     exit 4

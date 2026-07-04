@@ -201,6 +201,7 @@ function normEngine(r){
 const EVENT_AGENTS = ["worker", "engine", "reviewer"];
 const RUN_START = new Set(["run_started", "issue_picked"]);      // opens a run
 const ALERT_EV  = new Set(["stalled", "escalated_needs_human"]); // needs-a-human events
+const PAUSE_EV  = new Set(["cap_paused"]);   // PET-257: quota/off-hours park — NOT an alert
 const AGENT_META = {
   worker:   { icon:"🔧", title:"Worker" },
   engine:   { icon:"⚙️", title:"Engine" },
@@ -210,6 +211,7 @@ const STATE_META = {
   running:       { cls:"run",   label:"● running" },
   stalled:       { cls:"alert", label:"■ stalled" },
   "needs-human": { cls:"alert", label:"✋ needs human" },
+  paused:        { cls:"pause", label:"⏸ paused" },
   idle:          { cls:"idle",  label:"idle" },
   none:          { cls:"none",  label:"no events" },
 };
@@ -229,6 +231,10 @@ function agentStatus(agent, allEvents, model){
   if (ALERT_EV.has(last.event))
     return { agent, state: last.event === "stalled" ? "stalled" : "needs-human",
       issue:last.issue, pr:last.pr, since:last.ts, detail:last.detail, model };
+  // PET-257: a parked engine says so (quota / off-hours / preempt) instead of reading "idle".
+  // cap_resumed (and any later event) naturally supersedes it as the newest event.
+  if (PAUSE_EV.has(last.event))
+    return { agent, state:"paused", issue:last.issue, pr:last.pr, since:last.ts, detail:last.detail, model };
   const lastStart = evs.find(e => RUN_START.has(e.event));
   const lastExit  = evs.find(e => e.event === "run_exited");
   const running   = lastStart && (!lastExit || tsVal(lastStart.ts) >= tsVal(lastExit.ts));
