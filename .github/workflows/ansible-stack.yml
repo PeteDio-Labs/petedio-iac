@@ -151,8 +151,13 @@ jobs:
           ev.update(json.loads(os.environ.get("EXTRA_VARS") or "{}"))
           json.dump(ev, open(sys.argv[1], "w"))
           PY
+          # tools/ is mounted read-only at /tools because /ansible/playbooks/../.. = / inside
+          # the container — plays that copy repo artifacts via "{{ playbook_dir }}/../../tools/…"
+          # (configure-fleet.yml's static page) resolve to /tools/… . Without it the copy fails
+          # with "Could not find … on the Ansible Controller" (first ansible-fleet apply, PET-255).
           docker run --rm --network host \
-            -v "$GITHUB_WORKSPACE/ansible:/ansible" -v "$CI:/ci:ro" -w /ansible \
+            -v "$GITHUB_WORKSPACE/ansible:/ansible" -v "$GITHUB_WORKSPACE/tools:/tools:ro" \
+            -v "$CI:/ci:ro" -w /ansible \
             -e "ANSIBLE_HOST_KEY_CHECKING=$HOST_KEY_CHECKING" \
             ${SSH_ARGS:+-e "ANSIBLE_SSH_ARGS=$SSH_ARGS"} \
             -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \

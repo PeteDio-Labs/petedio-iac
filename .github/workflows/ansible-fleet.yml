@@ -12,6 +12,10 @@
 # fleet_version=<github.sha> rides in via the stack's non-secret extra-vars input so the
 # PET-222 cache-bust (`app.js?v=<sha>`) tracks the deployed commit — the in-container git
 # lookup can't see .git and would otherwise pin `?v=nover` forever.
+#
+# DEPENDS on ansible-stack.yml mounting the repo's tools/ at /tools in the apply container —
+# configure-fleet.yml copies the static page from "{{ playbook_dir }}/../../tools/…", which
+# resolves to /tools/… inside the container (learned from the first apply's failure).
 name: ansible-fleet
 
 on:
