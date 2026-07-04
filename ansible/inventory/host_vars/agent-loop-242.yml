@@ -18,3 +18,7 @@
 agent_loop_worker_loop_timer_enabled: true
 agent_loop_engine_timer_enabled: true
 agent_loop_reviewer_loop_timer_enabled: true
+# Fleet needs-human push alerts (PET-256) — go-live 2026-07-04: ntfy_topic seeded in
+# kv/services/agent-loop; dry-run on 242 verified (historical merged-unverdicted PRs
+# correctly settled into dedupe state, zero pending pushes).
+agent_loop_fleet_alert_timer_enabled: true
