@@ -14,6 +14,9 @@
 #   engine   -> petedio-engine[bot]   (contents:write, pull_requests:write) — push + open PR,
 #               NO merge (Bucket-B new-effect-kind authoring, PET-184; asymmetrically weaker
 #               model than the reviewer, so the reviewer stays the stronger gate)
+#   merge    -> petedio-merge[bot]    (contents:write, pull_requests:write) — the Bucket-A
+#               auto-merge identity (PET-185, scripts/automerge-poll.sh). A FOURTH distinct
+#               App so the reviewer never merges and the authors structurally can't.
 # OPERATOR: worker_app_id / reviewer_app_id / engine_app_id in Vault MUST be THREE DIFFERENT
 # GitHub Apps — identical IDs collapse the identities into one actor and GitHub's self-review
 # block returns (defeating PET-176/PET-184). Verify they differ when seeding kv/services/agent-loop.
@@ -30,7 +33,7 @@ die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 
 ROLE="${1:-}"
-case "$ROLE" in worker | reviewer | engine) ;; *) die "usage: $(basename "$0") <worker|reviewer|engine>" ;; esac
+case "$ROLE" in worker | reviewer | engine | merge) ;; *) die "usage: $(basename "$0") <worker|reviewer|engine|merge>" ;; esac
 PREFIX="$(printf '%s' "$ROLE" | tr '[:lower:]' '[:upper:]')" # WORKER / REVIEWER
 
 for t in openssl curl python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
