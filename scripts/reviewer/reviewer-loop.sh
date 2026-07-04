@@ -201,6 +201,7 @@ elif command -v gtimeout >/dev/null; then TIMEOUT_PREFIX=(gtimeout "$TIMEOUT_S")
 emit --event run_started --issue "$PET" --pr "$NUM" --detail "auto-launch review $REPO#$NUM"
 log "launching boxed review: $REPO#$NUM ($PET)  model=$MODEL max-turns=$MAX_TURNS timeout=${TIMEOUT_S}s"
 RUN_LOG="$ART/reviewer-run-${PET}-${NUM}.json"
+START_S="$(date +%s)"
 set +e
 "${TIMEOUT_PREFIX[@]}" "$CLAUDE_CMD" -p "$(cat "$PROMPT_FILE")" \
   --model "$MODEL" \
@@ -212,6 +213,34 @@ set +e
 CRC=$?
 set -e
 [ "$CRC" -eq 124 ] && log "claude -p hit the ${TIMEOUT_S}s wall — verifying what it managed."
+WALL_S=$(( $(date +%s) - START_S ))
+
+# --- PET-258: stamp real usage onto the row the run just logged --------------------------
+# The verdict row is appended by the boxed claude run ITSELF, which cannot know its final
+# usage — but the result JSON here does. Same token convention as engine-run.sh
+# (input + output + cache_creation + cache_read). Best-effort: a missing/garbled result
+# object just leaves tokens at 0, never blocks the tick.
+TOKENS="$(RUN_LOG="$RUN_LOG" python3 <<'PY'
+import json, os
+tot = 0
+try:
+    obj = json.load(open(os.environ["RUN_LOG"]))
+except Exception:
+    obj = {}
+u = (obj or {}).get("usage") or {}
+for k in ("input_tokens","output_tokens","cache_creation_input_tokens","cache_read_input_tokens"):
+    v = u.get(k)
+    if isinstance(v, (int, float)): tot += int(v)
+print(tot)
+PY
+)"
+if [ "${TOKENS:-0}" -gt 0 ]; then
+  "$SCRIPT_DIR/reviewer-stamp-usage.sh" --issue "$PET" --pr "$NUM" \
+    --tokens "$TOKENS" --wall-s "$WALL_S" 2>&1 | tail -1 >&2 || true
+  log "usage: tokens=$TOKENS wall_s=${WALL_S}s (stamped onto the verdict row)."
+else
+  log "usage: no token count in $RUN_LOG (rc=$CRC) — row keeps tokens=0."
+fi
 
 # --- ground truth: did a review by the bot actually post? --------------------------------
 VERDICT="$(gh api "repos/$REPO/pulls/$NUM/reviews" 2>/dev/null | BOT="$BOT_LOGIN" python3 -c 'import json,os,sys
