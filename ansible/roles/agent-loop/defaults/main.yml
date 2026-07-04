@@ -195,6 +195,17 @@ agent_loop_automerge_timer_enabled: false
 agent_loop_automerge_oncalendar: "*:0/10"
 agent_loop_automerge_script: "{{ agent_loop_workspace }}/iac/scripts/automerge-poll.sh"
 
+# --- Fleet needs-human push alerts (PET-256) --------------------------------------------
+# A systemd timer runs scripts/fleet-alert.sh as the loop user: ntfy push to Pedro's phone
+# on a new stalled/escalated_needs_human event, or a fleet PR unreviewed past the threshold.
+# Dedupe state means each condition fires once. DEFAULT OFF: flipping it on requires the
+# ntfy topic seeded in Vault kv/services/agent-loop (field `ntfy_topic`) — see
+# docs/runbooks/fleet-alerts.md. Flip per-host in host_vars (worker/engine go-live pattern).
+agent_loop_fleet_alert_timer_enabled: false
+agent_loop_fleet_alert_oncalendar: "*:0/10"
+agent_loop_fleet_alert_review_hours: 2
+agent_loop_fleet_alert_script: "{{ agent_loop_workspace }}/iac/scripts/fleet-alert.sh"
+
 # --- Engine loop (PET-184) -----------------------------------------------------------
 # The THIRD fleet tier: Claude Code (Sonnet-tier), headless, authoring NEW Bucket-B effect
 # `kind`s. It is the LOWEST-priority consumer of the shared Max quota (Pedro > reviewer >
