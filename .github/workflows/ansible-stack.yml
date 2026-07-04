@@ -46,6 +46,14 @@ on:
         required: false
         type: string
         default: ""
+      extra-vars:
+        description: >-
+          Optional JSON object of NON-SECRET extra-vars merged into the apply's -e @file
+          (e.g. '{"fleet_version": "<sha>"}'). Never put credentials here — they'd sit in
+          the workflow file and the run log.
+        required: false
+        type: string
+        default: ""
 
 env:
   VAULT_ADDR: https://192.168.50.223:8200
@@ -122,6 +130,7 @@ jobs:
           STACK: ${{ inputs.stack }}
           HOST_KEY_CHECKING: ${{ inputs.host-key-checking }}
           SSH_ARGS: ${{ inputs.ansible-ssh-args }}
+          EXTRA_VARS: ${{ inputs.extra-vars }}
         run: |
           umask 077
           CI="/tmp/ci-$STACK"
@@ -138,6 +147,8 @@ jobs:
           if os.environ.get("NEXUS_USERNAME"):
               ev["nexus_username"] = os.environ["NEXUS_USERNAME"]
               ev["nexus_password"] = os.environ["NEXUS_PASSWORD"]
+          # Caller-supplied NON-SECRET extra-vars (see the input's description).
+          ev.update(json.loads(os.environ.get("EXTRA_VARS") or "{}"))
           json.dump(ev, open(sys.argv[1], "w"))
           PY
           docker run --rm --network host \
