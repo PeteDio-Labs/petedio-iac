@@ -75,6 +75,14 @@ import shlex
 def out(k, v): print(f"{k}={shlex.quote(str(v))}")
 
 cat = os.environ.get("CATALOG_FILE", "").strip()
+pf_id = ""
+if not cat:
+    # Per-file form FIRST (PET-216 idiom used by the specs: "creates src/engine/jokers/the_family.ts").
+    # The flat regex below cannot match it, so before PET-261 these specs silently fell to the
+    # vouchers default and the run died on a sibling miss (PET-223/224 no-change loop).
+    m = re.search(r'src/engine/([A-Za-z0-9_]+)/([A-Za-z0-9_]+)\.ts', spec)
+    if m:
+        cat, pf_id = f"src/engine/{m.group(1)}.ts", m.group(2)
 if not cat:
     m = re.search(r'src/engine/([A-Za-z0-9_]+)\.ts', spec)
     cat = f"src/engine/{m.group(1)}.ts" if m else "src/engine/vouchers.ts"
@@ -84,7 +92,7 @@ out("TEST_REL", cat[:-3] + ".test.ts")
 new_id = os.environ.get("NEW_ID", "").strip()
 if not new_id:
     m = re.search(r'id\s*:\s*["\x27]([a-z0-9_]+)["\x27]', spec)
-    new_id = m.group(1) if m else ""
+    new_id = m.group(1) if m else pf_id  # per-file filename as the last-resort id
 out("NEW_ID", new_id)
 
 STOP = {"an", "a", "the", "one", "existing", "sibling", "entry", "test", "shape", "of",
