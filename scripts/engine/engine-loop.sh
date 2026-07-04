@@ -50,6 +50,28 @@ SLOT_LOCK="${ENGINE_SLOT_LOCK:-/run/lock/cc-slot}"
 export ENGINE_STATE_DIR="$STATE_DIR"
 mkdir -p "$STATE_DIR" "$QUEUE_DIR"
 
+# --- park telemetry (PET-257) ------------------------------------------------------------
+# A silently-parked engine reads as "idle" on the fleet view. Emit ONE cap_paused event per
+# contiguous parked stretch (state-change dedupe via .last-park — the timer re-parks every
+# tick, the stream must not get a row per tick) and ONE cap_resumed when the guards clear.
+EVENT="$SCRIPT_DIR/../agent-event.sh"
+emit() { [ -x "$EVENT" ] && "$EVENT" --agent engine "$@" >/dev/null 2>&1 || true; }
+LAST_PARK="$STATE_DIR/.last-park"
+park() { # park <reason> <detail> — log, emit once per stretch, exit 0 (parked, not an error)
+  if [ "$(cat "$LAST_PARK" 2>/dev/null)" != "$1" ]; then
+    printf '%s' "$1" >"$LAST_PARK"
+    emit --event cap_paused --detail "$2"
+  fi
+  log "$2 — parking."
+  exit 0
+}
+unpark() { # all guards passed — close a parked stretch (once)
+  if [ -s "$LAST_PARK" ]; then
+    emit --event cap_resumed --detail "guards clear (was: $(cat "$LAST_PARK" 2>/dev/null))"
+    : >"$LAST_PARK"
+  fi
+}
+
 meta_get() { grep -E "^$2=" "$1" 2>/dev/null | head -1 | cut -d= -f2- || true; }
 
 # --- subcommand: enqueue ----------------------------------------------------------------
@@ -84,7 +106,7 @@ fi
 [ $# -eq 0 ] || die "unknown subcommand '$1' (use: <none> | enqueue | status)."
 
 # --- guard 1: pause sentinel ------------------------------------------------------------
-[ -e "$PAUSE_FILE" ] && { log "PAUSED sentinel present ($PAUSE_FILE) — parking."; exit 0; }
+[ -e "$PAUSE_FILE" ] && park sentinel "PAUSED sentinel present ($PAUSE_FILE)"
 
 # --- guard 2: off-hours window ----------------------------------------------------------
 if [ -n "${ENGINE_OFFHOURS:-}" ]; then
@@ -92,18 +114,19 @@ if [ -n "${ENGINE_OFFHOURS:-}" ]; then
   in_window=false
   if [ "$start" -le "$end" ]; then [ "$now_h" -ge "$start" ] && [ "$now_h" -lt "$end" ] && in_window=true
   else [ "$now_h" -ge "$start" ] || [ "$now_h" -lt "$end" ] && in_window=true; fi   # wraps midnight
-  [ "$in_window" = true ] || { log "outside off-hours window ($ENGINE_OFFHOURS, now=${now_h}h) — parking."; exit 0; }
+  [ "$in_window" = true ] || park offhours "outside off-hours window ($ENGINE_OFFHOURS, now=${now_h}h)"
 fi
 
 # --- guard 3: reviewer preempt ----------------------------------------------------------
-[ -e "$REVIEWER_ACTIVE" ] && { log "reviewer active ($REVIEWER_ACTIVE) — yielding."; exit 0; }
+[ -e "$REVIEWER_ACTIVE" ] && park preempt "reviewer active ($REVIEWER_ACTIVE) — yielding"
 
 # --- guard 4: cc-slot flock (single automated Claude Code session on 242) ---------------
 if ! exec 9>"$SLOT_LOCK" 2>/dev/null; then
   SLOT_LOCK="$ENGINE_HOME/cc-slot.lock"; exec 9>"$SLOT_LOCK" || die "cannot open a cc-slot lock file."
 fi
-flock -n 9 || { log "cc-slot busy (another automated cc session holds it) — exiting."; exit 0; }
+flock -n 9 || park slot "cc-slot busy (another automated cc session holds it)"
 log "cc-slot acquired ($SLOT_LOCK)."
+unpark
 
 # --- auto-enqueue: poll engine-candidates (engine-ok Todo) into the queue (S1) -----------
 # S0→S1: instead of only draining a hand-filled queue, poll engine-candidates.sh (engine-ok

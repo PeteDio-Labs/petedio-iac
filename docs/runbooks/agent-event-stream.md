@@ -29,6 +29,8 @@ events, distinct lane.
 | `verdict_posted` |  | ✓ |  |  | reviewer posts approve/changes |
 | `changes_requested` |  | ✓ |  |  | reviewer kicks a PR back |
 | `stalled` |  |  | ✓ | ✓ | stall sweep releases a stale claim (PET-147) |
+| `cap_paused` |  |  |  | ✓ | quota / off-hours / preempt park — informational, self-resuming, NOT a needs-human alert (PET-257); one per contiguous parked stretch |
+| `cap_resumed` |  |  |  | ✓ | the park's guards cleared (PET-257) |
 | `escalated_needs_human` | ✓ | ✓ | ✓ | ✓ | an issue is set `needs-human` |
 | `run_exited` | ✓ | ✓ | ✓ | ✓ | iteration ends (clean or aborted) |
 
