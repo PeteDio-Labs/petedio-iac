@@ -22,3 +22,8 @@ agent_loop_reviewer_loop_timer_enabled: true
 # kv/services/agent-loop; dry-run on 242 verified (historical merged-unverdicted PRs
 # correctly settled into dedupe state, zero pending pushes).
 agent_loop_fleet_alert_timer_enabled: true
+# Bucket-A auto-merge (PET-185) — go-live 2026-07-04: petedio-merge[bot] App (id 4219171,
+# installation 144475243, scoped to co-latro-backend only) seeded in kv/services/agent-loop;
+# token mint + automerge-poll --dry-run verified on 242 (WOULD-MERGE #68/PET-224 — full
+# predicate green on real data).
+agent_loop_automerge_timer_enabled: true
