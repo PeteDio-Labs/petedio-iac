@@ -7,9 +7,11 @@
 # Vault Agent token; engine_* App identity seeded in kv/services/agent-loop; the engine's
 # pinned model proven by the PET-215 S0 run (phase=done).
 #
-# NB: the host clock is UTC, so agent_loop_engine_offhours "22-7" = 22:00–07:00 UTC
-# (= 17:00–02:00 America/Chicago). Adjust the window (or set TZ in the unit) if the
-# intent is Chicago nights.
+# NB: the host clock is UTC. Window changed 2026-07-04 per Pedro: the engine runs
+# 03:00–13:00 America/Chicago (sleep + morning), freeing evening quota for interactive
+# use — that's "8-18" UTC under CDT (UTC-5). When DST ends (CST, UTC-6) this drifts to
+# 4am–2pm Chicago; adjust to "9-19" then if the 3am start matters.
+agent_loop_engine_offhours: "8-18"
 #
 # Reviewer S1 (PET-247) graduated 2026-07-04: with the reviewer still S0 (hand-run), PRs
 # #65/#66/#67 sat unreviewed ~30h — exactly the deadlock the auto-launch was built for
