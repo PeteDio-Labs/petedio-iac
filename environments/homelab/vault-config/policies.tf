@@ -124,6 +124,63 @@ resource "vault_policy" "colatro_ci" {
   EOT
 }
 
+# colatro-admin-ci: the policy the co-latro-admin repo gets via the colatro-admin-ci JWT role
+# (auth.tf, PET-99). Least-privilege for the deploy-on-merge workflow (Workflow B) that builds
+# the 4 OpenFaaS functions, pushes them to Nexus, and `faas-cli deploy`s them to faasd (LXC 241):
+#   - kv/admin/db            DATABASE_URL wired into every function's env (stack.yml)
+#   - kv/services/admin      the co-latro <-> admin seam token (users fn: COLATRO_SERVICE_TOKEN)
+#   - kv/services/openfaas   the faasd gateway password (`faas-cli login`)
+#   - kv/services/nexus      push the 4 function images to Nexus (docker login)
+#   - kv/iac/lxc-ssh         SSH key to open the runner->241:8080 tunnel for the deploy
+#   - kv/poker/db            INVITES_TOKEN (the invites-fn Bearer secret; optional at rollout)
+# READ + per-prefix LIST only — a leaked token reads exactly these deploy inputs and mutates
+# nothing. Scoped tighter than the `ansible` policy (all services/*); no iac/* beyond the SSH key.
+resource "vault_policy" "colatro_admin_ci" {
+  name = "colatro-admin-ci"
+
+  policy = <<-EOT
+    path "kv/data/admin/db" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/admin" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/openfaas" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/nexus" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/poker/db" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/admin/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/poker/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
 # ansible: host-config runs read infra + service secrets.
 resource "vault_policy" "ansible" {
   name = "ansible"
