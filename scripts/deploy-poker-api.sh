@@ -54,6 +54,12 @@ MINIO_AK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=access_key kv/services/m
 MINIO_SK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=secret_key kv/services/minio-frontend)" || die "cannot read minio-frontend secret_key."
 [ -n "$NEXUS_P" ] && [ -n "$MINIO_AK" ] && [ -n "$MINIO_SK" ] || die "a required secret was empty."
 
+# PET-87: admin-portal UI bucket creds (co-latro-admin-ui) — OPTIONAL. When kv/services/minio-admin-ui
+# is unseeded the playbook skips the admin-UI sync (frontend-only deploy stays green). Seed with
+# scripts/reseed-minio-admin-ui-vault.sh to enable the admin.pdlab.dev portal sync.
+MINIO_ADMIN_AK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=access_key kv/services/minio-admin-ui 2>/dev/null || true)"
+MINIO_ADMIN_SK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=secret_key kv/services/minio-admin-ui 2>/dev/null || true)"
+
 step "Running configure-poker-api.yml against poker-api (230)"
 EXTRA_TAG=()
 [ -n "${IMAGE_TAG:-}" ] && EXTRA_TAG=(-e "backend_image_tag=$IMAGE_TAG")
@@ -66,7 +72,9 @@ cat > "$EVARS" <<JSON
   "nexus_username": $(printf '%s' "$NEXUS_U" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
   "nexus_password": $(printf '%s' "$NEXUS_P" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
   "minio_frontend_access_key": $(printf '%s' "$MINIO_AK" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
-  "minio_frontend_secret_key": $(printf '%s' "$MINIO_SK" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))')
+  "minio_frontend_secret_key": $(printf '%s' "$MINIO_SK" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
+  "minio_admin_ui_access_key": $(printf '%s' "$MINIO_ADMIN_AK" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
+  "minio_admin_ui_secret_key": $(printf '%s' "$MINIO_ADMIN_SK" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))')
 }
 JSON
 

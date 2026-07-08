@@ -50,6 +50,12 @@
     minio_frontend_bucket: "co-latro-frontend"
     mc_bin: /usr/local/bin/mc
     mc_url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+    # ---- Admin portal (PET-87): admin.pdlab.dev static UI + /function/* proxy on this same host ----
+    # The faasd gateway (LXC 241 :8080) is firewall-locked to source .230 (PET-204/F1), so the admin
+    # portal must be served from here. Static build (co-latro-admin/ui) synced from a MinIO bucket,
+    # mirroring the co-latro frontend. The invites Bearer is injected server-side (never to browser).
+    colatro_admin_web_root: /var/www/co-latro-admin
+    minio_admin_ui_bucket: "co-latro-admin-ui"
 
   pre_tasks:
     # Docker in an unprivileged LXC needs nesting + keyctl, set out-of-band on the
@@ -189,6 +195,18 @@
         mode: "0644"
       notify: Restart vault-agent-co-latro
 
+    # PET-87: the admin vhost's invites-Bearer nginx map is ALSO Vault-Agent-rendered (from the
+    # same kv/poker/db read) so the token never flows through the deploy — the ansible policy
+    # can't read kv/poker/*, only this Agent's poker-api AppRole can.
+    - name: Render the Vault Agent admin invites-map template (consul-template; holds no secret)
+      ansible.builtin.template:
+        src: templates/co-latro-admin-invites.conf.ctmpl.j2
+        dest: "{{ colatro_vault_agent_dir }}/co-latro-admin-invites.conf.ctmpl"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart vault-agent-co-latro
+
     - name: Render the Vault Agent config
       ansible.builtin.template:
         src: templates/vault-agent-co-latro.hcl.j2
@@ -297,6 +315,62 @@
         state: link
       notify: Reload nginx
 
+    # ---- Admin portal vhost (PET-87): admin.pdlab.dev, name-based, alongside co-latro ----
+    - name: Create the admin portal web root
+      ansible.builtin.file:
+        path: "{{ colatro_admin_web_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    # The invites-Bearer nginx map (/etc/nginx/conf.d/co-latro-admin-invites-token.conf) is rendered
+    # by the poker-api Vault Agent from kv/poker/db (see vault-agent-co-latro.hcl.j2), NOT here — the
+    # token must not flow through the deploy (ansible policy can't read kv/poker/*). The admin vhost
+    # references $co_latro_admin_invites_auth from that map, so `nginx -t` FAILS if it's absent —
+    # which would also block the co-latro site's reload. So we only drop+enable the admin vhost once
+    # the Vault Agent has rendered the map. If the secret_id isn't seeded, the admin portal is simply
+    # skipped (co-latro stays up); it comes online on the next run once secrets exist — same posture
+    # as the backend. mc-sync of the UI is likewise gated on this below.
+    - name: Wait for the Vault Agent to render the admin invites-Bearer nginx map
+      ansible.builtin.wait_for:
+        path: /etc/nginx/conf.d/co-latro-admin-invites-token.conf
+        timeout: 30
+      register: admin_map_wait
+      failed_when: false
+      when: poker_secret_id_stat.stat.exists
+
+    - name: Record whether the admin portal can be enabled (map present)
+      ansible.builtin.set_fact:
+        admin_portal_ready: "{{ poker_secret_id_stat.stat.exists and (admin_map_wait.state | default('') == 'present') }}"
+
+    - name: Warn if the admin portal is skipped (invites-Bearer map not yet rendered)
+      ansible.builtin.debug:
+        msg: >-
+          Admin portal (admin.pdlab.dev) skipped — the Vault Agent has not rendered
+          /etc/nginx/conf.d/co-latro-admin-invites-token.conf yet (seed the poker-api AppRole
+          secret_id so it can read kv/poker/db COLATRO_INVITES_TOKEN). co-latro is unaffected;
+          re-run once secrets are seeded.
+      when: not admin_portal_ready
+
+    - name: Drop the admin portal nginx site (admin.pdlab.dev vhost)
+      ansible.builtin.copy:
+        src: files/co-latro-admin-nginx.conf
+        dest: /etc/nginx/sites-available/co-latro-admin
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload nginx
+      when: admin_portal_ready
+
+    - name: Enable the admin portal site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/co-latro-admin
+        dest: /etc/nginx/sites-enabled/co-latro-admin
+        state: link
+      notify: Reload nginx
+      when: admin_portal_ready
+
     # The co-latro site is default_server; nginx allows only one per address, so the
     # distro's stock default site must go or `nginx -t` fails on a duplicate.
     - name: Remove the distro stock default site (default_server clash)
@@ -344,6 +418,42 @@
         owner: www-data
         group: www-data
         recurse: true
+
+    # ---- Admin UI dist sync from MinIO (PET-87) ----
+    # Separate bucket-scoped svcacct (kv/services/minio-admin-ui) — kv/services/minio-frontend is
+    # scoped to co-latro-frontend ONLY and can't read this bucket. Only runs when creds are
+    # provided (deploy-poker-api.sh resolves them from Vault); skipped otherwise so a frontend-only
+    # deploy stays green before the admin bucket is seeded.
+    - name: Configure the mc alias for the admin-ui bucket
+      ansible.builtin.command:
+        cmd: >-
+          {{ mc_bin }} alias set colatro-admin-minio {{ minio_frontend_endpoint }}
+          {{ minio_admin_ui_access_key }} {{ minio_admin_ui_secret_key }}
+      register: mc_admin_alias
+      changed_when: false
+      no_log: true
+      when:
+        - admin_portal_ready | default(false)
+        - minio_admin_ui_access_key is defined and minio_admin_ui_access_key | length > 0
+        - minio_admin_ui_secret_key is defined and minio_admin_ui_secret_key | length > 0
+
+    - name: Sync the admin UI dist from MinIO into the admin web root
+      ansible.builtin.command:
+        cmd: >-
+          {{ mc_bin }} mirror --overwrite --remove
+          colatro-admin-minio/{{ minio_admin_ui_bucket }} {{ colatro_admin_web_root }}
+      register: mc_admin_mirror
+      changed_when: "'Total: 0 B' not in mc_admin_mirror.stdout and mc_admin_mirror.stdout | length > 0"
+      when: mc_admin_alias is defined and not (mc_admin_alias.skipped | default(false))
+
+    - name: Fix admin web-root ownership after the sync
+      ansible.builtin.file:
+        path: "{{ colatro_admin_web_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        recurse: true
+      when: mc_admin_alias is defined and not (mc_admin_alias.skipped | default(false))
 
   handlers:
     - name: Reload systemd

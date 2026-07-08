@@ -47,6 +47,25 @@ module "cloudflare_ingress" {
     "co-latro.pdlab.dev" = {
       service = "http://192.168.50.230:80"
     }
+
+    # Co-latro Admin portal (PET-87). Served from the poker-api VM-230 as a NAME-BASED nginx
+    # vhost (server_name admin.pdlab.dev), alongside the default co-latro site: static admin UI
+    # + /function/* reverse-proxied to the faasd gateway on LXC 241 (230 is the only origin the
+    # gateway firewall allows — PET-204/F1). The tunnel forwards Host: admin.pdlab.dev to the
+    # origin (module sets origin_request.http_host_header), so the name-based vhost matches.
+    #
+    # Gated by Cloudflare Access, login via the ADMIN's Authentik user (NOT One-Time PIN):
+    # allowed_idps points at the Authentik OIDC IdP (cloudflare-oidc.tf), so the module sets
+    # auto_redirect_to_identity = true and the browser goes straight to the auth.pdlab.dev
+    # login page. access_emails still does the AUTHORIZATION (only this email passes) as
+    # defense-in-depth after Authentik authenticates — so the Authentik user MUST present this
+    # email address. Prereq: the manual Authentik app + kv/iac/authentik seed (cloudflare-oidc.tf).
+    "admin.pdlab.dev" = {
+      service       = "http://192.168.50.230:80"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+    }
   }
 }
 

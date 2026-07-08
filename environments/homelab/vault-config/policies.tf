@@ -32,6 +32,10 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
+    path "kv/data/iac/authentik" {
+      capabilities = ["read"]
+    }
+
     path "kv/data/poker/*" {
       capabilities = ["read"]
     }
