@@ -31,3 +31,15 @@ template {
   perms       = "0600"
   command     = "systemctl restart {{ colatro_container_name }}"
 }
+
+# PET-87: render the admin vhost's invites-Bearer nginx map from the SAME kv/poker/db read.
+# The token is injected into /function/* server-side by the admin.pdlab.dev vhost, never shipped
+# to the browser and never on the deploy path (the ansible policy can't read kv/poker/*). Lands as
+# a real 0640 file in conf.d (nginx can't include tmpfs at reload-time reliably across reboots).
+# On change, validate + reload nginx so a bad render never takes the site down.
+template {
+  source      = "{{ colatro_vault_agent_dir }}/co-latro-admin-invites.conf.ctmpl"
+  destination = "/etc/nginx/conf.d/co-latro-admin-invites-token.conf"
+  perms       = "0640"
+  command     = "nginx -t && systemctl reload nginx"
+}

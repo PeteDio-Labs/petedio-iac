@@ -1,0 +1,18 @@
+{# Vault Agent consul-template for the admin vhost's invites-Bearer nginx map (PET-87).
+   The {% raw %} block is passed verbatim to Vault Agent, which resolves COLATRO_INVITES_TOKEN
+   from kv/poker/db at runtime and renders this nginx map file on the box. The token is injected
+   into /function/* server-side (see co-latro-admin-nginx.conf) — never shipped to the browser,
+   never on the deploy path (the ansible policy can't read kv/poker/*; only the poker-api Vault
+   Agent AppRole can). Rendered to /etc/nginx/conf.d/co-latro-admin-invites-token.conf. -#}
+# {{ ansible_managed }} — rendered by Vault Agent from kv/poker/db (PET-87). Do not edit by hand.
+# nginx has no http-level `set`, so two maps synthesize the Authorization header value:
+#   1. constant -> raw token (Vault-rendered)   2. token -> "Bearer <token>" or "" if empty.
+# Empty token => empty header (safe: the invites function leaves enforcement off when unset).
+{% raw %}{{ with secret "kv/data/poker/db" }}map $host $co_latro_admin_invites_token {
+    default "{{ .Data.data.COLATRO_INVITES_TOKEN }}";
+}{{ end }}{% endraw %}
+
+map $co_latro_admin_invites_token $co_latro_admin_invites_auth {
+    ""      "";
+    default "Bearer $co_latro_admin_invites_token";
+}

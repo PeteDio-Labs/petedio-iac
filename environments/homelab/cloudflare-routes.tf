@@ -47,6 +47,27 @@ module "cloudflare_ingress" {
     "co-latro.pdlab.dev" = {
       service = "http://192.168.50.230:80"
     }
+
+    # Co-latro Admin portal (PET-87). Served from the poker-api VM-230 as a NAME-BASED nginx
+    # vhost (server_name admin.pdlab.dev), alongside the default co-latro site: static admin UI
+    # + /function/* reverse-proxied to the faasd gateway on LXC 241 (230 is the only origin the
+    # gateway firewall allows — PET-204/F1). The tunnel forwards Host: admin.pdlab.dev to the
+    # origin (module sets origin_request.http_host_header), so the name-based vhost matches.
+    #
+    # Gated by Cloudflare Access to a single operator email. This is the SAME posture as
+    # fleet.pdlab.dev today (email allow-list; login via Cloudflare One-Time PIN) — it fully
+    # protects the origin now. Authentik SSO (PET-38) is a one-line ADDITIVE follow-up once the
+    # `cloudflare_zero_trust_access_identity_provider.authentik` resource exists:
+    #     allowed_idps = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+    # That resource is NOT yet in Terraform (PET-38 shipped only the swap runbook — see
+    # docs/runbooks/fleet-activity-view.md §"Swap login to Authentik OIDC"), and it needs
+    # the Authentik-side OIDC app (manual, LXC 119) + Vault kv/iac/authentik seeding first.
+    # Until then `allowed_idps` is intentionally omitted (-> OTP), NOT a dangling reference.
+    "admin.pdlab.dev" = {
+      service       = "http://192.168.50.230:80"
+      access        = true
+      access_emails = ["pedelgadillo@gmail.com"]
+    }
   }
 }
 
