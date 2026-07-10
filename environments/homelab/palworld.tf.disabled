@@ -1,3 +1,27 @@
+# ============================================================================
+# DISABLED — LXC 234 is intentionally TORN DOWN pending the Palworld 1.0 launch.
+# (PET-170.) This file is named `.disabled` so Terraform does NOT load it: with
+# the `module "palworld"` gone from the graph, the apply-on-merge destroys CT 234.
+# The full config below is preserved (incl. the pinned mesh MAC) so relaunch is a
+# rename, not a rewrite.
+#
+# WHY: instead of upgrading the pre-1.0 build in place, we rebuild fresh AFTER 1.0
+# ships so the SteamCMD install pulls 1.0 directly — no in-place upgrade to babysit.
+# The pre-teardown world save (a ~1.2M pre-1.0 test world) was backed up off-box.
+#
+# >>> RELAUNCH (once Palworld 1.0 is released), two steps:
+#   1. `git mv palworld.tf.disabled palworld.tf` -> PR -> merge. terraform apply
+#      recreates CT 234 at the SAME pinned mesh MAC (below), so the .86 router
+#      reservation and clients still resolve `192.168.86.234:8211` unchanged.
+#   2. Provisioning does NOT auto-run: the `ansible-palworld` workflow is path-
+#      filtered to `ansible/**`, and a bare TF-file rename touches no ansible path.
+#      So AFTER the LXC is up, run the playbook to install 1.0 + start the unit:
+#        ansible-playbook -i ansible/inventory/hosts.yml \
+#          ansible/playbooks/configure-palworld.yml --limit palworld-234
+#      (Its binaries task runs `app_update 2394010 validate` -> pulls 1.0 fresh.)
+#   Verify the apply log directly (apply-on-merge hits live Proxmox — PET-170).
+# ============================================================================
+
 # palworld (LXC 234) — Palworld 1.0 dedicated game server. (PET-157)
 #
 # Greenfield game host, prepped so launch day (2026-07-10) is just "install the
@@ -53,13 +77,21 @@ module "palworld" {
   # LAN/uplink (has the gateway); vmbr0 carries the mesh segment with no gateway, exactly
   # what a secondary mesh NIC wants.
   #
-  # >>> OPERATOR — confirm before apply (router/DHCP = hard rule 6, operator-only):
-  #   - .234 mirrors the VMID (234) and the LAN octet (.234). Confirm it's free on the .86
-  #     mesh and add the STATIC DHCP reservation on the router so it can't be re-leased.
+  # eth1 carries a STATIC .86 address (below) — it does NOT DHCP, so it won't show in the
+  # router's lease table. mac_address pins the hwaddr (PET-262): it's the MAC the provider
+  # computed for the original net1, so a rebuild returns on the SAME address and the .86
+  # router reservation/exclusion + clients keep resolving 192.168.86.234 unchanged.
+  #
+  # >>> OPERATOR — router step (hard rule 6, operator-only):
+  #   - On the .86 MikroTik, reserve .234 for MAC BC:24:11:6C:1D:76 (static lease) or exclude
+  #     .234 from the DHCP pool so nothing else is ever handed this address. (No lease binds —
+  #     eth1 is static.)
   secondary_network_interface = {
     name         = "eth1"
     bridge       = "vmbr0"
     ipv4_address = "192.168.86.234/24"
+    # Pin the mesh-NIC MAC so the .86 address is stable across the teardown/relaunch (PET-262).
+    mac_address = "BC:24:11:6C:1D:76"
     # no ipv4_gateway — default route stays on eth0 (platform LAN)
   }
 }
