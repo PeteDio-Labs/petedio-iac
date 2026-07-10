@@ -36,3 +36,12 @@ variable "colatro_repos" {
     "PeteDio-Labs/co-latro-frontend",
   ]
 }
+
+# GitHub repo for the Palworld control panel (petedio-palworld-panel). Bound to its own
+# palworld-panel-cd JWT role (auth.tf) so the panel's deploy-on-merge gets ONLY the ansible
+# SSH key + its own service secret, never the broader iac/ansible scope. (PET-266)
+variable "palworld_panel_repo" {
+  description = "owner/name of the petedio-palworld-panel repo bound to the palworld-panel-cd JWT role."
+  type        = string
+  default     = "PeteDio-Labs/petedio-palworld-panel"
+}
