@@ -53,13 +53,22 @@ module "palworld" {
   # LAN/uplink (has the gateway); vmbr0 carries the mesh segment with no gateway, exactly
   # what a secondary mesh NIC wants.
   #
-  # >>> OPERATOR — confirm before apply (router/DHCP = hard rule 6, operator-only):
-  #   - .234 mirrors the VMID (234) and the LAN octet (.234). Confirm it's free on the .86
-  #     mesh and add the STATIC DHCP reservation on the router so it can't be re-leased.
+  # eth1 carries a STATIC .86 address (below) — it does NOT DHCP, so it won't show in the
+  # router's lease table. mac_address pins the hwaddr (PET-262): it's byte-identical to the
+  # MAC the provider already computed for the live net1, so `terraform apply` is a no-op for
+  # this NIC (no reconfigure, no restart) — it just records the value so a future rebuild
+  # can't regenerate a different MAC and orphan the router-side reservation/exclusion.
+  #
+  # >>> OPERATOR — router step (hard rule 6, operator-only):
+  #   - .234 mirrors the VMID (234) and the LAN octet (.234). On the .86 MikroTik, reserve
+  #     .234 for MAC BC:24:11:6C:1D:76 (static lease) or exclude .234 from the DHCP pool so
+  #     nothing else is ever handed this address. (No lease binds — eth1 is static.)
   secondary_network_interface = {
     name         = "eth1"
     bridge       = "vmbr0"
     ipv4_address = "192.168.86.234/24"
+    # Pin the live mesh-NIC MAC so the .86 address is stable across rebuilds (PET-262).
+    mac_address = "BC:24:11:6C:1D:76"
     # no ipv4_gateway — default route stays on eth0 (platform LAN)
   }
 }
