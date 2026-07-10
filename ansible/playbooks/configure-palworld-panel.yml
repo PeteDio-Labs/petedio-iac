@@ -77,6 +77,15 @@
         mode: "0755"
 
     # ---- Bun runtime (pinned dir; the app has no runtime deps, bun runs the TS directly) ----
+    - name: Install runtime prerequisites (unzip + curl are required by the bun installer)
+      ansible.builtin.apt:
+        name:
+          - unzip
+          - curl
+          - ca-certificates
+        state: present
+        update_cache: true
+
     - name: Check whether bun is already installed
       ansible.builtin.stat:
         path: "{{ bun_bin }}"
