@@ -35,8 +35,12 @@ module "nexus" {
   ipv4_address = "192.168.50.111/24"
   target_node  = var.target_node
 
-  cores            = 4
-  memory_dedicated = 2048
+  cores = 4
+  # 2048 (the as-imported value) livelocked the container in reclaim once the Nexus
+  # JVM's effective -Xmx4g heap filled it (PET-272 outage: memory PSI some=98%,
+  # 133B direct pgscans, CF 524 at the edge). JVM worst case is ~6.5G committed
+  # (4g heap + 2g direct + metaspace), so 8192 leaves real headroom.
+  memory_dedicated = 8192
   memory_swap      = 512
   disk_size        = 40
   datastore_id     = "sdb3-storage"
