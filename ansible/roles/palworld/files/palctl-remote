@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# palctl-remote — the forced command for the control-panel's restricted SSH key (PET-266).
+# authorized_keys pins command="/usr/local/bin/palctl-remote", so whatever the panel sends
+# arrives in $SSH_ORIGINAL_COMMAND and is allow-listed here — the key can ONLY do these.
+set -euo pipefail
+
+case "${SSH_ORIGINAL_COMMAND:-}" in
+  start)
+    exec systemctl start palworld
+    ;;
+  status)
+    exec systemctl is-active palworld
+    ;;
+  *)
+    echo "palctl-remote: denied — only 'start' or 'status' are permitted" >&2
+    exit 1
+    ;;
+esac

@@ -91,6 +91,9 @@
     owner: "{{ palworld_user }}"
     group: "{{ palworld_group }}"
     mode: "0644"
+  # A config change only takes effect on restart. This is byte-identical (no restart) on a
+  # passwordless converge — REST keys are only emitted when an AdminPassword is set (PET-266).
+  notify: Restart palworld
 
 - name: Install the Palworld systemd unit
   ansible.builtin.template:
@@ -140,6 +143,46 @@
   when:
     - palworld_firewall_enabled | bool
     - palworld_mesh_enabled | bool
+
+# --- Control panel: REST port + SSH start-hook (PET-266) -------------------------
+# Open the REST API port (tcp) to ONLY the control-panel host (LXC 235). REST stays off
+# the public/mesh rules — it's admin surface, never LAN-wide.
+- name: Allow the Palworld REST API port from the control panel only (UFW)
+  community.general.ufw:
+    rule: allow
+    port: "{{ palworld_rest_api_port }}"
+    proto: tcp
+    from_ip: "{{ palworld_panel_ip }}"
+    comment: "Palworld REST API - control panel only (PET-266)"
+  when:
+    - palworld_firewall_enabled | bool
+    - palworld_rest_api_enabled | bool
+
+# The panel starts a stopped server over SSH (REST is unavailable then). Install a forced
+# command so its key can ONLY run `systemctl start palworld`. Skipped unless a pubkey is
+# provided (deploy-palworld.sh passes it), so a keyless converge installs nothing.
+- name: Install the palctl-remote forced-command wrapper (panel start-hook)
+  ansible.builtin.copy:
+    src: palctl-remote
+    dest: /usr/local/bin/palctl-remote
+    owner: root
+    group: root
+    mode: "0755"
+  when: palworld_panel_ssh_pubkey | length > 0
+
+- name: Authorize the control panel's key for root, pinned to the start-hook
+  ansible.builtin.lineinfile:
+    path: /root/.ssh/authorized_keys
+    create: true
+    owner: root
+    group: root
+    mode: "0600"
+    # Match on the key body so a rotated key updates in place instead of appending.
+    regexp: "{{ palworld_panel_ssh_pubkey | regex_escape }}\\s*$"
+    line: >-
+      command="/usr/local/bin/palctl-remote",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding
+      {{ palworld_panel_ssh_pubkey }}
+  when: palworld_panel_ssh_pubkey | length > 0
 
 # --- Binaries + service ----------------------------------------------------------
 # Install/update the dedicated-server binaries via SteamCMD. No `creates:` guard — we

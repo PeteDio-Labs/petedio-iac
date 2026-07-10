@@ -6,3 +6,14 @@
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
+
+# Restart the dedicated server to pick up a PalWorldSettings.ini change (e.g. enabling REST).
+# Only meaningful once the unit exists + is managed — a keyless/binaries-less converge never
+# notifies this with a real change, and the guard keeps it from firing on a not-yet-started unit.
+- name: Restart palworld
+  ansible.builtin.systemd:
+    name: "{{ palworld_service_name }}"
+    state: restarted
+  when:
+    - palworld_install_binaries | bool
+    - palworld_enable_service | bool

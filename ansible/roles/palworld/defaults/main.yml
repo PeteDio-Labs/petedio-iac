@@ -38,6 +38,26 @@ palworld_server_password: ""
 palworld_rcon_enabled: false
 palworld_rcon_port: 25575
 
+# --- REST API (PET-266) ----------------------------------------------------------
+# The control panel (LXC 235) drives shutdown/announce/status over the built-in REST
+# API (RCON is deprecated in 1.0). REST needs an AdminPassword, so the .ini template
+# only emits RESTAPIEnabled=True when palworld_admin_password is actually set — which
+# means a passwordless converge (e.g. the ansible-palworld.yml apply-on-merge, which
+# passes no secrets) leaves the .ini byte-identical and does NOT enable REST or restart
+# the server. Enable it with an explicit operator run that provides the password:
+#   scripts/deploy-palworld.sh   (resolves the secrets from Vault kv/services/palworld-panel)
+palworld_rest_api_enabled: true
+palworld_rest_api_port: 8212
+# Open the REST port (tcp) to ONLY the control-panel host — never public/mesh/LAN-wide.
+palworld_panel_ip: 192.168.50.235
+
+# --- Panel start-hook (PET-266) --------------------------------------------------
+# The panel can't use REST to START the server (it's down then), so it SSHes in and a
+# forced command runs `systemctl start palworld`. We authorize the panel's PUBLIC key
+# for root with that forced command (nothing else is runnable with it). Empty by default
+# so a passwordless/keyless converge installs nothing; deploy-palworld.sh passes the key.
+palworld_panel_ssh_pubkey: ""
+
 # --- Firewall -------------------------------------------------------------------
 # Access is intended over Tailscale, so the PUBLIC LAN/WAN rule is off by default.
 # Turn on only if you really want the game port reachable on the LAN.
