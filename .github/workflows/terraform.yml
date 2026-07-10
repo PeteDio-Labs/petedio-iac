@@ -68,6 +68,22 @@ jobs:
       - name: Validate
         run: terraform validate
 
+      # vault-config is a SEPARATE root (own state, operator-applied via scripts/apply-vault-config.sh
+      # — deliberately NEVER in the apply job below; the Vault root token must not touch CI). The
+      # `fmt -check -recursive` above already covers its formatting, but `terraform validate` is NOT
+      # recursive — it only checks the environments/homelab root. So validate the vault-config root
+      # explicitly here, or a malformed vault-config .tf merges with a green `validate` and only
+      # fails later at the operator's manual plan (PET-266: PR #153 was vault-config-only and its
+      # `validate` never touched the changed dir). Same hosted/no-creds posture; -backend=false
+      # skips MinIO, VAULT_ADDR (dummy, above) lets the vault provider instantiate without connecting.
+      - name: Init vault-config (no backend)
+        working-directory: environments/homelab/vault-config
+        run: terraform init -input=false -backend=false
+
+      - name: Validate vault-config
+        working-directory: environments/homelab/vault-config
+        run: terraform validate
+
   # --- Privileged apply ---------------------------------------------------------------
   # Self-hosted, INSIDE the homelab. Runs ONLY on push to main (post-merge, trusted code) and
   # is gated behind the hosted `validate` job. The only job that mints Vault creds + touches
