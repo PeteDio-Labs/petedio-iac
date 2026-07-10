@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+# Palworld control panel — Bun backend + nginx SPA (images from Nexus). The frontend :80 is
+# the origin behind the Cloudflare tunnel (palworld.pdlab.dev). Rendered by
+# configure-palworld-panel.yml on LXC 235 (PET-266).
+
+services:
+  backend:
+    image: "{{ backend_image }}:{{ palworld_panel_image_tag }}"
+    container_name: palworld-panel-backend
+    env_file:
+      - "{{ panel_dir }}/backend.env"       # PALWORLD_ADMIN_PASSWORD (secret)
+    environment:
+      PALWORLD_HOST: "{{ palworld_target_host }}"
+      PALWORLD_REST_PORT: "{{ palworld_rest_port }}"
+      PALWORLD_SSH_HOST: "{{ palworld_target_host }}"
+      PALWORLD_SSH_USER: "root"
+      PALWORLD_SSH_KEY: "/app/secrets/panel_ssh_key"
+      DEFAULT_COUNTDOWN_MINUTES: "{{ palworld_panel_default_countdown }}"
+    volumes:
+      - "{{ panel_secrets_dir }}/panel_ssh_key:/app/secrets/panel_ssh_key:ro"
+    networks: [panel]
+    restart: unless-stopped
+
+  frontend:
+    image: "{{ frontend_image }}:{{ palworld_panel_image_tag }}"
+    container_name: palworld-panel-frontend
+    ports:
+      - "{{ panel_web_port }}:80"
+    depends_on:
+      - backend
+    networks: [panel]
+    restart: unless-stopped
+
+networks:
+  panel:
+    driver: bridge

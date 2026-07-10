@@ -66,6 +66,19 @@ module "cloudflare_ingress" {
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["pedelgadillo@gmail.com"]
     }
+
+    # Palworld control panel (PET-266). nginx origin on the panel LXC 235 (serves the SPA +
+    # proxies /api to the Bun backend). Gated by Cloudflare Access, login via Authentik OIDC
+    # (same pattern as admin.pdlab.dev): allowed_idps -> the module sets auto_redirect_to_identity
+    # so the browser goes straight to auth.pdlab.dev. access_emails does the AUTHORIZATION after
+    # Authentik authenticates — sonia (created in Authentik) + pedro. The panel can shut the game
+    # server down, so keep this list tight.
+    "palworld.pdlab.dev" = {
+      service       = "http://192.168.50.235:80"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["soniasdelgadillo@gmail.com", "pedelgadillo@gmail.com"]
+    }
   }
 }
 

@@ -1,0 +1,180 @@
+---
+# configure-palworld-panel.yml — roll out the Palworld control panel onto LXC 235. (PET-266)
+#
+# Post-create against the bare Debian UNPRIVILEGED LXC that Terraform stands up
+# (environments/homelab/palworld-panel.tf). Installs Docker CE, logs in to Nexus, writes the
+# panel's secrets (Palworld AdminPassword + the restricted SSH key), and runs the two-container
+# compose stack (Bun backend + nginx SPA, pulled from Nexus). The frontend :80 is the origin
+# behind the Cloudflare tunnel at palworld.pdlab.dev (Authentik-gated, cloudflare-routes.tf).
+#
+# Container features (nesting/keyctl) are NOT set here — the bpg/proxmox provider can't set LXC
+# features{} over an API token (root@pam gotcha, docs/GOTCHAS.md). Run scripts/lxc-features-235.sh
+# FIRST; the container simply won't run without them (the compose task errors clearly if so).
+#
+# SECRETS: resolved BEFORE the run by scripts/deploy-palworld-panel.sh and passed as no_log
+# extra-vars (never argv, never logged):
+#   nexus_username / nexus_password  (Vault kv/services/nexus)      — docker login
+#   palworld_admin_password          (Vault kv/services/palworld-panel) — REST Basic auth
+#   panel_ssh_private_key            (Vault kv/services/palworld-panel) — the start-hook key
+# Run via:  ./scripts/deploy-palworld-panel.sh   (NOT applied on merge — the shared CI can't
+# supply these secrets, so this stays an operator action, like deploy-poker-api.sh.)
+#
+# Requires the community.docker collection on the controller:
+#   ansible-galaxy collection install -r ansible/requirements.yml
+
+- name: Configure Palworld control-panel host (LXC 235)
+  hosts: palworld-panel
+  become: true
+
+  vars:
+    panel_dir: /etc/palworld-panel
+    panel_secrets_dir: /etc/palworld-panel/secrets
+    nexus_registry: docker.pdlab.dev
+    backend_image: docker.pdlab.dev/palworld-panel-backend
+    frontend_image: docker.pdlab.dev/palworld-panel-frontend
+    # Override with -e palworld_panel_image_tag=<sha> for a pinned / rollback-able deploy.
+    palworld_panel_image_tag: latest
+    # The Palworld server this panel controls.
+    palworld_target_host: 192.168.50.234
+    palworld_rest_port: 8212
+    panel_web_port: 80
+    palworld_panel_default_countdown: 5
+
+  pre_tasks:
+    # Docker in an unprivileged LXC needs nesting + keyctl, set out-of-band on the node
+    # (scripts/lxc-features-235.sh). We can't reliably detect it from inside; the real test
+    # is the compose start below. Informational probe only.
+    - name: Probe the kernel keyring (informational; keyctl CLI may be absent)
+      ansible.builtin.command: keyctl show
+      register: panel_keyctl_probe
+      failed_when: false
+      changed_when: false
+
+    - name: Assert required secret extra-vars were provided (use scripts/deploy-palworld-panel.sh)
+      ansible.builtin.assert:
+        that:
+          - nexus_username is defined and nexus_username | length > 0
+          - nexus_password is defined and nexus_password | length > 0
+          - palworld_admin_password is defined and palworld_admin_password | length > 0
+          - panel_ssh_private_key is defined and panel_ssh_private_key | length > 0
+        fail_msg: >-
+          Missing secret extra-vars. Don't run this playbook directly — run
+          scripts/deploy-palworld-panel.sh, which resolves them from Vault and passes them in.
+      no_log: true
+
+  tasks:
+    # ---- Docker CE + compose plugin ----
+    - name: Install prerequisites for the Docker apt repo (+ keyutils for the probe)
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - curl
+          - keyutils
+        state: present
+        update_cache: true
+
+    - name: Add the Docker apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /usr/share/keyrings/docker-archive-keyring.asc
+        mode: "0644"
+
+    - name: Add the Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/usr/share/keyrings/docker-archive-keyring.asc]
+          https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+
+    - name: Install Docker CE + the compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker is started and enabled
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    # ---- Nexus registry login ----
+    - name: Log in to the Nexus Docker registry
+      ansible.builtin.command:
+        cmd: "docker login {{ nexus_registry }} -u {{ nexus_username }} --password-stdin"
+        stdin: "{{ nexus_password }}"
+      register: docker_login
+      changed_when: "'Login Succeeded' in docker_login.stdout"
+      no_log: true
+
+    # ---- Panel config + secrets (root-only, 0600) ----
+    - name: Create the panel config + secrets directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      loop:
+        - "{{ panel_dir }}"
+        - "{{ panel_secrets_dir }}"
+
+    - name: Write the restricted SSH private key (used to start the server)
+      ansible.builtin.copy:
+        content: "{{ panel_ssh_private_key }}\n"
+        dest: "{{ panel_secrets_dir }}/panel_ssh_key"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Restart palworld-panel
+
+    - name: Render the backend secret env-file (Palworld AdminPassword)
+      ansible.builtin.template:
+        src: templates/palworld-panel.env.j2
+        dest: "{{ panel_dir }}/backend.env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: Restart palworld-panel
+
+    - name: Render the docker-compose stack
+      ansible.builtin.template:
+        src: templates/docker-compose-palworld-panel.yml.j2
+        dest: "{{ panel_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart palworld-panel
+
+    # ---- Bring the stack up (pulls latest images from Nexus) ----
+    - name: Pull + start the panel compose stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ panel_dir }}"
+        pull: always
+        state: present
+
+    # ---- Firewall: allow the frontend port from the LAN (the CF tunnel connector reaches
+    # origins over the LAN). Docker publishes on the host, which can bypass the INPUT chain,
+    # so this is defense-in-depth / explicit intent. ----
+    - name: Allow the panel web port from the LAN (UFW)
+      community.general.ufw:
+        rule: allow
+        port: "{{ panel_web_port }}"
+        proto: tcp
+        from_ip: 192.168.50.0/24
+        comment: "Palworld control panel web (PET-266)"
+
+  handlers:
+    - name: Restart palworld-panel
+      community.docker.docker_compose_v2:
+        project_src: "{{ panel_dir }}"
+        state: restarted
