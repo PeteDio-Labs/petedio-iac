@@ -146,6 +146,28 @@ resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   token_ttl      = 900
 }
 
+# colatro-admin-ci role → colatro-admin-ci policy (PET-99). The co-latro-admin repo's deploy
+# workflow (Workflow B) builds the 4 OpenFaaS functions, pushes them to Nexus, and
+# `faas-cli deploy`s them to the faasd gateway on LXC 241 — on push to main (deploy-on-merge).
+# Separate role/policy so the admin repo gets ONLY the admin-deploy creds (admin DB URL, the
+# seam token, the faasd gateway password, Nexus push, LXC SSH to tunnel to :8080) and never the
+# colatro-ci / iac scope. MAIN-PUSH ONLY: bound to exactly the main-push sub (NOT pull_request —
+# the co-latro-admin PR job is a no-secrets typecheck), so no PR/fork run can mint this token.
+# Matches the openfaas-ci / github-actions main-only pattern above.
+resource "vault_jwt_auth_backend_role" "colatro_admin_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "colatro-admin-ci"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = "repo:${var.colatro_admin_repo}:ref:refs/heads/main"
+  }
+  token_policies = [vault_policy.colatro_admin_ci.name]
+  token_ttl      = 900
+}
+
 # vault-snapshot role → vault-snapshot policy (PET-109). The raft-snapshot systemd timer
 # on .223 (Ansible role vault-snapshot) logs in with this AppRole to take + upload a
 # snapshot. Short token TTL — the job runs in seconds and re-auths each run; the secret_id
