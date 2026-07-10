@@ -1,0 +1,188 @@
+---
+# configure-palworld-panel.yml — deploy the Palworld control panel CO-LOCATED on the game
+# server LXC 234, as a native Bun systemd service (PET-266).
+#
+# WHY CO-LOCATED / NATIVE (not a separate Docker LXC): the separate-LXC path needs Docker
+# nesting, which must be set over Proxmox-node SSH — an operator/supervised step. Running the
+# panel natively on 234 needs none of that: REST is localhost, and "start" is an SSH-to-localhost
+# forced command (systemctl start palworld) using the same restricted key the palworld role
+# installs. The panel serves the SPA + /api on :8080; the Cloudflare tunnel points
+# palworld.pdlab.dev at it (Authentik-gated, cloudflare-routes.tf).
+#
+# The app itself is petedio-palworld-panel (Bun; no runtime deps, no build — bun runs the TS
+# directly). Its source is copied from the controller checkout (palworld_panel_src).
+#
+# SECRETS (resolved by scripts/deploy-palworld-panel.sh, passed as no_log extra-vars):
+#   palworld_admin_password  (Vault kv/services/palworld-panel) — REST Basic auth (== 234's AdminPassword)
+#   panel_ssh_private_key    (Vault kv/services/palworld-panel) — the start-hook key (root@localhost)
+# Run via:  ./scripts/deploy-palworld-panel.sh
+
+- name: Deploy the Palworld control panel on 234 (native Bun service)
+  hosts: palworld
+  become: true
+
+  vars:
+    panel_app_dir: /opt/palworld-panel
+    panel_user: palpanel
+    panel_group: palpanel
+    panel_port: 8080
+    bun_install_dir: /opt/bun
+    bun_bin: /opt/bun/bin/bun
+    # Controller path to the petedio-palworld-panel checkout (backend/ + frontend/).
+    palworld_panel_src: "{{ lookup('env', 'HOME') }}/petedio/palworld-panel"
+    palworld_target_host: 127.0.0.1
+    palworld_rest_port: 8212
+    panel_default_countdown: 5
+
+  pre_tasks:
+    - name: Assert required secret extra-vars were provided (use scripts/deploy-palworld-panel.sh)
+      ansible.builtin.assert:
+        that:
+          - palworld_admin_password is defined and palworld_admin_password | length > 0
+          - panel_ssh_private_key is defined and panel_ssh_private_key | length > 0
+        fail_msg: >-
+          Missing secret extra-vars. Run scripts/deploy-palworld-panel.sh, which resolves them
+          from Vault (kv/services/palworld-panel) and passes them in.
+      no_log: true
+
+    - name: Assert the app source is present on the controller
+      ansible.builtin.stat:
+        path: "{{ palworld_panel_src }}/backend/src/index.ts"
+      delegate_to: localhost
+      become: false
+      register: panel_src_stat
+      failed_when: not panel_src_stat.stat.exists
+
+  tasks:
+    - name: Create the panel service group
+      ansible.builtin.group:
+        name: "{{ panel_group }}"
+        system: true
+
+    - name: Create the panel service user (no login shell)
+      ansible.builtin.user:
+        name: "{{ panel_user }}"
+        group: "{{ panel_group }}"
+        home: "{{ panel_app_dir }}"
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: false
+
+    - name: Create the panel app directory
+      ansible.builtin.file:
+        path: "{{ panel_app_dir }}"
+        state: directory
+        owner: "{{ panel_user }}"
+        group: "{{ panel_group }}"
+        mode: "0755"
+
+    # ---- Bun runtime (pinned dir; the app has no runtime deps, bun runs the TS directly) ----
+    - name: Install runtime prerequisites (unzip + curl are required by the bun installer)
+      ansible.builtin.apt:
+        name:
+          - unzip
+          - curl
+          - ca-certificates
+        state: present
+        update_cache: true
+
+    - name: Check whether bun is already installed
+      ansible.builtin.stat:
+        path: "{{ bun_bin }}"
+      register: bun_stat
+
+    - name: Install bun (official installer, to a fixed system path)
+      ansible.builtin.shell:
+        cmd: "set -o pipefail; curl -fsSL https://bun.sh/install | BUN_INSTALL={{ bun_install_dir }} bash"
+        creates: "{{ bun_bin }}"
+      when: not bun_stat.stat.exists
+
+    - name: Make bun world-readable/executable
+      ansible.builtin.file:
+        path: "{{ bun_bin }}"
+        mode: "0755"
+
+    # ---- App source (backend + frontend) from the controller checkout ----
+    - name: Copy the backend source
+      ansible.builtin.copy:
+        src: "{{ palworld_panel_src }}/backend/"
+        dest: "{{ panel_app_dir }}/backend/"
+        owner: "{{ panel_user }}"
+        group: "{{ panel_group }}"
+        mode: "0644"
+        directory_mode: "0755"
+      notify: Restart palworld-panel
+
+    - name: Copy the frontend (static SPA)
+      ansible.builtin.copy:
+        src: "{{ palworld_panel_src }}/frontend/public/"
+        dest: "{{ panel_app_dir }}/frontend/public/"
+        owner: "{{ panel_user }}"
+        group: "{{ panel_group }}"
+        mode: "0644"
+        directory_mode: "0755"
+      notify: Restart palworld-panel
+
+    # ---- Secrets: the REST admin password (env-file) + the start-hook private key ----
+    - name: Render the backend secret env-file (AdminPassword)
+      ansible.builtin.template:
+        src: templates/palworld-panel.env.j2
+        dest: "{{ panel_app_dir }}/backend.env"
+        owner: "{{ panel_user }}"
+        group: "{{ panel_group }}"
+        mode: "0600"
+      no_log: true
+      notify: Restart palworld-panel
+
+    - name: Install the start-hook private key
+      ansible.builtin.copy:
+        content: "{{ panel_ssh_private_key }}\n"
+        dest: "{{ panel_app_dir }}/panel_ssh_key"
+        owner: "{{ panel_user }}"
+        group: "{{ panel_group }}"
+        mode: "0600"
+      no_log: true
+      notify: Restart palworld-panel
+
+    # ---- systemd unit ----
+    - name: Install the palworld-panel systemd unit
+      ansible.builtin.template:
+        src: templates/palworld-panel.service.j2
+        dest: /etc/systemd/system/palworld-panel.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart palworld-panel
+
+    - name: Flush handlers so the unit + files are in place before enable/start
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable + start the palworld-panel service
+      ansible.builtin.systemd:
+        name: palworld-panel
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # ---- Firewall: allow the panel web port from the LAN (CF tunnel connector reaches it there) ----
+    - name: Allow the panel web port from the LAN (UFW)
+      community.general.ufw:
+        rule: allow
+        port: "{{ panel_port }}"
+        proto: tcp
+        from_ip: 192.168.50.0/24
+        comment: "Palworld control panel web (PET-266)"
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart palworld-panel
+      ansible.builtin.systemd:
+        name: palworld-panel
+        state: restarted
+      # Only once the unit exists (first run installs it before this can fire meaningfully).
+      failed_when: false
