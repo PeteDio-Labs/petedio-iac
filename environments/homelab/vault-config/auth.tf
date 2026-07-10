@@ -146,6 +146,25 @@ resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   token_ttl      = 900
 }
 
+# palworld-panel-cd role → palworld-panel-cd policy. APPLY-on-merge only: the panel repo's
+# deploy.yml runs configure-palworld-panel.yml against LXC 234 from the runner on push to main.
+# Bound to ONLY the panel repo's main-push sub (the deploy workflow is push-to-main; no PR job
+# mints a token). Gets ONLY the ansible SSH key (to reach 234) + the panel's own service secret
+# (REST admin password + the restricted start-hook key). Mirrors openfaas-ci. (PET-266)
+resource "vault_jwt_auth_backend_role" "palworld_panel_cd" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "palworld-panel-cd"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = "repo:${var.palworld_panel_repo}:ref:refs/heads/main"
+  }
+  token_policies = [vault_policy.palworld_panel_cd.name]
+  token_ttl      = 900
+}
+
 # vault-snapshot role → vault-snapshot policy (PET-109). The raft-snapshot systemd timer
 # on .223 (Ansible role vault-snapshot) logs in with this AppRole to take + upload a
 # snapshot. Short token TTL — the job runs in seconds and re-auths each run; the secret_id

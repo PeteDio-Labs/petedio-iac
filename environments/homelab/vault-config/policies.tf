@@ -216,6 +216,32 @@ resource "vault_policy" "openfaas_ci" {
   EOT
 }
 
+# palworld-panel-cd: the petedio-palworld-panel repo's CD role — deploy.yml runs the native
+# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the ansible
+# SSH key (to reach 234) and the panel's own service secret (REST admin password + restricted
+# start-hook key). NOT the broader ci-read/ansible scope. (PET-266)
+resource "vault_policy" "palworld_panel_cd" {
+  name = "palworld-panel-cd"
+
+  policy = <<-EOT
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/palworld-panel" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
 # agent-loop: the autonomous loop host (LXC 242) reads ONLY its own service secret
 # (proxmox_ro_token now, github_token later) — strictly narrower than `ansible` (all
 # services/*). A Vault Agent on the box auto-auths with the agent-loop AppRole (auth.tf)
