@@ -1,0 +1,30 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Palworld control panel (PET-266) — graceful shutdown/start web app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ panel_user }}
+Group={{ panel_group }}
+WorkingDirectory={{ panel_app_dir }}
+EnvironmentFile={{ panel_app_dir }}/backend.env
+Environment=PORT={{ panel_port }}
+Environment=PUBLIC_DIR={{ panel_app_dir }}/frontend/public
+Environment=PALWORLD_HOST={{ palworld_target_host }}
+Environment=PALWORLD_REST_PORT={{ palworld_rest_port }}
+Environment=PALWORLD_SSH_HOST={{ palworld_target_host }}
+Environment=PALWORLD_SSH_USER=root
+Environment=PALWORLD_SSH_KEY={{ panel_app_dir }}/panel_ssh_key
+Environment=DEFAULT_COUNTDOWN_MINUTES={{ panel_default_countdown }}
+ExecStart={{ bun_bin }} {{ panel_app_dir }}/backend/src/index.ts
+Restart=on-failure
+RestartSec=3
+# Light hardening (the service needs outbound to localhost REST + ssh).
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target
