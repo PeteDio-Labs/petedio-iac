@@ -84,6 +84,34 @@
     group: "{{ palworld_group }}"
     mode: "0755"
 
+# The CI apply cannot read the game passwords (its Vault role grants only lxc-ssh +
+# Nexus creds), so `palworld_admin_password`/`palworld_server_password` arrive empty on
+# merge-applies. A converge must never blank a password already live on the host: when
+# a password var is empty, re-use whatever the existing ini has (brownfield-safe; the
+# operator can still rotate by passing the extra-var). (PET-278)
+- name: Read the existing PalWorldSettings.ini (password preservation)
+  ansible.builtin.slurp:
+    src: "{{ palworld_server_dir }}/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini"
+  register: palworld_existing_ini
+  failed_when: false
+  no_log: true
+
+- name: Preserve the live AdminPassword when none was supplied
+  ansible.builtin.set_fact:
+    palworld_admin_password: "{{ (palworld_existing_ini.content | b64decode | regex_search('AdminPassword=\"([^\"]*)\"', '\\1') or [''])| first }}"
+  when:
+    - palworld_admin_password | length == 0
+    - palworld_existing_ini.content is defined
+  no_log: true
+
+- name: Preserve the live ServerPassword when none was supplied
+  ansible.builtin.set_fact:
+    palworld_server_password: "{{ (palworld_existing_ini.content | b64decode | regex_search('ServerPassword=\"([^\"]*)\"', '\\1') or [''])| first }}"
+  when:
+    - palworld_server_password | length == 0
+    - palworld_existing_ini.content is defined
+  no_log: true
+
 - name: Template PalWorldSettings.ini (tunables from role vars)
   ansible.builtin.template:
     src: PalWorldSettings.ini.j2

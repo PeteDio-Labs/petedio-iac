@@ -4,4 +4,4 @@
 ; play, not this file by hand. Palworld reads the whole config from the single
 ; OptionSettings=(...) line; keys omitted here fall back to the server's defaults.
 [/Script/Pal.PalGameWorldSettings]
-OptionSettings=(ServerName="{{ palworld_server_name }}",ServerDescription="{{ palworld_server_description }}",ServerPlayerMaxNum={{ palworld_max_players }},PublicPort={{ palworld_public_port }},AdminPassword="{{ palworld_admin_password }}",ServerPassword="{{ palworld_server_password }}",RCONEnabled={{ 'True' if palworld_rcon_enabled else 'False' }},RCONPort={{ palworld_rcon_port }})
+OptionSettings=(ServerName="{{ palworld_server_name }}",ServerDescription="{{ palworld_server_description }}",ServerPlayerMaxNum={{ palworld_max_players }},PublicPort={{ palworld_public_port }},AdminPassword="{{ palworld_admin_password }}",ServerPassword="{{ palworld_server_password }}",RCONEnabled={{ 'True' if palworld_rcon_enabled else 'False' }},RCONPort={{ palworld_rcon_port }},RESTAPIEnabled={{ 'True' if palworld_rest_api_enabled else 'False' }},RESTAPIPort={{ palworld_rest_api_port }},EnableGameDataAPI={{ 'True' if palworld_gamedata_api_enabled else 'False' }})

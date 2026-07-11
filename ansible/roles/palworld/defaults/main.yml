@@ -38,6 +38,16 @@ palworld_server_password: ""
 palworld_rcon_enabled: false
 palworld_rcon_port: 25575
 
+# REST API — the control panel (PET-266) depends on it; live 234 has had it on since
+# launch day but only by hand-edit (drift, found in PET-278). Declared here so a
+# converge keeps it. EnableGameDataAPI gates the 1.0 /v1/api/game-data world-snapshot
+# endpoint (undocumented flag, recovered from binary strings — PET-278 spike). The
+# template task carries no restart notify, so flag changes arm at the NEXT server
+# restart (e.g. the next bedtime shutdown/start cycle), never mid-session.
+palworld_rest_api_enabled: true
+palworld_rest_api_port: 8212
+palworld_gamedata_api_enabled: true
+
 # --- Firewall -------------------------------------------------------------------
 # Access is intended over Tailscale, so the PUBLIC LAN/WAN rule is off by default.
 # Turn on only if you really want the game port reachable on the LAN.
