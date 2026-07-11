@@ -18,7 +18,9 @@ Group={{ palworld_group }}
 WorkingDirectory={{ palworld_server_dir }}
 # -useperfthreads/NoAsyncLoadingThread are Pocketpair's recommended perf flags for
 # the dedicated server; the port comes from the templated PalWorldSettings.ini.
-ExecStart={{ palworld_server_exec }} -useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS
+# -EnableGameDataAPI: the 1.0 /v1/api/game-data gate is a LAUNCH ARG, not an ini key —
+# proven empirically in PET-278 (the ini's EnableGameDataAPI=True alone still 404s).
+ExecStart={{ palworld_server_exec }} -useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS{{ ' -EnableGameDataAPI' if palworld_gamedata_api_enabled else '' }}
 Restart=on-failure
 RestartSec=5
 # Give the server time to flush saves on stop rather than getting SIGKILLed.
