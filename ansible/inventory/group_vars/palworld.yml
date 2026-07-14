@@ -8,5 +8,5 @@
 # Held at the vanilla engine defaults: raised limits must be opted into per-change
 # THROUGH the panel (confirm + maintenance window), not pre-baked here. A static
 # override auto-applied 10/20 to the live world with no operator action → reverted.
-palworld_base_camp_max_in_guild: 4 # BaseCampMaxNumInGuild (engine default 4, max 10)
+palworld_base_camp_max_in_guild: 5 # BaseCampMaxNumInGuild (DIAGNOSTIC: 4→5 to test whether this world honors ini base-limit changes in-game; revert after)
 palworld_base_camp_worker_max: 15 # BaseCampWorkerMaxNum (engine default 15, ini max 50, >20 = perf lever)
