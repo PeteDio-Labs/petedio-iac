@@ -48,6 +48,14 @@ palworld_rest_api_enabled: true
 palworld_rest_api_port: 8212
 palworld_gamedata_api_enabled: true
 
+# --- Base-building world tunables (bases + pals) ----------------------------------
+# Role defaults mirror the engine defaults (4 base camps per guild / 15 worker pals
+# per camp); the palworld inventory group raises them for the shared world. Like the
+# REST flags above, the converge re-templates the ini with no restart notify, so new
+# values arm at the NEXT server restart — never mid-session.
+palworld_base_camp_max_per_guild: 4 # BaseCampMaxNumInGuild (in-game slider max 10)
+palworld_base_camp_worker_max: 15 # BaseCampWorkerMaxNum (in-game slider max 20)
+
 # --- Firewall -------------------------------------------------------------------
 # Access is intended over Tailscale, so the PUBLIC LAN/WAN rule is off by default.
 # Turn on only if you really want the game port reachable on the LAN.
