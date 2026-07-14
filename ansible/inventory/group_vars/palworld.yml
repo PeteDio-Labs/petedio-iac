@@ -4,5 +4,9 @@
 # keys via the GitHub API, so keep the file to simple `key: value` lines. Values are
 # re-templated into PalWorldSettings.ini by the ansible-palworld apply on merge and
 # arm at the NEXT server restart (the panel's stop/start), never mid-session.
-palworld_base_camp_max_in_guild: 10 # BaseCampMaxNumInGuild (engine default 4, max 10)
-palworld_base_camp_worker_max: 20 # BaseCampWorkerMaxNum (engine default 15, ini max 50, >20 = perf lever)
+#
+# Held at the vanilla engine defaults: raised limits must be opted into per-change
+# THROUGH the panel (confirm + maintenance window), not pre-baked here. A static
+# override auto-applied 10/20 to the live world with no operator action → reverted.
+palworld_base_camp_max_in_guild: 4 # BaseCampMaxNumInGuild (engine default 4, max 10)
+palworld_base_camp_worker_max: 15 # BaseCampWorkerMaxNum (engine default 15, ini max 50, >20 = perf lever)
