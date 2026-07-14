@@ -11,6 +11,7 @@ on:
       - ansible/playbooks/configure-palworld.yml
       - ansible/roles/palworld/**
       - ansible/inventory/hosts.yml
+      - ansible/inventory/group_vars/palworld.yml
       - .github/workflows/ansible-palworld.yml
       - .github/workflows/ansible-stack.yml
   # NB: ansible-stack.yml is deliberately in pull_request.paths ONLY — shared-logic edits
@@ -22,6 +23,7 @@ on:
       - ansible/playbooks/configure-palworld.yml
       - ansible/roles/palworld/**
       - ansible/inventory/hosts.yml
+      - ansible/inventory/group_vars/palworld.yml
       - .github/workflows/ansible-palworld.yml
 
 # Serialize runs of this workflow so two fast merges can't race two ansible applies
