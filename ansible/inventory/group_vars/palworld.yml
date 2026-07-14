@@ -8,5 +8,5 @@
 # Held at the vanilla engine defaults: raised limits must be opted into per-change
 # THROUGH the panel (confirm + maintenance window), not pre-baked here. A static
 # override auto-applied 10/20 to the live world with no operator action → reverted.
-palworld_base_camp_max_in_guild: 3 # BaseCampMaxNumInGuild — set to 3 to match the cap this world actually enforces. Palworld 1.0 bakes the base-camp limit into the world save (Oodle/PlM), so ini changes do NOT move the existing guild (verified: config 4 and 5 both left it at 3). Config-vs-game now agree. (PET-266)
+palworld_base_camp_max_in_guild: 10 # BaseCampMaxNumInGuild — raised to the native max (10) to try to unlock a guild whose base allowance ratcheted to its count after the cap was lowered below it (destroying a base dropped the in-game max 3→2). Count is now well below 10; a high cap on a fresh load is the community-reported unlock. (PET-266)
 palworld_base_camp_worker_max: 15 # BaseCampWorkerMaxNum (engine default 15, ini max 50, >20 = perf lever)
