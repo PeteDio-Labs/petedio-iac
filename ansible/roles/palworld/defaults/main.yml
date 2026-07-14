@@ -48,6 +48,13 @@ palworld_rest_api_enabled: true
 palworld_rest_api_port: 8212
 palworld_gamedata_api_enabled: true
 
+# Base-camp + worker-pal limits — raised to the in-game slider maxima for the co-op
+# server (vanilla defaults: 4 bases per guild, 15 worker pals per base). Like the
+# REST flags above, the template task carries no restart notify: new limits arm at
+# the NEXT server restart (e.g. a panel shutdown/start cycle), never mid-session.
+palworld_base_camp_max_num_in_guild: 10 # BaseCampMaxNumInGuild (vanilla 4, slider max 10)
+palworld_base_camp_worker_max_num: 20 # BaseCampWorkerMaxNum (vanilla 15, slider max 20)
+
 # --- Firewall -------------------------------------------------------------------
 # Access is intended over Tailscale, so the PUBLIC LAN/WAN rule is off by default.
 # Turn on only if you really want the game port reachable on the LAN.
