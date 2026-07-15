@@ -129,6 +129,28 @@
     mode: "0644"
   notify: Reload systemd
 
+# --- Control scripts (PET-266) ---------------------------------------------------
+# palctl-remote is the forced command the control panel's restricted SSH key is pinned to
+# (root's authorized_keys → command="/usr/local/bin/palctl-remote"); it allow-lists exactly
+# the verbs the panel may run — start / status / check-update / update. palworld-update is the
+# reusable SteamCMD check/apply the last two verbs call. Both were previously hand-placed drift
+# on 234; codified here so a reprovision restores them and the update verbs stay in sync.
+- name: Install the palctl-remote forced-command dispatcher
+  ansible.builtin.copy:
+    src: palctl-remote
+    dest: /usr/local/bin/palctl-remote
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the palworld-update check/apply script
+  ansible.builtin.copy:
+    src: palworld-update
+    dest: /usr/local/bin/palworld-update
+    owner: root
+    group: root
+    mode: "0755"
+
 # Reload systemd so the new unit is known before the binaries-install + enable tasks
 # below pick it up (the enable/start is gated on palworld_install_binaries).
 - name: Reload systemd so the new unit is known

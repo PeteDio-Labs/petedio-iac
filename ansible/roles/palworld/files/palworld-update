@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# palworld-update — reusable check/apply of the Palworld dedicated-server build (PET-266).
+#
+# Runs as root: invoked by palctl-remote (the control panel's restricted SSH forced command)
+# or by hand on host 234. Two modes:
+#   --check   print one-line JSON {currentBuild,latestBuild,updateAvailable,currentVersion}
+#             — read-only (queries the installed manifest + SteamCMD app_info + REST /info).
+#   --apply   stop → SteamCMD app_update validate → start → verify, streaming progress as
+#             "@@STAGE <name> <pct> [detail]" lines and a final "@@DONE {json}" so the panel
+#             can follow along over SSE. Prints "@@ERROR <msg>" and exits non-zero on failure.
+#
+# Paths track the palworld role defaults (steam user, /home/steam/palworld, app 2394010,
+# service "palworld", REST 8212) — keep in sync with roles/palworld/defaults/main.yml.
+set -euo pipefail
+
+STEAM_USER=steam
+STEAMCMD=/home/steam/steamcmd/steamcmd.sh
+SERVER_DIR=/home/steam/palworld
+APP_ID=2394010
+SERVICE=palworld
+MANIFEST="$SERVER_DIR/steamapps/appmanifest_${APP_ID}.acf"
+INI="$SERVER_DIR/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini"
+REST="http://127.0.0.1:8212/v1/api"
+
+installed_build() {
+  [ -f "$MANIFEST" ] && awk -F'"' '/"buildid"/{print $4; exit}' "$MANIFEST" || true
+}
+
+# Latest public build id from Steam (anonymous app_info). app_info_update forces a cache refresh.
+latest_build() {
+  sudo -u "$STEAM_USER" "$STEAMCMD" +login anonymous +app_info_update 1 \
+      +app_info_print "$APP_ID" +quit 2>/dev/null \
+    | tr -d '\r' \
+    | awk '/"branches"/{b=1} b&&/"public"/{p=1} p&&/"buildid"/{gsub(/"/,"",$2); print $2; exit}'
+}
+
+# Running server version from the REST API (empty when the server is down). Reads the
+# AdminPassword straight from the ini so no secret transits anywhere.
+server_version() {
+  local pw
+  pw=$(sed -nE 's/.*AdminPassword="([^"]*)".*/\1/p' "$INI" 2>/dev/null || true)
+  curl -s -m 5 -u "admin:${pw}" "$REST/info" 2>/dev/null \
+    | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p'
+}
+
+json_str() { # emit a JSON string or `null`
+  if [ -n "$1" ]; then printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; else printf 'null'; fi
+}
+
+do_check() {
+  local cur lat ver avail
+  cur=$(installed_build)
+  lat=$(latest_build)
+  ver=$(server_version)
+  # Only claim an update when we actually learned a differing latest build (never false-positive).
+  if [ -n "$lat" ] && [ -n "$cur" ] && [ "$cur" != "$lat" ]; then avail=true; else avail=false; fi
+  [ -z "$lat" ] && lat="$cur"
+  printf '{"currentBuild":%s,"latestBuild":%s,"updateAvailable":%s,"currentVersion":%s}\n' \
+    "$(json_str "$cur")" "$(json_str "$lat")" "$avail" "$(json_str "$ver")"
+}
+
+stage() { printf '@@STAGE %s\n' "$*"; }
+
+do_apply() {
+  stage "shutting-down 8"
+  systemctl stop "$SERVICE" || true
+
+  stage "downloading 15 0%"
+  # Stream SteamCMD progress (it uses \r) → downloading pct mapped into 15..72.
+  set +e
+  sudo -u "$STEAM_USER" "$STEAMCMD" \
+      +force_install_dir "$SERVER_DIR" +login anonymous \
+      +app_update "$APP_ID" validate +quit 2>&1 \
+    | tr '\r' '\n' \
+    | while IFS= read -r line; do
+        case "$line" in
+          *progress:*)
+            pc=$(printf '%s' "$line" | sed -nE 's/.*progress:[[:space:]]*([0-9]+)\..*/\1/p')
+            [ -n "$pc" ] && stage "downloading $(( 15 + pc * 57 / 100 )) ${pc}%"
+            ;;
+        esac
+      done
+  local rc=${PIPESTATUS[0]}
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    systemctl start "$SERVICE" || true   # never leave the server down on a failed update
+    printf '@@ERROR SteamCMD exited %s\n' "$rc"
+    exit 1
+  fi
+
+  stage "installing 78"
+  stage "starting 88"
+  systemctl start "$SERVICE"
+
+  stage "verifying 94"
+  local ver="" i=0
+  while [ "$i" -lt 40 ]; do
+    ver=$(server_version)
+    [ -n "$ver" ] && break
+    sleep 3; i=$((i + 1))
+  done
+  printf '@@DONE {"build":%s,"version":%s}\n' "$(json_str "$(installed_build)")" "$(json_str "$ver")"
+}
+
+case "${1:-}" in
+  --check) do_check ;;
+  --apply) do_apply ;;
+  *) echo "usage: palworld-update --check|--apply" >&2; exit 2 ;;
+esac
