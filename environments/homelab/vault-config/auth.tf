@@ -151,6 +151,25 @@ resource "vault_jwt_auth_backend_role" "palworld_panel_cd" {
   token_ttl      = 900
 }
 
+# resume-builder-cd role → resume-builder-cd policy (Resume Builder P1). APPLY-on-merge
+# only: the app repo's deploy.yml copies build/ + installs the systemd unit on resume-242
+# from the runner on push to main. Bound to ONLY the repo's main-push sub. Gets ONLY the
+# ansible SSH key (to reach resume-242) + the app's own service secret. Mirrors
+# palworld-panel-cd. Apply BEFORE the CD workflow lands or the first run 403s.
+resource "vault_jwt_auth_backend_role" "resume_builder_cd" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "resume-builder-cd"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = "repo:${var.resume_builder_repo}:ref:refs/heads/main"
+  }
+  token_policies = [vault_policy.resume_builder_cd.name]
+  token_ttl      = 900
+}
+
 # vault-snapshot role → vault-snapshot policy (PET-109). The raft-snapshot systemd timer
 # on .223 (Ansible role vault-snapshot) logs in with this AppRole to take + upload a
 # snapshot. Short token TTL — the job runs in seconds and re-auths each run; the secret_id

@@ -1,0 +1,46 @@
+# mongodb role — native MongoDB 8.0 for the resume-builder app (resume-242, ex agent-loop).
+# Localhost-only (the app runs on the same host); no LAN exposure like the postgres RDS
+# host. security.authorization is on from the start — the app user is bootstrapped via
+# Mongo's localhost exception (a localhost connection may create the first user when the
+# users collection is empty, even with authorization enabled), so there's no
+# disable-then-enable-then-restart dance. See resume-builder planning doc §4/P1.
+---
+mongodb_version_line: "8.0"  # supported to 2029-10; pin the apt repo to this line, not 'stable'
+mongodb_ubuntu_codename: "noble"  # 24.04
+
+mongodb_bind_ip: "127.0.0.1"
+mongodb_port: 27017
+mongodb_db_path: /var/lib/mongodb
+mongodb_log_path: /var/log/mongodb/mongod.log
+
+# Small footprint: 242 is a 6G-RAM LXC shared with the app + Bun; the app's working set is
+# tiny (per-user resume documents). ~600-800MB mongod RSS at this cache size (planning doc).
+mongodb_wiredtiger_cache_size_gb: 0.25
+
+# The app's own database + a scoped SCRAM user (readWrite only, no admin) — never the app
+# connecting as a Mongo admin. Password is a REQUIRED extra-var with no default (same
+# no-committed-placeholder rule as postgres_admin_password) — resolve it from Vault
+# kv/services/resume-builder (field mongo_app_password) and pass via a 0600 JSON @file.
+mongodb_app_db: resume
+mongodb_app_user: resume-app
+# mongodb_app_password: intentionally undefined here — asserted present in tasks/main.yml
+
+# --- Nightly backup (mongodump --archive --gzip | mc pipe) ------------------------------
+# Unlike vault-snapshot (which self-serves MinIO creds from a live Vault Agent on the same
+# host), resume-242's Vault Agent AppRole was retired with the fleet in P0 and a
+# replacement isn't provisioned yet — so the MinIO creds are resolved ONCE at playbook-run
+# time (same no-committed-secret pattern as mongodb_app_password / postgres_admin_password)
+# and written to a root-only env file the backup script sources. Revisit if/when a fresh
+# Vault Agent identity lands for this host.
+mongodb_backup_enabled: true
+mongodb_backup_script_path: /usr/local/sbin/resume-mongo-backup.sh
+mongodb_backup_env_path: /etc/resume-mongo-backup.env
+mongodb_backup_oncalendar: "*-*-* 03:15:00"  # off the MinIO-heavy hours other timers use
+mongodb_backup_mc_path: /usr/local/bin/mc
+mongodb_backup_mc_alias: resumebackup
+mongodb_backup_minio_scheme: http
+mongodb_backup_minio_hostport: "192.168.50.221:9000"
+mongodb_backup_bucket: resume-mongo-backups
+# mongodb_backup_minio_access_key / mongodb_backup_minio_secret_key: intentionally
+# undefined here — required extra-vars, asserted present in tasks/main.yml. Resolve from
+# Vault kv/services/resume-builder (fields mc_access_key / mc_secret_key) before running.
