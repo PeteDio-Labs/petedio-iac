@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Resume builder (cv.pdlab.dev) — SvelteKit/Bun/MongoDB app
+After=network-online.target mongod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ resume_builder_user }}
+Group={{ resume_builder_group }}
+WorkingDirectory={{ resume_builder_app_dir }}/build
+EnvironmentFile={{ resume_builder_app_dir }}/app.env
+ExecStart={{ bun_bin }} {{ resume_builder_app_dir }}/build/index.js
+Restart=on-failure
+RestartSec=3
+# Light hardening — the service needs outbound to localhost Mongo + the Ollama host.
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

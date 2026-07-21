@@ -1,0 +1,191 @@
+---
+# configure-resume-builder.yml — deploy the resume-builder SvelteKit app natively on
+# resume-242, as a Bun systemd service (Resume Builder P1). Mirrors
+# configure-palworld-panel.yml's native-Bun-service pattern.
+#
+# WHY NATIVE (not Docker): same reasoning as the palworld panel — no nesting/keyctl
+# needed, no separate LXC. The app serves on :8080; the Cloudflare tunnel points
+# cv.pdlab.dev at it (Authentik-gated, cloudflare-routes.tf).
+#
+# Unlike the panel (which copies raw TS source — bun runs it directly, zero deps), this
+# app is SvelteKit's adapter-node output: platform-specific node_modules can't be copied
+# from the operator's Mac (arm64/x86_64 mismatch), so `bun install --production` runs ON
+# THE TARGET after the build/ directory is copied over.
+#
+# SECRETS (resolved by scripts/deploy-resume-builder.sh, passed as no_log extra-vars):
+#   resume_builder_mongo_password    (Vault kv/services/resume-builder, field mongo_app_password)
+#   resume_builder_cf_access_team_domain / _aud   (kv/services/resume-builder, or the
+#     Cloudflare Access app created by cloudflare-routes.tf once that PR has applied)
+#   resume_builder_allowed_users     (kv/services/resume-builder, or hardcode the one
+#     provisioned user per the planning doc — single-user v1)
+# Run via:  ./scripts/deploy-resume-builder.sh
+
+- name: Deploy the resume-builder app on resume-242 (native Bun service)
+  hosts: resume
+  become: true
+
+  vars:
+    resume_builder_app_dir: /opt/resume-builder
+    resume_builder_user: resumebuilder
+    resume_builder_group: resumebuilder
+    resume_builder_port: 8080
+    bun_install_dir: /opt/bun
+    bun_bin: /opt/bun/bin/bun
+    # Controller path to the petedio-resume-builder checkout, already built
+    # (`bun run build` in resume_builder_src before running this play).
+    resume_builder_src: "{{ lookup('env', 'HOME') }}/petedio/resume-builder"
+    resume_builder_mongo_user: "{{ mongodb_app_user | default('resume-app') }}"
+    resume_builder_mongo_db: "{{ mongodb_app_db | default('resume') }}"
+    resume_builder_mongo_port: "{{ mongodb_port | default(27017) }}"
+
+  pre_tasks:
+    - name: Assert required secret extra-vars were provided (use scripts/deploy-resume-builder.sh)
+      ansible.builtin.assert:
+        that:
+          - resume_builder_mongo_password is defined and resume_builder_mongo_password | length > 0
+          - resume_builder_cf_access_team_domain is defined and resume_builder_cf_access_team_domain | length > 0
+          - resume_builder_cf_access_aud is defined and resume_builder_cf_access_aud | length > 0
+          - resume_builder_allowed_users is defined and resume_builder_allowed_users | length > 0
+        fail_msg: >-
+          Missing secret extra-vars. Run scripts/deploy-resume-builder.sh, which resolves
+          them from Vault (kv/services/resume-builder) and passes them in.
+      no_log: true
+
+    - name: Assert the app was already built on the controller (bun run build)
+      ansible.builtin.stat:
+        path: "{{ resume_builder_src }}/build/index.js"
+      delegate_to: localhost
+      become: false
+      register: resume_builder_build_stat
+      failed_when: not resume_builder_build_stat.stat.exists
+
+  tasks:
+    - name: Create the app service group
+      ansible.builtin.group:
+        name: "{{ resume_builder_group }}"
+        system: true
+
+    - name: Create the app service user (no login shell)
+      ansible.builtin.user:
+        name: "{{ resume_builder_user }}"
+        group: "{{ resume_builder_group }}"
+        home: "{{ resume_builder_app_dir }}"
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: false
+
+    - name: Create the app directory
+      ansible.builtin.file:
+        path: "{{ resume_builder_app_dir }}"
+        state: directory
+        owner: "{{ resume_builder_user }}"
+        group: "{{ resume_builder_group }}"
+        mode: "0755"
+
+    # ---- Bun runtime (pinned dir, independent of any user account) ----
+    - name: Install runtime prerequisites (unzip + curl are required by the bun installer)
+      ansible.builtin.apt:
+        name:
+          - unzip
+          - curl
+          - ca-certificates
+        state: present
+        update_cache: true
+
+    - name: Check whether bun is already installed
+      ansible.builtin.stat:
+        path: "{{ bun_bin }}"
+      register: bun_stat
+
+    - name: Install bun (official installer, to a fixed system path)
+      ansible.builtin.shell:
+        cmd: "set -o pipefail; curl -fsSL https://bun.sh/install | BUN_INSTALL={{ bun_install_dir }} bash"
+        creates: "{{ bun_bin }}"
+      when: not bun_stat.stat.exists
+
+    - name: Make bun world-readable/executable
+      ansible.builtin.file:
+        path: "{{ bun_bin }}"
+        mode: "0755"
+
+    # ---- App build output from the controller checkout ----
+    - name: Remove any previous build/ so a renamed/removed file doesn't linger
+      ansible.builtin.file:
+        path: "{{ resume_builder_app_dir }}/build"
+        state: absent
+      notify: Restart resume-builder
+
+    - name: Copy the built app (SvelteKit adapter-node output)
+      ansible.builtin.copy:
+        src: "{{ resume_builder_src }}/build/"
+        dest: "{{ resume_builder_app_dir }}/build/"
+        owner: "{{ resume_builder_user }}"
+        group: "{{ resume_builder_group }}"
+        mode: "0644"
+        directory_mode: "0755"
+      notify: Restart resume-builder
+
+    # Platform-specific deps (e.g. any native addon) must be installed ON THE TARGET —
+    # copying node_modules from the operator's Mac (arm64/x86_64) would ship the wrong
+    # binaries. adapter-node's build/package.json lists exactly the production deps.
+    - name: bun install --production inside build/ (target-native deps)
+      ansible.builtin.command:
+        cmd: "{{ bun_bin }} install --production"
+        chdir: "{{ resume_builder_app_dir }}/build"
+      become_user: "{{ resume_builder_user }}"
+      changed_when: true
+      notify: Restart resume-builder
+
+    # ---- Secrets: rendered into a root-only-until-chowned env-file ----
+    - name: Render the app env-file (Mongo URI, CF Access config, allow-list)
+      ansible.builtin.template:
+        src: templates/resume-builder.env.j2
+        dest: "{{ resume_builder_app_dir }}/app.env"
+        owner: "{{ resume_builder_user }}"
+        group: "{{ resume_builder_group }}"
+        mode: "0600"
+      no_log: true
+      notify: Restart resume-builder
+
+    # ---- systemd unit ----
+    - name: Install the resume-builder systemd unit
+      ansible.builtin.template:
+        src: templates/resume-builder.service.j2
+        dest: /etc/systemd/system/resume-builder.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart resume-builder
+
+    - name: Flush handlers so the unit + files are in place before enable/start
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable + start the resume-builder service
+      ansible.builtin.systemd:
+        name: resume-builder
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # ---- Firewall: allow the app port from the LAN (CF tunnel connector reaches it there) ----
+    - name: Allow the app port from the LAN (UFW)
+      community.general.ufw:
+        rule: allow
+        port: "{{ resume_builder_port }}"
+        proto: tcp
+        from_ip: 192.168.50.0/24
+        comment: "Resume builder web (Resume Builder P1)"
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart resume-builder
+      ansible.builtin.systemd:
+        name: resume-builder
+        state: restarted
+      # Only meaningful once the unit exists (first run installs it before this fires).
+      failed_when: false
