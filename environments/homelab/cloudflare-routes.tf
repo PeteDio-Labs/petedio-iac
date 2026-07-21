@@ -69,6 +69,19 @@ module "cloudflare_ingress" {
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["soniasdelgadillo@gmail.com", "pedelgadillo@gmail.com"]
     }
+
+    # Resume builder (Resume Builder milestone, P1). Origin is the SvelteKit app on
+    # resume-242 (:8080 — same co-located-deploy pattern as the palworld panel; ex
+    # agent-loop-242, PET-265 P0 teardown). Gated by Cloudflare Access with Authentik OIDC
+    # login; the email allow-list AUTHORIZES after Authentik authenticates. Sonia is the
+    # only provisioned APP user (enforced again at the app layer, planning doc §4) — pedro
+    # stays in the CF Access policy for ops/deploy testing only.
+    "cv.pdlab.dev" = {
+      service       = "http://192.168.50.242:8080"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["soniasdelgadillo@gmail.com", "pedelgadillo@gmail.com"]
+    }
   }
 }
 
