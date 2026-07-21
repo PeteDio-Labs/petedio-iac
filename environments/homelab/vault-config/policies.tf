@@ -242,29 +242,6 @@ resource "vault_policy" "palworld_panel_cd" {
   EOT
 }
 
-# agent-loop: the autonomous loop host (LXC 242) reads ONLY its own service secret
-# (proxmox_ro_token now, github_token later) — strictly narrower than `ansible` (all
-# services/*). A Vault Agent on the box auto-auths with the agent-loop AppRole (auth.tf)
-# and renews a token into ~agent/.vault-token, so the read-only Proxmox helper self-serves
-# with no operator step. Single read path = minimal blast radius for an unattended box.
-# PET-141.
-resource "vault_policy" "agent_loop" {
-  name = "agent-loop"
-
-  policy = <<-EOT
-    path "kv/data/services/agent-loop" {
-      capabilities = ["read"]
-    }
-
-    # The fleet poller (worker/engine candidates) self-serves the READ-ONLY Linear API key to
-    # enumerate worker-ok/engine-ok Todo issues for auto-launch (PET-184 S1). Read-only path,
-    # read-only key — the loop never writes Linear (status flows via the GitHub-Linear link).
-    path "kv/data/services/linear" {
-      capabilities = ["read"]
-    }
-  EOT
-}
-
 # vault-snapshot: the policy the automated raft-snapshot timer on .223 uses (PET-109).
 # Exactly two narrow reads — take a raft snapshot, and read the MinIO svcacct creds it
 # uploads with. Nothing else: a leaked snapshot token can back Vault up and read the

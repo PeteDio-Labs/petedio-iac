@@ -37,20 +37,17 @@ vault kv patch kv/services/agent-loop \
   proxmox_ro_token='petedio@pam!loop-ro=<secret-from-step-1>'
 ```
 
-On the loop host the helper now **self-serves** the token — no manual export. A **Vault
-Agent** (PET-141, `roles/agent-loop`) auto-auths with the read-only `agent-loop` AppRole and
-renews a token into `~agent/.vault-token`, which `vault` (and so
-`scripts/proxmox-ro-config.sh`'s Vault fallback) reads off disk. So once the host is
-provisioned (see `roles/agent-loop/README.md` for the one-time AppRole-creds step), just run
-the helper:
+**The `agent-loop` AppRole/Vault Agent self-serve path described above was retired with the
+agent fleet (PET-265 P0, 2026-07-21)** — the loop host that ran it no longer exists as such
+(renamed `resume-242`, repurposed). Run the helper with the session env var instead:
 
 ```sh
+export PROXMOX_RO_TOKEN="$(vault kv get -field=proxmox_ro_token kv/services/agent-loop)"
 scripts/proxmox-ro-config.sh pve01 106
 ```
 
-To override (e.g. debugging, or before the Vault Agent is up) the helper still honours a
-session env var: `export PROXMOX_RO_TOKEN="$(vault kv get -field=proxmox_ro_token kv/services/agent-loop)"`
-(needs a Vault token + `VAULT_ADDR`/`VAULT_CACERT`).
+(needs a Vault token + `VAULT_ADDR`/`VAULT_CACERT` — the `kv/services/agent-loop` secret
+itself is untouched, only the AppRole that auto-read it on-host is gone.)
 
 ## Using it
 
