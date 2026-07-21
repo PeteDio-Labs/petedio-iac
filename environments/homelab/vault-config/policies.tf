@@ -242,6 +242,33 @@ resource "vault_policy" "palworld_panel_cd" {
   EOT
 }
 
+# resume-builder-cd: the petedio-resume-builder repo's CD role (Resume Builder P1) —
+# deploy.yml copies build/ + installs the systemd unit on resume-242 on merge (the runner
+# SSHes in). Least-privilege: ONLY the ansible SSH key (to reach resume-242) and the app's
+# own service secret (Mongo creds + CF Access env). NOT the broader ci-read/ansible scope.
+# Mirrors palworld-panel-cd. Apply BEFORE the CD workflow lands or the first run 403s.
+resource "vault_policy" "resume_builder_cd" {
+  name = "resume-builder-cd"
+
+  policy = <<-EOT
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/resume-builder" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
 # vault-snapshot: the policy the automated raft-snapshot timer on .223 uses (PET-109).
 # Exactly two narrow reads — take a raft snapshot, and read the MinIO svcacct creds it
 # uploads with. Nothing else: a leaked snapshot token can back Vault up and read the
