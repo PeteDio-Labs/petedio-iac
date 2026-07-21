@@ -3,15 +3,18 @@
 # Docker/nesting on this LXC — same reasoning as Postgres on agent-loop, GOTCHAS.md).
 # Idempotent: re-running with the same extra-vars is a no-op past first bootstrap.
 
-- name: Assert the app user password was provided (Vault kv/services/resume-builder — never a committed default)
+- name: Assert the app + admin user passwords were provided (Vault kv/services/resume-builder — never a committed default)
   ansible.builtin.assert:
     that:
       - mongodb_app_password is defined
       - mongodb_app_password | length > 0
+      - mongodb_admin_password is defined
+      - mongodb_admin_password | length > 0
     fail_msg: >-
-      Missing mongodb_app_password. Resolve it from Vault kv/services/resume-builder
-      (field mongo_app_password) and pass it as a no_log extra-var via a 0600 JSON @file
-      (see scripts/deploy-poker-api.sh for the pattern).
+      Missing mongodb_app_password / mongodb_admin_password. Resolve them from Vault
+      kv/services/resume-builder (fields mongo_app_password / mongo_admin_password) and
+      pass as no_log extra-vars via a 0600 JSON @file (see scripts/deploy-poker-api.sh
+      for the pattern).
   no_log: true
 
 - name: Assert the backup MinIO creds were provided, if the backup timer is enabled
@@ -89,43 +92,96 @@
 - name: Flush handlers now so a config change is live before the user-bootstrap check below
   ansible.builtin.meta: flush_handlers
 
-# --- App user bootstrap (idempotent via Mongo's localhost exception) ----------------
+# --- Admin user bootstrap (Mongo's localhost exception, single-use per mongod lifetime) --
 # With security.authorization: enabled and an EMPTY users collection, a connection from
-# localhost is granted temporary admin access — exactly enough to run one createUser.
-# Once any user exists, the exception closes itself; auth() below is what makes re-runs
-# a no-op instead of erroring on "user already exists".
+# localhost is granted temporary admin access. IMPORTANT (verified live, 2026-07-21): the
+# exception only allows creating ONE user, and only in the admin db with an admin-capable
+# role — it does NOT let you createUser directly on an arbitrary app database. It's also
+# single-use for the life of the mongod process (closes after first successful create, even
+# if that user is later dropped — a restart is what re-opens it, not an empty users
+# collection). So: bootstrap ONE persistent admin user via the exception, then always use
+# THAT admin's real credentials for everything else (idempotent on every re-run, no more
+# reliance on the exception).
+
+# -u/-p/--authenticationDatabase flags, NOT a mongodb://user:pass@host URI: a
+# Vault-generated password (openssl rand -base64) routinely contains +/=/ characters that
+# a connection-string parser rejects as "unescaped characters" unless percent-encoded.
+# Flags take the raw value with no URI parsing involved. (Verified live, 2026-07-21 —
+# this exact bug broke the first version of this bootstrap.)
+- name: Check whether the bootstrap admin user can already authenticate (idempotency check)
+  ansible.builtin.command:
+    cmd: >-
+      mongosh --quiet --host 127.0.0.1 --port {{ mongodb_port }}
+      -u {{ mongodb_admin_user | quote }} -p {{ mongodb_admin_password | quote }}
+      --authenticationDatabase admin
+      --eval "db.runCommand({connectionStatus: 1}).ok"
+  register: mongodb_admin_auth_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Create the bootstrap admin user via the localhost exception (first bootstrap only)
+  ansible.builtin.command:
+    cmd: >-
+      mongosh --quiet mongodb://127.0.0.1:{{ mongodb_port }}/admin
+      --eval "db.createUser({user: '{{ mongodb_admin_user }}', pwd: '{{ mongodb_admin_password }}',
+      roles: [{role: 'root', db: 'admin'}]})"
+  when: "'1' not in mongodb_admin_auth_check.stdout"
+  no_log: true
+  register: mongodb_admin_user_create
+  changed_when: mongodb_admin_user_create.rc == 0
+  failed_when: false
+
+- name: Fail loudly if the admin user still can't authenticate after the bootstrap attempt
+  ansible.builtin.fail:
+    msg: >-
+      {{ mongodb_admin_user }} could not authenticate and the localhost-exception create
+      failed too — either a DIFFERENT admin already exists (check mongodb_admin_password
+      matches what was used originally), or the exception already closed this mongod
+      lifetime (restart mongod and re-run). Needs an operator to fix by hand, not a bare
+      re-run of this role.
+  when:
+    - "'1' not in mongodb_admin_auth_check.stdout"
+    - mongodb_admin_user_create is defined
+    - mongodb_admin_user_create.rc is defined
+    - mongodb_admin_user_create.rc != 0
+
+# --- App user (idempotent — always via the real admin credentials, never the exception) --
 
 - name: Check whether the app user can already authenticate (idempotency check)
   ansible.builtin.command:
     cmd: >-
-      mongosh --quiet mongodb://127.0.0.1:{{ mongodb_port }}/{{ mongodb_app_db }}
-      --eval "db.auth('{{ mongodb_app_user }}', '{{ mongodb_app_password }}')"
+      mongosh --quiet --host 127.0.0.1 --port {{ mongodb_port }}
+      -u {{ mongodb_app_user | quote }} -p {{ mongodb_app_password | quote }}
+      --authenticationDatabase {{ mongodb_app_db }}
+      --eval "db.runCommand({connectionStatus: 1}).ok"
   register: mongodb_app_user_auth_check
   changed_when: false
   failed_when: false
   no_log: true
 
-- name: Create the app user via the localhost exception (first bootstrap only)
+- name: Create the app user via the admin credentials (readWrite, scoped to its own db only)
   ansible.builtin.command:
     cmd: >-
-      mongosh --quiet mongodb://127.0.0.1:{{ mongodb_port }}/{{ mongodb_app_db }}
-      --eval "db.createUser({user: '{{ mongodb_app_user }}', pwd: '{{ mongodb_app_password }}',
-      roles: [{role: 'readWrite', db: '{{ mongodb_app_db }}'}]})"
-  when: "'true' not in mongodb_app_user_auth_check.stdout"
+      mongosh --quiet --host 127.0.0.1 --port {{ mongodb_port }}
+      -u {{ mongodb_admin_user | quote }} -p {{ mongodb_admin_password | quote }}
+      --authenticationDatabase admin
+      --eval "db.getSiblingDB('{{ mongodb_app_db }}').createUser({user: '{{ mongodb_app_user }}',
+      pwd: '{{ mongodb_app_password }}', roles: [{role: 'readWrite', db: '{{ mongodb_app_db }}'}]})"
+  when: "'1' not in mongodb_app_user_auth_check.stdout"
   no_log: true
   register: mongodb_app_user_create
   changed_when: mongodb_app_user_create.rc == 0
   failed_when: false
 
-- name: Fail loudly if user creation didn't succeed and auth still doesn't work (not a fresh-bootstrap case)
+- name: Fail loudly if the app user still can't authenticate after the create attempt
   ansible.builtin.fail:
     msg: >-
-      {{ mongodb_app_user }} could not authenticate and the localhost-exception create
-      failed too — the users collection is probably non-empty with a DIFFERENT admin/user
-      already present. This needs an operator to create/fix the app user by hand
-      (mongosh as an existing admin), not a bare re-run of this role.
+      {{ mongodb_app_user }} could not authenticate and creating it via the admin
+      credentials failed too. Needs an operator to fix by hand (mongosh as
+      {{ mongodb_admin_user }}), not a bare re-run of this role.
   when:
-    - "'true' not in mongodb_app_user_auth_check.stdout"
+    - "'1' not in mongodb_app_user_auth_check.stdout"
     - mongodb_app_user_create is defined
     - mongodb_app_user_create.rc is defined
     - mongodb_app_user_create.rc != 0

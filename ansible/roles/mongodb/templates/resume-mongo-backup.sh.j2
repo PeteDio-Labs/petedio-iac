@@ -34,8 +34,13 @@ export "MC_HOST_${MC_ALIAS}"="{{ mongodb_backup_minio_scheme }}://${MC_ACCESS_KE
 ts="$(date -u +%Y%m%dT%H%M%SZ)"
 object="${DB}-${ts}.archive.gz"
 
+# Flags, not a mongodb://user:pass@host URI: a Vault-generated password (openssl
+# rand -base64) routinely contains +/=/ characters a URI parser rejects unless
+# percent-encoded — flags take the raw value with no URI parsing involved (same bug
+# class hit and fixed in roles/mongodb/tasks/main.yml, 2026-07-21).
 mongodump \
-  --uri="mongodb://${USER}:${MONGODB_APP_PASSWORD}@127.0.0.1:{{ mongodb_port }}/${DB}?authSource=${DB}" \
+  --host=127.0.0.1 --port={{ mongodb_port }} --db="${DB}" \
+  --username="${USER}" --password="${MONGODB_APP_PASSWORD}" --authenticationDatabase="${DB}" \
   --archive --gzip |
   "$MC" pipe --quiet "${MC_ALIAS}/${BUCKET}/${object}" ||
   die "mongodump | mc pipe failed"

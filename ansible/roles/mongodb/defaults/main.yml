@@ -17,6 +17,14 @@ mongodb_log_path: /var/log/mongodb/mongod.log
 # tiny (per-user resume documents). ~600-800MB mongod RSS at this cache size (planning doc).
 mongodb_wiredtiger_cache_size_gb: 0.25
 
+# Bootstrap admin (root role on the admin db) — infrastructure-only, never given to the
+# app. Exists solely so the app user can be created/managed idempotently without relying
+# on Mongo's localhost exception more than once (it's single-use per mongod lifetime —
+# see tasks/main.yml). Password is a REQUIRED extra-var with no default — resolve from
+# Vault kv/services/resume-builder (field mongo_admin_password).
+mongodb_admin_user: admin
+# mongodb_admin_password: intentionally undefined here — asserted present in tasks/main.yml
+
 # The app's own database + a scoped SCRAM user (readWrite only, no admin) — never the app
 # connecting as a Mongo admin. Password is a REQUIRED extra-var with no default (same
 # no-committed-placeholder rule as postgres_admin_password) — resolve it from Vault
