@@ -1,2 +1,0 @@
-{"ts":"2026-06-30T03:12:00Z","issue":"PET-220","repo":"PeteDio-Labs/co-latro-backend","branch":"pet-220-retrigger-suit-kind","pr":58,"engine_model":"claude-sonnet-5","harness":"claude-code-headless","tests":"pass","guard":"green","tokens":78420,"wall_s":1140,"head_sha":"e1f2a3b"}
-{"ts":"2026-06-30T04:05:00Z","issue":"PET-221","repo":"PeteDio-Labs/co-latro-backend","branch":"pet-221-per-discard-xmult-kind","pr":59,"engine_model":"claude-sonnet-5","harness":"claude-code-headless","tests":"fail","guard":"red","tokens":91230,"wall_s":1580,"head_sha":"a4b5c6d"}
