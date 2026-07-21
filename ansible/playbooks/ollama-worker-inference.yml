@@ -1,20 +1,22 @@
-# Ported pattern from the existing ollama plays — PET-132.
+# Ported pattern from the existing ollama plays — originally PET-132 (the retired agent
+# fleet's worker tier); retuned for the Resume Builder app (P1) — filename kept as-is to
+# avoid unnecessary churn, but the layout below is app inference, not a fleet worker.
 ---
-# ollama-worker-inference.yml — configure ollama-host (.12) as the two-agent pivot's
-# WORKER inference tier (PET-132): two pinned single-GPU Ollama services + dual-resident
-# models. Coder (qwen3:8b) on the RTX 3060 Ti at :11434; qwen2.5:3b on the GTX 1660 SUPER
-# at :11435. Each model is pinned ENTIRELY to its card (CUDA_VISIBLE_DEVICES) — no
-# cross-GPU split, no Turing fallback-kernel risk.
+# ollama-worker-inference.yml — configure ollama-host (.12) as the resume builder's
+# inference tier: two pinned single-GPU Ollama services + dual-resident models. Quality
+# lane (qwen3.5:9b) on the RTX 3060 Ti at :11434; fast lane + embeddings (qwen3.5:4b +
+# qwen3-embedding:0.6b) on the GTX 1660 SUPER at :11435. Each model is pinned ENTIRELY to
+# its card (CUDA_VISIBLE_DEVICES) — no cross-GPU split, no Turing fallback-kernel risk.
 #
 # Runs the service role FIRST (both pinned instances up) THEN the models role (pull +
 # load-resident), so the residency warm-up can reach :11435 as well as :11434.
 #
-# Operator-only (never run by the loop). Fill the GPU UUIDs in host_vars/ollama-host.yml
-# first (nvidia-smi -L) — the service role asserts the placeholders are gone.
+# Operator-only. Fill the GPU UUIDs in host_vars/ollama-host.yml first (nvidia-smi -L) —
+# the service role asserts the placeholders are gone.
 #   ansible-playbook playbooks/ollama-worker-inference.yml
 #   ansible-playbook playbooks/ollama-worker-inference.yml --check   # dry run
 
-- name: Configure ollama-host worker inference layout
+- name: Configure ollama-host resume-builder inference layout
   hosts: ollama
   become: true
   force_handlers: true   # PET-132: apply the env/pin restart even if a later resident-load hiccups
