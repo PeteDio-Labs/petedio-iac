@@ -9,12 +9,19 @@ host, so unlike the postgres RDS host there's no LAN bind, no CIDR allowlist.
 - MongoDB 8.0 (`mongodb-org`), `bindIp 127.0.0.1`, `wiredTiger.engineConfig.cacheSizeGB`
   `0.25` (small footprint — 242 is a shared 6G-RAM LXC), `security.authorization: enabled`
   from the start.
+- A **bootstrap admin user** (`mongodb_admin_user`, default `admin`; `root` role on the
+  admin db) via Mongo's **localhost exception** — verified live (2026-07-21): the
+  exception only allows creating one user, only in the admin db, and only ONCE per mongod
+  process lifetime (closes after the first successful create, even if that user is later
+  dropped — a restart reopens it, not an empty users collection). So it's used exactly
+  once to create a persistent admin, never relied on again.
 - The app's SCRAM user (`mongodb_app_user`, default `resume-app`), scoped `readWrite` on
   the `mongodb_app_db` database (default `resume`) only — never an admin credential.
-  Bootstrapped idempotently via Mongo's **localhost exception**: a localhost connection
-  may run one `createUser` while the users collection is empty, even with authorization
-  already enabled, so there's no disable-auth-then-enable-then-restart dance. Re-runs
-  check `db.auth(...)` first and no-op if the user already works.
+  Created/verified idempotently using the bootstrap admin's real credentials (not the
+  exception). All auth checks use `-u`/`-p`/`--authenticationDatabase` flags, never a
+  `mongodb://user:pass@host` URI — a Vault-generated password (`openssl rand -base64`)
+  routinely contains `+`/`/` characters a URI parser rejects unless percent-encoded;
+  flags take the raw value with no parsing involved.
 - A nightly `mongodump --archive --gzip | mc pipe` backup straight to a versioned MinIO
   bucket (`resume-mongo-backups`, default) — no local staging file, no remote pruning
   (bucket versioning is the retention net, same convention as `vault-snapshot`).
@@ -23,6 +30,8 @@ host, so unlike the postgres RDS host there's no LAN bind, no CIDR allowlist.
 
 - `mongodb_app_password` — resolve from Vault `kv/services/resume-builder`
   (field `mongo_app_password`).
+- `mongodb_admin_password` — resolve from Vault `kv/services/resume-builder`
+  (field `mongo_admin_password`). Infrastructure-only credential, never given to the app.
 - `mongodb_backup_minio_access_key` / `_secret_key` — a **scoped** svcacct for the
   `resume-mongo-backups` bucket (fields `mc_access_key` / `mc_secret_key`), same Vault
   path. Only required if `mongodb_backup_enabled` (default `true`).
