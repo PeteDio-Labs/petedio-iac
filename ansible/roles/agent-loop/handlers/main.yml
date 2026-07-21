@@ -5,8 +5,3 @@
     name: vault-agent
     state: restarted
     daemon_reload: true
-
-# Re-exec systemd to pick up changed unit files (PET-148 rebase timer/service templates).
-- name: Reload systemd (agent-loop)
-  ansible.builtin.systemd_service:
-    daemon_reload: true
