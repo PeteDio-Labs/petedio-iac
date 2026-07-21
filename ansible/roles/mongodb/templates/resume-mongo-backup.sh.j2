@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# resume-mongo-backup (Resume Builder P1) — mongodump the app database straight to MinIO,
+# no local staging file. Run by resume-mongo-backup.timer. Mirrors vault-snapshot.sh.j2's
+# structure (preconditions-first, mc via MC_HOST_ env, never persisted to ~/.mc/config.json).
+set -euo pipefail
+
+# shellcheck disable=SC1090
+source "{{ mongodb_backup_env_path }}"
+
+MC="{{ mongodb_backup_mc_path }}"
+MC_ALIAS="{{ mongodb_backup_mc_alias }}"
+MINIO_URL="{{ mongodb_backup_minio_scheme }}://{{ mongodb_backup_minio_hostport }}"
+BUCKET="{{ mongodb_backup_bucket }}"
+DB="{{ mongodb_app_db }}"
+USER="{{ mongodb_app_user }}"
+
+log() { printf 'resume-mongo-backup: %s\n' "$*"; }
+die() { printf 'resume-mongo-backup: ERROR: %s\n' "$*" >&2; exit 1; }
+
+command -v mongodump >/dev/null || die "mongodump not found"
+[ -x "$MC" ] || die "mc not found at $MC"
+[ -n "${MC_ACCESS_KEY:-}" ] && [ -n "${MC_SECRET_KEY:-}" ] || die "MC_ACCESS_KEY/MC_SECRET_KEY missing from {{ mongodb_backup_env_path }}"
+[ -n "${MONGODB_APP_PASSWORD:-}" ] || die "MONGODB_APP_PASSWORD missing from {{ mongodb_backup_env_path }}"
+
+# shellcheck disable=SC2140
+export "MC_HOST_${MC_ALIAS}"="{{ mongodb_backup_minio_scheme }}://${MC_ACCESS_KEY}:${MC_SECRET_KEY}@{{ mongodb_backup_minio_hostport }}"
+
+# Precondition first (PET-151 pattern): fail fast if the destination bucket is missing,
+# not mid-dump after the work is already done.
+"$MC" ls "${MC_ALIAS}/${BUCKET}" >/dev/null 2>&1 ||
+  die "MinIO bucket '${BUCKET}' missing or unreachable at ${MINIO_URL} — create it first: 'mc mb <alias>/${BUCKET} && mc version enable <alias>/${BUCKET}'."
+
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+object="${DB}-${ts}.archive.gz"
+
+mongodump \
+  --uri="mongodb://${USER}:${MONGODB_APP_PASSWORD}@127.0.0.1:{{ mongodb_port }}/${DB}?authSource=${DB}" \
+  --archive --gzip |
+  "$MC" pipe --quiet "${MC_ALIAS}/${BUCKET}/${object}" ||
+  die "mongodump | mc pipe failed"
+
+log "uploaded ${object} to ${MINIO_URL}/${BUCKET}/ (bucket versioning is the retention net — no local copy, no remote pruning)"

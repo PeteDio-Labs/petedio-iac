@@ -1,0 +1,181 @@
+---
+# mongodb role (Resume Builder P1) — native MongoDB 8.0 from the official apt repo (no
+# Docker/nesting on this LXC — same reasoning as Postgres on agent-loop, GOTCHAS.md).
+# Idempotent: re-running with the same extra-vars is a no-op past first bootstrap.
+
+- name: Assert the app user password was provided (Vault kv/services/resume-builder — never a committed default)
+  ansible.builtin.assert:
+    that:
+      - mongodb_app_password is defined
+      - mongodb_app_password | length > 0
+    fail_msg: >-
+      Missing mongodb_app_password. Resolve it from Vault kv/services/resume-builder
+      (field mongo_app_password) and pass it as a no_log extra-var via a 0600 JSON @file
+      (see scripts/deploy-poker-api.sh for the pattern).
+  no_log: true
+
+- name: Assert the backup MinIO creds were provided, if the backup timer is enabled
+  ansible.builtin.assert:
+    that:
+      - mongodb_backup_minio_access_key is defined
+      - mongodb_backup_minio_access_key | length > 0
+      - mongodb_backup_minio_secret_key is defined
+      - mongodb_backup_minio_secret_key | length > 0
+    fail_msg: >-
+      Missing mongodb_backup_minio_access_key/secret_key. Resolve from Vault
+      kv/services/resume-builder (fields mc_access_key / mc_secret_key) — a scoped
+      svcacct for the resume-mongo-backups bucket, not a root credential.
+  no_log: true
+  when: mongodb_backup_enabled | bool
+
+# --- Install (official mongodb-org repo, pinned to the 8.0 line) ------------------------
+
+- name: Install prerequisites (gnupg for the repo key)
+  ansible.builtin.apt:
+    name:
+      - gnupg
+      - ca-certificates
+    state: present
+    update_cache: true
+
+- name: Add the MongoDB apt signing key
+  ansible.builtin.get_url:
+    url: "https://pgp.mongodb.com/server-{{ mongodb_version_line }}.asc"
+    dest: "/usr/share/keyrings/mongodb-server-{{ mongodb_version_line }}.asc"
+    mode: "0644"
+
+# get_url above fetches an ASCII-armored key; dearmor it in place so apt_repository's
+# signed-by can consume it (apt requires a binary keyring, not the armored form).
+- name: Dearmor the MongoDB apt signing key
+  ansible.builtin.command:
+    cmd: >-
+      gpg --batch --yes --dearmor
+      -o /usr/share/keyrings/mongodb-server-{{ mongodb_version_line }}.gpg
+      /usr/share/keyrings/mongodb-server-{{ mongodb_version_line }}.asc
+  args:
+    creates: "/usr/share/keyrings/mongodb-server-{{ mongodb_version_line }}.gpg"
+
+- name: Add the MongoDB apt repository pinned to {{ mongodb_version_line }}
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [ signed-by=/usr/share/keyrings/mongodb-server-{{ mongodb_version_line }}.gpg ]
+      https://repo.mongodb.org/apt/ubuntu {{ mongodb_ubuntu_codename }}/mongodb-org/{{ mongodb_version_line }} multiverse
+    filename: "mongodb-org-{{ mongodb_version_line }}"
+    state: present
+
+- name: Install mongodb-org
+  ansible.builtin.apt:
+    name: mongodb-org
+    state: present
+    update_cache: true
+
+# --- Configure ----------------------------------------------------------------------
+
+- name: Render mongod.conf (bindIp 127.0.0.1, cacheSizeGB, authorization enabled)
+  ansible.builtin.template:
+    src: mongod.conf.j2
+    dest: /etc/mongod.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart mongod
+
+- name: Ensure mongod is started and enabled
+  ansible.builtin.service:
+    name: mongod
+    state: started
+    enabled: true
+
+- name: Flush handlers now so a config change is live before the user-bootstrap check below
+  ansible.builtin.meta: flush_handlers
+
+# --- App user bootstrap (idempotent via Mongo's localhost exception) ----------------
+# With security.authorization: enabled and an EMPTY users collection, a connection from
+# localhost is granted temporary admin access — exactly enough to run one createUser.
+# Once any user exists, the exception closes itself; auth() below is what makes re-runs
+# a no-op instead of erroring on "user already exists".
+
+- name: Check whether the app user can already authenticate (idempotency check)
+  ansible.builtin.command:
+    cmd: >-
+      mongosh --quiet mongodb://127.0.0.1:{{ mongodb_port }}/{{ mongodb_app_db }}
+      --eval "db.auth('{{ mongodb_app_user }}', '{{ mongodb_app_password }}')"
+  register: mongodb_app_user_auth_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Create the app user via the localhost exception (first bootstrap only)
+  ansible.builtin.command:
+    cmd: >-
+      mongosh --quiet mongodb://127.0.0.1:{{ mongodb_port }}/{{ mongodb_app_db }}
+      --eval "db.createUser({user: '{{ mongodb_app_user }}', pwd: '{{ mongodb_app_password }}',
+      roles: [{role: 'readWrite', db: '{{ mongodb_app_db }}'}]})"
+  when: "'true' not in mongodb_app_user_auth_check.stdout"
+  no_log: true
+  register: mongodb_app_user_create
+  changed_when: mongodb_app_user_create.rc == 0
+  failed_when: false
+
+- name: Fail loudly if user creation didn't succeed and auth still doesn't work (not a fresh-bootstrap case)
+  ansible.builtin.fail:
+    msg: >-
+      {{ mongodb_app_user }} could not authenticate and the localhost-exception create
+      failed too — the users collection is probably non-empty with a DIFFERENT admin/user
+      already present. This needs an operator to create/fix the app user by hand
+      (mongosh as an existing admin), not a bare re-run of this role.
+  when:
+    - "'true' not in mongodb_app_user_auth_check.stdout"
+    - mongodb_app_user_create is defined
+    - mongodb_app_user_create.rc is defined
+    - mongodb_app_user_create.rc != 0
+
+# --- Nightly backup (mongodump --archive --gzip | mc pipe to MinIO) -----------------
+
+- name: Nightly Mongo backup to MinIO
+  when: mongodb_backup_enabled | bool
+  block:
+    - name: Install the mc (MinIO client) binary, if not already present (agent-loop role may have left one)
+      ansible.builtin.get_url:
+        url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+        dest: "{{ mongodb_backup_mc_path }}"
+        mode: "0755"
+        owner: root
+        group: root
+        force: false
+
+    - name: Write the backup env file (0600, root-only — MinIO creds + Mongo app password)
+      ansible.builtin.template:
+        src: resume-mongo-backup.env.j2
+        dest: "{{ mongodb_backup_env_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Install the backup script
+      ansible.builtin.template:
+        src: resume-mongo-backup.sh.j2
+        dest: "{{ mongodb_backup_script_path }}"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Install the backup systemd service + timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - resume-mongo-backup.service
+        - resume-mongo-backup.timer
+      notify: Reload systemd (mongodb)
+
+    - name: Enable and start the backup timer
+      ansible.builtin.systemd_service:
+        name: resume-mongo-backup.timer
+        enabled: true
+        state: started
+        daemon_reload: true

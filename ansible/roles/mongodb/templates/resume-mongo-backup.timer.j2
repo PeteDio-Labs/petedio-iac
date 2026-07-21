@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+# Nightly schedule for resume-mongo-backup.service (Resume Builder P1).
+[Unit]
+Description=Nightly resume-builder Mongo backup
+
+[Timer]
+OnCalendar={{ mongodb_backup_oncalendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
