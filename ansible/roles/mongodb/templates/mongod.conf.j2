@@ -1,0 +1,26 @@
+# {{ ansible_managed }}
+# mongod.conf — resume-builder app database (resume-242). Localhost-only: the app runs on
+# this same host, so there's no LAN bind like the postgres RDS host.
+
+storage:
+  dbPath: {{ mongodb_db_path }}
+  wiredTiger:
+    engineConfig:
+      cacheSizeGB: {{ mongodb_wiredtiger_cache_size_gb }}
+
+systemLog:
+  destination: file
+  logAppend: true
+  path: {{ mongodb_log_path }}
+
+net:
+  port: {{ mongodb_port }}
+  bindIp: {{ mongodb_bind_ip }}
+
+processManagement:
+  timeZone: UTC
+
+# Enabled from day one — the app user is bootstrapped via Mongo's localhost exception
+# (tasks/main.yml), not by toggling this off and back on.
+security:
+  authorization: enabled
