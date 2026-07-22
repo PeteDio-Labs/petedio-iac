@@ -30,13 +30,18 @@ ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pedro
 # layout ("coder"/"gemma") since they're really just the GPU-pin identifiers — only the
 # model VALUES changed.
 #
-# qwen3.5:9b is the ONE unverified number in this retune (planning doc §10 risk #2): a
-# dense 9B's weights + q8_0 KV cache may not hold 100% GPU at 8-16k ctx on an 8G card.
-# Verify live with `ollama ps` after applying (100% GPU column, not the offload %% —
-# bug #14351 means that figure isn't trustworthy); if it spills, step
-# ollama_extra_env's OLLAMA_CONTEXT_LENGTH down further or fall back to the
-# already-proven qwen3:8b (kept in ollama_base_models below either way).
-ollama_coder_model: "qwen3.5:9b"   # quality lane: resume tailoring, cover letters, Q&A (fallback: qwen3:8b)
+# qwen3.5:9b was the ONE unverified number in this retune (planning doc §10 risk #2) —
+# VERIFIED LIVE, 2026-07-21: it holds 100% GPU at ctx 8192 (5.7GB / 8192MB). NOTE for
+# future debugging on this host: the first live test showed heavy CPU spill (19-21%
+# GPU) that looked like a genuine capacity miss — it was actually an ORPHANED
+# llama-server process from earlier ad-hoc testing (`keep_alive:0` "unload" calls don't
+# always cleanly kill the backend process) silently holding ~2GB of GPU0's VRAM,
+# surviving even a full `systemctl restart ollama`. Always check `nvidia-smi` for
+# leaked llama-server processes (not just `ollama ps`, which only reports what the
+# CURRENT server process thinks is loaded) before trusting a spill/fit measurement.
+# 16384 ctx was NOT re-verified after finding this — 8192 is what's proven; if a future
+# session wants more context, re-test from a confirmed-clean baseline first.
+ollama_coder_model: "qwen3.5:9b"   # quality lane: resume tailoring, cover letters, Q&A (fallback if ever needed: qwen3:8b, also verified 100% GPU @ ctx 8192)
 ollama_fast_model: "qwen3.5:4b"   # fast lane: keyword extraction, span rewrites
 ollama_embed_model: "qwen3-embedding:0.6b"   # fast lane: JD<->resume + question<->story embeddings
 
@@ -50,7 +55,7 @@ ollama_coder_gpu: "GPU-0141644f-f1c4-d527-121f-ae96af5372ed"   # RTX 3060 Ti (8G
 ollama_gemma_gpu: "GPU-bdefa4ac-8c14-9baa-db1b-c94bb471b027"   # GTX 1660 SUPER (6GB) — nvidia-smi -L, 2026-06-23
 
 # Pull every model this host serves (shared store -> one pull per instance). qwen3:8b
-# stays pulled as the quality-lane fallback even though it's not resident by default.
+# stays pulled as a proven fallback even though it's not resident by default.
 ollama_base_models:
   - "{{ ollama_coder_model }}"
   - "{{ ollama_fast_model }}"
@@ -59,21 +64,32 @@ ollama_base_models:
 
 # PRIMARY service (:11434) — pinned to the 3060 Ti, tuned for the quality lane: q8_0
 # KV-cache (halves KV VRAM, requires flash attention), keep_alive=-1 so it never unloads.
-# Context capped at 16K (not the old coder lane's 32K) per the VRAM-fit risk noted above —
-# always still set num_ctx per-request from the app side (planning doc §6 rule: a bare
-# default silently truncates a long JD+profile).
+# Context is 8192 — VERIFIED LIVE (clean baseline, no leaked processes) as holding
+# qwen3.5:9b at 100% GPU. Always still set num_ctx per-request from the app side, capped
+# well under 8192 (planning doc §6 rule: a bare default silently truncates a long
+# JD+profile — this ceiling is now a hard one, not just a footgun to avoid).
 ollama_extra_env:
   - "CUDA_VISIBLE_DEVICES={{ ollama_coder_gpu }}"
   - "OLLAMA_FLASH_ATTENTION=1"
   - "OLLAMA_KV_CACHE_TYPE=q8_0"
-  - "OLLAMA_CONTEXT_LENGTH=16384"
+  - "OLLAMA_CONTEXT_LENGTH=8192"
   - "OLLAMA_KEEP_ALIVE=-1"
 
 # SECOND pinned instance (:11435) — the 1660 SUPER, keeps the fast + embedding models
-# resident together (~1.9GB q4 + ~0.6GB embed model, well inside 6G). Turing has no
-# tensor cores, so this lane is slow at long-prompt ingest — the app must cap fast-lane
+# resident together. VERIFIED LIVE (2026-07-21, clean baseline): qwen3.5:4b alone holds
+# 100% GPU at ctx 8192 (3.3GB), confirmed unaffected by the embedding model loading
+# alongside it. qwen3-embedding:0.6b, however, does NOT fully fit alongside it even from
+# a clean state: ~45-55% GPU / rest CPU at ctx 8192, no real improvement at ctx 2048 —
+# its resident size (~2.2-2.6GB) is larger than a 0.6B model's weights alone would
+# suggest, likely fixed compute-buffer overhead in this architecture, not something ctx
+# tuning fixes. Total needed (4b 3.3GB + embed ~2.2GB min) leaves under 700MB margin on
+# a 6GB card — genuinely tight, not a bug. Known, accepted limitation for now: embedding
+# calls still work, just slower than the "sub-second" target in the planning doc's task
+# specs — revisit if it becomes a real bottleneck (candidates: a smaller/different
+# embedding model, or moving it off this card). Turing has no tensor cores either way,
+# so this lane is slow at long-prompt ingest regardless — the app must cap fast-lane
 # inputs to ~4k tokens (planning doc §6); flash attention + q8_0 KV still help decode
-# speed and VRAM headroom even without tensor-core prompt processing gains.
+# speed and VRAM headroom even without tensor-core gains.
 ollama_extra_instances:
   - name: ollama-1660s
     port: 11435
@@ -86,7 +102,9 @@ ollama_extra_instances:
       - "OLLAMA_KEEP_ALIVE=-1"
 
 # Keep each model warm on its pinned instance/GPU (loaded with keep_alive=-1). Two
-# entries on :11435 — both models resident together, same port.
+# entries on :11435 — both models resident together, same port. The embedding model is
+# tagged `kind: embed` — it doesn't support /api/generate (verified live, 2026-07-21;
+# see roles/ollama-models/tasks/main.yml for the warm-up split this drives).
 ollama_resident_models:
   - model: "{{ ollama_coder_model }}"
     port: 11434
@@ -94,3 +112,4 @@ ollama_resident_models:
     port: 11435
   - model: "{{ ollama_embed_model }}"
     port: 11435
+    kind: embed
