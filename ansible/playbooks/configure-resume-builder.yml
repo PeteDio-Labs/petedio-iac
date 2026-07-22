@@ -37,6 +37,12 @@
     resume_builder_mongo_user: "{{ mongodb_app_user | default('resume-app') }}"
     resume_builder_mongo_db: "{{ mongodb_app_db | default('resume') }}"
     resume_builder_mongo_port: "{{ mongodb_port | default(27017) }}"
+    # AI lane — the FAST Ollama instance (:11435, GTX 1660 SUPER), which keeps
+    # qwen3.5:4b + qwen3-embedding:0.6b resident (host_vars/ollama-host.yml).
+    # LOAD-BEARING: with OLLAMA_HOST empty the app's createAiProvider() silently falls
+    # back to deterministic demo stubs, so a "production" deploy would serve fake AI.
+    resume_builder_ollama_host: "http://192.168.50.12:11435"
+    resume_builder_ollama_fast_model: "{{ ollama_fast_model | default('qwen3.5:4b') }}"
 
   pre_tasks:
     - name: Assert required secret extra-vars were provided (use scripts/deploy-resume-builder.sh)
