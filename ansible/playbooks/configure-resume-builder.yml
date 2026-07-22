@@ -107,6 +107,9 @@
       ansible.builtin.shell:
         cmd: "set -o pipefail; curl -fsSL https://bun.sh/install | BUN_INSTALL={{ bun_install_dir }} bash"
         creates: "{{ bun_bin }}"
+        # `set -o pipefail` is a bashism — Ubuntu's /bin/sh is dash, which fails with
+        # "Illegal option -o pipefail". Ansible's shell module defaults to /bin/sh.
+        executable: /bin/bash
       when: not bun_stat.stat.exists
 
     - name: Make bun world-readable/executable
@@ -131,13 +134,34 @@
         directory_mode: "0755"
       notify: Restart resume-builder
 
-    # Platform-specific deps (e.g. any native addon) must be installed ON THE TARGET —
-    # copying node_modules from the operator's Mac (arm64/x86_64) would ship the wrong
-    # binaries. adapter-node's build/package.json lists exactly the production deps.
-    - name: bun install --production inside build/ (target-native deps)
+    # adapter-node leaves the runtime deps (mongodb, jose) as EXTERNAL bare imports and
+    # does NOT emit a build/package.json — so the manifest has to come from the source
+    # checkout and node_modules must live one level up, at the app dir: Node/Bun resolve
+    # from build/index.js by walking up to {{ resume_builder_app_dir }}/node_modules.
+    #
+    # bunfig.toml + bun-preload.js are the mongodb/bson compat shim: bson calls a node:v8
+    # API Bun hasn't implemented, so importing mongodb under Bun throws without the
+    # preload. bun reads bunfig.toml from the CWD, which the unit sets to the app dir.
+    - name: Copy the runtime manifest + Bun compat shim to the app dir
+      ansible.builtin.copy:
+        src: "{{ resume_builder_src }}/{{ item }}"
+        dest: "{{ resume_builder_app_dir }}/{{ item }}"
+        owner: "{{ resume_builder_user }}"
+        group: "{{ resume_builder_group }}"
+        mode: "0644"
+      loop:
+        - package.json
+        - bun.lock
+        - bunfig.toml
+        - bun-preload.js
+      notify: Restart resume-builder
+
+    # Platform-specific deps must be installed ON THE TARGET — copying node_modules from
+    # the operator's Mac (arm64/x86_64) would ship the wrong binaries.
+    - name: bun install --production in the app dir (target-native deps)
       ansible.builtin.command:
         cmd: "{{ bun_bin }} install --production"
-        chdir: "{{ resume_builder_app_dir }}/build"
+        chdir: "{{ resume_builder_app_dir }}"
       become_user: "{{ resume_builder_user }}"
       changed_when: true
       notify: Restart resume-builder

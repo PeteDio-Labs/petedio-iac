@@ -8,7 +8,9 @@ Wants=network-online.target
 Type=simple
 User={{ resume_builder_user }}
 Group={{ resume_builder_group }}
-WorkingDirectory={{ resume_builder_app_dir }}/build
+# CWD is the app dir (not build/): bun reads bunfig.toml — the mongodb/bson compat
+# preload — from the working directory, and node_modules lives here too.
+WorkingDirectory={{ resume_builder_app_dir }}
 EnvironmentFile={{ resume_builder_app_dir }}/app.env
 ExecStart={{ bun_bin }} {{ resume_builder_app_dir }}/build/index.js
 Restart=on-failure
