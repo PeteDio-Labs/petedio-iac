@@ -99,6 +99,10 @@
       ansible.builtin.shell:
         cmd: "set -o pipefail; curl -fsSL https://bun.sh/install | BUN_INSTALL={{ bun_install_dir }} bash"
         creates: "{{ bun_bin }}"
+        # `set -o pipefail` is a bashism. Ansible's shell module runs /bin/sh, which on
+        # Ubuntu/Pop!_OS is dash -> "Illegal option -o pipefail" (hit on palworld-mc,
+        # PET-266). It only ever worked because the LXC's /bin/sh happened to be bash.
+        executable: /bin/bash
       when: not bun_stat.stat.exists
 
     - name: Make bun world-readable/executable
