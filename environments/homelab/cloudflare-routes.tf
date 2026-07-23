@@ -115,11 +115,12 @@ import {
 # Cloudflare Access is HOSTNAME-scoped, not tunnel-scoped, so the Authentik gate and the
 # sonia+pedro allow-list ride along unchanged — same module, same arguments as before.
 #
-# Guarded on the TF_VAR so an apply before the operator has created the tunnel is a clean
-# no-op instead of an error. See variables.tf and docs/runbooks/palworld-panel-tunnel.md.
+# The tunnel UUID is a REQUIRED variable (no default) — see variables.tf. It used to be
+# count-guarded for convenience, but a disabled module plus the `moved` blocks below reads
+# as "source removed" and destroys the live Access app + CNAME. Hard-failing the plan on a
+# missing ID is the safe outcome; there is no benign version of that apply.
 module "cloudflare_ingress_palworld" {
   source = "../../modules/cloudflare-ingress"
-  count  = var.cloudflare_palworld_tunnel_id != null ? 1 : 0
 
   account_id   = local.cloudflare_account_id
   zone_id      = local.cloudflare_zone_id
@@ -146,13 +147,13 @@ module "cloudflare_ingress_palworld" {
 # ungated, plus a new app ID for no reason. `moved` makes it a state rename: zero API churn.
 moved {
   from = module.cloudflare_ingress.cloudflare_zero_trust_access_application.route["palworld.pdlab.dev"]
-  to   = module.cloudflare_ingress_palworld[0].cloudflare_zero_trust_access_application.route["palworld.pdlab.dev"]
+  to   = module.cloudflare_ingress_palworld.cloudflare_zero_trust_access_application.route["palworld.pdlab.dev"]
 }
 moved {
   from = module.cloudflare_ingress.cloudflare_zero_trust_access_policy.route["palworld.pdlab.dev"]
-  to   = module.cloudflare_ingress_palworld[0].cloudflare_zero_trust_access_policy.route["palworld.pdlab.dev"]
+  to   = module.cloudflare_ingress_palworld.cloudflare_zero_trust_access_policy.route["palworld.pdlab.dev"]
 }
 moved {
   from = module.cloudflare_ingress.cloudflare_dns_record.route["palworld.pdlab.dev"]
-  to   = module.cloudflare_ingress_palworld[0].cloudflare_dns_record.route["palworld.pdlab.dev"]
+  to   = module.cloudflare_ingress_palworld.cloudflare_dns_record.route["palworld.pdlab.dev"]
 }

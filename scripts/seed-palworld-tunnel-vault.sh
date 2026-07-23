@@ -23,6 +23,8 @@ export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
 export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 VAULT_PATH="${VAULT_PATH:-kv/services/palworld-panel}"
+# Non-secret IDs live here; .github/workflows/terraform.yml maps them to TF_VAR_* for CI.
+CF_VAULT_PATH="${CF_VAULT_PATH:-kv/iac/cloudflare}"
 
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -79,13 +81,27 @@ echo "tunnel_token present ($LEN bytes). Other fields still on the secret:"
 vault kv get -format=json "$VAULT_PATH" \
   | python3 -c 'import sys,json;print("   " + ", ".join(sorted(json.load(sys.stdin)["data"]["data"])))'
 
+# The UUID is NON-secret, but it has to reach the CI runner, and terraform.yml sources every
+# TF_VAR from Vault (kv/data/iac/cloudflare -> TF_VAR_cloudflare_palworld_tunnel_id). Exporting
+# it in a local shell is not enough: apply-on-merge runs on the runner. And the variable is
+# deliberately REQUIRED, so a missing value fails the plan loudly rather than disabling the
+# module — which, with the `moved` blocks, would destroy the live Access app and CNAME.
+step "Writing palworld_tunnel_id to kv/iac/cloudflare (where CI reads TF_VARs)"
+vault kv patch "$CF_VAULT_PATH" palworld_tunnel_id="$TUNNEL_ID" >/dev/null
+READBACK="$(vault kv get -field=palworld_tunnel_id "$CF_VAULT_PATH")"
+[ "$READBACK" = "$TUNNEL_ID" ] || die "read-back mismatch at $CF_VAULT_PATH."
+echo "palworld_tunnel_id = $READBACK"
+
 step "Next"
 cat <<EOF
-1. export TF_VAR_cloudflare_palworld_tunnel_id=$TUNNEL_ID
-2. Merge petedio-iac#187 (apply moves the Access app + CNAME onto the new tunnel).
-3. ansible-playbook -i ansible/inventory ansible/playbooks/configure-palworld-tunnel.yml \\
+1. Merge petedio-iac#187 — apply moves the Access app + CNAME onto the new tunnel.
+   (CI picks the UUID up from $CF_VAULT_PATH automatically; no local export needed.)
+2. ansible-playbook -i ansible/inventory ansible/playbooks/configure-palworld-tunnel.yml \\
      -e "cloudflared_tunnel_token=\$(vault kv get -field=tunnel_token $VAULT_PATH)"
-4. Merge petedio-palworld-panel#24 (CD deploys PANEL_BIND=127.0.0.1).
+3. Merge petedio-palworld-panel#24 (CD deploys PANEL_BIND=127.0.0.1).
 
-palworld.pdlab.dev is down between step 2 and step 3 finishing. Expected.
+For a LOCAL plan/apply, export it yourself:
+   export TF_VAR_cloudflare_palworld_tunnel_id=$TUNNEL_ID
+
+palworld.pdlab.dev is down between step 1 and step 2 finishing. Expected.
 EOF
