@@ -60,6 +60,32 @@
       register: panel_src_stat
       failed_when: not panel_src_stat.stat.exists
 
+    # Frontend is a Vite/Preact build now (PET-266 migration off the old static-file SPA) —
+    # this play copies frontend/dist/, it does not build it. The build has to happen on
+    # whatever controller runs this playbook, BEFORE this play does, and write into the
+    # checkout at palworld_panel_src: in CI that checkout is bind-mounted read-only into the
+    # ansible container (see petedio-palworld-panel's deploy.yml), so a delegate_to:localhost
+    # build task HERE cannot write to it. `scripts/deploy-palworld-panel.sh` runs
+    # `bun run build` itself before invoking this play; CI's deploy.yml does the same on the
+    # runner before the ansible/Docker step. Fail loudly and specifically rather than copying
+    # a stale or half-built dist/ (or erroring inside the copy task with a confusing message).
+    - name: Check whether the frontend was built (frontend/dist/ present)
+      ansible.builtin.stat:
+        path: "{{ palworld_panel_src }}/frontend/dist/phone.html"
+      delegate_to: localhost
+      become: false
+      register: panel_dist_stat
+
+    - name: Assert the frontend build is present
+      ansible.builtin.assert:
+        that: panel_dist_stat.stat.exists
+        fail_msg: >-
+          {{ palworld_panel_src }}/frontend/dist/phone.html not found — the frontend hasn't
+          been built. Run `cd frontend && bun install && bun run build` in the panel checkout
+          first (scripts/deploy-palworld-panel.sh and the CI deploy.yml both do this
+          automatically; a manual ansible-playbook run does not).
+        quiet: true
+
   tasks:
     - name: Create the panel service group
       ansible.builtin.group:
@@ -124,10 +150,19 @@
         directory_mode: "0755"
       notify: Restart palworld-panel
 
-    - name: Copy the frontend (static SPA)
+    # Vite content-hashes every asset filename, so a redeploy never OVERWRITES an old chunk —
+    # it adds a new one beside it. copy: is additive-only (it never prunes), so without this
+    # the target would accumulate every hashed filename from every deploy forever. Wipe the
+    # directory first; the copy right after always repopulates it completely from dist/.
+    - name: Clear the previous frontend build before copying the new one
+      ansible.builtin.file:
+        path: "{{ panel_app_dir }}/frontend/dist"
+        state: absent
+
+    - name: Copy the frontend (Vite build output — see the dist/ assert above)
       ansible.builtin.copy:
-        src: "{{ palworld_panel_src }}/frontend/public/"
-        dest: "{{ panel_app_dir }}/frontend/public/"
+        src: "{{ palworld_panel_src }}/frontend/dist/"
+        dest: "{{ panel_app_dir }}/frontend/dist/"
         owner: "{{ panel_user }}"
         group: "{{ panel_group }}"
         mode: "0644"
