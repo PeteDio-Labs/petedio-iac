@@ -243,8 +243,10 @@
 
     - name: Ignore lid-close and idle (logind drop-in)
       ansible.builtin.copy:
+        # NB: no `{{ ansible_managed }}` here — that var is injected by the template
+        # action plugin only, and is undefined inside `copy: content:`.
         content: |
-          # {{ ansible_managed }}
+          # Ansible managed — roles/palworld (petedio-iac). Do not edit by hand.
           # This host runs the Palworld dedicated server (PET-266). A closed lid or an
           # idle timeout must never suspend it. See also the masked sleep targets.
           [Login]
