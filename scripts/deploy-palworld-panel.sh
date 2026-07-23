@@ -21,10 +21,15 @@ export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
-for t in vault ansible-playbook python3; do command -v "$t" >/dev/null || die "$t not in PATH"; done
+for t in vault ansible-playbook python3 bun; do command -v "$t" >/dev/null || die "$t not in PATH"; done
 [ -f "$SECRETS/ansible.role_id" ] && [ -f "$SECRETS/ansible.secret_id" ] \
   || die "ansible AppRole creds not in $SECRETS."
 [ -f "$PANEL_SRC/backend/src/index.ts" ] || die "panel source not at $PANEL_SRC (set PANEL_SRC)."
+[ -f "$PANEL_SRC/frontend/package.json" ] || die "panel frontend not at $PANEL_SRC/frontend (set PANEL_SRC)."
+
+step "Building the frontend (Vite — phone.html + dashboard.html)"
+( cd "$PANEL_SRC/frontend" && bun install --frozen-lockfile && bun run build ) \
+  || die "frontend build failed — see output above."
 
 applogin(){ local rid sid; rid="$(cat "$SECRETS/$1.role_id")"; sid="$(cat "$SECRETS/$1.secret_id")"
   vault write -field=token auth/approle/login role_id="$rid" secret_id="$sid" 2>/dev/null || die "AppRole login failed for '$1'."; }
