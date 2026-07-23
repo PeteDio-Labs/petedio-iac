@@ -46,23 +46,29 @@ palworld_rcon_port: 25575
 palworld_rest_api_enabled: true
 palworld_rest_api_port: 8212
 
-# NO palworld_gamedata_api_enabled — deliberately removed (PET-278, 2026-07-22).
-# The 1.0 /v1/api/game-data endpoint exists in the route table but is NOT enableable
-# on the shipping dedicated-server build. Verified live on 234 (v1.0.1.100619), all
-# three routes fail:
-#   * EnableGameDataAPI=True inside OptionSettings is silently dropped — it never
-#     appears in the 117-field /v1/api/settings dump, so it is not a config key;
-#   * -EnableGameDataAPI as a launch arg is a no-op (it was on the running process
-#     for hours while /v1/api/game-data still 404'd);
-#   * RCON answers "Unknown command" to EnableGameDataAPI, SetGameDataAPIEnabled,
-#     EnableOutputGameData and SetCollectGameDataInterval — Palworld's RCON is a fixed
-#     whitelist (even "Help" is unknown; "ShowPlayers" works), not an exec dispatcher.
-# In the binary those names sit in the UE reflection/exec table, there are zero
-# /Script/Pal.* ini sections, and -ExecCmds is stripped. The endpoint always returns
-# 404 "PalGameDataBridge GameData API is not enabled".
-# Keeping a var here made dead config read as working config, which is worse than not
-# having it. 1.0 is under a month old — re-test after a Pocketpair patch, and only
-# re-add the var once a converge can actually flip the endpoint to 200.
+# GameData API — /v1/api/game-data (world actor snapshot). RE-ADDED 2026-07-23 after
+# PET-278's "not enableable" conclusion turned out to be a CASING miss, not a missing
+# feature. Verified live on palworld-mc (v1.0.1.100619, build 24181105): the endpoint
+# returns 200 with real actor data.
+#
+# The switch is a launch arg, and ONLY in this exact spelling:
+#     -enable-gamedata-api      <-- lowercase, hyphen-separated. WORKS.
+# PET-278 tried `-EnableGameDataAPI` (the CamelCase spelling that appears in the UE
+# reflection/exec name table) and correctly proved THAT is a no-op — it was live on the
+# running process while the endpoint still 404'd. Both facts are true: the exec-table
+# name is not the CLI flag. Don't "normalise" the casing below to match the other
+# launch args (-useperfthreads / -NoAsyncLoadingThread) — PalServer parses this one
+# literally and any other casing silently does nothing.
+#
+# Still NOT config: EnableGameDataAPI=True inside OptionSettings is silently dropped
+# (never appears in the /v1/api/settings dump), and RCON answers "Unknown command" to
+# every GameData verb — Palworld's RCON is a fixed whitelist. The ini and RCON halves
+# of the PET-278 finding stand; only the launch-arg half was wrong.
+#
+# Requires palworld_rest_api_enabled (the endpoint is served by the REST API listener).
+# NB the payload contains player IP addresses and Steam IDs — see the panel's own
+# access gating before exposing it to any unauthenticated surface.
+palworld_gamedata_api_enabled: true
 
 # --- Base-building world tunables (bases + pals) ----------------------------------
 # Role defaults mirror the engine defaults (4 base camps per guild / 15 worker pals

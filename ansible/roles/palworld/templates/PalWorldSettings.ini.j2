@@ -4,7 +4,8 @@
 ; play, not this file by hand. Palworld reads the whole config from the single
 ; OptionSettings=(...) line; keys omitted here fall back to the server's defaults.
 ; NB: EnableGameDataAPI is deliberately absent — the server's parser silently drops it
-; (it never shows up in /v1/api/settings) and /v1/api/game-data is not enableable on the
-; shipping build at all. See the note in the role defaults (PET-278).
+; (it never shows up in /v1/api/settings), so it is not a config key. /v1/api/game-data
+; IS enableable, but via the `-enable-gamedata-api` LAUNCH ARG in palworld.service.j2,
+; not from here. See the note in the role defaults (PET-278).
 [/Script/Pal.PalGameWorldSettings]
 OptionSettings=(ServerName="{{ palworld_server_name }}",ServerDescription="{{ palworld_server_description }}",ServerPlayerMaxNum={{ palworld_max_players }},PublicPort={{ palworld_public_port }},BaseCampMaxNumInGuild={{ palworld_base_camp_max_in_guild }},BaseCampWorkerMaxNum={{ palworld_base_camp_worker_max }},AdminPassword="{{ palworld_admin_password }}",ServerPassword="{{ palworld_server_password }}",RCONEnabled={{ 'True' if palworld_rcon_enabled else 'False' }},RCONPort={{ palworld_rcon_port }},RESTAPIEnabled={{ 'True' if palworld_rest_api_enabled else 'False' }},RESTAPIPort={{ palworld_rest_api_port }})
