@@ -154,6 +154,22 @@
         directory_mode: "0755"
       notify: Restart palworld-panel
 
+    # shared/ is the backend<->frontend contract directory, and the backend imports it at
+    # ../../shared/*. It used to be TYPE-ONLY (`import type`), which Bun erases at runtime, so
+    # not copying it was invisible. The moment a real runtime import landed (shared/identity.ts,
+    # PET-266's surfaceFor) the service crash-looped on the host with
+    # "Cannot find module '../../shared/identity'" — while CI stayed green, because tests and
+    # the Vite build run from the repo where shared/ exists. Copy it, and assert it below.
+    - name: Copy the shared contract directory (backend imports it at runtime)
+      ansible.builtin.copy:
+        src: "{{ palworld_panel_src }}/shared/"
+        dest: "{{ panel_app_dir }}/shared/"
+        owner: "{{ panel_user }}"
+        group: "{{ panel_group }}"
+        mode: "0644"
+        directory_mode: "0755"
+      notify: Restart palworld-panel
+
     # Vite content-hashes every asset filename, so a redeploy never OVERWRITES an old chunk —
     # it adds a new one beside it. copy: is additive-only (it never prunes), so without this
     # the target would accumulate every hashed filename from every deploy forever. Wipe the
@@ -215,6 +231,18 @@
         enabled: true
         state: started
         daemon_reload: true
+
+    # A green deploy that leaves a crash-looping service is the failure mode this play just
+    # had: systemd "started" the unit, the unit died on a missing module, and Ansible reported
+    # success. Poll the app's own health endpoint so the deploy fails where the cause is.
+    - name: Wait for the panel to answer on loopback (proves it actually booted)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ panel_port }}/api/health"
+        status_code: [200]
+      register: panel_up
+      retries: 10
+      delay: 3
+      until: panel_up.status == 200
 
     # ---- Firewall: withdraw the old LAN allow-rules ----
     # The panel now binds 127.0.0.1 (panel_bind), so nothing off-box can reach :8080 at all
