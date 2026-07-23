@@ -12,6 +12,7 @@ on:
       - ansible/roles/palworld/**
       - ansible/inventory/hosts.yml
       - ansible/inventory/group_vars/palworld.yml
+      - ansible/inventory/host_vars/palworld-mc.yml
       - .github/workflows/ansible-palworld.yml
       - .github/workflows/ansible-stack.yml
   # NB: ansible-stack.yml is deliberately in pull_request.paths ONLY — shared-logic edits
@@ -24,6 +25,7 @@ on:
       - ansible/roles/palworld/**
       - ansible/inventory/hosts.yml
       - ansible/inventory/group_vars/palworld.yml
+      - ansible/inventory/host_vars/palworld-mc.yml
       - .github/workflows/ansible-palworld.yml
 
 # Serialize runs of this workflow so two fast merges can't race two ansible applies
@@ -43,5 +45,7 @@ jobs:
     with:
       playbook: playbooks/configure-palworld.yml
       stack: palworld
-      collections: community.general
+      # community.general -> the role's ufw tasks; ansible.posix -> authorized_key, which
+      # pins the panel's start-hook key to the palctl-remote forced command (PET-266).
+      collections: community.general ansible.posix
       # host-key-checking stays the default "False" (mirrors the pre-dedup behavior)

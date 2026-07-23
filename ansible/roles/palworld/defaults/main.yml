@@ -63,9 +63,47 @@ palworld_base_camp_worker_max: 15 # BaseCampWorkerMaxNum (slider max 20; ini acc
 palworld_firewall_enabled: true
 palworld_open_public_port: false
 palworld_firewall_subnet: 192.168.50.0/24
+# Platform-LAN (.50) ingress. True for the LXC, which is dual-homed onto both segments;
+# a host with no .50 NIC at all (the baremetal box) turns it off so we don't carry a rule
+# for a subnet it can't be reached on. (PET-266 migration)
+palworld_lan_ingress_enabled: true
 
 # Mesh (192.168.86.x) ingress — PET-168. Off by default (the dual-home NIC is opt-in);
 # the palworld inventory group flips palworld_mesh_enabled on. Opens 8211/udp from the
 # mesh subnet so clients on that segment can reach the server over the eth1 NIC.
 palworld_mesh_enabled: false
 palworld_mesh_subnet: 192.168.86.0/24
+
+# --- Which world to serve ---------------------------------------------------------
+# `DedicatedServerName` in GameUserSettings.ini names the SaveGames/0/<name> folder the
+# server loads. It is NOT in PalWorldSettings.ini and nothing else points at the world:
+# restoring SaveGames/ alone leaves this pointing at whatever world the host last made,
+# and the server silently boots a BRAND-NEW empty world instead of the restored one.
+# Caught rehearsing the PET-266 migration — the server came up green, the panel showed
+# "online", and the map was empty.
+#
+# Empty -> leave the file alone (the LXC's value is already correct and self-maintained).
+# Set it to the world GUID on any host that must be pinned to a specific save.
+palworld_dedicated_server_name: ""
+
+# --- Baremetal / physical host ----------------------------------------------------
+# The role was written against a Proxmox LXC. These gate the extra handling a PHYSICAL
+# host needs (PET-266 migration: LXC 234 -> the ex-mission-control laptop on the .86
+# play segment). All default to the LXC behavior, so 234 converges byte-identically.
+palworld_baremetal: false
+
+# A laptop suspends on lid-close and on idle — either one kills the game server. When
+# true the role masks the sleep targets and writes a logind drop-in. Defaults to
+# whatever palworld_baremetal says: physical host -> inhibit, container -> don't
+# (a container has no logind sleep targets to mask anyway).
+palworld_inhibit_sleep: "{{ palworld_baremetal }}"
+
+# Public half of the control panel's start-hook SSH key. The panel authenticates to
+# root with the private half (Vault kv/services/palworld-panel -> panel_ssh_private_key)
+# and lands on the palctl-remote forced command, which allow-lists start/status/
+# check-update/update. This line was HAND-PLACED on 234 and never codified (PET-266
+# migration found it) — without it, a rebuilt host has a dead Start button. A public key
+# is not a secret, so it lives here rather than in Vault. Empty -> task skipped.
+palworld_panel_starthook_pubkey: >-
+  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE/w77J42GrWIqYm+55G5FRHoPR3NlbbZG59fDRjrg6Z
+  palworld-panel-starthook

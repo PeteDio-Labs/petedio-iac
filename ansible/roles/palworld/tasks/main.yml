@@ -9,10 +9,25 @@
 # pulls the 1.0 build automatically on the first converge after release — no manual step.
 # Set palworld_install_binaries=false to fall back to the old "ready-for-binaries" prep.
 
+# NB the guard: this used to be `creates: /var/lib/dpkg/arch`, which is only a valid
+# proxy for "no foreign arch yet" on the MINIMAL Debian LXC template. Every normal
+# Debian/Ubuntu install (incl. the Pop!_OS baremetal host, PET-266) already ships that
+# file, so the task silently skipped and the 32-bit SteamCMD prereqs never installed.
+# Ask dpkg what is actually enabled instead.
+- name: Read the enabled foreign dpkg architectures
+  ansible.builtin.command:
+    cmd: dpkg --print-foreign-architectures
+  register: palworld_foreign_arches
+  changed_when: false
+  # Read-only, and the next task's `when` consumes its output — without this a --check
+  # run would skip it and then fail on the undefined stdout_lines.
+  check_mode: false
+
 - name: Enable i386 multiarch (SteamCMD is 32-bit)
   ansible.builtin.command:
     cmd: dpkg --add-architecture i386
-    creates: /var/lib/dpkg/arch
+  when: "'i386' not in palworld_foreign_arches.stdout_lines"
+  changed_when: true
   notify: Update apt cache
 
 - name: Flush handlers so the apt cache reflects i386 before installing
@@ -120,6 +135,27 @@
     group: "{{ palworld_group }}"
     mode: "0644"
 
+# Pin which save the server loads. GameUserSettings.ini only exists once the server has
+# run at least once, and the server REWRITES it on shutdown — so this is a converge-time
+# guard for rebuilds/restores, not a live control. Set the value while the unit is
+# stopped (a running server will write its own back out on exit).
+- name: Check whether GameUserSettings.ini exists yet
+  ansible.builtin.stat:
+    path: "{{ palworld_server_dir }}/Pal/Saved/Config/LinuxServer/GameUserSettings.ini"
+  register: palworld_gus
+  when: palworld_dedicated_server_name | length > 0
+
+- name: Pin DedicatedServerName to the world this host must serve
+  ansible.builtin.lineinfile:
+    path: "{{ palworld_server_dir }}/Pal/Saved/Config/LinuxServer/GameUserSettings.ini"
+    regexp: '^DedicatedServerName='
+    line: "DedicatedServerName={{ palworld_dedicated_server_name }}"
+    owner: "{{ palworld_user }}"
+    group: "{{ palworld_group }}"
+  when:
+    - palworld_dedicated_server_name | length > 0
+    - palworld_gus.stat.exists | default(false)
+
 - name: Install the Palworld systemd unit
   ansible.builtin.template:
     src: palworld.service.j2
@@ -151,6 +187,20 @@
     group: root
     mode: "0755"
 
+# The other half of the panel's control path: root's authorized_keys entry that pins the
+# panel's key to the palctl-remote forced command. palctl-remote alone is inert without
+# it — the panel could not authenticate — so a host rebuilt from this role would come up
+# with a dead Start button. Hand-placed on 234 until PET-266's migration codified it.
+- name: Pin the panel start-hook key to the palctl-remote forced command
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ palworld_panel_starthook_pubkey }}"
+    key_options: >-
+      command="/usr/local/bin/palctl-remote",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding
+    state: present
+    exclusive: false
+  when: palworld_panel_starthook_pubkey | length > 0
+
 # Reload systemd so the new unit is known before the binaries-install + enable tasks
 # below pick it up (the enable/start is gated on palworld_install_binaries).
 - name: Reload systemd so the new unit is known
@@ -163,7 +213,9 @@
     proto: udp
     from_ip: "{{ palworld_firewall_subnet }}"
     comment: "Palworld game port - homelab LAN (PET-157)"
-  when: palworld_firewall_enabled | bool
+  when:
+    - palworld_firewall_enabled | bool
+    - palworld_lan_ingress_enabled | bool
 
 # Public exposure is OFF by default — access is over Tailscale. Only opens the port
 # to any source when explicitly turned on.
@@ -191,6 +243,53 @@
     - palworld_firewall_enabled | bool
     - palworld_mesh_enabled | bool
 
+# --- Physical-host power behavior (PET-266) ---------------------------------------
+# The game host is a laptop: out of the box it suspends on lid-close and on idle, and a
+# suspended host is a dead server (players drop, the panel goes red). Masking the sleep
+# targets is what actually enforces this — systemd cannot reach a masked target, so
+# logind/GNOME/UPower all fail to suspend regardless of their own settings — and it takes
+# effect immediately. The logind drop-in is the belt-and-braces record of intent and
+# arms at the next boot; we deliberately do NOT restart systemd-logind, since that can
+# terminate live user sessions on a desktop host for no benefit here.
+- name: Inhibit suspend/hibernate on a physical host
+  when: palworld_inhibit_sleep | bool
+  block:
+    - name: Create the logind drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/logind.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Ignore lid-close and idle (logind drop-in)
+      ansible.builtin.copy:
+        # NB: no `{{ ansible_managed }}` here — that var is injected by the template
+        # action plugin only, and is undefined inside `copy: content:`.
+        content: |
+          # Ansible managed — roles/palworld (petedio-iac). Do not edit by hand.
+          # This host runs the Palworld dedicated server (PET-266). A closed lid or an
+          # idle timeout must never suspend it. See also the masked sleep targets.
+          [Login]
+          HandleLidSwitch=ignore
+          HandleLidSwitchExternalPower=ignore
+          HandleLidSwitchDocked=ignore
+          IdleAction=ignore
+        dest: /etc/systemd/logind.conf.d/10-palworld-no-sleep.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Mask the sleep targets (immediate, and survives a logind reconfigure)
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        masked: true
+      loop:
+        - sleep.target
+        - suspend.target
+        - hibernate.target
+        - hybrid-sleep.target
+
 # --- Binaries + service ----------------------------------------------------------
 # Install/update the dedicated-server binaries via SteamCMD. No `creates:` guard — we
 # WANT this to re-run so the launch-day converge pulls the 1.0 build; `app_update` is
@@ -208,6 +307,15 @@
   register: palworld_steamcmd
   changed_when: "'already up to date' not in (palworld_steamcmd.stdout | default(''))"
   when: palworld_install_binaries | bool
+  # On a host where SteamCMD has never run, the FIRST invocation bootstraps and updates
+  # ITSELF, relaunches, and then reports `Failed to install app '2394010' (Missing
+  # configuration)` (rc 8) — the app install never happens. The next run works. So a
+  # fresh host could never converge in a single pass; proven on palworld-mc (PET-266),
+  # where an identical hand-run straight after the failure printed "Success! App
+  # '2394010' fully installed". Retry rather than making the operator run the play twice.
+  retries: 3
+  delay: 10
+  until: palworld_steamcmd is not failed
 
 # Enable on boot + start now (binaries are present). Gated on the binaries being
 # installed so we never try to start a unit whose ExecStart doesn't exist yet.

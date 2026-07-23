@@ -1,0 +1,23 @@
+---
+# palworld-mc — the Palworld game host on BAREMETAL (PET-266 migration).
+#
+# Hardware: ex-mission-control laptop, Pop!_OS 24.04, 11th-gen i7-11390H (4c/8t, 5.0 GHz
+# boost), 15 GiB RAM, ~868 GB free. Palworld is single-thread bound, so this is a real
+# upgrade on LXC 234's Xeon E5-2690 v2 @ 3.0 GHz.
+#
+# Network: ONE wired NIC, `enx9c69d3140f0c` (a USB ethernet adapter — the interface name
+# and MAC 9c:69:d3:14:0f:0c are derived from that dongle, so swapping it changes both),
+# static via NetworkManager on the .86 play segment, default route 192.168.86.1. No .50
+# NIC at all — unlike the dual-homed LXC. The .50 platform LAN still REACHES this host
+# (verified: the cloudflared connector on LXC 112 and the CI runner on 232 both do), the
+# router carries .50 <-> .86, which is why the Cloudflare tunnel can point straight here
+# with no dual-home, second connector, or Tailscale hop.
+
+# Physical host: mask the sleep targets + write the logind drop-in, or a closed lid ends
+# the game session. Also drops the .50 ufw rule the LXC carries (see below).
+palworld_baremetal: true
+
+# No .50 interface exists here, so a .50-scoped ingress rule would be dead config. Play
+# traffic and the panel both arrive over the .86 NIC (palworld_mesh_enabled is true for
+# the whole group).
+palworld_lan_ingress_enabled: false
