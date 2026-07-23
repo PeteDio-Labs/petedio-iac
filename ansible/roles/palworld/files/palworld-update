@@ -36,11 +36,20 @@ latest_build() {
 
 # Running server version from the REST API (empty when the server is down). Reads the
 # AdminPassword straight from the ini so no secret transits anywhere.
+#
+# `|| true` on the pipeline is load-bearing, not decoration: curl exits 7 ("couldn't
+# connect") whenever the game is offline, and under `set -o pipefail` that nonzero status
+# propagates through `| sed` even though sed itself succeeds on empty input. Without the
+# guard, `ver=$(server_version)` aborts the WHOLE script under `set -e` — silently, since
+# curl's stderr is intentionally dropped — before do_check ever prints its JSON line. That
+# is exactly what broke `check-update` (and would have broken do_apply's verify loop the
+# same way): server offline -> empty error -> panel shows "check failed" with no reason.
 server_version() {
   local pw
   pw=$(sed -nE 's/.*AdminPassword="([^"]*)".*/\1/p' "$INI" 2>/dev/null || true)
   curl -s -m 5 -u "admin:${pw}" "$REST/info" 2>/dev/null \
-    | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p'
+    | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' \
+    || true
 }
 
 json_str() { # emit a JSON string or `null`
