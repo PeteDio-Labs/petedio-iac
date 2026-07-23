@@ -1,0 +1,71 @@
+---
+# configure-palworld-tunnel.yml — run a Cloudflare tunnel connector ON the game host so the
+# panel can bind loopback only (PET-266 lockdown).
+#
+# WHY THIS EXISTS. The panel had :8080 on 0.0.0.0, i.e. unauthenticated on the .86 play
+# segment — anyone on the wifi could power the game server off. Closing that means binding
+# 127.0.0.1, which means whatever serves palworld.pdlab.dev has to be on this host. The main
+# tunnel's connector is on LXC 112 (.50) and cannot reach another host's loopback, so the
+# panel gets its OWN tunnel with its connector here.
+#
+# DELIBERATELY SEPARATE from configure-palworld-panel.yml, which runs on EVERY merge via CD.
+# The connector is set up once; folding it into the CD path would make every app deploy
+# depend on the tunnel token being resolvable. Run this by hand at cutover.
+#
+# SECRETS (pass as an extra-var, no_log'd by the role):
+#   cloudflared_tunnel_token  (Vault kv/services/palworld-panel, field tunnel_token)
+#
+# PREREQUISITES (operator, out-of-band — same plane split as the Authentik OIDC app):
+#   1. Create the tunnel in Cloudflare (Zero Trust → Networks → Tunnels), name it
+#      `palworld-mc`. Terraform does NOT create it: a TF-created tunnel persists its token
+#      in state, which is exactly the leak PET-107/190 fixed.
+#   2. Put its token at kv/services/palworld-panel field `tunnel_token`, and its UUID into
+#      the TF_VAR `cloudflare_palworld_tunnel_id`.
+#   3. Apply the Terraform (creates the ingress rule + moves the Access app/CNAME onto the
+#      new tunnel), THEN run this play, THEN deploy the panel with PANEL_BIND=127.0.0.1.
+#
+# ORDER MATTERS: until this connector is up, palworld.pdlab.dev has no origin on the new
+# tunnel. Expect the hostname to be down between the TF apply and this play finishing.
+#
+# Run:
+#   ansible-playbook -i inventory playbooks/configure-palworld-tunnel.yml \
+#     -e "cloudflared_tunnel_token=$(vault kv get -field=tunnel_token kv/services/palworld-panel)"
+
+- name: Run a Cloudflare tunnel connector on the Palworld game host
+  hosts: palworld
+  become: true
+
+  pre_tasks:
+    - name: Assert the tunnel token was provided
+      ansible.builtin.assert:
+        that:
+          - cloudflared_tunnel_token is defined
+          - cloudflared_tunnel_token | length > 0
+        fail_msg: >-
+          cloudflared_tunnel_token is required. Resolve it from Vault:
+          vault kv get -field=tunnel_token kv/services/palworld-panel
+      no_log: true
+
+  roles:
+    - cloudflared
+
+  post_tasks:
+    # The point of the whole exercise: prove the connector can actually reach the panel over
+    # loopback before anyone flips the bind. Non-fatal — the panel may not be deployed yet.
+    - name: Check the panel answers on loopback (what the connector will proxy to)
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8080/api/health
+        status_code: [200]
+      register: panel_health
+      failed_when: false
+      changed_when: false
+
+    - name: Report the loopback origin check
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'Panel answers on 127.0.0.1:8080 — the connector has a valid origin.'
+            if panel_health.status == 200
+            else 'Panel did NOT answer on 127.0.0.1:8080 (status ' ~ panel_health.status ~ '). '
+                 ~ 'palworld.pdlab.dev will 502 until configure-palworld-panel.yml runs.'
+          }}

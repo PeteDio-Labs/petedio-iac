@@ -58,20 +58,9 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com"]
     }
 
-    # Palworld control panel (PET-266). Origin is the panel's Bun service on the game host
-    # (:8080 — native co-located deploy, PR #152; serves the SPA + /api + SSE). Since the
-    # PET-266 cutover that host is BAREMETAL — the mission-control laptop — which took over
-    # the LXC's mesh address 192.168.86.234 so no player had to re-enter a server IP. The
-    # cloudflared connector sits on .50 and reaches .86 across the router (verified). Gated by
-    # Cloudflare Access with Authentik OIDC login, same pattern as admin.pdlab.dev; the email
-    # allow-list AUTHORIZES after Authentik authenticates. The panel can power the game server
-    # off/on, so keep this list tight: sonia + pedro.
-    "palworld.pdlab.dev" = {
-      service       = "http://192.168.86.234:8080"
-      access        = true
-      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
-      access_emails = ["soniasdelgadillo@gmail.com", "pedelgadillo@gmail.com"]
-    }
+    # NOTE: palworld.pdlab.dev MOVED off this tunnel — see module.cloudflare_ingress_palworld
+    # at the bottom of this file. Its connector now runs on the game host itself so the panel
+    # can bind loopback only (PET-266).
 
     # Resume builder (Resume Builder milestone, P1). Origin is the SvelteKit app on
     # resume-242 (:8080 — same co-located-deploy pattern as the palworld panel; ex
@@ -111,4 +100,60 @@ import {
 import {
   to = module.cloudflare_ingress.cloudflare_dns_record.route["seer.pdlab.dev"]
   id = "${local.cloudflare_zone_id}/553f672178651906b01c66cdca2c9de7"
+}
+
+# ============================================================================================
+# Palworld panel — its own tunnel, connector ON the game host (PET-266 lockdown)
+# ============================================================================================
+#
+# WHY A SECOND TUNNEL. The panel binds 127.0.0.1 now, so whatever serves palworld.pdlab.dev
+# has to be ON palworld-mc. Ingress config is per-TUNNEL, not per-connector: a rule pointing
+# at http://127.0.0.1:8080 applies to EVERY connector on that tunnel, so adding a second
+# connector to the main tunnel would make the .50 connector start 502'ing this hostname (it
+# has nothing on its own :8080). A dedicated tunnel keeps each connector's ingress honest.
+#
+# Cloudflare Access is HOSTNAME-scoped, not tunnel-scoped, so the Authentik gate and the
+# sonia+pedro allow-list ride along unchanged — same module, same arguments as before.
+#
+# The tunnel UUID is a REQUIRED variable (no default) — see variables.tf. It used to be
+# count-guarded for convenience, but a disabled module plus the `moved` blocks below reads
+# as "source removed" and destroys the live Access app + CNAME. Hard-failing the plan on a
+# missing ID is the safe outcome; there is no benign version of that apply.
+module "cloudflare_ingress_palworld" {
+  source = "../../modules/cloudflare-ingress"
+
+  account_id   = local.cloudflare_account_id
+  zone_id      = local.cloudflare_zone_id
+  tunnel_id    = var.cloudflare_palworld_tunnel_id
+  tunnel_cname = "${var.cloudflare_palworld_tunnel_id}.cfargotunnel.com"
+
+  routes = {
+    # Origin is loopback ON the connector's own host. The panel serves the SPA + /api + SSE
+    # from one Bun process; it has no auth of its own, so Access IS the gate for the web
+    # path, and the loopback bind is what stops the play segment bypassing it entirely.
+    # The panel can power the game server off/on — keep this list tight: sonia + pedro.
+    "palworld.pdlab.dev" = {
+      service       = "http://127.0.0.1:8080"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["soniasdelgadillo@gmail.com", "pedelgadillo@gmail.com"]
+    }
+  }
+}
+
+# Migrate the LIVE Access application, its policy, and the CNAME between module instances
+# rather than letting TF destroy + recreate them. Without these, an apply would tear down the
+# Access app on a public hostname and rebuild it — a window where palworld.pdlab.dev resolves
+# ungated, plus a new app ID for no reason. `moved` makes it a state rename: zero API churn.
+moved {
+  from = module.cloudflare_ingress.cloudflare_zero_trust_access_application.route["palworld.pdlab.dev"]
+  to   = module.cloudflare_ingress_palworld.cloudflare_zero_trust_access_application.route["palworld.pdlab.dev"]
+}
+moved {
+  from = module.cloudflare_ingress.cloudflare_zero_trust_access_policy.route["palworld.pdlab.dev"]
+  to   = module.cloudflare_ingress_palworld.cloudflare_zero_trust_access_policy.route["palworld.pdlab.dev"]
+}
+moved {
+  from = module.cloudflare_ingress.cloudflare_dns_record.route["palworld.pdlab.dev"]
+  to   = module.cloudflare_ingress_palworld.cloudflare_dns_record.route["palworld.pdlab.dev"]
 }

@@ -165,3 +165,24 @@ variable "cloudflare_tunnel_id" {
   type        = string
   default     = null
 }
+
+variable "cloudflare_palworld_tunnel_id" {
+  description = <<-EOT
+    UUID of the SECOND cloudflared tunnel, whose connector runs ON the game host
+    (palworld-mc) so palworld.pdlab.dev can reach the panel over 127.0.0.1 — the whole
+    point of PET-266's loopback bind. Non-secret; the runtime token is separate and lives
+    at kv/services/palworld-panel (field tunnel_token).
+
+    Like the main tunnel, Terraform does NOT create this — it is token-managed by the
+    daemon, and having TF create it would persist the token in state (the leak PET-107/190
+    fixed). Operator creates it in Cloudflare, then scripts/seed-palworld-tunnel-vault.sh
+    stores the token AND writes this UUID to kv/iac/cloudflare, where terraform.yml reads
+    it into this TF_VAR.
+
+    DELIBERATELY REQUIRED — no default. A null default let the module count to 0 while the
+    `moved` blocks below still pointed at it, which reads as "source gone" and DESTROYS the
+    live Access application, its policy, and the CNAME on a public hostname. Failing the
+    plan with "No value for required variable" is the correct outcome for a missing ID.
+  EOT
+  type        = string
+}

@@ -36,10 +36,14 @@
     # Session-history DB (PET-266) — the dashboard's durable store. Under the app dir so
     # it survives redeploys (the source copy only replaces backend/ and frontend/).
     panel_db_path: "{{ panel_app_dir }}/panel-sessions.db"
-    # Where the panel's :8080 may be reached from — see the ufw task at the bottom.
-    panel_ingress_subnets:
-      - 192.168.50.0/24
-      - 192.168.86.0/24
+    # PET-266 lockdown: bind loopback, not 0.0.0.0. The only legitimate callers are a browser
+    # on this machine and the co-located cloudflared connector, both over 127.0.0.1. This
+    # replaces the old ufw allow-list — a closed socket beats a firewall rule, and ufw is
+    # inactive on palworld-mc anyway, so those rules were never actually enforcing anything.
+    panel_bind: 127.0.0.1
+    # Identity of this install, for attributing console-originated actions. Inventory
+    # hostname rather than the live hostname so a laptop rename doesn't rewrite history.
+    panel_id: "{{ inventory_hostname }}"
 
   pre_tasks:
     - name: Assert required secret extra-vars were provided (use scripts/deploy-palworld-panel.sh)
@@ -212,19 +216,24 @@
         state: started
         daemon_reload: true
 
-    # ---- Firewall: allow the panel web port from the LAN (CF tunnel connector reaches it there) ----
-    # Both segments, deliberately: the cloudflared connector lives on .50 (LXC 112) but the
-    # baremetal host is .86-only, so depending on whether the router preserves or rewrites the
-    # source address the packet arrives from either range. Allowing both keeps one rule set
-    # correct on the LXC and on the laptop. (PET-266)
-    - name: Allow the panel web port from the LAN + mesh (UFW)
+    # ---- Firewall: withdraw the old LAN allow-rules ----
+    # The panel now binds 127.0.0.1 (panel_bind), so nothing off-box can reach :8080 at all
+    # and these rules grant access to a socket that isn't listening. Deleted rather than left
+    # behind: a stale "allow 8080 from the play segment" rule would quietly become real again
+    # the moment someone set PANEL_BIND=0.0.0.0 to debug something.
+    #
+    # `delete: true` is a no-op when the rule isn't there, so this is safe on a fresh host and
+    # on one that never had ufw enabled (which is the case on palworld-mc today).
+    - name: Withdraw the pre-lockdown panel web-port allow rules (UFW)
       community.general.ufw:
         rule: allow
         port: "{{ panel_port }}"
         proto: tcp
         from_ip: "{{ item }}"
-        comment: "Palworld control panel web (PET-266)"
-      loop: "{{ panel_ingress_subnets }}"
+        delete: true
+      loop:
+        - 192.168.50.0/24
+        - 192.168.86.0/24
 
   handlers:
     - name: Reload systemd

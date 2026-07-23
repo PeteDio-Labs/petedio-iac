@@ -1,0 +1,78 @@
+---
+# cloudflared tasks (PET-266) — install the connector and register it against a token-managed
+# tunnel. Idempotent: apt converges, and `cloudflared service install` is guarded on the unit
+# file already existing (the command is NOT idempotent — it errors if a service is present).
+#
+# NO secrets here. The tunnel token is passed at runtime (see the playbook header) and is
+# no_log'd at the one task that touches it.
+
+- name: Install prerequisites (curl, gnupg, ca-certificates)
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gnupg
+      - ca-certificates
+    state: present
+    update_cache: true
+
+# --- Cloudflare apt repo ---------------------------------------------------------------
+
+- name: Add the Cloudflare apt signing key
+  ansible.builtin.get_url:
+    url: "{{ cloudflared_apt_key_url }}"
+    dest: "{{ cloudflared_apt_keyring }}"
+    mode: "0644"
+
+- name: Add the Cloudflare apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by={{ cloudflared_apt_keyring }}]
+      https://pkg.cloudflare.com/cloudflared {{ cloudflared_apt_release }} main
+    filename: cloudflared
+    state: present
+    update_cache: true
+
+- name: Install cloudflared
+  ansible.builtin.apt:
+    name: cloudflared
+    state: present
+    update_cache: true
+
+# --- Connector registration -------------------------------------------------------------
+# `cloudflared service install <token>` writes /etc/systemd/system/cloudflared.service with
+# the token baked into the unit's ExecStart. Re-running it on a host that already has the
+# service fails ("already installed"), so gate on the unit file. To ROTATE the token, run
+# `cloudflared service uninstall` on the host first, then re-run this play.
+
+- name: Check whether the cloudflared service is already registered
+  ansible.builtin.stat:
+    path: /etc/systemd/system/cloudflared.service
+  register: cloudflared_unit
+
+- name: Register the connector against the tunnel (token-managed)
+  ansible.builtin.command: "cloudflared service install {{ cloudflared_tunnel_token }}"
+  when:
+    - not cloudflared_unit.stat.exists
+    - cloudflared_tunnel_token is defined
+    - cloudflared_tunnel_token | length > 0
+  no_log: true
+  changed_when: true
+  notify: Restart cloudflared
+
+- name: Warn when no token was supplied (daemon installed, connector NOT registered)
+  ansible.builtin.debug:
+    msg: >-
+      cloudflared is installed but no connector was registered — cloudflared_tunnel_token was
+      not provided. Pass it from Vault (kv/services/palworld-panel, field tunnel_token) and
+      re-run, or the tunnel hostname will have no origin.
+  when:
+    - not cloudflared_unit.stat.exists
+    - cloudflared_tunnel_token is not defined or cloudflared_tunnel_token | length == 0
+
+- name: Enable and start cloudflared
+  ansible.builtin.systemd:
+    name: cloudflared
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: cloudflared_unit.stat.exists or cloudflared_tunnel_token | default('') | length > 0
