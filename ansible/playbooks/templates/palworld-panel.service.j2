@@ -22,6 +22,11 @@ Environment=PANEL_BIND={{ panel_bind }}
 # on loopback too) — see the panel repo's backend/src/local.ts. PANEL_ID names the machine
 # for the console side so attribution doesn't change if the laptop is renamed.
 Environment=PANEL_ID={{ panel_id }}
+# email -> character seed. Since the loopback lockdown every phone visitor arrives through
+# Cloudflare Access, so the panel already knows their email — this saves them ever being
+# asked "who's playing?". Only fills gaps: a person who re-links themselves in the app keeps
+# their choice across restarts. Emails must match the Access allow-list in cloudflare-routes.tf.
+Environment=PANEL_IDENTITY_MAP={{ panel_identity_map }}
 Environment=PUBLIC_DIR={{ panel_app_dir }}/frontend/dist
 Environment=PALWORLD_HOST={{ palworld_target_host }}
 Environment=PALWORLD_REST_PORT={{ palworld_rest_port }}

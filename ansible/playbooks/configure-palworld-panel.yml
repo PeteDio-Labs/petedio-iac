@@ -44,6 +44,9 @@
     # Identity of this install, for attributing console-originated actions. Inventory
     # hostname rather than the live hostname so a laptop rename doesn't rewrite history.
     panel_id: "{{ inventory_hostname }}"
+    # Same two people as the Cloudflare Access allow-list for palworld.pdlab.dev — the link
+    # is only reachable by someone Access already authenticated as that address.
+    panel_identity_map: "soniasdelgadillo@gmail.com=SoniaDillo,pedelgadillo@gmail.com=PeteDillo"
 
   pre_tasks:
     - name: Assert required secret extra-vars were provided (use scripts/deploy-palworld-panel.sh)
