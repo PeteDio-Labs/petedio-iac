@@ -169,6 +169,14 @@
         directory_mode: "0755"
       notify: Restart palworld-panel
 
+    # Leftover from the pre-Vite static SPA (app.js/index.html/styles.css) — PUBLIC_DIR no
+    # longer points at it and nothing serves from it. Not managed by any task above, so it
+    # never gets cleaned up on its own.
+    - name: Remove the old static-SPA frontend/public/ (superseded by frontend/dist/)
+      ansible.builtin.file:
+        path: "{{ panel_app_dir }}/frontend/public"
+        state: absent
+
     # ---- Secrets: the REST admin password (env-file) + the start-hook private key ----
     - name: Render the backend secret env-file (AdminPassword)
       ansible.builtin.template:
