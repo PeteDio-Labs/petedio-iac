@@ -18,11 +18,10 @@ Group={{ palworld_group }}
 WorkingDirectory={{ palworld_server_dir }}
 # -useperfthreads/NoAsyncLoadingThread are Pocketpair's recommended perf flags for
 # the dedicated server; the port comes from the templated PalWorldSettings.ini.
-# -EnableGameDataAPI was here on the earlier PET-278 guess that the /v1/api/game-data
-# gate is a launch arg. It is not: the arg was live on the running process while the
-# endpoint still 404'd. Neither the ini key nor RCON works either — see the long note
-# in the role defaults. Dropped rather than left as a no-op that reads as working.
-ExecStart={{ palworld_server_exec }} -useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS
+# -enable-gamedata-api unlocks GET /v1/api/game-data. The lowercase-hyphen spelling is
+# load-bearing: PET-278's `-EnableGameDataAPI` (the UE exec-table casing) is a silent
+# no-op. Verified 200 on palworld-mc 2026-07-23. See the role defaults for the full note.
+ExecStart={{ palworld_server_exec }} -useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS{% if palworld_gamedata_api_enabled %} -enable-gamedata-api{% endif %}
 Restart=on-failure
 RestartSec=5
 # Give the server time to flush saves on stop rather than getting SIGKILLed.
