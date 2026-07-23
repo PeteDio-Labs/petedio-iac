@@ -33,6 +33,10 @@
     palworld_target_host: 127.0.0.1
     palworld_rest_port: 8212
     panel_default_countdown: 5
+    # Where the panel's :8080 may be reached from — see the ufw task at the bottom.
+    panel_ingress_subnets:
+      - 192.168.50.0/24
+      - 192.168.86.0/24
 
   pre_tasks:
     - name: Assert required secret extra-vars were provided (use scripts/deploy-palworld-panel.sh)
@@ -167,13 +171,18 @@
         daemon_reload: true
 
     # ---- Firewall: allow the panel web port from the LAN (CF tunnel connector reaches it there) ----
-    - name: Allow the panel web port from the LAN (UFW)
+    # Both segments, deliberately: the cloudflared connector lives on .50 (LXC 112) but the
+    # baremetal host is .86-only, so depending on whether the router preserves or rewrites the
+    # source address the packet arrives from either range. Allowing both keeps one rule set
+    # correct on the LXC and on the laptop. (PET-266)
+    - name: Allow the panel web port from the LAN + mesh (UFW)
       community.general.ufw:
         rule: allow
         port: "{{ panel_port }}"
         proto: tcp
-        from_ip: 192.168.50.0/24
+        from_ip: "{{ item }}"
         comment: "Palworld control panel web (PET-266)"
+      loop: "{{ panel_ingress_subnets }}"
 
   handlers:
     - name: Reload systemd
