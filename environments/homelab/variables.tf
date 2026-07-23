@@ -165,3 +165,20 @@ variable "cloudflare_tunnel_id" {
   type        = string
   default     = null
 }
+
+variable "cloudflare_palworld_tunnel_id" {
+  description = <<-EOT
+    UUID of the SECOND cloudflared tunnel, whose connector runs ON the game host
+    (palworld-mc) so palworld.pdlab.dev can reach the panel over 127.0.0.1 — the whole
+    point of PET-266's loopback bind. Non-secret; the runtime token is separate and lives
+    at kv/services/palworld-panel (field tunnel_token).
+
+    Like the main tunnel, Terraform does NOT create this — it is token-managed by the
+    daemon, and having TF create it would persist the token in state (the leak PET-107/190
+    fixed). Operator creates it, seeds Vault, then sets this TF_VAR. Until it is set the
+    palworld ingress module is disabled and palworld.pdlab.dev keeps whatever the main
+    tunnel serves, so a plan without it is clean rather than broken.
+  EOT
+  type        = string
+  default     = null
+}

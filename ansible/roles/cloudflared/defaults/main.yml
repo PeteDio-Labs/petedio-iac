@@ -1,0 +1,22 @@
+---
+# cloudflared role defaults (PET-266) — run a Cloudflare tunnel connector on a host so an
+# origin can bind loopback only. Written for the Palworld game host (palworld-mc, baremetal
+# Pop!_OS 24.04), but nothing here is Palworld-specific.
+
+# The connector is TOKEN-MANAGED: ingress rules live in Cloudflare (Terraform owns them, see
+# environments/homelab/cloudflare-routes.tf), not in a local config file. So this role
+# installs the daemon and hands it the token — it never writes ingress config.
+#
+# Provided at runtime from Vault (kv/services/palworld-panel, field tunnel_token) — NO
+# default, never committed. When undefined the role installs the package and stops, rather
+# than registering a connector with an empty token.
+# cloudflared_tunnel_token: "eyJhIjoi..."
+
+# apt repo release codename. Pop!_OS 24.04 is Ubuntu noble underneath, and Cloudflare
+# publishes per-codename lists; ansible_distribution_release reports the Ubuntu base, but
+# pin it here so a distro that reports something Cloudflare doesn't publish is an obvious
+# one-line override rather than a confusing 404 from apt.
+cloudflared_apt_release: "{{ ansible_distribution_release | default('noble') }}"
+
+cloudflared_apt_key_url: https://pkg.cloudflare.com/cloudflare-main.gpg
+cloudflared_apt_keyring: /usr/share/keyrings/cloudflare-main.gpg
