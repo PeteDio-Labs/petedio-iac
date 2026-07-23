@@ -40,13 +40,29 @@ palworld_rcon_port: 25575
 
 # REST API — the control panel (PET-266) depends on it; live 234 has had it on since
 # launch day but only by hand-edit (drift, found in PET-278). Declared here so a
-# converge keeps it. EnableGameDataAPI gates the 1.0 /v1/api/game-data world-snapshot
-# endpoint (undocumented flag, recovered from binary strings — PET-278 spike). The
-# template task carries no restart notify, so flag changes arm at the NEXT server
-# restart (e.g. the next bedtime shutdown/start cycle), never mid-session.
+# converge keeps it. The template task carries no restart notify, so flag changes arm
+# at the NEXT server restart (e.g. the next bedtime shutdown/start cycle), never
+# mid-session.
 palworld_rest_api_enabled: true
 palworld_rest_api_port: 8212
-palworld_gamedata_api_enabled: true
+
+# NO palworld_gamedata_api_enabled — deliberately removed (PET-278, 2026-07-22).
+# The 1.0 /v1/api/game-data endpoint exists in the route table but is NOT enableable
+# on the shipping dedicated-server build. Verified live on 234 (v1.0.1.100619), all
+# three routes fail:
+#   * EnableGameDataAPI=True inside OptionSettings is silently dropped — it never
+#     appears in the 117-field /v1/api/settings dump, so it is not a config key;
+#   * -EnableGameDataAPI as a launch arg is a no-op (it was on the running process
+#     for hours while /v1/api/game-data still 404'd);
+#   * RCON answers "Unknown command" to EnableGameDataAPI, SetGameDataAPIEnabled,
+#     EnableOutputGameData and SetCollectGameDataInterval — Palworld's RCON is a fixed
+#     whitelist (even "Help" is unknown; "ShowPlayers" works), not an exec dispatcher.
+# In the binary those names sit in the UE reflection/exec table, there are zero
+# /Script/Pal.* ini sections, and -ExecCmds is stripped. The endpoint always returns
+# 404 "PalGameDataBridge GameData API is not enabled".
+# Keeping a var here made dead config read as working config, which is worse than not
+# having it. 1.0 is under a month old — re-test after a Pocketpair patch, and only
+# re-add the var once a converge can actually flip the endpoint to 200.
 
 # --- Base-building world tunables (bases + pals) ----------------------------------
 # Role defaults mirror the engine defaults (4 base camps per guild / 15 worker pals
