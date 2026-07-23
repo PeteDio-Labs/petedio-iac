@@ -286,6 +286,15 @@
   register: palworld_steamcmd
   changed_when: "'already up to date' not in (palworld_steamcmd.stdout | default(''))"
   when: palworld_install_binaries | bool
+  # On a host where SteamCMD has never run, the FIRST invocation bootstraps and updates
+  # ITSELF, relaunches, and then reports `Failed to install app '2394010' (Missing
+  # configuration)` (rc 8) — the app install never happens. The next run works. So a
+  # fresh host could never converge in a single pass; proven on palworld-mc (PET-266),
+  # where an identical hand-run straight after the failure printed "Success! App
+  # '2394010' fully installed". Retry rather than making the operator run the play twice.
+  retries: 3
+  delay: 10
+  until: palworld_steamcmd is not failed
 
 # Enable on boot + start now (binaries are present). Gated on the binaries being
 # installed so we never try to start a unit whose ExecStart doesn't exist yet.
