@@ -18,6 +18,11 @@ Environment=PALWORLD_SSH_HOST={{ palworld_target_host }}
 Environment=PALWORLD_SSH_USER=root
 Environment=PALWORLD_SSH_KEY={{ panel_app_dir }}/panel_ssh_key
 Environment=DEFAULT_COUNTDOWN_MINUTES={{ panel_default_countdown }}
+# Session history (PET-266). Pinned to an absolute path under the app dir rather than
+# left to default relative to the working directory — the unit's WorkingDirectory could
+# change and the history would silently start over in a new file. palpanel owns this
+# directory, and SQLite's WAL sidecar files land beside it.
+Environment=PANEL_DB={{ panel_db_path }}
 ExecStart={{ bun_bin }} {{ panel_app_dir }}/backend/src/index.ts
 Restart=on-failure
 RestartSec=3
