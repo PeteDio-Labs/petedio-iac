@@ -163,8 +163,21 @@ resource "vault_jwt_auth_backend_role" "resume_builder_cd" {
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
+  # Bound on `repository` + `ref` rather than on `sub`, unlike palworld-panel-cd above.
+  #
+  # GitHub does not emit one stable `sub` format across repos. The panel's repo produces the
+  # classic `repo:OWNER/NAME:ref:refs/heads/main`, but this (newer) repo produces an
+  # ID-QUALIFIED subject — `repo:PeteDio-Labs@<org-id>/petedio-resume-builder@<repo-id>:ref:…`
+  # — so a literal sub binding can never match and the first CD run fails with
+  # `claim "sub" does not match any associated bound claim values`. Confirmed via
+  # /repos/{owner}/{repo}/actions/oidc/customization/sub, which differs between the two repos.
+  #
+  # `repository` and `ref` are plain claims with no such prefix games, and together they are
+  # exactly as tight as the sub binding was: this repo, pushes to main only (a PR run carries
+  # ref=refs/pull/N/merge and is still excluded). Prefer this form for new CD roles.
   bound_claims = {
-    sub = "repo:${var.resume_builder_repo}:ref:refs/heads/main"
+    repository = var.resume_builder_repo
+    ref        = "refs/heads/main"
   }
   token_policies = [vault_policy.resume_builder_cd.name]
   token_ttl      = 900
