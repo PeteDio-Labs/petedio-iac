@@ -42,7 +42,14 @@ module "palworld" {
   # pve01 has no NVMe (cluster NVMe is on pve02), so keep sdb3-storage and defer
   # NVMe to a follow-up. See header.
   datastore_id = "sdb3-storage"
-  description  = "Palworld 1.0 dedicated server (PET-157). Managed by Terraform."
+  description  = "Palworld 1.0 dedicated server (PET-157) - RETIRED, kept stopped as rollback."
+
+  # PET-266 cutover: the game + panel now run on baremetal (the mission-control laptop),
+  # which has TAKEN OVER this container's mesh address 192.168.86.234. This module sets
+  # `started = var.start_on_boot`, so leaving it true would make any apply boot 234 back up
+  # and fight the laptop for that address on the segment the family plays on. Held stopped
+  # -- the disk stays intact as the rollback path until this file is deleted outright.
+  start_on_boot = false
 
   # PET-168: dual-home onto the 192.168.86.x mesh for local-LAN play, ALONGSIDE the
   # platform-LAN NIC (eth0, .50.234) and the Tailscale path — those are untouched. No

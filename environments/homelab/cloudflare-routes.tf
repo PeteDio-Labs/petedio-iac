@@ -58,13 +58,16 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com"]
     }
 
-    # Palworld control panel (PET-266). Origin is the panel's Bun service on the game LXC 234
-    # (:8080 — native co-located deploy, PR #152; serves the SPA + /api + SSE). Gated by
+    # Palworld control panel (PET-266). Origin is the panel's Bun service on the game host
+    # (:8080 — native co-located deploy, PR #152; serves the SPA + /api + SSE). Since the
+    # PET-266 cutover that host is BAREMETAL — the mission-control laptop — which took over
+    # the LXC's mesh address 192.168.86.234 so no player had to re-enter a server IP. The
+    # cloudflared connector sits on .50 and reaches .86 across the router (verified). Gated by
     # Cloudflare Access with Authentik OIDC login, same pattern as admin.pdlab.dev; the email
     # allow-list AUTHORIZES after Authentik authenticates. The panel can power the game server
     # off/on, so keep this list tight: sonia + pedro.
     "palworld.pdlab.dev" = {
-      service       = "http://192.168.50.234:8080"
+      service       = "http://192.168.86.234:8080"
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["soniasdelgadillo@gmail.com", "pedelgadillo@gmail.com"]
