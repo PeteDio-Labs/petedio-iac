@@ -74,6 +74,18 @@ palworld_lan_ingress_enabled: true
 palworld_mesh_enabled: false
 palworld_mesh_subnet: 192.168.86.0/24
 
+# --- Which world to serve ---------------------------------------------------------
+# `DedicatedServerName` in GameUserSettings.ini names the SaveGames/0/<name> folder the
+# server loads. It is NOT in PalWorldSettings.ini and nothing else points at the world:
+# restoring SaveGames/ alone leaves this pointing at whatever world the host last made,
+# and the server silently boots a BRAND-NEW empty world instead of the restored one.
+# Caught rehearsing the PET-266 migration — the server came up green, the panel showed
+# "online", and the map was empty.
+#
+# Empty -> leave the file alone (the LXC's value is already correct and self-maintained).
+# Set it to the world GUID on any host that must be pinned to a specific save.
+palworld_dedicated_server_name: ""
+
 # --- Baremetal / physical host ----------------------------------------------------
 # The role was written against a Proxmox LXC. These gate the extra handling a PHYSICAL
 # host needs (PET-266 migration: LXC 234 -> the ex-mission-control laptop on the .86

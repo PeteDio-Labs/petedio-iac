@@ -10,3 +10,8 @@
 # override auto-applied 10/20 to the live world with no operator action → reverted.
 palworld_base_camp_max_in_guild: 10 # BaseCampMaxNumInGuild — raised to the native max (10) to try to unlock a guild whose base allowance ratcheted to its count after the cap was lowered below it (destroying a base dropped the in-game max 3→2). Count is now well below 10; a high cap on a fresh load is the community-reported unlock. (PET-266)
 palworld_base_camp_worker_max: 15 # BaseCampWorkerMaxNum (engine default 15, ini max 50, >20 = perf lever)
+
+# The shared world both hosts serve. Pins DedicatedServerName in GameUserSettings.ini —
+# without it a host that has generated any other world boots that one instead, silently,
+# with an empty map (found rehearsing the PET-266 migration). See the role defaults.
+palworld_dedicated_server_name: 0BA20FE97DF7472AADFD2237B5B4EFFC

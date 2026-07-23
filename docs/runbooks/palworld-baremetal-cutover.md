@@ -70,6 +70,23 @@ re-addressed**. Never leave a hand-stopped 234 sitting in front of an apply.
    Only `SaveGames/` moves. `PalWorldSettings.ini` stays the Ansible-managed one already on
    the laptop — same values, same `AdminPassword`, so the panel and REST keep working.
 
+   > **Copying `SaveGames/` is NOT sufficient on its own.** `DedicatedServerName` in
+   > `Pal/Saved/Config/LinuxServer/GameUserSettings.ini` names the `SaveGames/0/<name>`
+   > folder the server loads, and it is not part of `PalWorldSettings.ini`. If it still
+   > points at a world this host generated earlier, the server boots a **brand-new empty
+   > world** and ignores the one you just restored — while coming up green, with the panel
+   > reporting "online". This was hit during the rehearsal. Confirm, with the unit
+   > **stopped** (the server rewrites this file on shutdown):
+   >
+   > ```bash
+   > ssh root@192.168.86.123 'grep ^DedicatedServerName= /home/steam/palworld/Pal/Saved/Config/LinuxServer/GameUserSettings.ini'
+   > # must read 0BA20FE97DF7472AADFD2237B5B4EFFC
+   > ```
+   >
+   > `palworld_dedicated_server_name` in `group_vars/palworld.yml` now pins this on every
+   > converge, so it should already be right — verify anyway, it is the difference between
+   > the family's world and an empty map.
+
 ## Phase 3 — take the address
 
 6. Re-address the laptop to the LXC's freed address. This drops your SSH session, so detach
@@ -90,11 +107,16 @@ re-addressed**. Never leave a hand-stopped 234 sitting in front of an apply.
 
    ```bash
    ssh root@192.168.86.234 'systemctl start palworld'
-   # then, once /info answers:
+   # then, once /info answers (~20s):
    #   worldguid must equal 0BA20FE97DF7472AADFD2237B5B4EFFC
    #   metrics.days must be >= the value recorded before the move
    #   metrics.basecampnum must match (7 at the time of writing)
    ```
+
+   **`worldguid` is the check that matters.** A wrong-but-plausible `worldguid` with
+   `days: 0` and `basecampnum: 0` means the server generated a fresh world and your restore
+   was ignored — stop it immediately (before it writes), fix `DedicatedServerName`, restart.
+   The restored save is untouched on disk in that state; nothing is lost.
 
 ## Phase 4 — repoint the edge, then retire
 

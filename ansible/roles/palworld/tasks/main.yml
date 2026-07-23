@@ -135,6 +135,27 @@
     group: "{{ palworld_group }}"
     mode: "0644"
 
+# Pin which save the server loads. GameUserSettings.ini only exists once the server has
+# run at least once, and the server REWRITES it on shutdown — so this is a converge-time
+# guard for rebuilds/restores, not a live control. Set the value while the unit is
+# stopped (a running server will write its own back out on exit).
+- name: Check whether GameUserSettings.ini exists yet
+  ansible.builtin.stat:
+    path: "{{ palworld_server_dir }}/Pal/Saved/Config/LinuxServer/GameUserSettings.ini"
+  register: palworld_gus
+  when: palworld_dedicated_server_name | length > 0
+
+- name: Pin DedicatedServerName to the world this host must serve
+  ansible.builtin.lineinfile:
+    path: "{{ palworld_server_dir }}/Pal/Saved/Config/LinuxServer/GameUserSettings.ini"
+    regexp: '^DedicatedServerName='
+    line: "DedicatedServerName={{ palworld_dedicated_server_name }}"
+    owner: "{{ palworld_user }}"
+    group: "{{ palworld_group }}"
+  when:
+    - palworld_dedicated_server_name | length > 0
+    - palworld_gus.stat.exists | default(false)
+
 - name: Install the Palworld systemd unit
   ansible.builtin.template:
     src: palworld.service.j2
