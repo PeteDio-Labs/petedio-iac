@@ -18,11 +18,23 @@ Group={{ palworld_group }}
 WorkingDirectory={{ palworld_server_dir }}
 # -useperfthreads/NoAsyncLoadingThread are Pocketpair's recommended perf flags for
 # the dedicated server; the port comes from the templated PalWorldSettings.ini.
-# -EnableGameDataAPI was here on the earlier PET-278 guess that the /v1/api/game-data
-# gate is a launch arg. It is not: the arg was live on the running process while the
-# endpoint still 404'd. Neither the ini key nor RCON works either — see the long note
-# in the role defaults. Dropped rather than left as a no-op that reads as working.
-ExecStart={{ palworld_server_exec }} -useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS
+# -enable-gamedata-api unlocks GET /v1/api/game-data. The lowercase-hyphen spelling is
+# load-bearing: PET-278's `-EnableGameDataAPI` (the UE exec-table casing) is a silent
+# no-op. Verified 200 on palworld-mc 2026-07-23. See the role defaults for the full note.
+#
+# The conditional below is an inline EXPRESSION, not an if-block, and that is load-bearing.
+# Ansible's template module sets trim_blocks=True by default, which eats the newline
+# immediately following a block tag. With the conditional written as a block tag closing at
+# end of line, the NEXT line was swallowed and the unit rendered as
+#     ExecStart=... -enable-gamedata-apiRestart=on-failure
+# — one malformed arg, no Restart= directive, and /v1/api/game-data back to 404, with
+# nothing failing anywhere (Palworld ignores unknown args). An expression is not a block
+# tag, so nothing is trimmed. Do not "tidy" this back into a block form without also using
+# the whitespace-preserving close (+%) or setting trim_blocks: False.
+#
+# NB: keep literal Jinja block syntax out of these comments — the template engine parses
+# comment lines too, and a literal tag here is a TemplateSyntaxError, not documentation.
+ExecStart={{ palworld_server_exec }} -useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS{{ ' -enable-gamedata-api' if palworld_gamedata_api_enabled | bool else '' }}
 Restart=on-failure
 RestartSec=5
 # Give the server time to flush saves on stop rather than getting SIGKILLed.
