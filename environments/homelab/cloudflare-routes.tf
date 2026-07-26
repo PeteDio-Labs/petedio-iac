@@ -74,6 +74,31 @@ module "cloudflare_ingress" {
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["soniasdelgadillo@gmail.com", "pedelgadillo@gmail.com"]
     }
+
+    # Water fast tracker (petedio-water-fast). Origin is the Bun service on waterfast-243
+    # (:8080 — same native co-located-deploy pattern as the resume builder and the palworld
+    # panel). Gated by Cloudflare Access with Authentik OIDC login; the email allow-list
+    # AUTHORIZES after Authentik authenticates.
+    #
+    # THIS LIST IS THE APP'S USER LIST. The app has no signup and no login screen of its
+    # own — it trusts the Cf-Access-Jwt-Assertion header and creates a user row on first
+    # authenticated request. So adding someone here grants them an account, and the address
+    # must match their Authentik user's email exactly or they authenticate successfully and
+    # are then denied, which is a confusing failure to diagnose after the fact.
+    #
+    # Michelle and Marcos need Authentik accounts created by hand before their entries here
+    # do anything (the automation never mutates the SSO box — see cloudflare-oidc.tf).
+    "fast.pdlab.dev" = {
+      service      = "http://192.168.50.243:8080"
+      access       = true
+      allowed_idps = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = [
+        "pedelgadillo@gmail.com",
+        "soniasdelgadillo@gmail.com",
+        "delg369@gmail.com",          # Michelle
+        "antonio.meletich@gmail.com", # Marcos
+      ]
+    }
   }
 }
 
