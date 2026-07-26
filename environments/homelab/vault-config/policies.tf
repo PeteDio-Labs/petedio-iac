@@ -16,6 +16,15 @@ resource "vault_policy" "ci_read" {
   name = "ci-read"
 
   policy = <<-EOT
+    # water-fast (LXC 243). Scoped to the single secret, NOT kv/data/services/* — CI only
+    # needs this one, and the wider prefix would hand every service's credentials to the
+    # apply job. Required before var.waterfast_db_ready can flip to true: the gated
+    # ephemeral read in waterfast.tf runs as ci-read on apply-on-merge, and without this
+    # grant that apply fails with a permission denied on a path it can see but not read.
+    path "kv/data/services/water-fast" {
+      capabilities = ["read"]
+    }
+
     path "kv/data/iac/proxmox" {
       capabilities = ["read"]
     }

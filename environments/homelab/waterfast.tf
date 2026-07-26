@@ -47,11 +47,20 @@ output "waterfast_id" {
 # newly-declared required variable broke a gated apply.
 #
 # ORDER for the operator:
-#   1. merge this PR with waterfast_db_ready = false (plan is a no-op for the DB objects)
+#   1. merge this PR with waterfast_db_ready = false (plan is a no-op for the DB objects).
+#      Apply-on-merge creates the LXC and the fast.pdlab.dev route — enough to deploy.
 #   2. seed Vault:  vault kv put kv/services/water-fast db_password=… \
 #                     cf_access_team_domain=… cf_access_aud=…
-#   3. set the repo variable WATERFAST_DB_READY=true and re-apply — the DB + owner role
-#      are then created by Terraform.
+#      (the AUD only exists once the Access application from cloudflare-routes.tf has applied)
+#   3. create the database + owner role by hand on 231 with that password, and deploy
+#      (scripts/deploy-water-fast.sh). The app is LIVE at this point, with the DB unmanaged —
+#      exactly how the `poker` DB started, see postgres.tf's phase-2 note.
+#   4. LATER, to bring the DB under Terraform: apply the vault-config root
+#      (scripts/apply-vault-config.sh — grants ci-read read on kv/data/services/water-fast;
+#      it is operator-only and does NOT land with a normal merge), set the repo variable
+#      WATERFAST_DB_READY=true, `terraform import` the existing db + role, then apply and
+#      confirm a no-op. Importing first matters: with the objects already live, an un-imported
+#      apply errors "already exists" (docs/runbooks/postgres-import.md).
 ephemeral "vault_kv_secret_v2" "waterfast" {
   count = var.postgres_ready && var.waterfast_db_ready ? 1 : 0
   mount = "kv"
