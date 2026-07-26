@@ -165,6 +165,38 @@
     mode: "0644"
   notify: Reload systemd
 
+# Read the unit BACK and check it. A template that renders wrong still writes cleanly, and
+# systemd will happily load a malformed ExecStart — Palworld ignores unknown args, so the
+# server comes up green with a silently broken flag. That is exactly what shipped once:
+# trim_blocks ate the newline after an {% endif %} and produced
+#     ExecStart=… -enable-gamedata-apiRestart=on-failure
+# which cost the GameData API and the Restart= directive, with nothing failing anywhere.
+# Cheap to check, and it fails the play at the cause instead of days later at a symptom.
+- name: Read back the rendered unit
+  ansible.builtin.slurp:
+    src: "/etc/systemd/system/{{ palworld_service_name }}.service"
+  register: palworld_unit_rendered
+  changed_when: false
+
+- name: Assert the rendered unit is well-formed
+  vars:
+    unit: "{{ palworld_unit_rendered.content | b64decode }}"
+    exec_line: "{{ (palworld_unit_rendered.content | b64decode).split('\n') | select('match', '^ExecStart=') | first | default('') }}"
+  ansible.builtin.assert:
+    that:
+      # Directives that follow ExecStart must still be their own lines, not swallowed into it.
+      - unit is search('(?m)^Restart=')
+      - unit is search('(?m)^RestartSec=')
+      - exec_line is not search('Restart=')
+      # The GameData flag is casing- and spelling-sensitive; assert the exact token, and
+      # assert it is ABSENT when the toggle is off so the check works in both directions.
+      - (exec_line.endswith(' -enable-gamedata-api')) == (palworld_gamedata_api_enabled | bool)
+    fail_msg: >-
+      Rendered {{ palworld_service_name }}.service is malformed — ExecStart is
+      "{{ exec_line }}". Check the Jinja block tags in palworld.service.j2: Ansible sets
+      trim_blocks=True, so a newline after {% raw %}{% endif %}{% endraw %} is removed.
+    success_msg: "Unit renders correctly (gamedata flag {{ 'on' if palworld_gamedata_api_enabled | bool else 'off' }})."
+
 # --- Control scripts (PET-266) ---------------------------------------------------
 # palctl-remote is the forced command the control panel's restricted SSH key is pinned to
 # (root's authorized_keys → command="/usr/local/bin/palctl-remote"); it allow-lists exactly
