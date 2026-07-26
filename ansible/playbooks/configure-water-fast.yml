@@ -132,6 +132,18 @@
         delete: true
       notify: Restart water-fast
 
+    # rsync creates only the FINAL component of the destination path, so syncing into
+    # frontend/dist/ fails with "No such file or directory" while frontend/ doesn't exist.
+    # (Caught on the first live deploy — the backend and shared copies work without this
+    # only because their parent is the app dir itself.)
+    - name: Create the frontend parent directory
+      ansible.builtin.file:
+        path: "{{ waterfast_app_dir }}/frontend"
+        state: directory
+        owner: "{{ waterfast_user }}"
+        group: "{{ waterfast_group }}"
+        mode: "0755"
+
     - name: Copy the built frontend
       ansible.posix.synchronize:
         src: "{{ waterfast_src }}/frontend/dist/"
