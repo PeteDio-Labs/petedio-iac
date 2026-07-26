@@ -46,8 +46,7 @@
     "242": { "block": "compute", "seat": 2, "target_vmid": 242 },
     "244": { "block": "compute", "seat": 4, "target_vmid": 244 },
 
-    "102": { "block": "unschemed", "seat": 0, "target_vmid": null },
-    "234": { "block": "unschemed", "seat": 1, "target_vmid": null }
+    "102": { "block": "unschemed", "seat": 0, "target_vmid": null }
   },
 
   "_offcluster_comment": [
@@ -72,7 +71,7 @@
       "seat": 2,
       "role": "Palworld dedicated server on bare metal (ex-mission-control laptop). Took over LXC 234's mesh address at cutover.",
       "under_iac": true,
-      "note": "On the .86 mesh, not the .50 LAN. LXC 234 is held stopped as its rollback."
+      "note": "On the .86 mesh, not the .50 LAN. LXC 234 was destroyed 2026-07-26 (iac#191) — its rootfs held no game data."
     }
   ],
 
@@ -87,6 +86,6 @@
     "106": "brownfield",
     "119": "iac", "221": "none", "223": "iac", "112": "iac",
     "230": "iac", "231": "iac", "232": "iac", "233": "iac",
-    "234": "iac", "241": "iac", "242": "iac", "244": "iac"
+    "241": "iac", "242": "iac", "244": "iac"
   }
 }
