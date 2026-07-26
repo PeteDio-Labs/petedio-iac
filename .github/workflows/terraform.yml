@@ -110,14 +110,10 @@ jobs:
       # and the preflight step below, so they can't drift. Default false → pool is a no-op and the
       # preflight is skipped. Flip MANAGE_RESOURCE_POOL=true AFTER granting Pool.Allocate (PET-159).
       TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
-      # waterfast.tf gate. Same one-repo-variable shape as MANAGE_RESOURCE_POOL above, and
-      # wired now rather than later so flipping it is a repo-variable change, not a workflow
-      # edit. Default false → the `waterfast` DB module AND its ephemeral read of
-      # kv/services/water-fast are both count=0, so apply-on-merge never touches Vault for it.
-      # BEFORE setting WATERFAST_DB_READY=true: ci-read must be able to read
-      # kv/data/services/water-fast (vault-config/policies.tf) — that root is operator-applied
-      # via scripts/apply-vault-config.sh, so it does NOT land with a normal merge.
-      TF_VAR_waterfast_db_ready: ${{ vars.WATERFAST_DB_READY || 'false' }}
+      # NB: there is no longer a per-database gate. Every Postgres database in databases.tf
+      # is gated by var.postgres_ready alone, so adding one needs no workflow change — but
+      # its secret must be readable by ci-read (vault-config/policies.tf, operator-applied)
+      # BEFORE the merge that adds it, or this apply fails on a permission denied.
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 

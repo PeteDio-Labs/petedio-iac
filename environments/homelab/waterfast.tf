@@ -35,56 +35,17 @@ output "waterfast_id" {
   value       = module.waterfast.vm_id
 }
 
-# ---- the `waterfast` database on postgres-rds-231 ----------------------------------------
+# The `waterfast` database on postgres-rds-231 is declared in databases.tf with every other
+# Postgres database, and adopted there by `import` blocks — it was created by hand alongside
+# the first deploy, exactly as `poker` originally was.
 #
-# Gated on var.waterfast_db_ready (default FALSE) *in addition to* var.postgres_ready, and
-# that second gate is load-bearing rather than belt-and-braces:
+# The old var.waterfast_db_ready gate is gone. It existed to keep an ephemeral read of a
+# not-yet-seeded kv/services/water-fast from failing the plan that gated the merge; the path
+# is seeded now (scripts/reseed-water-fast-vault.sh), so var.postgres_ready — the same gate
+# every other database uses — is sufficient and the special case has earned its removal.
 #
-# The ephemeral Vault read below is opened at PLAN as well as apply. If it were ungated it
-# would reach for kv/services/water-fast during the very first plan of this PR — before the
-# operator has seeded that path — and fail the plan, which is the merge gate for the whole
-# workspace. The same trap as the PET-19 incident recorded in .agent/lessons.md, where a
-# newly-declared required variable broke a gated apply.
-#
-# ORDER for the operator:
-#   1. merge this PR with waterfast_db_ready = false (plan is a no-op for the DB objects).
-#      Apply-on-merge creates the LXC and the fast.pdlab.dev route — enough to deploy.
-#   2. seed Vault:  vault kv put kv/services/water-fast db_password=… \
-#                     cf_access_team_domain=… cf_access_aud=…
-#      (the AUD only exists once the Access application from cloudflare-routes.tf has applied)
-#   3. create the database + owner role by hand on 231 with that password, and deploy
-#      (scripts/deploy-water-fast.sh). The app is LIVE at this point, with the DB unmanaged —
-#      exactly how the `poker` DB started, see postgres.tf's phase-2 note.
-#   4. LATER, to bring the DB under Terraform: apply the vault-config root
-#      (scripts/apply-vault-config.sh — grants ci-read read on kv/data/services/water-fast;
-#      it is operator-only and does NOT land with a normal merge), set the repo variable
-#      WATERFAST_DB_READY=true, `terraform import` the existing db + role, then apply and
-#      confirm a no-op. Importing first matters: with the objects already live, an un-imported
-#      apply errors "already exists" (docs/runbooks/postgres-import.md).
-ephemeral "vault_kv_secret_v2" "waterfast" {
-  count = var.postgres_ready && var.waterfast_db_ready ? 1 : 0
-  mount = "kv"
-  name  = "services/water-fast"
-}
-
-locals {
-  # TF_VAR-first, Vault-fallback — the same precedence poker uses, so a break-glass override
-  # works without editing config. Ephemeral, so it may only flow into ephemeral-valid
-  # contexts (the module's write-only owner_password); Terraform errors at validate if it
-  # ever reaches a normal argument or an output, which is a useful guard.
-  waterfast_db_password = (
-    var.waterfast_db_password != null
-    ? var.waterfast_db_password
-    : try(ephemeral.vault_kv_secret_v2.waterfast[0].data["db_password"], null)
-  )
-}
-
-module "waterfast_db" {
-  source = "../../modules/postgres-db"
-  count  = var.postgres_ready && var.waterfast_db_ready ? 1 : 0
-
-  db_name                = "waterfast"
-  owner_role             = "waterfast"
-  owner_password         = local.waterfast_db_password
-  owner_password_version = var.waterfast_db_password_version
-}
+# PREREQUISITE for apply-on-merge: ci-read must be able to read kv/data/services/water-fast.
+# That grant lives in the vault-config root, which is operator-applied with the root token
+# and deliberately never runs in CI, so it does NOT land with a normal merge —
+# scripts/apply-vault-config.sh has to have run first or the apply fails on a permission
+# denied it can't diagnose for itself.
