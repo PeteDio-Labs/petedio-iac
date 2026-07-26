@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Water fast tracker (fast.pdlab.dev) — family fasting + hydration log
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ waterfast_user }}
+Group={{ waterfast_group }}
+WorkingDirectory={{ waterfast_app_dir }}
+# DATABASE_URL, CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD live here (mode 0640, owned by the
+# service user) rather than as Environment= lines, which would be world-readable via
+# `systemctl show`.
+EnvironmentFile={{ waterfast_app_dir }}/backend.env
+Environment=PORT={{ waterfast_port }}
+Environment=PUBLIC_DIR={{ waterfast_app_dir }}/frontend/dist
+# Load-bearing: with NODE_ENV=production the app refuses to start if WATERFAST_DEV_IDENTITY
+# is ever set, which is the fence around the local-development identity bypass. Do not drop
+# this to "fix" a boot problem — a booting server that trusts an unverified identity is the
+# worse outcome.
+Environment=NODE_ENV=production
+ExecStart={{ bun_bin }} {{ waterfast_app_dir }}/backend/src/index.ts
+Restart=on-failure
+RestartSec=3
+
+# Hardening. The service needs outbound TCP only (Postgres on 231, Cloudflare's JWKS
+# endpoint) and reads nothing outside its own directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={{ waterfast_app_dir }}
+
+[Install]
+WantedBy=multi-user.target

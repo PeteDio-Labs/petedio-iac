@@ -1,0 +1,240 @@
+---
+# configure-water-fast.yml — deploy the water-fast tracker natively on waterfast-243 as a
+# Bun systemd service. Mirrors configure-resume-builder.yml / configure-palworld-panel.yml.
+#
+# WHY NATIVE (not Docker): same reasoning as the other two — no nesting/keyctl needed, one
+# Bun process serving a static bundle plus JSON routes. The app listens on :8080 and the
+# Cloudflare tunnel points fast.pdlab.dev at it (Authentik-gated, cloudflare-routes.tf).
+#
+# The app is petedio-water-fast. Bun runs the backend TypeScript directly (no build step
+# there), but the FRONTEND must be built on the controller first — `bun run build` in
+# frontend/ — because this play copies frontend/dist/ rather than building on the target.
+# Backend node_modules (`jose`) are installed ON the target: they'd otherwise be copied
+# from the operator's Mac, and jose is pure JS today but that's not a guarantee worth
+# betting a deploy on.
+#
+# SECRETS (resolved by scripts/deploy-water-fast.sh, passed as no_log extra-vars):
+#   waterfast_db_password           (Vault kv/services/water-fast, field db_password)
+#   waterfast_cf_access_team_domain (kv/services/water-fast, field cf_access_team_domain)
+#   waterfast_cf_access_aud         (kv/services/water-fast, field cf_access_aud)
+# Run via:  ./scripts/deploy-water-fast.sh
+
+- name: Deploy the water-fast tracker on waterfast-243 (native Bun service)
+  hosts: waterfast
+  become: true
+
+  vars:
+    waterfast_app_dir: /opt/water-fast
+    waterfast_user: waterfast
+    waterfast_group: waterfast
+    waterfast_port: 8080
+    bun_install_dir: /opt/bun
+    bun_bin: /opt/bun/bin/bun
+    # Controller path to the petedio-water-fast checkout, with frontend/dist/ already built.
+    waterfast_src: "{{ lookup('env', 'HOME') }}/petedio/water-fast"
+    waterfast_db_host: 192.168.50.231
+    waterfast_db_port: 5432
+    waterfast_db_name: waterfast
+    waterfast_db_user: waterfast
+
+  pre_tasks:
+    - name: Assert required secret extra-vars were provided (use scripts/deploy-water-fast.sh)
+      ansible.builtin.assert:
+        that:
+          - waterfast_db_password is defined and waterfast_db_password | length > 0
+          - waterfast_cf_access_team_domain is defined and waterfast_cf_access_team_domain | length > 0
+          - waterfast_cf_access_aud is defined and waterfast_cf_access_aud | length > 0
+        fail_msg: >-
+          Missing secret extra-vars. Run scripts/deploy-water-fast.sh, which resolves them
+          from Vault (kv/services/water-fast) and passes them in.
+      no_log: true
+
+    # Without this the play would happily deploy a backend with no frontend and serve 404s
+    # for the page itself, which looks like a routing or tunnel fault rather than a missing
+    # build step.
+    - name: Assert the frontend was built on the controller (bun run build in frontend/)
+      ansible.builtin.stat:
+        path: "{{ waterfast_src }}/frontend/dist/index.html"
+      delegate_to: localhost
+      become: false
+      register: waterfast_dist_stat
+      failed_when: not waterfast_dist_stat.stat.exists
+
+  tasks:
+    - name: Create the app service group
+      ansible.builtin.group:
+        name: "{{ waterfast_group }}"
+        system: true
+
+    - name: Create the app service user (no login shell)
+      ansible.builtin.user:
+        name: "{{ waterfast_user }}"
+        group: "{{ waterfast_group }}"
+        home: "{{ waterfast_app_dir }}"
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: false
+
+    - name: Create the app directory
+      ansible.builtin.file:
+        path: "{{ waterfast_app_dir }}"
+        state: directory
+        owner: "{{ waterfast_user }}"
+        group: "{{ waterfast_group }}"
+        mode: "0755"
+
+    # ---- Bun runtime (pinned dir, independent of any user account) ----
+    - name: Install runtime prerequisites (unzip + curl are required by the bun installer)
+      ansible.builtin.apt:
+        name:
+          - unzip
+          - curl
+          - ca-certificates
+        state: present
+        update_cache: true
+
+    - name: Check whether bun is already installed
+      ansible.builtin.stat:
+        path: "{{ bun_bin }}"
+      register: bun_stat
+
+    - name: Install bun (official installer, to a fixed system path)
+      ansible.builtin.shell:
+        cmd: "set -o pipefail; curl -fsSL https://bun.sh/install | BUN_INSTALL={{ bun_install_dir }} bash"
+        creates: "{{ bun_bin }}"
+        # `set -o pipefail` is a bashism — Ubuntu's /bin/sh is dash, which fails with
+        # "Illegal option -o pipefail". Ansible's shell module defaults to /bin/sh.
+        executable: /bin/bash
+      when: not bun_stat.stat.exists
+
+    - name: Make bun world-readable/executable
+      ansible.builtin.file:
+        path: "{{ bun_bin }}"
+        mode: "0755"
+
+    # ---- application code ----
+    - name: Copy the backend source
+      ansible.posix.synchronize:
+        src: "{{ waterfast_src }}/backend/"
+        dest: "{{ waterfast_app_dir }}/backend/"
+        delete: true
+        rsync_opts:
+          - "--exclude=node_modules"
+          - "--exclude=.env"
+      notify: Restart water-fast
+
+    # shared/types.ts is imported by the backend with a relative path (../../shared), so the
+    # directory layout on the target has to mirror the repo's, not be flattened.
+    - name: Copy the shared contract
+      ansible.posix.synchronize:
+        src: "{{ waterfast_src }}/shared/"
+        dest: "{{ waterfast_app_dir }}/shared/"
+        delete: true
+      notify: Restart water-fast
+
+    - name: Copy the built frontend
+      ansible.posix.synchronize:
+        src: "{{ waterfast_src }}/frontend/dist/"
+        dest: "{{ waterfast_app_dir }}/frontend/dist/"
+        delete: true
+      notify: Restart water-fast
+
+    # The repo is a Bun WORKSPACE (root package.json declares backend + frontend), and bun
+    # refuses to install if a declared member is missing — "Workspace not found frontend".
+    # We deploy frontend/dist/ but not frontend/src/, so frontend/package.json has to come
+    # along for the workspace to resolve, even though nothing runs it on this host.
+    - name: Copy the workspace manifests + lockfile for a reproducible install
+      ansible.builtin.copy:
+        src: "{{ waterfast_src }}/{{ item }}"
+        dest: "{{ waterfast_app_dir }}/{{ item }}"
+        owner: "{{ waterfast_user }}"
+        group: "{{ waterfast_group }}"
+        mode: "0644"
+      loop:
+        - bun.lock
+        - package.json
+        - frontend/package.json
+      notify: Restart water-fast
+
+    # Installed at the WORKSPACE ROOT, not in backend/ — that's where the lockfile applies,
+    # so --frozen-lockfile actually pins what lands on the box. --production drops every
+    # devDependency, leaving `jose` (the backend's only runtime dep) and preact.
+    - name: Install production dependencies on the target
+      ansible.builtin.command:
+        cmd: "{{ bun_bin }} install --production --frozen-lockfile"
+        chdir: "{{ waterfast_app_dir }}"
+      register: waterfast_bun_install
+      changed_when: "'installed' in waterfast_bun_install.stdout"
+      notify: Restart water-fast
+
+    # ---- configuration ----
+    - name: Write the service environment file
+      ansible.builtin.template:
+        src: templates/water-fast.env.j2
+        dest: "{{ waterfast_app_dir }}/backend.env"
+        owner: "{{ waterfast_user }}"
+        group: "{{ waterfast_group }}"
+        mode: "0640"
+      no_log: true
+      notify: Restart water-fast
+
+    - name: Ensure the app directory is owned by the service user
+      ansible.builtin.file:
+        path: "{{ waterfast_app_dir }}"
+        state: directory
+        owner: "{{ waterfast_user }}"
+        group: "{{ waterfast_group }}"
+        recurse: true
+
+    # ---- systemd unit ----
+    - name: Install the water-fast systemd unit
+      ansible.builtin.template:
+        src: templates/water-fast.service.j2
+        dest: /etc/systemd/system/water-fast.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart water-fast
+
+    - name: Flush handlers so the unit + files are in place before enable/start
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable + start the water-fast service
+      ansible.builtin.systemd:
+        name: water-fast
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # A green deploy that leaves a crash-looping service is a real failure mode here — the
+    # app calls assertConfig() at boot and exits on bad config, and systemd would report
+    # "started" for a process that died a second later. Poll its health endpoint so the
+    # deploy fails at the cause.
+    - name: Wait for the app to answer on loopback (proves it actually booted)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ waterfast_port }}/healthz"
+        status_code: [200]
+      register: waterfast_up
+      retries: 10
+      delay: 3
+      until: waterfast_up.status == 200
+
+    # Proves the edge contract too: with no Cloudflare JWT the API must refuse, not serve.
+    # If this ever returns 200 the identity check has been bypassed and the family's data is
+    # readable by anything that can reach the LAN address.
+    - name: Verify the API rejects an unauthenticated request (fails closed)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ waterfast_port }}/api/me"
+        status_code: [401]
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart water-fast
+      ansible.builtin.systemd:
+        name: water-fast
+        state: restarted

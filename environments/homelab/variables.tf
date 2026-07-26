@@ -186,3 +186,45 @@ variable "cloudflare_palworld_tunnel_id" {
   EOT
   type        = string
 }
+
+# ---- water fast (LXC 243 / fast.pdlab.dev) ------------------------------------------------
+
+variable "waterfast_db_ready" {
+  description = <<-EOT
+    Second gate for the `waterfast` database on postgres-rds-231 (see waterfast.tf).
+
+    FALSE (default): the DB module AND the ephemeral Vault read of kv/services/water-fast
+    are both count = 0, so a plan touches neither. This is what lets the LXC + tunnel route
+    land before the Vault path exists — an ephemeral resource is opened at PLAN time, so an
+    ungated read of an unseeded path would fail the plan that gates the merge.
+
+    TRUE: Terraform manages the `waterfast` database and its owner role. Flip this only
+    after `vault kv put kv/services/water-fast db_password=...` has run.
+
+    Requires var.postgres_ready as well — this gate is additional to it, not a replacement.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "waterfast_db_password" {
+  description = <<-EOT
+    Password for the `waterfast` DB owner role. Sourced from Vault
+    (kv/services/water-fast, field db_password) with TF_VAR_waterfast_db_password as a
+    break-glass override. Defaults to null so no plan or apply requires it while
+    waterfast_db_ready = false.
+  EOT
+  type        = string
+  sensitive   = true
+  default     = null
+}
+
+variable "waterfast_db_password_version" {
+  description = <<-EOT
+    password_wo_version for the `waterfast` owner role. The password is write-only and so
+    invisible to the diff — bump this integer to push a rotated Vault value through to
+    Postgres on the next apply. Leave unchanged otherwise.
+  EOT
+  type        = number
+  default     = 1
+}
