@@ -251,6 +251,34 @@ resource "vault_policy" "palworld_panel_cd" {
   EOT
 }
 
+# water-fast-cd: the petedio-water-fast repo's CD role — deploy.yml copies the built
+# frontend + backend source and installs the systemd unit on waterfast-243 on merge (the
+# runner SSHes in). Least-privilege: ONLY the ansible SSH key (to reach 243) and the app's
+# own service secret (DB password + CF Access team domain/AUD). NOT the broader
+# ci-read/ansible scope. Mirrors resume-builder-cd. Apply BEFORE the CD workflow lands or
+# the first run 403s.
+resource "vault_policy" "water_fast_cd" {
+  name = "water-fast-cd"
+
+  policy = <<-EOT
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/water-fast" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
 # resume-builder-cd: the petedio-resume-builder repo's CD role (Resume Builder P1) —
 # deploy.yml copies build/ + installs the systemd unit on resume-242 on merge (the runner
 # SSHes in). Least-privilege: ONLY the ansible SSH key (to reach resume-242) and the app's

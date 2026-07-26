@@ -183,6 +183,31 @@ resource "vault_jwt_auth_backend_role" "resume_builder_cd" {
   token_ttl      = 900
 }
 
+# water-fast-cd role → water-fast-cd policy. The petedio-water-fast repo's CD role: its
+# deploy.yml builds the frontend then runs petedio-iac's configure-water-fast.yml against
+# waterfast-243 on push to main. Gets ONLY the ansible SSH key (to reach 243) + the app's
+# own service secret. Apply BEFORE the CD workflow lands or the first run 403s.
+#
+# Bound on `repository` + `ref`, NOT on `sub` — see the resume-builder-cd note above. This
+# repo was created in 2026 and so emits the ID-QUALIFIED subject
+# (`repo:PeteDio-Labs@<org-id>/petedio-water-fast@<repo-id>:ref:...`), which no literal sub
+# binding can match. repository + ref is exactly as tight: this repo, pushes to main only
+# (a PR run carries ref=refs/pull/N/merge and is excluded).
+resource "vault_jwt_auth_backend_role" "water_fast_cd" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "water-fast-cd"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository = var.water_fast_repo
+    ref        = "refs/heads/main"
+  }
+  token_policies = [vault_policy.water_fast_cd.name]
+  token_ttl      = 900
+}
+
 # vault-snapshot role → vault-snapshot policy (PET-109). The raft-snapshot systemd timer
 # on .223 (Ansible role vault-snapshot) logs in with this AppRole to take + upload a
 # snapshot. Short token TTL — the job runs in seconds and re-auths each run; the secret_id

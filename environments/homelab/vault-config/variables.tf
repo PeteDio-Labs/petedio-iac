@@ -54,3 +54,9 @@ variable "resume_builder_repo" {
   type        = string
   default     = "PeteDio-Labs/petedio-resume-builder"
 }
+
+variable "water_fast_repo" {
+  description = "owner/name of the petedio-water-fast repo bound to the water-fast-cd JWT role."
+  type        = string
+  default     = "PeteDio-Labs/petedio-water-fast"
+}
