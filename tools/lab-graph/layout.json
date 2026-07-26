@@ -1,0 +1,92 @@
+{
+  "_comment": [
+    "Assigned function block + spatial slot per VMID. Deliberately hand-authored, NOT derived",
+    "from the PVE API: API ordering reshuffles on every create/destroy, which would destroy the",
+    "spatial memory that is the only reason to render the lab in space rather than as a list.",
+    "",
+    "This file is also the answer to open decision 1 in the VR Lab doc: guests group by their",
+    "ASSIGNED function block, not their live VMID. Live VMIDs for Media are 100-110 against a",
+    "21x target and renumbering is deferred indefinitely (a VMID is fixed at creation, so",
+    "renumber means destroy+recreate) — grouping by live VMID would bake that mismatch in.",
+    "",
+    "A guest present in PVE but absent here lands in `staging` and is reported in `warnings`.",
+    "Place it deliberately; do not let the renderer invent a position."
+  ],
+
+  "blocks": {
+    "media": { "label": "Media", "target_range": "21x", "slot": 0 },
+    "core": { "label": "Core", "target_range": "22x", "slot": 1 },
+    "apps": { "label": "Apps", "target_range": "23x", "slot": 2 },
+    "compute": { "label": "Compute / AI", "target_range": "24x", "slot": 3 },
+    "unschemed": { "label": "Unscheme'd", "target_range": null, "slot": 4 },
+    "staging": { "label": "Staging (unplaced)", "target_range": null, "slot": 5 }
+  },
+
+  "guests": {
+    "100": { "block": "media", "seat": 5, "target_vmid": 215 },
+    "101": { "block": "media", "seat": 6, "target_vmid": 216 },
+    "103": { "block": "media", "seat": 0, "target_vmid": 210 },
+    "104": { "block": "media", "seat": 1, "target_vmid": 211 },
+    "105": { "block": "media", "seat": 2, "target_vmid": 212 },
+    "109": { "block": "media", "seat": 3, "target_vmid": 213 },
+    "110": { "block": "media", "seat": 4, "target_vmid": 214 },
+
+    "106": { "block": "core", "seat": 0, "target_vmid": 220 },
+    "221": { "block": "core", "seat": 1, "target_vmid": 221 },
+    "119": { "block": "core", "seat": 2, "target_vmid": 222 },
+    "223": { "block": "core", "seat": 3, "target_vmid": 223 },
+    "112": { "block": "core", "seat": 4, "target_vmid": 224 },
+
+    "230": { "block": "apps", "seat": 0, "target_vmid": 230 },
+    "231": { "block": "apps", "seat": 1, "target_vmid": 231 },
+    "232": { "block": "apps", "seat": 2, "target_vmid": 232 },
+    "233": { "block": "apps", "seat": 3, "target_vmid": 233 },
+
+    "241": { "block": "compute", "seat": 1, "target_vmid": 241 },
+    "242": { "block": "compute", "seat": 2, "target_vmid": 242 },
+    "244": { "block": "compute", "seat": 4, "target_vmid": 244 },
+
+    "102": { "block": "unschemed", "seat": 0, "target_vmid": null },
+    "234": { "block": "unschemed", "seat": 1, "target_vmid": null }
+  },
+
+  "_offcluster_comment": [
+    "Load-bearing hosts that are NOT Proxmox guests, so they have no VMID and never appear in",
+    "any pct-based enumeration. L0 has to render these or the lab is a lie of omission.",
+    "lab-graph reports them as declared-only: it does not probe them (that is a health concern,",
+    "not a topology one) and marks their `source` accordingly."
+  ],
+  "offcluster": [
+    {
+      "id": "ollama-host",
+      "address": "192.168.50.12",
+      "block": "compute",
+      "seat": 0,
+      "role": "Inference — RTX 3060 Ti + GTX 1660 SUPER. Both GPUs must stay usable.",
+      "under_iac": true
+    },
+    {
+      "id": "palworld-mc",
+      "address": "192.168.86.234",
+      "block": "unschemed",
+      "seat": 2,
+      "role": "Palworld dedicated server on bare metal (ex-mission-control laptop). Took over LXC 234's mesh address at cutover.",
+      "under_iac": true,
+      "note": "On the .86 mesh, not the .50 LAN. LXC 234 is held stopped as its rollback."
+    }
+  ],
+
+  "_iac_comment": [
+    "L4 coverage: what is actually controlled. Three states — 'iac' (declared and applied from",
+    "petedio-iac or petedio-media-iac), 'brownfield' (imported in place at its live VMID/IP),",
+    "and 'none'. Hand-maintained: there is no API that can answer this."
+  ],
+  "iac_coverage": {
+    "100": "none", "101": "none", "103": "none", "104": "none", "105": "none",
+    "109": "none", "110": "none", "102": "none",
+    "106": "brownfield",
+    "119": "iac", "221": "none", "223": "iac", "112": "iac",
+    "230": "iac", "231": "iac", "232": "iac", "233": "iac",
+    "234": "iac", "241": "iac", "242": "iac", "244": "iac"
+  }
+}
