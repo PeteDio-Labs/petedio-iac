@@ -1,9 +1,15 @@
 ---
-# minio role (PET-124) — config-as-code for the Terraform state backend (LXC 221 / .221).
-# Idempotent and safe to re-run against the live host. NO secrets are committed: the
-# root credentials arrive as a no_log extra-var (Vault kv/iac/minio-root — see defaults).
-# The tfstate-scoped svcacct in Vault (kv/iac/minio) is owned by
-# scripts/reseed-minio-vault.sh, NOT this role (see README.md).
+# minio role (PET-124) — config-as-code for BOTH MinIO hosts:
+#   .221 (minio group)      the Terraform state backend — hand-managed, no TF resource ever
+#   .245 (minio_data group) app data — Terraform-managed (environments/homelab/minio-data.tf)
+# The only difference between them is `minio_buckets` (and the root-credential path); the
+# defaults here are .221's, so the state backend converges exactly as before.
+#
+# Idempotent and safe to re-run against either live host. NO secrets are committed: the
+# root credentials arrive as a no_log extra-var (Vault kv/iac/minio-root for .221,
+# kv/iac/minio-data-root for .245 — see defaults and README.md).
+# The bucket-scoped svcaccts in Vault (kv/iac/minio, kv/services/minio-obsidian) are owned
+# by scripts/reseed-minio-*.sh, NOT this role (see README.md).
 
 - name: Assert the MinIO root credentials were provided (Vault kv/iac/minio-root — never a committed default)
   ansible.builtin.assert:
@@ -91,7 +97,7 @@
     content: |
       # ANSIBLE MANAGED (roles/minio).
       [Unit]
-      Description=MinIO (Terraform state backend, LXC 221)
+      Description={{ minio_service_description }}
       Documentation=https://min.io/docs/minio/linux/index.html
       Wants=network-online.target
       After=network-online.target
@@ -165,37 +171,10 @@
   changed_when: false
   no_log: true
 
-# --- State bucket + versioning ---------------------------------------------------
+# --- Buckets: create + versioning + quota ----------------------------------------
 
-- name: Check whether the state bucket exists
-  ansible.builtin.command:
-    cmd: "{{ mc_bin }} ls {{ minio_mc_alias }}/{{ minio_state_bucket }}"
-  register: mc_bucket_check
-  changed_when: false
-  failed_when: false
-
-- name: Create the state bucket if absent
-  ansible.builtin.command:
-    cmd: "{{ mc_bin }} mb {{ minio_mc_alias }}/{{ minio_state_bucket }}"
-  when: mc_bucket_check.rc != 0
-  register: mc_bucket_create
-  changed_when: mc_bucket_create.rc == 0
-
-- name: Read current versioning state of the bucket
-  ansible.builtin.command:
-    cmd: "{{ mc_bin }} version info {{ minio_mc_alias }}/{{ minio_state_bucket }}"
-  register: mc_version_info
-  changed_when: false
-
-# Only enable when not already enabled, so a converged host reports no change (mc
-# prints a success line every time otherwise). Match case-insensitively — `mc version
-# info` reports "... versioning is enabled".
-- name: Enable versioning on the state bucket (the lock-light backend's recovery net)
-  ansible.builtin.command:
-    cmd: "{{ mc_bin }} version enable {{ minio_mc_alias }}/{{ minio_state_bucket }}"
-  when: "'enabled' not in (mc_version_info.stdout | lower)"
-  register: mc_version_enable
-  changed_when: mc_version_enable.rc == 0
+- name: Converge the buckets this host owns
+  ansible.builtin.include_tasks: buckets.yml
 
 # --- Off-host backup (opt-in) ----------------------------------------------------
 
@@ -224,7 +203,7 @@
           # the operator-configured off-host destination. Runs as root via the timer below.
           set -euo pipefail
           {{ mc_bin }} mirror --overwrite --preserve \
-            "{{ minio_mc_alias }}/{{ minio_state_bucket }}" "{{ minio_backup_dest }}"
+            "{{ minio_mc_alias }}/{{ minio_backup_bucket }}" "{{ minio_backup_dest }}"
 
     - name: Install the backup systemd service
       ansible.builtin.copy:

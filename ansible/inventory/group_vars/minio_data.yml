@@ -1,0 +1,27 @@
+---
+# group_vars for minio_data (LXC 245 / 192.168.50.245) — the app-data MinIO.
+#
+# THIS FILE IS THE BUCKET REGISTRY for app data. Adding a bucket to the homelab means
+# adding an entry below and re-running configure-minio-data.yml — not touching .221 (the
+# Terraform state backend), and not touching roles/minio/defaults/main.yml (whose default
+# is .221's single `tfstate` bucket and must stay that way).
+#
+# No secrets here. Root credentials come from Vault kv/iac/minio-data-root and are passed
+# as a no_log extra-var at runtime by scripts/deploy-minio-data.sh.
+
+minio_service_description: "MinIO (app data, LXC 245)"
+
+minio_buckets:
+  # obsidian-fs-mcs — backs Obsidian vault sync for the FS MCS coursework vault across
+  # Pedro's Mac / iPhone / iPad / PC, via the Remotely Save plugin speaking S3 to
+  # http://192.168.50.245:9000 over the tailnet. Setup: docs/runbooks/obsidian-vault-sync.md.
+  #
+  # Versioning (enabled by the role for every bucket) is the ONLY recovery net here — the
+  # vault is deliberately not git-backed, so a bad sync that deletes notes is undone from
+  # object versions. Do not suspend it.
+  #
+  # The quota is a guardrail, not a capacity plan: the vault is ~240 KB today, and 5 GiB
+  # is far more headroom than course notes plus attachments need, while still bounding a
+  # runaway sync loop well inside the host's 16 GiB root disk.
+  - name: obsidian-fs-mcs
+    quota_bytes: 5368709120 # 5 GiB
