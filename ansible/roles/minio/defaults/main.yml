@@ -43,11 +43,32 @@ minio_console_address: ":9001"
 minio_local_endpoint: "http://127.0.0.1:9000"
 minio_mc_alias: local
 
-# --- State bucket ----------------------------------------------------------------
+# --- Buckets ---------------------------------------------------------------------
 # Versioning is the recovery net for the lock-light backend (docs/GOTCHAS.md →
 # "MinIO S3 state backend"; backend.tf uses S3-native use_lockfile + versioning). The
 # role ENABLES versioning when off; it never suspends it.
 minio_state_bucket: tfstate
+
+# The buckets THIS host owns. The role converges each one: create if absent, enable
+# versioning if off, and set a hard quota if `quota_bytes` is given. It never removes a
+# bucket, never suspends versioning, and never touches object data.
+#
+# The default is exactly .221's single `tfstate` bucket, so the state backend's converge
+# is unchanged by this list existing. The app-data host (LXC 245) overrides it in
+# inventory/group_vars/minio_data.yml — that is where new app buckets go, NOT here and
+# NOT on .221.
+#
+# Per-bucket keys:
+#   name        (required) bucket name
+#   quota_bytes (optional) hard quota in BYTES. Deliberately bytes and not "5gi": the
+#               converge compares this integer against `mc quota info --json`'s `quota`
+#               field, so an exact unit-free value keeps the check idempotent instead of
+#               re-setting the quota (and reporting "changed") on every run.
+minio_buckets:
+  - name: "{{ minio_state_bucket }}"
+
+# systemd unit Description=. Per-host so `systemctl status minio` says which MinIO this is.
+minio_service_description: "MinIO (Terraform state backend, LXC 221)"
 
 # --- Root credentials (REQUIRED — no default, never commit) ----------------------
 # Resolve from Vault and pass as a no_log extra-var via a 0600 JSON @file — the
@@ -68,6 +89,9 @@ minio_firewall_subnet: "192.168.50.0/24"
 # When enabled the role installs an `mc mirror` script + a systemd timer. See the
 # runbook for picking a target, first-run seeding, and the check cadence.
 minio_backup_enabled: false
+# Which bucket gets mirrored. Defaults to the state bucket (.221's only reason to back
+# anything up); the app-data host would point this at one of its own buckets.
+minio_backup_bucket: "{{ minio_state_bucket }}"
 # The mc target the backup mirrors INTO, e.g. "offsite/tfstate-backup" (an mc alias you
 # configure on the host out-of-band). No default — must be set when enabling.
 minio_backup_dest: ""
