@@ -59,3 +59,13 @@ zot_cache_registries:
 
 # Derived — keeps every health/verify URL in the role scheme-correct.
 zot_scheme: "{{ 'https' if zot_tls_enabled | bool else 'http' }}"
+
+# Journal retention. Host-level rather than zot-specific, but zot is this
+# container's only role, so it lives here rather than in a one-setting role of
+# its own.
+#
+# systemd's default cap is 10% of the filesystem. On CT106's 40G rootfs that is
+# ~4G, and the journal had duly grown to 3.5G — more than half of everything
+# used on the disk, for a box whose actual workload is a 95MB Go binary. A cap
+# makes that bounded instead of merely slow.
+zot_journal_max_use: 200M
