@@ -17,11 +17,12 @@ services:
 {% if zot_tls_enabled %}
       - {{ zot_tls_dir }}:/etc/zot/tls:ro
 {% endif %}
-    healthcheck:
-      # /v2/ is the OCI base endpoint; it answers 401 when auth is on, which
-      # still proves the server is up and serving the distribution API.
-      test: ["CMD-SHELL", "wget -q -O /dev/null --no-check-certificate -T 5 {{ 'https' if zot_tls_enabled else 'http' }}://localhost:{{ zot_port }}/v2/ 2>&1; [ $? -le 1 ]"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
+    # NO healthcheck block on purpose. The zot image is DISTROLESS — no shell, no
+    # wget, no curl — so every CMD-SHELL probe exits 127 and the container reports
+    # "unhealthy" while serving traffic perfectly. A permanently-failing healthcheck
+    # is worse than none: it makes `docker ps` lie, and anything gating on health
+    # (compose depends_on, restart policies) then misbehaves.
+    #
+    # Liveness is asserted from OUTSIDE instead — roles/zot/tasks/main.yml polls
+    # /v2/ and then does an authenticated catalog read, which proves more than a
+    # port probe ever would.
