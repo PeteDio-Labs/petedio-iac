@@ -1,4 +1,4 @@
-# Proxmox resource pool grouping all petedio-iac-managed LXCs (PET-56). Org hygiene only —
+# Proxmox resource pool grouping EVERY LXC on the cluster (PET-56). Org hygiene only —
 # a pool is a metadata grouping in the Proxmox UI/API; it changes NOTHING about the
 # containers themselves.
 #
@@ -31,7 +31,7 @@ resource "proxmox_virtual_environment_pool" "homelab" {
   count = var.manage_resource_pool ? 1 : 0
 
   pool_id = "homelab"
-  comment = "All petedio-iac-managed LXCs. Managed by Terraform (PET-56)."
+  comment = "Every LXC on the cluster. Managed by Terraform (PET-56)."
 }
 
 locals {
@@ -41,7 +41,7 @@ locals {
   # pool itself.
   #
   # This map must list EVERY proxmox-lxc module in this environment — the pool's whole point
-  # is "all petedio-iac-managed LXCs", so a module missing here is silent drift. It had drifted
+  # is that it accounts for every container, so a module missing here is silent drift. It had drifted
   # once already: authentik-119 and runner-233 were left out after their PRs merged (this file
   # still carried the "will be added when their PRs merge" TODO), and waterfast-243 /
   # tailscale-244 / minio-data-245 followed that precedent. When you add a proxmox-lxc module,
@@ -61,12 +61,37 @@ locals {
     tailscale  = module.tailscale.vm_id
     minio_data = module.minio_data.vm_id
   } : {}
+
+  # LXCs that exist on the cluster but have NO Terraform module here, so there is
+  # no module output to source a vm_id from. Membership is additive and never
+  # touches the container, so pooling them is safe even though TF does not manage
+  # them — and leaving them out is precisely the "silent drift" this file warns
+  # about, just one level up: the pool looked complete while a third of the
+  # cluster sat outside it.
+  #
+  # Each of these is unmanaged for its own reason, not by oversight:
+  #   221 minio      the Terraform S3 STATE BACKEND. TF cannot create the host
+  #                  that stores TF state — see minio-state-backend.tf. Config-as-
+  #                  code only, via configure-minio.yml.
+  #   102 flaresolverr  pve02. Community-script container, never captured.
+  #   112 cloud-flare-main  pve02. The cloudflared tunnel connector.
+  #
+  # The seven MEDIA LXCs (100/101/103/104/105/109/110) are deliberately NOT here:
+  # they are Terraform-managed, just in a different repo and state
+  # (petedio-media-iac). Hardcoding their VMIDs here would duplicate ownership and
+  # lose the module dependency; that repo adds its own memberships to this pool
+  # instead. This pool is cluster-wide, so cross-state membership is fine.
+  pool_unmanaged_members = var.manage_resource_pool ? {
+    minio            = 221
+    flaresolverr     = 102
+    cloud_flare_main = 112
+  } : {}
 }
 
 # proxmox_pool_membership (NOT the deprecated _virtual_environment_ alias). `type` is
 # read-only — the provider infers lxc vs qemu from the vm_id — so only pool_id + vm_id are set.
 resource "proxmox_pool_membership" "lxc" {
-  for_each = local.pool_lxc_members
+  for_each = merge(local.pool_lxc_members, local.pool_unmanaged_members)
 
   pool_id = proxmox_virtual_environment_pool.homelab[0].pool_id
   vm_id   = each.value
