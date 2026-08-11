@@ -24,10 +24,17 @@ module "cloudflare_ingress" {
 
   # KEEP — live services. Everything else is dropped by the ingress rewrite.
   routes = {
-    "auth.pdlab.dev"     = { service = "http://192.168.50.119:9000" } # Authentik
-    "docker.pdlab.dev"   = { service = "http://192.168.50.111:8082" } # Nexus (docker)
-    "registry.pdlab.dev" = { service = "http://192.168.50.111:8081" } # Nexus (registry)
-    "seer.pdlab.dev"     = { service = "http://192.168.50.33:5055" }  # Overseerr
+    "auth.pdlab.dev" = { service = "http://192.168.50.119:9000" } # Authentik
+    "seer.pdlab.dev" = { service = "http://192.168.50.33:5055" }  # Overseerr
+
+    # docker.pdlab.dev / registry.pdlab.dev REMOVED from the tunnel — Nexus is
+    # gone, replaced by zot on the same LXC. The registry is deliberately no
+    # longer reachable from the internet: its only consumers (runner-232/233,
+    # faasd on 241) are all on the LAN, so routing them out to Cloudflare and
+    # back in was pure latency and pure attack surface. docker.pdlab.dev is now
+    # a plain A record straight to the box — see cloudflare_dns_record.registry
+    # below. registry.pdlab.dev is retired outright: it fronted Nexus's web UI,
+    # which zot replaces with its own, LAN-only.
 
     # Co-latro — the game, prealpha (PET-58). nginx on VM-230 (poker-api) serves the frontend
     # dist/ and reverse-proxies /api to the backend on :3020 (same origin, relative API calls).
@@ -115,14 +122,6 @@ import {
   id = "${local.cloudflare_zone_id}/61c79a4269f9bd3113d1f306219009e9"
 }
 import {
-  to = module.cloudflare_ingress.cloudflare_dns_record.route["docker.pdlab.dev"]
-  id = "${local.cloudflare_zone_id}/cc952b328455a928811c5ad980f11599"
-}
-import {
-  to = module.cloudflare_ingress.cloudflare_dns_record.route["registry.pdlab.dev"]
-  id = "${local.cloudflare_zone_id}/0bc0916310c01640872d57482f14c637"
-}
-import {
   to = module.cloudflare_ingress.cloudflare_dns_record.route["seer.pdlab.dev"]
   id = "${local.cloudflare_zone_id}/553f672178651906b01c66cdca2c9de7"
 }
@@ -181,4 +180,37 @@ moved {
 moved {
   from = module.cloudflare_ingress.cloudflare_dns_record.route["palworld.pdlab.dev"]
   to   = module.cloudflare_ingress_palworld.cloudflare_dns_record.route["palworld.pdlab.dev"]
+}
+
+# ============================================================================================
+# Registry DNS — docker.pdlab.dev straight to the box, no tunnel
+# ============================================================================================
+#
+# zot (which replaced Nexus on CT106) serves the OCI API on :443 with a real
+# Let's Encrypt cert obtained by DNS-01. So the hostname needs to resolve, but
+# nothing needs to PROXY it — hence a plain A record with proxied = false.
+#
+# WHY KEEP THE HOSTNAME AT ALL instead of using the IP: `docker.pdlab.dev` is
+# baked into both co-latro CI workflows, the frontend e2e compose file,
+# deploy-lab-graph.sh, lab-graph's stack.yml, and faasd's
+# /var/lib/faasd/.docker/config.json. Keeping the name means the registry swap
+# touches none of them.
+#
+# This publishes a private RFC1918 address in public DNS. That is intentional
+# and is the normal trade for LAN-only services that still want a real cert: the
+# record is only useful to something already on the LAN, and the alternative
+# (internal-CA certs) means distributing a CA to every client forever.
+resource "cloudflare_dns_record" "registry" {
+  zone_id = local.cloudflare_zone_id
+  name    = "docker.pdlab.dev"
+  type    = "A"
+  content = "192.168.50.111"
+  ttl     = 300
+  proxied = false # MUST stay false — proxying an RFC1918 origin cannot work.
+  comment = "zot OCI registry on CT106. LAN-only; no tunnel (PET-122 follow-up)."
+
+  # The old CNAME (tunnel) for this name is destroyed when it leaves the
+  # cloudflare_ingress routes map. Cloudflare rejects two records on one name,
+  # so the destroy must land first.
+  depends_on = [module.cloudflare_ingress]
 }
