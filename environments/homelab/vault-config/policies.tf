@@ -100,7 +100,7 @@ resource "vault_policy" "terraform" {
 
 # colatro-ci: the policy the Co-latro app repos get via the colatro-ci JWT role
 # (auth.tf). Least-privilege for publish-on-merge + the manual deploy workflow:
-#   - kv/services/nexus            push the backend image to Nexus
+#   - kv/services/registry         push the backend image to the registry (zot)
 #   - kv/services/minio-frontend-ci  WRITE the frontend dist to the MinIO bucket
 #     (distinct from the read-only kv/services/minio-frontend the on-box rollout uses)
 #   - kv/iac/lxc-ssh               SSH key to reach LXC 230 from the deploy workflow
@@ -111,7 +111,7 @@ resource "vault_policy" "colatro_ci" {
   name = "colatro-ci"
 
   policy = <<-EOT
-    path "kv/data/services/nexus" {
+    path "kv/data/services/registry" {
       capabilities = ["read"]
     }
 
@@ -201,7 +201,7 @@ resource "vault_policy" "media_ci" {
 
 # openfaas-ci: the petedio-iac CI role that APPLIES configure-openfaas.yml to LXC 241 on
 # merge (the runner SSHes in). Least-privilege: ONLY the ansible SSH key (to reach 241) and
-# the Nexus pull creds (written into faasd's /var/lib/faasd/.docker/config.json). NOT the
+# the registry pull creds (written into faasd's /var/lib/faasd/.docker/config.json). NOT the
 # broader ci-read/iac scope. (PET-88)
 resource "vault_policy" "openfaas_ci" {
   name = "openfaas-ci"
@@ -211,7 +211,7 @@ resource "vault_policy" "openfaas_ci" {
       capabilities = ["read"]
     }
 
-    path "kv/data/services/nexus" {
+    path "kv/data/services/registry" {
       capabilities = ["read"]
     }
 

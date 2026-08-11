@@ -26,7 +26,7 @@ variable "github_oidc_audience" {
 
 # Co-latro app repos allowed to exchange an Actions OIDC token via the colatro-ci
 # JWT role (auth.tf). The app CI (publish-on-merge) + the manual deploy workflow run
-# from these repos; each needs Nexus push + MinIO-write (publish) and the LXC SSH key
+# from these repos; each needs registry push + MinIO-write (publish) and the LXC SSH key
 # (deploy). Kept separate from petedio-iac so app CI never gets the iac creds.
 variable "colatro_repos" {
   description = "owner/name of each Co-latro repo bound to the colatro-ci JWT role."

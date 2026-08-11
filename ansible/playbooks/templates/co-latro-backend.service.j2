@@ -1,5 +1,5 @@
 # {{ ansible_managed }}
-# Co-latro backend — runs the Nexus image as a systemd-managed Docker container.
+# Co-latro backend — runs the registry image as a systemd-managed Docker container.
 # Single container, so plain `docker run` (no compose). The DATABASE_URL secret lives ONLY
 # in the EnvironmentFile, which is now a tmpfs file rendered by the Vault Agent (PET-57) —
 # never on persistent disk, never in this (world-readable) unit.

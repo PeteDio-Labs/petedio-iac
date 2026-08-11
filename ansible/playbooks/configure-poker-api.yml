@@ -4,7 +4,7 @@
 # Runs post-create against the bare Debian UNPRIVILEGED LXC that Terraform stands up
 # (environments/homelab/poker.tf — TF owns existence + hardware + network only). This
 # playbook makes it a working app host:
-#   Docker CE  ->  Nexus login  ->  rendered env-file (DATABASE_URL)  ->  systemd unit
+#   Docker CE  ->  registry login  ->  rendered env-file (DATABASE_URL)  ->  systemd unit
 #   running the backend image on :3020  ->  nginx serving the frontend + proxying /api.
 #
 # Container features (nesting/keyctl) are NOT set here — the bpg/proxmox provider can't
@@ -17,7 +17,7 @@
 #   colatro_database_url  (Vault kv/poker/db DATABASE_URL — via the terraform-local
 #                          AppRole, which is granted kv/poker/*; the ansible policy is
 #                          deliberately NOT — see docs/runbooks/vault-seed.md)
-#   nexus_username / nexus_password          (Vault kv/services/nexus)
+#   registry_username / registry_password          (Vault kv/services/registry)
 #   minio_frontend_access_key / _secret_key  (Vault kv/services/minio-frontend)
 # Run via:  ./scripts/deploy-poker-api.sh
 #
@@ -42,7 +42,7 @@
     colatro_vault_addr: "https://192.168.50.223:8200"
     colatro_vault_bin: /usr/bin/vault
     colatro_web_root: /var/www/co-latro
-    nexus_registry: docker.pdlab.dev
+    registry_host: docker.pdlab.dev
     colatro_image: "docker.pdlab.dev/co-latro-backend"
     # Override with -e backend_image_tag=<sha> for a pinned / rollback-able deploy.
     backend_image_tag: "latest"
@@ -81,8 +81,8 @@
     - name: Assert required secret extra-vars were provided (use scripts/deploy-poker-api.sh)
       ansible.builtin.assert:
         that:
-          - nexus_username is defined and nexus_username | length > 0
-          - nexus_password is defined and nexus_password | length > 0
+          - registry_username is defined and registry_username | length > 0
+          - registry_password is defined and registry_password | length > 0
           - minio_frontend_access_key is defined and minio_frontend_access_key | length > 0
           - minio_frontend_secret_key is defined and minio_frontend_secret_key | length > 0
         fail_msg: >-
@@ -132,11 +132,11 @@
         state: started
         enabled: true
 
-    # ---- Nexus registry login ----
-    - name: Log in to the Nexus Docker registry
+    # ---- registry login ----
+    - name: Log in to the Docker registry
       ansible.builtin.command:
-        cmd: "docker login {{ nexus_registry }} -u {{ nexus_username }} --password-stdin"
-        stdin: "{{ nexus_password }}"
+        cmd: "docker login {{ registry_host }} -u {{ registry_username }} --password-stdin"
+        stdin: "{{ registry_password }}"
       register: docker_login
       changed_when: "'Login Succeeded' in docker_login.stdout"
       no_log: true
@@ -259,7 +259,7 @@
       when: poker_secret_id_stat.stat.exists
 
     # ---- Backend container image + systemd unit ----
-    - name: Pull the backend image from Nexus
+    - name: Pull the backend image from the registry
       community.docker.docker_image:
         name: "{{ colatro_image }}:{{ backend_image_tag }}"
         source: pull

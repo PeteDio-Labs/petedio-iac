@@ -48,8 +48,8 @@ export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die 'Vault unreachable / token invalid.'
 
 PVE_RO="$(vault kv get -field=proxmox_ro_token kv/services/agent-loop)"
-NEXUS_U="$(vault kv get -field=username kv/services/nexus 2>/dev/null || echo admin)"
-NEXUS_P="$(vault kv get -field=admin_password kv/services/nexus)"
+REGISTRY_U="$(vault kv get -field=username kv/services/registry 2>/dev/null || echo admin)"
+REGISTRY_P="$(vault kv get -field=password kv/services/registry)"
 GW_PW="$(vault kv get -field=gateway_password kv/services/openfaas)"
 
 # ---- 1. build + push on runner-232 -------------------------------------------------------
@@ -60,7 +60,7 @@ scp -q -o BatchMode=yes -i "$SSH_KEY" \
   "root@$BUILDER:$REMOTE_SRC/"
 
 # Creds arrive on stdin, never argv — argv is world-readable in /proc.
-printf '%s\n%s\n' "$NEXUS_U" "$NEXUS_P" | $SSH "root@$BUILDER" "
+printf '%s\n%s\n' "$REGISTRY_U" "$REGISTRY_P" | $SSH "root@$BUILDER" "
   set -euo pipefail
   read -r u; read -r p
   printf '%s' \"\$p\" | docker login docker.pdlab.dev -u \"\$u\" --password-stdin >/dev/null
