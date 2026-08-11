@@ -1,0 +1,87 @@
+# zot — deploy the OCI registry that replaces Nexus on LXC 106.
+#
+# Runs ALONGSIDE Nexus during migration (zot :5000, Nexus :8081/:8082) so the
+# replacement can be proven against the real images before anything cuts over.
+# Removing Nexus is a separate, explicit step (zot_remove_nexus).
+---
+- name: zot — require credentials
+  ansible.builtin.assert:
+    that:
+      - (zot_username | length) > 0
+      - (zot_password | length) > 0
+    fail_msg: >-
+      zot_username/zot_password must be supplied (the playbook reads them from
+      Vault at kv/services/registry). Never hardcode them in the role.
+    quiet: true
+
+- name: zot — config directory
+  ansible.builtin.file:
+    path: "{{ zot_config_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: zot — blob store directory
+  ansible.builtin.file:
+    path: "{{ zot_data_dir }}"
+    state: directory
+    mode: "0755"
+
+# bcrypt is the ONLY algorithm zot accepts in an htpasswd file — an md5/crypt
+# entry silently fails every login. Generated locally so the password never
+# reaches the host's process table or shell history.
+- name: zot — render htpasswd (bcrypt)
+  ansible.builtin.copy:
+    content: "{{ zot_username }}:{{ zot_password | password_hash('bcrypt') }}\n"
+    dest: "{{ zot_config_dir }}/htpasswd"
+    mode: "0640"
+  no_log: true
+  notify: restart zot
+
+- name: zot — render config
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ zot_config_dir }}/config.json"
+    mode: "0640"
+    validate: "python3 -c \"import json,sys; json.load(open('%s'))\""
+  notify: restart zot
+
+- name: zot — render compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ zot_config_dir }}/docker-compose.yml"
+    mode: "0640"
+  notify: restart zot
+
+- name: zot — bring the stack up
+  community.docker.docker_compose_v2:
+    project_src: "{{ zot_config_dir }}"
+    state: present
+    pull: missing
+
+- name: zot — wait for the registry API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ zot_port }}/v2/"
+    # 401 is the correct answer from an authenticated registry: it proves the
+    # distribution API is live. Treating only 200 as healthy would hang forever.
+    status_code: [200, 401]
+    timeout: 10
+  register: zot_api
+  until: zot_api.status in [200, 401]
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: zot — verify an authenticated catalog read
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ zot_port }}/v2/_catalog"
+    url_username: "{{ zot_username }}"
+    url_password: "{{ zot_password }}"
+    force_basic_auth: true
+    timeout: 15
+  register: zot_catalog
+  changed_when: false
+  no_log: true
+
+- name: zot — report catalog
+  ansible.builtin.debug:
+    msg: "zot up on :{{ zot_port }} — repositories: {{ zot_catalog.json.repositories | default([]) }}"
