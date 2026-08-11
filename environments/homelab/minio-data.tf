@@ -40,9 +40,9 @@
 # tailnet, so every client reaches this host by its LAN IP inside WireGuard with zero public
 # ingress. Client setup: docs/runbooks/obsidian-vault-sync.md.
 #
-# Not added to pool.tf: the two most recent LXCs (waterfast-243, tailscale-244) are absent
-# from local.pool_lxc_members too, and that resource is gated behind var.manage_resource_pool
-# + a Pool.Allocate grant. Following the existing precedent rather than widening this change.
+# In pool.tf: this LXC is in local.pool_lxc_members, along with waterfast-243 / tailscale-244
+# — the three had been left out on the "follow the existing precedent" argument, which just
+# propagated the drift. Membership is still gated behind var.manage_resource_pool.
 
 module "minio_data" {
   source = "../../modules/proxmox-lxc"

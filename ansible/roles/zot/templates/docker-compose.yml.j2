@@ -14,10 +14,13 @@ services:
       - {{ zot_config_dir }}/config.json:/etc/zot/config.json:ro
       - {{ zot_config_dir }}/htpasswd:/etc/zot/htpasswd:ro
       - {{ zot_data_dir }}:{{ zot_data_dir }}
+{% if zot_tls_enabled %}
+      - {{ zot_tls_dir }}:/etc/zot/tls:ro
+{% endif %}
     healthcheck:
       # /v2/ is the OCI base endpoint; it answers 401 when auth is on, which
       # still proves the server is up and serving the distribution API.
-      test: ["CMD-SHELL", "wget -q --spider -T 5 http://localhost:{{ zot_port }}/v2/ 2>&1 | grep -q . || wget -q -O /dev/null -T 5 http://localhost:{{ zot_port }}/v2/ || true"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null --no-check-certificate -T 5 {{ 'https' if zot_tls_enabled else 'http' }}://localhost:{{ zot_port }}/v2/ 2>&1; [ $? -le 1 ]"]
       interval: 30s
       timeout: 10s
       retries: 5

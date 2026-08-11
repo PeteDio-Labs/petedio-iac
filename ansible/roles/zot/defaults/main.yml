@@ -11,9 +11,26 @@ zot_version: "v2.1.3"
 zot_image: "ghcr.io/project-zot/zot-linux-amd64:{{ zot_version }}"
 zot_container_name: zot
 
-# Port 5000 is the registry convention. Nexus is on 8081/8082, so zot can run
-# alongside it during the migration without a conflict.
+# During migration zot runs on 5000 alongside Nexus (8081/8082). After cutover
+# it moves to 443 so `docker.pdlab.dev/<image>` resolves with no explicit port —
+# which is what keeps every existing CI/deploy reference working unchanged.
 zot_port: 5000
+
+# ---------------------------------------------------------------------- TLS --
+# Docker refuses a non-TLS registry unless every client lists it in
+# insecure-registries, so TLS is what makes this reachable without touching a
+# single consumer. The cert is a real Let's Encrypt one obtained by DNS-01 —
+# no inbound port 80, no public exposure of the registry itself; the only thing
+# that has to be public is a TXT record during issuance.
+zot_tls_enabled: false
+zot_hostname: docker.pdlab.dev
+zot_tls_dir: /etc/zot/tls
+zot_acme_email: pedelgadillo@gmail.com
+zot_lego_version: "4.19.2"
+zot_lego_dir: /opt/lego
+# Cloudflare token for the DNS-01 challenge, supplied by the playbook from
+# Vault (kv/iac/cloudflare). Never defaulted to a real value.
+zot_cf_dns_token: ""
 
 # Config + auth live on the container's own disk; the blob store goes on the
 # NFS-backed mount that already serves Nexus, so durability is unchanged.
@@ -29,3 +46,6 @@ zot_password: ""
 # this local prefix, e.g. <registry>/docker-hub/library/alpine:3.20.
 zot_cache_enabled: true
 zot_cache_prefix: docker-hub
+
+# Derived — keeps every health/verify URL in the role scheme-correct.
+zot_scheme: "{{ 'https' if zot_tls_enabled | bool else 'http' }}"

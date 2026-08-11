@@ -31,10 +31,21 @@
         - username
         - password
 
+    - name: Read the Cloudflare DNS token from Vault (DNS-01 challenge)
+      ansible.builtin.command:
+        cmd: "vault kv get -field=api_token kv/iac/cloudflare"
+      delegate_to: localhost
+      become: false
+      register: cf_token
+      changed_when: false
+      no_log: true
+      when: zot_tls_enabled | default(false) | bool
+
     - name: Bind credentials to the role
       ansible.builtin.set_fact:
         zot_username: "{{ registry_creds.results[0].stdout | trim }}"
         zot_password: "{{ registry_creds.results[1].stdout | trim }}"
+        zot_cf_dns_token: "{{ cf_token.stdout | default('') | trim }}"
       no_log: true
   roles:
     - zot

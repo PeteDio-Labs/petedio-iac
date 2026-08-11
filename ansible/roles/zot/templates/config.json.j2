@@ -10,6 +10,12 @@
   "http": {
     "address": "0.0.0.0",
     "port": "{{ zot_port }}",
+{% if zot_tls_enabled %}
+    "tls": {
+      "cert": "/etc/zot/tls/server.crt",
+      "key": "/etc/zot/tls/server.key"
+    },
+{% endif %}
     "auth": {
       "htpasswd": {
         "path": "/etc/zot/htpasswd"

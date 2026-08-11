@@ -37,16 +37,29 @@ resource "proxmox_virtual_environment_pool" "homelab" {
 locals {
   # vm_id sourced from each module's output → an implicit dependency, so a membership is
   # created after its container exists. Imported/captured LXCs (e.g. nexus) are included too:
-  # membership is additive and never mutates the container. authentik-119 / runner-233 will
-  # be added here when their PRs merge. Gated by the same flag as the pool itself.
+  # membership is additive and never mutates the container. Gated by the same flag as the
+  # pool itself.
+  #
+  # This map must list EVERY proxmox-lxc module in this environment — the pool's whole point
+  # is "all petedio-iac-managed LXCs", so a module missing here is silent drift. It had drifted
+  # once already: authentik-119 and runner-233 were left out after their PRs merged (this file
+  # still carried the "will be added when their PRs merge" TODO), and waterfast-243 /
+  # tailscale-244 / minio-data-245 followed that precedent. When you add a proxmox-lxc module,
+  # add it here in the same PR. ollama-host is NOT here on purpose — it is bare metal
+  # (modules/baremetal-host), not a container, so it has no VMID to put in a pool.
   pool_lxc_members = var.manage_resource_pool ? {
     nexus      = module.nexus.vm_id
     vault      = module.vault.vm_id
     poker_api  = module.poker_api.vm_id
     postgres   = module.postgres_host.vm_id
     runner     = module.runner.vm_id
+    runner_2   = module.runner_2.vm_id
     openfaas   = module.openfaas.vm_id
     agent_loop = module.agent_loop.vm_id
+    authentik  = module.authentik.vm_id
+    waterfast  = module.waterfast.vm_id
+    tailscale  = module.tailscale.vm_id
+    minio_data = module.minio_data.vm_id
   } : {}
 }
 

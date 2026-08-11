@@ -26,6 +26,16 @@
     state: directory
     mode: "0755"
 
+- name: zot — is there already a certificate?
+  ansible.builtin.stat:
+    path: "{{ zot_lego_dir }}/certificates/{{ zot_hostname }}.crt"
+  register: zot_cert_stat
+  when: zot_tls_enabled | bool
+
+- name: zot — obtain TLS certificate
+  ansible.builtin.include_tasks: tls.yml
+  when: zot_tls_enabled | bool
+
 # bcrypt is the ONLY algorithm zot accepts in an htpasswd file — an md5/crypt
 # entry silently fails every login. Generated locally so the password never
 # reaches the host's process table or shell history.
@@ -60,7 +70,12 @@
 
 - name: zot — wait for the registry API
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ zot_port }}/v2/"
+    url: "{{ zot_scheme }}://127.0.0.1:{{ zot_port }}/v2/"
+    # Loopback + no cert validation on purpose: this is a LIVENESS probe, not a
+    # trust check. The cert is issued for docker.pdlab.dev, so verifying it
+    # against 127.0.0.1 would always fail. Real trust is proven from the runner
+    # after the DNS flip.
+    validate_certs: false
     # 401 is the correct answer from an authenticated registry: it proves the
     # distribution API is live. Treating only 200 as healthy would hang forever.
     status_code: [200, 401]
@@ -73,7 +88,8 @@
 
 - name: zot — verify an authenticated catalog read
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ zot_port }}/v2/_catalog"
+    url: "{{ zot_scheme }}://127.0.0.1:{{ zot_port }}/v2/_catalog"
+    validate_certs: false
     url_username: "{{ zot_username }}"
     url_password: "{{ zot_password }}"
     force_basic_auth: true
@@ -84,4 +100,4 @@
 
 - name: zot — report catalog
   ansible.builtin.debug:
-    msg: "zot up on :{{ zot_port }} — repositories: {{ zot_catalog.json.repositories | default([]) }}"
+    msg: "zot up on {{ zot_scheme }}://{{ zot_hostname }}:{{ zot_port }} — repositories: {{ zot_catalog.json.repositories | default([]) }}"
