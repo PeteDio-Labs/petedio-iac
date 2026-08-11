@@ -42,10 +42,20 @@ zot_data_dir: /nexus-data/zot
 zot_username: ""
 zot_password: ""
 
-# docker.io pull-through. Images fetched through the cache are addressed under
-# this local prefix, e.g. <registry>/docker-hub/library/alpine:3.20.
+# Pull-through mirrors. Each upstream gets its own local prefix, so a cached
+# image is addressed <registry>/<prefix>/<upstream-repo>:<tag> — e.g.
+# docker.pdlab.dev/docker-hub/library/alpine:3.20.
+#
+# Both upstreams here throttle: Docker Hub caps anonymous pulls at 100/6h per IP
+# (that cap aborted a media-stack update run), and lscr.io burst-limits hard
+# enough that a digest check against it intermittently returns nothing — which
+# means an update to qBittorrent can go unnoticed. Caching both makes the update
+# check deterministic instead of dependent on someone else's rate limiter.
 zot_cache_enabled: true
 zot_cache_prefix: docker-hub
+zot_cache_registries:
+  - { url: "https://registry-1.docker.io", prefix: "docker-hub" }
+  - { url: "https://lscr.io",              prefix: "lscr-io" }
 
 # Derived — keeps every health/verify URL in the role scheme-correct.
 zot_scheme: "{{ 'https' if zot_tls_enabled | bool else 'http' }}"
