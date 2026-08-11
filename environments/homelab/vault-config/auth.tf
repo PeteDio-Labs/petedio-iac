@@ -89,7 +89,7 @@ resource "vault_jwt_auth_backend_role" "media_ci" {
 }
 
 # colatro-ci role → colatro-ci policy. Same JWT backend, separate role so the Co-latro
-# app repos get ONLY the colatro-ci policy (Nexus + MinIO-write + LXC SSH), never the
+# app repos get ONLY the colatro-ci policy (registry + MinIO-write + LXC SSH), never the
 # iac ci-read creds. Binds main + pull_request subs for BOTH app repos — built from
 # var.colatro_repos and comma-joined into one string (bound_claims_type=string, OR
 # semantics), matching the github-actions role's two-sub pattern. Bind main + PR so a
@@ -117,7 +117,7 @@ resource "vault_jwt_auth_backend_role" "colatro_ci" {
 # openfaas-ci role → openfaas-ci policy. APPLY-on-merge only: ansible-openfaas.yml runs the
 # host-config play against LXC 241 from the runner on push to main. Bound to ONLY the
 # main-push sub (NOT pull_request — the PR job is a no-secrets syntax-check), so this token
-# can't be minted from a PR / fork. Gets only the ansible SSH key + Nexus pull creds.
+# can't be minted from a PR / fork. Gets only the ansible SSH key + registry pull creds.
 resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "openfaas-ci"

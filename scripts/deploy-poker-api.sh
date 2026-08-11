@@ -8,7 +8,7 @@
 # directly (so it's never at rest / never flows through the deploy). This script now
 # resolves only the deploy-time secrets the playbook still needs, all under the ansible
 # policy:
-#   - kv/services/{nexus,minio-frontend}    -> ansible AppRole (policy: ansible)
+#   - kv/services/{registry,minio-frontend} -> ansible AppRole (policy: ansible)
 #
 # OPERATOR path (run from the Mac). The runner/OIDC CD-on-merge path is a fast-follow:
 # ci-read currently reads poker/* but NOT services/* — grant that before moving here.
@@ -35,7 +35,7 @@ for r in ansible; do
     || die "AppRole creds for '$r' not in $SECRETS (see vault-seed.md)."
 done
 
-# This script resolves only kv/services/* (nexus + minio-frontend), all under the ansible
+# This script resolves only kv/services/* (registry + minio-frontend), all under the ansible
 # policy. DATABASE_URL (kv/poker/db) is rendered on-host by the poker-api Vault Agent
 # (PET-57), not here — the ansible policy is deliberately NOT granted poker/*.
 applogin(){ # $1=role  -> echoes a token
@@ -47,12 +47,12 @@ applogin(){ # $1=role  -> echoes a token
 
 step "Resolving kv/services/* (ansible AppRole)"
 AN_TOKEN="$(applogin ansible)"
-NEXUS_U="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=username kv/services/nexus 2>/dev/null || echo admin)"
-NEXUS_P="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=admin_password kv/services/nexus)" || die "cannot read kv/services/nexus."
+REGISTRY_U="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=username kv/services/registry 2>/dev/null || echo admin)"
+REGISTRY_P="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=password kv/services/registry)" || die "cannot read kv/services/registry."
 MINIO_AK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=access_key kv/services/minio-frontend)" \
   || die "cannot read kv/services/minio-frontend — run scripts/reseed-minio-frontend-vault.sh first."
 MINIO_SK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=secret_key kv/services/minio-frontend)" || die "cannot read minio-frontend secret_key."
-[ -n "$NEXUS_P" ] && [ -n "$MINIO_AK" ] && [ -n "$MINIO_SK" ] || die "a required secret was empty."
+[ -n "$REGISTRY_P" ] && [ -n "$MINIO_AK" ] && [ -n "$MINIO_SK" ] || die "a required secret was empty."
 
 # PET-87: admin-portal UI bucket creds (co-latro-admin-ui) — OPTIONAL. When kv/services/minio-admin-ui
 # is unseeded the playbook skips the admin-UI sync (frontend-only deploy stays green). Seed with
@@ -69,8 +69,8 @@ cd "$ANSIBLE_DIR"
 EVARS="$(mktemp)"; chmod 600 "$EVARS"; trap 'rm -f "$EVARS"' EXIT
 cat > "$EVARS" <<JSON
 {
-  "nexus_username": $(printf '%s' "$NEXUS_U" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
-  "nexus_password": $(printf '%s' "$NEXUS_P" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
+  "registry_username": $(printf '%s' "$REGISTRY_U" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
+  "registry_password": $(printf '%s' "$REGISTRY_P" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
   "minio_frontend_access_key": $(printf '%s' "$MINIO_AK" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
   "minio_frontend_secret_key": $(printf '%s' "$MINIO_SK" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
   "minio_admin_ui_access_key": $(printf '%s' "$MINIO_ADMIN_AK" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),

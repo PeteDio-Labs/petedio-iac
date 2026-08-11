@@ -6,13 +6,13 @@
 #
 # Jobs (gated on the CALLER's event, which propagates to reusable workflows):
 #   syntax-check  pull_request — prove the play parses. No secrets, no host contact.
-#   apply         push to main — OIDC → Vault (openfaas-ci role: lxc-ssh + Nexus pull creds
+#   apply         push to main — OIDC → Vault (openfaas-ci role: lxc-ssh + registry pull creds
 #                 only) → ansible-playbook against the live host, from the self-hosted
 #                 homelab runner (VM 232).
 #
 # Ansible runs in an official python:3.12-slim container: the runner ships a minimal Python
 # (no venv/pip), but it has Docker. openssh-client is added for the apply. (TODO: bake an
-# ansible image into Nexus to drop the per-run apt/pip.)
+# ansible image into the registry to drop the per-run apt/pip.)
 name: ansible-stack
 
 on:
@@ -31,8 +31,8 @@ on:
         required: false
         type: string
         default: ""
-      with-nexus-creds:
-        description: "Also mint Nexus pull creds and pass nexus_username/nexus_password extra-vars"
+      with-registry-creds:
+        description: "Also mint registry pull creds and pass registry_username/registry_password extra-vars"
         required: false
         type: boolean
         default: false
@@ -92,7 +92,7 @@ jobs:
         shell: bash
         run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
 
-      # The openfaas-ci role (main-push-only sub) grants ONLY lxc-ssh + the Nexus pull creds
+      # The openfaas-ci role (main-push-only sub) grants ONLY lxc-ssh + the registry pull creds
       # — every stack apply fits inside it. (Per-stack least-privilege roles = follow-up.)
       - name: Vault — SSH key via OIDC
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
@@ -107,8 +107,8 @@ jobs:
           secrets: |
             kv/data/iac/lxc-ssh private_key | ANSIBLE_SSH_KEY
 
-      - name: Vault — Nexus pull creds via OIDC
-        if: inputs.with-nexus-creds
+      - name: Vault — registry pull creds via OIDC
+        if: inputs.with-registry-creds
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
@@ -119,8 +119,8 @@ jobs:
           caCertificate: ${{ steps.vault_ca.outputs.b64 }}
           exportEnv: true
           secrets: |
-            kv/data/services/nexus username | NEXUS_USERNAME ;
-            kv/data/services/nexus admin_password | NEXUS_PASSWORD
+            kv/data/services/registry username | REGISTRY_USERNAME ;
+            kv/data/services/registry password | REGISTRY_PASSWORD
 
       - name: Apply ${{ inputs.playbook }} (ansible in Docker)
         shell: bash
@@ -139,14 +139,14 @@ jobs:
           printf '%s\n' "$ANSIBLE_SSH_KEY" > "$CI/key"; chmod 600 "$CI/key"
           # Extra-vars via a JSON @file — never on argv, never logged. python3 stdlib (no pip).
           # ansible_ssh_private_key_file as an extra-var (highest precedence) overrides the
-          # inventory group var (~/.ssh/id_ed25519_ansible, absent in the container). Nexus
+          # inventory group var (~/.ssh/id_ed25519_ansible, absent in the container). Registry
           # creds ride along only when the caller asked for them (env present).
           python3 - "$CI/evars.json" <<'PY'
           import json, os, sys
           ev = {"ansible_ssh_private_key_file": "/ci/key"}
-          if os.environ.get("NEXUS_USERNAME"):
-              ev["nexus_username"] = os.environ["NEXUS_USERNAME"]
-              ev["nexus_password"] = os.environ["NEXUS_PASSWORD"]
+          if os.environ.get("REGISTRY_USERNAME"):
+              ev["registry_username"] = os.environ["REGISTRY_USERNAME"]
+              ev["registry_password"] = os.environ["REGISTRY_PASSWORD"]
           # Caller-supplied NON-SECRET extra-vars (see the input's description).
           ev.update(json.loads(os.environ.get("EXTRA_VARS") or "{}"))
           json.dump(ev, open(sys.argv[1], "w"))
