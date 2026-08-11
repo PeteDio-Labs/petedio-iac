@@ -35,12 +35,15 @@ module "nexus" {
   ipv4_address = "192.168.50.111/24"
   target_node  = var.target_node
 
-  cores = 4
+  # Was 4c/8G for Nexus's JVM. zot is a Go binary: after the swap this box idles
+  # at ~120MB of 8192MB, so 2c/1G is generous. Memory is the real reclaim —
+  # 7GB back to pve01.
+  cores = 2
   # 2048 (the as-imported value) livelocked the container in reclaim once the Nexus
   # JVM's effective -Xmx4g heap filled it (PET-272 outage: memory PSI some=98%,
   # 133B direct pgscans, CF 524 at the edge). JVM worst case is ~6.5G committed
   # (4g heap + 2g direct + metaspace), so 8192 leaves real headroom.
-  memory_dedicated = 8192
+  memory_dedicated = 1024
   memory_swap      = 512
   disk_size        = 40
   datastore_id     = "sdb3-storage"
@@ -56,10 +59,10 @@ module "nexus" {
   # standard automation key keeps this consistent with the other LXCs.
   ssh_public_key = var.ssh_public_key
 
-  description = "Nexus registry (registry.pdlab.dev / docker.pdlab.dev). Brownfield-captured into petedio-iac (PET-122). Managed by Terraform."
+  description = "OCI registry (zot) at docker.pdlab.dev — LAN-only, no tunnel. Ex-Nexus; VMID/hostname kept to avoid a destroy+recreate. Managed by Terraform."
 }
 
 output "nexus_id" {
-  description = "VMID of the Nexus registry container."
+  description = "VMID of the registry container (zot, ex-Nexus)."
   value       = module.nexus.vm_id
 }
