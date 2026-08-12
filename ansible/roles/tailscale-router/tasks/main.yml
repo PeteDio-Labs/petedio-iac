@@ -57,6 +57,48 @@
   ansible.builtin.command: sysctl -p /etc/sysctl.d/99-tailscale.conf
   changed_when: false
 
+# Writing 99-tailscale.conf is NOT enough to survive a reboot here. systemd-sysctl.service
+# — the thing that applies /etc/sysctl.d at boot — FAILS in this unprivileged LXC with
+# status=243/CREDENTIALS (it carries `ImportCredential=sysctl.*` on systemd 257/Debian 13).
+# So after any reboot ip_forward is back to 0 and the subnet router looks perfectly healthy
+# — route still advertised and approved, the node still answers pings for itself — while
+# silently dropping every packet bound for the LAN behind it. Cost us remote access on
+# 2026-08-12 and took a while to spot precisely because the tailnet side was blameless.
+# Own the boot path with a oneshot instead of trusting systemd-sysctl.
+- name: Install the boot-time IP-forwarding unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/tailscale-ip-forward.service
+    mode: "0644"
+    content: |
+      [Unit]
+      # Managed by Ansible (roles/tailscale-router) — local edits are overwritten.
+      Description=Apply IP forwarding for Tailscale subnet routing (PET-188)
+      # Ordered ahead of the daemon that needs it, so forwarding is never the reason
+      # a freshly-booted subnet router blackholes traffic.
+      Before=tailscaled.service
+      After=local-fs.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      # Only our file — `sysctl --system` still exits non-zero on read-only kernel.* /
+      # fs.protected_* in this container (same reason as the task above).
+      ExecStart=/usr/sbin/sysctl -p /etc/sysctl.d/99-tailscale.conf
+
+      [Install]
+      # multi-user.target.wants covers boot; tailscaled.service.requires covers a manual
+      # `systemctl restart tailscaled` on a host where forwarding somehow got cleared.
+      WantedBy=multi-user.target
+      RequiredBy=tailscaled.service
+  notify: Reapply IP forwarding
+
+- name: Enable the boot-time IP-forwarding unit
+  ansible.builtin.systemd:
+    name: tailscale-ip-forward.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
 - name: Enable and start tailscaled
   ansible.builtin.systemd:
     name: tailscaled
