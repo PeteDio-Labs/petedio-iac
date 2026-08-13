@@ -40,6 +40,18 @@ locals {
       vault_path     = "services/water-fast"
       password_field = "db_password"
     }
+
+    # plane — the tracker that replaces Linear (plane.tf, LXC 235). FIRST database to
+    # take the defaults: no vault_path, no password_field, so it resolves to
+    # kv/db/plane field `password`. That is the convention every new database should
+    # follow; the three above only carry overrides because they predate it.
+    #
+    # Plane is Django and runs its own migrations against this database as the owner
+    # role. That is sufficient: every extension it plausibly needs (pg_trgm, btree_gin,
+    # uuid-ossp, citext, pgcrypto) is `trusted` on 231, and since PG13 a non-superuser
+    # DATABASE OWNER may CREATE EXTENSION a trusted one. No superuser grant — that would
+    # be superuser over poker/admin/waterfast too.
+    plane = {}
   }
 
   # Defaults applied to every entry, so a new database needs only `name = {}`.

@@ -25,6 +25,14 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
+    # plane (LXC 235). Same single-secret scoping as water-fast above: the gated
+    # ephemeral read in databases.tf runs as ci-read on apply-on-merge, so without this
+    # grant the apply fails with a permission denied on a path it can SEE but not read.
+    # This must land BEFORE the merge that adds `plane = {}` to databases.tf.
+    path "kv/data/db/plane" {
+      capabilities = ["read"]
+    }
+
     path "kv/data/iac/proxmox" {
       capabilities = ["read"]
     }
@@ -54,6 +62,10 @@ resource "vault_policy" "ci_read" {
     }
 
     path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/db/*" {
       capabilities = ["list"]
     }
 

@@ -25,3 +25,14 @@ minio_buckets:
   # runaway sync loop well inside the host's 16 GiB root disk.
   - name: obsidian-fs-mcs
     quota_bytes: 5368709120 # 5 GiB
+
+  # plane — attachments for the Plane tracker on LXC 235 (plane.tf). Reached over the
+  # LAN from 235 itself and over the tailnet from browsers; NEVER publicly, which is
+  # what lets this stay a plain http:// endpoint with no CORS policy and no Cloudflare
+  # route. Versioning (enabled by the role for every bucket) is the recovery net for a
+  # deleted attachment; it is not a backup, and it does not survive losing 245.
+  #
+  # 20 GiB: an issue tracker's attachments are screenshots and logs, not media. The
+  # quota bounds a runaway upload well inside the host's 16 GiB root disk plus headroom.
+  - name: plane
+    quota_bytes: 21474836480 # 20 GiB
