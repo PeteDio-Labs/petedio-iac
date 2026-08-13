@@ -158,6 +158,21 @@ resource "vault_policy" "ansible" {
       capabilities = ["read"]
     }
 
+    # kv/db/* — the per-database owner passwords declared in databases.tf.
+    #
+    # WHY ANSIBLE NEEDS THIS AT ALL. Until Plane, every database password was consumed
+    # only by Terraform (ci-read) — Ansible never rendered a connection string, because
+    # the apps holding one either got it from a kv/services/<app> secret or built it on
+    # the box. configure-plane.yml is the first play to render a DATABASE_URL, so
+    # scripts/deploy-plane.sh must read kv/db/plane under this policy. Without it the
+    # deploy dies at "permission denied" on a path it can see but not read — the same
+    # failure mode the ci-read comment warns about, one policy over.
+    #
+    # Scoped to the kv/db/ prefix only. It does NOT widen to poker/* or iac/*.
+    path "kv/data/db/*" {
+      capabilities = ["read"]
+    }
+
     path "kv/data/admin/*" {
       capabilities = ["read"]
     }
@@ -167,6 +182,10 @@ resource "vault_policy" "ansible" {
     }
 
     path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/db/*" {
       capabilities = ["list"]
     }
 
