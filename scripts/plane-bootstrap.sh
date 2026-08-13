@@ -105,9 +105,9 @@ step "Values for the repo variables"
 cat <<EOF
   PLANE_BASE_URL       = $BASE
   PLANE_WORKSPACE      = $WS
-  PLANE_PROJECT_ID_IAC = $PID
+  PLANE_PROJECT_ID = $PID
 
   gh variable set PLANE_BASE_URL       --repo PeteDio-Labs/petedio-iac --body '$BASE'
   gh variable set PLANE_WORKSPACE      --repo PeteDio-Labs/petedio-iac --body '$WS'
-  gh variable set PLANE_PROJECT_ID_IAC --repo PeteDio-Labs/petedio-iac --body '$PID'
+  gh variable set PLANE_PROJECT_ID --repo PeteDio-Labs/petedio-iac --body '$PID'
 EOF

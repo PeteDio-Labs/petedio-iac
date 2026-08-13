@@ -36,7 +36,7 @@ jobs:
     env:
       PLANE_BASE_URL: ${{ vars.PLANE_BASE_URL }}
       PLANE_WORKSPACE: ${{ vars.PLANE_WORKSPACE }}
-      PLANE_PROJECT_ID: ${{ vars.PLANE_PROJECT_ID_IAC }}
+      PLANE_PROJECT_ID: ${{ vars.PLANE_PROJECT_ID }}
       GH_TOKEN: ${{ github.token }}
       LOOKBACK: ${{ github.event.inputs.lookback_days || '3' }}
 
@@ -47,7 +47,10 @@ jobs:
         id: vault_ca
         run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
 
+      # Same reasoning as plane-sync.yml: a nightly job that goes red because Vault was
+      # sealed is noise, not signal — the next night's run reconciles anyway.
       - name: Vault — mint the Plane token via OIDC
+        continue-on-error: true
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
@@ -66,6 +69,10 @@ jobs:
       - name: Reconcile merged PRs
         run: |
           set -uo pipefail
+          if [ -z "${PLANE_API_KEY:-}" ]; then
+            echo "::warning title=plane-reconcile::No Plane API key — nothing reconciled this run."
+            exit 0
+          fi
           export SINCE
           SINCE=$(date -u -d "-${LOOKBACK} days" +%Y-%m-%d 2>/dev/null || date -u -v-"${LOOKBACK}"d +%Y-%m-%d)
           echo "Re-checking PRs merged since $SINCE"
