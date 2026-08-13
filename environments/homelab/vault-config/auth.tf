@@ -252,7 +252,12 @@ resource "vault_jwt_auth_backend_role" "plane_ci" {
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
   bound_claims = {
-    sub = "repo:${var.github_repo}:pull_request,repo:${var.github_repo}:ref:refs/heads/main"
+    sub = join(",", flatten([
+      for r in var.plane_repos : [
+        "repo:${r}:ref:refs/heads/main",
+        "repo:${r}:pull_request",
+      ]
+    ]))
   }
   token_policies = [vault_policy.plane_ci.name]
   token_ttl      = 300

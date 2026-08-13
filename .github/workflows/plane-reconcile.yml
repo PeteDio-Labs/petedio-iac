@@ -36,7 +36,7 @@ jobs:
     env:
       PLANE_BASE_URL: ${{ vars.PLANE_BASE_URL }}
       PLANE_WORKSPACE: ${{ vars.PLANE_WORKSPACE }}
-      PLANE_PROJECT_ID: ${{ vars.PLANE_PROJECT_ID_IAC }}
+      PLANE_PROJECT_ID: ${{ vars.PLANE_PROJECT_ID }}
       GH_TOKEN: ${{ github.token }}
       LOOKBACK: ${{ github.event.inputs.lookback_days || '3' }}
 
