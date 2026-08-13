@@ -1,0 +1,170 @@
+---
+# configure-plane.yml — Docker + Plane Community Edition on LXC 235 (plane.tf).
+#
+# Plane replaces Linear as the tracker. This play installs Docker CE, renders the
+# compose stack and its env from Vault-supplied values, and brings it up.
+#
+# WHAT IS EXTERNAL, AND WHY:
+#   * Postgres  -> the `plane` database on postgres-231 (databases.tf). Keeps one
+#     RDS-shaped backup path and the ephemeral write-only password discipline.
+#   * MinIO     -> the `plane` bucket on minio-data-245. NOT .221, which holds tfstate.
+#   * Redis + RabbitMQ stay BUNDLED: no durable state worth a separate backup path.
+#
+# TAILNET-ONLY. There is no cloudflare-routes.tf entry and there should not be — see the
+# header of plane.tf. Nothing here binds a public interface.
+#
+# PREREQUISITES (this play does not do them, and will fail loudly if they are missing):
+#   1. scripts/lxc-features-235.sh has set nesting=1,keyctl=1 on the node. Docker will
+#      not start in an unprivileged LXC without them.
+#   2. kv/db/plane exists with field `password` (the database owner's).
+#   3. kv/services/plane exists with the MinIO access/secret pair and a generated
+#      SECRET_KEY. Passed in as no_log extra-vars by scripts/deploy-plane.sh.
+#
+# Manual-validation-first (standing convention, PET-266): run scripts/deploy-plane.sh by
+# hand and get it green BEFORE any CD-on-merge workflow is wired to this play.
+
+- name: Configure Plane (LXC 235)
+  hosts: plane
+  become: true
+
+  vars:
+    plane_dir: /opt/plane
+    # Pinned. v1.4.1 was the latest stable release on 2026-08-13; `stable` is what
+    # APP_RELEASE falls back to if unset, which is how a tracker upgrades itself
+    # under you. Bump deliberately and re-derive plane.env.j2 from the new compose.
+    plane_version: "{{ plane_release | default('v1.4.1') }}"
+    plane_web_port: 8080
+    plane_host_ip: 192.168.50.235
+    pg_host: 192.168.50.231
+    pg_db: plane
+    pg_user: plane
+    minio_endpoint: http://192.168.50.245:9000
+    minio_bucket: plane
+
+  pre_tasks:
+    - name: Fail early if the Vault-supplied secrets were not passed in
+      ansible.builtin.assert:
+        that:
+          - plane_db_password | default('') | length > 0
+          - plane_secret_key | default('') | length > 0
+          - plane_minio_access_key | default('') | length > 0
+          - plane_minio_secret_key | default('') | length > 0
+          - plane_live_secret_key | default('') | length > 0
+          - plane_mq_password | default('') | length > 0
+        fail_msg: >-
+          Missing secrets. Run this via scripts/deploy-plane.sh, which resolves them
+          from Vault and passes them as no_log extra-vars — never hardcode them here.
+      no_log: true
+
+  tasks:
+    - name: Install prerequisites for the Docker apt repo
+      ansible.builtin.apt:
+        name: [apt-transport-https, ca-certificates, gnupg, curl, python3-requests]
+        state: present
+        update_cache: true
+
+    - name: Add the Docker apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /usr/share/keyrings/docker-archive-keyring.asc
+        mode: "0644"
+
+    - name: Add the Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/usr/share/keyrings/docker-archive-keyring.asc]
+          https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+
+    - name: Install Docker CE and the compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker is running and enabled
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Create the Plane directory
+      ansible.builtin.file:
+        path: "{{ plane_dir }}"
+        state: directory
+        mode: "0750"
+
+    # deployments/cli/community/ is the SELF-HOST compose. The docker-compose.yml at
+    # the repo root is the build-from-source one (every service is `build:`, no images)
+    # and would not deploy. Verified against v1.4.1.
+    - name: Fetch the pinned Plane Community compose file
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/makeplane/plane/{{ plane_version }}/deployments/cli/community/docker-compose.yml"
+        dest: "{{ plane_dir }}/docker-compose.yml"
+        mode: "0640"
+      register: plane_compose
+
+    - name: Render plane.env from Vault-supplied values
+      ansible.builtin.template:
+        src: templates/plane.env.j2
+        dest: "{{ plane_dir }}/plane.env"
+        mode: "0600"
+      no_log: true
+      register: plane_env
+
+    # Without this, the bundled Postgres and MinIO start anyway — see the template header.
+    - name: Render the compose override that disables the bundled db and object store
+      ansible.builtin.template:
+        src: templates/plane-compose-override.yml.j2
+        dest: "{{ plane_dir }}/docker-compose.override.yml"
+        mode: "0640"
+      register: plane_override
+
+    - name: Bring the stack up
+      ansible.builtin.command:
+        cmd: docker compose --env-file plane.env up -d
+        chdir: "{{ plane_dir }}"
+      register: plane_up
+      changed_when: "'Started' in plane_up.stderr or 'Created' in plane_up.stderr"
+
+    # The whole external-database decision is undone silently if these come up anyway.
+    - name: Assert the bundled Postgres and MinIO are NOT running
+      ansible.builtin.shell:
+        cmd: set -o pipefail && docker compose ps --format '{% raw %}{{.Service}}{% endraw %}' | sort -u
+        chdir: "{{ plane_dir }}"
+        executable: /bin/bash
+      changed_when: false
+      register: plane_ps
+
+    - name: Fail if a bundled data service started
+      ansible.builtin.assert:
+        that:
+          - "'plane-db' not in plane_ps.stdout_lines"
+          - "'plane-minio' not in plane_ps.stdout_lines"
+        fail_msg: >-
+          A bundled data service is running ({{ plane_ps.stdout_lines | join(', ') }}).
+          The compose override did not take effect, so Plane may be writing to a local
+          Postgres/MinIO instead of 231/245. Fix before using this instance.
+
+    - name: Wait for Plane to answer on the LAN address
+      ansible.builtin.uri:
+        url: "http://192.168.50.235:{{ plane_web_port }}/"
+        status_code: [200, 301, 302, 401, 404]
+        timeout: 10
+      register: plane_http
+      retries: 30
+      delay: 10
+      until: plane_http is succeeded
+
+  post_tasks:
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          Plane {{ plane_version }} up on http://192.168.50.235:{{ plane_web_port }}
+          (tailnet-only) · db={{ pg_db }}@{{ pg_host }} · bucket={{ minio_bucket }}@245
