@@ -231,3 +231,29 @@ resource "vault_approle_auth_backend_role" "poker_api" {
   token_ttl      = 3600
   token_max_ttl  = 14400
 }
+
+# plane-ci role → plane-ci policy. Replaces the GitHub↔Linear auto-advance that was
+# uninstalled 2026-08-13; Plane's own GitHub integration is a paid feature and is not
+# in the self-hosted Community Edition, so CI moves work-item state itself.
+#
+# TWO SUBJECTS, and both are needed:
+#   * ...:pull_request        → plane-sync.yml (pull_request_target: open/ready/merge)
+#   * ...:ref:refs/heads/main → plane-reconcile.yml (nightly schedule runs on main)
+#
+# Binding the pull_request subject is the thing PET-104 forbade for ci-read. It is
+# acceptable HERE, and only here, because vault_policy.plane_ci reads exactly one
+# secret whose worst case is a wrong issue status. Read that policy's comment before
+# touching this role.
+resource "vault_jwt_auth_backend_role" "plane_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "plane-ci"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = "repo:${var.github_repo}:pull_request,repo:${var.github_repo}:ref:refs/heads/main"
+  }
+  token_policies = [vault_policy.plane_ci.name]
+  token_ttl      = 300
+}
