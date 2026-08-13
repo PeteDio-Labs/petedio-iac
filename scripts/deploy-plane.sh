@@ -62,15 +62,37 @@ step "Preflight: is 235 up and does it have the container features?"
 ssh -i ~/.ssh/id_ed25519_ansible -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 \
   root@192.168.50.235 true 2>/dev/null || die "235 not answering SSH — is plane.tf applied?"
 
+# SECRETS GO IN A FILE, NEVER ON THE COMMAND LINE.
+#
+# `ansible-playbook -e key=value` puts every secret in the process table, where any
+# local user can read them with `ps aux` for the whole life of the run. This was found
+# the hard way on 2026-08-13: a routine `pgrep -fl ansible-playbook` printed the
+# database password, the Django SECRET_KEY and the MinIO keys in full, and they had to
+# be rotated. `-e @file` reads the same variables with no argv exposure.
+#
+# The file is created 0600 in a private temp dir and removed on ANY exit, including
+# Ctrl-C — hence the trap, set before the file is written.
+VARS_DIR="$(mktemp -d)"
+cleanup(){ rm -rf "$VARS_DIR"; }
+trap cleanup EXIT INT TERM
+VARS_FILE="$VARS_DIR/plane-vars.json"
+(umask 077; : > "$VARS_FILE")
+python3 - "$VARS_FILE" "$DB_PW" "$SECRET_KEY" "$MINIO_AK" "$MINIO_SK" "$LIVE_KEY" "$MQ_PW" <<'PYEOF'
+import json, sys
+path, db, sec, ak, sk, live, mq = sys.argv[1:8]
+with open(path, "w") as fh:
+    json.dump({
+        "plane_db_password": db,
+        "plane_secret_key": sec,
+        "plane_minio_access_key": ak,
+        "plane_minio_secret_key": sk,
+        "plane_live_secret_key": live,
+        "plane_mq_password": mq,
+    }, fh)
+PYEOF
+
 step "Ansible: configure-plane.yml"
 cd "$ANSIBLE_DIR"
-ansible-playbook playbooks/configure-plane.yml \
-  -e "plane_db_password=$DB_PW" \
-  -e "plane_secret_key=$SECRET_KEY" \
-  -e "plane_minio_access_key=$MINIO_AK" \
-  -e "plane_minio_secret_key=$MINIO_SK" \
-  -e "plane_live_secret_key=$LIVE_KEY" \
-  -e "plane_mq_password=$MQ_PW" \
-  "$@"
+ansible-playbook playbooks/configure-plane.yml -e "@$VARS_FILE" "$@"
 
 step "Done. Re-run this script — a converged host must report changed=0."
