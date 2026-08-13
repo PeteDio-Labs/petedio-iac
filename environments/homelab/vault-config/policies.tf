@@ -371,3 +371,25 @@ resource "vault_policy" "poker_api" {
     }
   EOT
 }
+
+# plane-ci: the ONLY policy a PR-triggered run may hold. Deliberately one path.
+#
+# WHY IT IS THIS NARROW. plane-sync.yml runs on `pull_request_target`, whose OIDC
+# subject (`...:pull_request`) is the SAME one an ordinary `pull_request` presents —
+# so a PR can mint this token. PET-104 removed that subject from ci-read precisely
+# because ci-read reaches Proxmox, MinIO, Cloudflare and Authentik. This policy is
+# the safe counterpart: its entire blast radius is "can change a work item's state
+# and post a comment".
+#
+# ⚠️ NEVER add a second path here, and never attach ci-read to the plane-ci role.
+# The moment this policy can read anything infrastructural, PET-104's exposure is
+# back and it is reachable from any fork's pull request.
+resource "vault_policy" "plane_ci" {
+  name = "plane-ci"
+
+  policy = <<-EOT
+    path "kv/data/services/plane" {
+      capabilities = ["read"]
+    }
+  EOT
+}

