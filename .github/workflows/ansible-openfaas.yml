@@ -37,6 +37,6 @@ jobs:
     with:
       playbook: playbooks/configure-openfaas.yml
       stack: openfaas
-      with-nexus-creds: true
+      with-registry-creds: true
       host-key-checking: "True"
       ansible-ssh-args: "-o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=accept-new"

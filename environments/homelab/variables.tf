@@ -57,28 +57,6 @@ variable "postgres_admin_password" {
   default     = null
 }
 
-variable "poker_db_password" {
-  description = <<-EOT
-    Password for the `poker` DB owner role created by modules/postgres-db.
-    Sourced from Vault (PET-6) / TF_VAR_poker_db_password in CI — never committed.
-    Defaults to null so phase-1 plan/apply needs no secret; REQUIRED when
-    postgres_ready = true.
-  EOT
-  type        = string
-  sensitive   = true
-  default     = null
-}
-
-variable "poker_db_password_version" {
-  description = <<-EOT
-    password_wo_version for the `poker` owner role (PET-190). The role password is
-    write-only/ephemeral and so diff-invisible — bump this integer to push a rotated
-    kv/poker/db value through to Postgres on the next apply. Leave unchanged otherwise.
-  EOT
-  type        = number
-  default     = 1
-}
-
 variable "postgres_ready" {
   description = <<-EOT
     Two-phase gate for the Postgres "RDS".
@@ -98,29 +76,6 @@ variable "postgres_ready" {
   EOT
   type        = bool
   default     = true
-}
-
-variable "admin_db_password" {
-  description = <<-EOT
-    Password for the `admin` DB owner role (the co-latro-admin service, PET-88). Sourced from
-    Vault (kv/admin/db, field owner_password) and passed as TF_VAR_admin_db_password in CI;
-    defaults to null so validate/plan without Vault degrade cleanly (resolver falls back to the
-    Vault data-source value, explicit TF_VAR wins). Seed kv/admin/db + grant ci-read read on
-    kv/data/admin/* BEFORE the consuming apply (lessons.md no-default-var / cutover ordering).
-  EOT
-  type        = string
-  sensitive   = true
-  default     = null
-}
-
-variable "admin_db_password_version" {
-  description = <<-EOT
-    password_wo_version for the `admin` owner role (PET-190). Same role as
-    poker_db_password_version: bump to push a rotated kv/admin/db value through to
-    Postgres on the next apply (the write-only password is otherwise diff-invisible).
-  EOT
-  type        = number
-  default     = 1
 }
 
 variable "cloudflare_api_token" {
@@ -164,4 +119,63 @@ variable "cloudflare_tunnel_id" {
   description = "Existing cloudflared tunnel UUID (non-secret). From kv/iac/cloudflare via TF_VAR in CI."
   type        = string
   default     = null
+}
+
+variable "cloudflare_palworld_tunnel_id" {
+  description = <<-EOT
+    UUID of the SECOND cloudflared tunnel, whose connector runs ON the game host
+    (palworld-mc) so palworld.pdlab.dev can reach the panel over 127.0.0.1 — the whole
+    point of PET-266's loopback bind. Non-secret; the runtime token is separate and lives
+    at kv/services/palworld-panel (field tunnel_token).
+
+    Like the main tunnel, Terraform does NOT create this — it is token-managed by the
+    daemon, and having TF create it would persist the token in state (the leak PET-107/190
+    fixed). Operator creates it in Cloudflare, then scripts/seed-palworld-tunnel-vault.sh
+    stores the token AND writes this UUID to kv/iac/cloudflare, where terraform.yml reads
+    it into this TF_VAR.
+
+    DELIBERATELY REQUIRED — no default. A null default let the module count to 0 while the
+    `moved` blocks below still pointed at it, which reads as "source gone" and DESTROYS the
+    live Access application, its policy, and the CNAME on a public hostname. Failing the
+    plan with "No value for required variable" is the correct outcome for a missing ID.
+  EOT
+  type        = string
+}
+
+
+# ---- Postgres databases (databases.tf) ----------------------------------------------------
+#
+# These two maps replace the seven per-database variables that used to live here (a password
+# and a version for poker and admin, plus a password, version and readiness gate for
+# waterfast). Adding a database no longer adds variables at all — it is one entry in
+# local.postgres_databases.
+
+variable "postgres_db_password_versions" {
+  description = <<-EOT
+    password_wo_version per database, keyed by database name — e.g. { poker = 2 }.
+
+    The owner-role password is write-only and therefore invisible to the plan diff, so
+    Terraform has no way to notice a rotated Vault value on its own. Bumping a database's
+    integer here is what pushes the new password through on the next apply. Databases absent
+    from the map default to 1.
+  EOT
+  type        = map(number)
+  default     = {}
+}
+
+variable "postgres_db_passwords" {
+  description = <<-EOT
+    Break-glass owner-password overrides, keyed by database name. Normally EMPTY: passwords
+    come from Vault via the ephemeral reads in databases.tf, and that is the path CI uses.
+
+    Declared `ephemeral` so a value supplied here is subject to the same rule as the Vault
+    read it displaces — it can only reach the module's write-only owner_password and can
+    never land in plan or state. Set it via TF_VAR_postgres_db_passwords for a single local
+    apply; do not wire it into CI, which would reintroduce the static-secret path that
+    PET-107/PET-190 removed.
+  EOT
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+  ephemeral   = true
 }

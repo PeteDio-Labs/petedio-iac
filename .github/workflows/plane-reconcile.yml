@@ -1,0 +1,89 @@
+# Nightly Plane reconciler — the safety net that makes plane-sync advisory.
+#
+# plane-sync never fails a build: Plane is a homelab LXC and it being down must not
+# block merges across nine repos. The cost of that choice is that a transition can be
+# silently missed. This job re-reads recently merged PRs and fixes any work item left
+# behind, so a missed webhook costs a day of staleness, not a permanent lie.
+#
+# This is `hanging-audit` (the Linear-era skill) rewritten as an unattended job. It
+# gets MORE valuable after the cutover, not less — with the Linear GitHub App gone,
+# nothing else advances state at all.
+#
+# Runs from a schedule on the default branch, so its OIDC subject is
+# `repo:PeteDio-Labs/petedio-iac:ref:refs/heads/main` — NOT the pull_request subject
+# plane-sync uses. The plane-ci role binds both.
+name: plane-reconcile
+
+on:
+  schedule:
+    - cron: "17 8 * * *" # 08:17 UTC ≈ 03:17 America/Chicago — after the nightly quiet period
+  workflow_dispatch:
+    inputs:
+      lookback_days:
+        description: "How many days of merged PRs to re-check"
+        required: false
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: [self-hosted, linux, x64, homelab]
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PLANE_BASE_URL: ${{ vars.PLANE_BASE_URL }}
+      PLANE_WORKSPACE: ${{ vars.PLANE_WORKSPACE }}
+      PLANE_PROJECT_ID: ${{ vars.PLANE_PROJECT_ID }}
+      GH_TOKEN: ${{ github.token }}
+      LOOKBACK: ${{ github.event.inputs.lookback_days || '3' }}
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Encode Vault CA
+        id: vault_ca
+        run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      # Same reasoning as plane-sync.yml: a nightly job that goes red because Vault was
+      # sealed is noise, not signal — the next night's run reconciles anyway.
+      - name: Vault — mint the Plane token via OIDC
+        continue-on-error: true
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: plane-ci
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: false
+          secrets: |
+            kv/data/services/plane api_key | PLANE_API_KEY
+
+      # Every PR merged in the window should have left its work item in Done. Re-run
+      # the same script per PR — it is idempotent and no-ops when the state matches,
+      # so a quiet night produces "already Done" lines and nothing else.
+      - name: Reconcile merged PRs
+        run: |
+          set -uo pipefail
+          if [ -z "${PLANE_API_KEY:-}" ]; then
+            echo "::warning title=plane-reconcile::No Plane API key — nothing reconciled this run."
+            exit 0
+          fi
+          export SINCE
+          SINCE=$(date -u -d "-${LOOKBACK} days" +%Y-%m-%d 2>/dev/null || date -u -v-"${LOOKBACK}"d +%Y-%m-%d)
+          echo "Re-checking PRs merged since $SINCE"
+
+          gh pr list --repo "$GITHUB_REPOSITORY" --state merged --limit 100 \
+            --json number,headRefName,mergedAt,url > /tmp/merged.json
+
+          python3 scripts/plane-merged-since.py /tmp/merged.json "$SINCE" > /tmp/todo.tsv
+          echo "in window: $(wc -l < /tmp/todo.tsv) PR(s)"
+
+          while IFS=$'\t' read -r ref url; do
+            [ -z "$ref" ] && continue
+            HEAD_REF="$ref" PR_URL="$url" PLANE_TRANSITION=done ./scripts/plane-sync.sh
+          done < /tmp/todo.tsv

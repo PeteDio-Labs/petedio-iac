@@ -89,7 +89,7 @@ resource "vault_jwt_auth_backend_role" "media_ci" {
 }
 
 # colatro-ci role → colatro-ci policy. Same JWT backend, separate role so the Co-latro
-# app repos get ONLY the colatro-ci policy (Nexus + MinIO-write + LXC SSH), never the
+# app repos get ONLY the colatro-ci policy (registry + MinIO-write + LXC SSH), never the
 # iac ci-read creds. Binds main + pull_request subs for BOTH app repos — built from
 # var.colatro_repos and comma-joined into one string (bound_claims_type=string, OR
 # semantics), matching the github-actions role's two-sub pattern. Bind main + PR so a
@@ -117,7 +117,7 @@ resource "vault_jwt_auth_backend_role" "colatro_ci" {
 # openfaas-ci role → openfaas-ci policy. APPLY-on-merge only: ansible-openfaas.yml runs the
 # host-config play against LXC 241 from the runner on push to main. Bound to ONLY the
 # main-push sub (NOT pull_request — the PR job is a no-secrets syntax-check), so this token
-# can't be minted from a PR / fork. Gets only the ansible SSH key + Nexus pull creds.
+# can't be minted from a PR / fork. Gets only the ansible SSH key + registry pull creds.
 resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "openfaas-ci"
@@ -183,6 +183,31 @@ resource "vault_jwt_auth_backend_role" "resume_builder_cd" {
   token_ttl      = 900
 }
 
+# water-fast-cd role → water-fast-cd policy. The petedio-water-fast repo's CD role: its
+# deploy.yml builds the frontend then runs petedio-iac's configure-water-fast.yml against
+# waterfast-243 on push to main. Gets ONLY the ansible SSH key (to reach 243) + the app's
+# own service secret. Apply BEFORE the CD workflow lands or the first run 403s.
+#
+# Bound on `repository` + `ref`, NOT on `sub` — see the resume-builder-cd note above. This
+# repo was created in 2026 and so emits the ID-QUALIFIED subject
+# (`repo:PeteDio-Labs@<org-id>/petedio-water-fast@<repo-id>:ref:...`), which no literal sub
+# binding can match. repository + ref is exactly as tight: this repo, pushes to main only
+# (a PR run carries ref=refs/pull/N/merge and is excluded).
+resource "vault_jwt_auth_backend_role" "water_fast_cd" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "water-fast-cd"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository = var.water_fast_repo
+    ref        = "refs/heads/main"
+  }
+  token_policies = [vault_policy.water_fast_cd.name]
+  token_ttl      = 900
+}
+
 # vault-snapshot role → vault-snapshot policy (PET-109). The raft-snapshot systemd timer
 # on .223 (Ansible role vault-snapshot) logs in with this AppRole to take + upload a
 # snapshot. Short token TTL — the job runs in seconds and re-auths each run; the secret_id
@@ -205,4 +230,35 @@ resource "vault_approle_auth_backend_role" "poker_api" {
   token_policies = [vault_policy.poker_api.name]
   token_ttl      = 3600
   token_max_ttl  = 14400
+}
+
+# plane-ci role → plane-ci policy. Replaces the GitHub↔Linear auto-advance that was
+# uninstalled 2026-08-13; Plane's own GitHub integration is a paid feature and is not
+# in the self-hosted Community Edition, so CI moves work-item state itself.
+#
+# TWO SUBJECTS, and both are needed:
+#   * ...:pull_request        → plane-sync.yml (pull_request_target: open/ready/merge)
+#   * ...:ref:refs/heads/main → plane-reconcile.yml (nightly schedule runs on main)
+#
+# Binding the pull_request subject is the thing PET-104 forbade for ci-read. It is
+# acceptable HERE, and only here, because vault_policy.plane_ci reads exactly one
+# secret whose worst case is a wrong issue status. Read that policy's comment before
+# touching this role.
+resource "vault_jwt_auth_backend_role" "plane_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "plane-ci"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = join(",", flatten([
+      for r in var.plane_repos : [
+        "repo:${r}:ref:refs/heads/main",
+        "repo:${r}:pull_request",
+      ]
+    ]))
+  }
+  token_policies = [vault_policy.plane_ci.name]
+  token_ttl      = 300
 }

@@ -1,0 +1,26 @@
+{#
+  docker-compose.override.yml — stop the bundled Postgres and MinIO from running.
+
+  WHY THIS FILE EXISTS. Plane's Community compose has NO `profiles`, and plane-db /
+  plane-minio carry a hardcoded `replicas: 1` (not templated by an env var), while four
+  services `depends_on: plane-db`. So pointing PGHOST/AWS_S3_ENDPOINT_URL at 231/245 is
+  NOT enough — `docker compose up` would still start a Postgres and a MinIO on this box,
+  quietly holding a second, empty database next to the real one. That is exactly the
+  "second unmanaged Postgres" the external-database decision exists to avoid.
+
+  Compose merges override files by default, so the upstream file stays byte-for-byte
+  what upstream published and an upgrade remains a one-line version bump.
+
+  ⚠️ VERIFY ON FIRST RUN: `docker compose ps` must show plane-db and plane-minio with
+  0 running containers, and `docker compose config` must still resolve. If depends_on
+  resolution complains about a zero-scaled service on this Compose version, the fallback
+  is to let them run unused — wasteful and confusing, but not harmful.
+#}
+services:
+  plane-db:
+    deploy:
+      replicas: 0
+
+  plane-minio:
+    deploy:
+      replicas: 0

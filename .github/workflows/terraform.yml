@@ -110,6 +110,19 @@ jobs:
       # and the preflight step below, so they can't drift. Default false → pool is a no-op and the
       # preflight is skipped. Flip MANAGE_RESOURCE_POOL=true AFTER granting Pool.Allocate (PET-159).
       TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
+      # Password rotation for the databases in databases.tf. The owner password is
+      # write-only, so it is invisible to the plan diff and Terraform cannot notice a
+      # rotated Vault value on its own — bumping a database's integer here is what
+      # pushes the new password through. JSON object, e.g. {"plane":2}. Default {} means
+      # every database stays at version 1 and nothing is re-applied.
+      #
+      # Added because a Plane secret was exposed in a process listing on 2026-08-13 and
+      # had to be rotated; reseeding Vault alone left the OLD password live on Postgres.
+      TF_VAR_postgres_db_password_versions: ${{ vars.POSTGRES_DB_PASSWORD_VERSIONS || '{}' }}
+      # NB: there is no longer a per-database gate. Every Postgres database in databases.tf
+      # is gated by var.postgres_ready alone, so adding one needs no workflow change — but
+      # its secret must be readable by ci-read (vault-config/policies.tf, operator-applied)
+      # BEFORE the merge that adds it, or this apply fails on a permission denied.
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -149,7 +162,8 @@ jobs:
             kv/data/iac/cloudflare api_token | TF_VAR_cloudflare_api_token ;
             kv/data/iac/cloudflare account_id | TF_VAR_cloudflare_account_id ;
             kv/data/iac/cloudflare zone_id | TF_VAR_cloudflare_zone_id ;
-            kv/data/iac/cloudflare tunnel_id | TF_VAR_cloudflare_tunnel_id
+            kv/data/iac/cloudflare tunnel_id | TF_VAR_cloudflare_tunnel_id ;
+            kv/data/iac/cloudflare palworld_tunnel_id | TF_VAR_cloudflare_palworld_tunnel_id
 
       # Preflight (PET-160): when the pool is being managed, prove the IaC token actually holds
       # Pool.Allocate/Pool.Audit BEFORE plan/apply — so a missing privilege fails LOUD here (on

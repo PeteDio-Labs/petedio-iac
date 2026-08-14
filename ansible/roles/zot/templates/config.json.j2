@@ -1,0 +1,73 @@
+{
+  "distSpecVersion": "1.1.0",
+  "storage": {
+    "rootDirectory": "{{ zot_data_dir }}",
+    "gc": true,
+    "gcDelay": "1h",
+    "gcInterval": "24h",
+    "dedupe": true
+  },
+  "http": {
+    "address": "0.0.0.0",
+    "port": "{{ zot_port }}",
+{% if zot_tls_enabled %}
+    "tls": {
+      "cert": "/etc/zot/tls/server.crt",
+      "key": "/etc/zot/tls/server.key"
+    },
+{% endif %}
+    "auth": {
+      "htpasswd": {
+        "path": "/etc/zot/htpasswd"
+      }
+    },
+    "accessControl": {
+      "repositories": {
+{% if zot_cache_enabled %}
+{% for r in zot_cache_registries %}
+        "{{ r.prefix }}/**": {
+          "anonymousPolicy": ["read"],
+          "defaultPolicy": ["read"]
+        },
+{% endfor %}
+{% endif %}
+        "**": {
+          "defaultPolicy": ["read", "create", "update"]
+        }
+      }
+    }
+  },
+  "log": {
+    "level": "info"
+  },
+  "extensions": {
+    "search": {
+      "enable": true
+    },
+    "ui": {
+      "enable": true
+    }
+{% if zot_cache_enabled %},
+    "sync": {
+      "enable": true,
+      "registries": [
+{% for r in zot_cache_registries %}
+        {
+          "urls": ["{{ r.url }}"],
+          "onDemand": true,
+          "tlsVerify": true,
+          "maxRetries": 3,
+          "retryDelay": "5m",
+          "content": [
+            {
+              "prefix": "**",
+              "destination": "/{{ r.prefix }}"
+            }
+          ]
+        }{{ "," if not loop.last }}
+{% endfor %}
+      ]
+    }
+{% endif %}
+  }
+}

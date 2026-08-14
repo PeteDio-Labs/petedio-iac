@@ -351,3 +351,27 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   **per-slug** (`.../application/o/<app-slug>/...`); wrong slug placement = login fails. CF's
   callback is `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`. Full procedure:
   `docs/runbooks/fleet-activity-view.md`.
+
+## Terraform — a local plan/apply is NOT the same plan CI runs
+
+- **`terraform apply` from a laptop, with no extra env, plans to DESTROY the resource pool and
+  all 7 of its memberships.** `var.manage_resource_pool` defaults to **false** (PET-160, after
+  the PET-159 poison-pill incident), while CI sets `TF_VAR_manage_resource_pool` from the repo
+  variable `MANAGE_RESOURCE_POOL`, which is **true**. So the pool exists in state, and any local
+  run without the variable sees `count = 0` and proposes removing it. Nothing warns you; it just
+  appears in the plan as 8 destroys alongside whatever you were actually changing.
+
+  Before any local plan/apply, export the variables CI sets — today that is
+  `TF_VAR_manage_resource_pool=true`. Treat **any** destroy in a plan whose change was additive
+  as a STOP: check whether it belongs to a gate you didn't set rather than to your edit.
+
+  This surfaced during the databases.tf consolidation, where the real change was
+  `2 to import, 1 to add, 1 to change, 0 to destroy` and the 8 destroys were entirely
+  pre-existing drift between the local and CI variable sets.
+
+- **Adding a Postgres database now touches one file** (`environments/homelab/databases.tf` —
+  one entry in `local.postgres_databases`), but its secret must be readable by **ci-read**
+  before the merge that adds it. That grant lives in the `vault-config` root, which is
+  operator-applied via `scripts/apply-vault-config.sh` and **never runs in CI** — so it does not
+  land with a normal merge, and apply-on-merge fails on a permission denied it cannot diagnose
+  for itself.

@@ -1,0 +1,23 @@
+version: 1.0
+# lab-graph — read-only homelab topology aggregator on faasd (LXC 241).
+# Deploy: scripts/deploy-lab-graph.sh   (builds on runner-232, secrets from Vault)
+provider:
+  name: openfaas
+  gateway: ${OPENFAAS_URL:-http://127.0.0.1:8080}
+
+functions:
+  lab-graph:
+    lang: dockerfile
+    handler: ./tools/lab-graph
+    image: docker.pdlab.dev/lab-graph:latest
+    # Secrets by REFERENCE, not by value: faasd mounts this at
+    # /var/openfaas/secrets/pve-ro-token. It never enters the image, the stack file,
+    # the environment, or `faas-cli describe` output.
+    secrets:
+      - pve-ro-token
+    environment:
+      PVE01_URL: "https://192.168.50.10:8006"
+      PVE02_URL: "https://192.168.50.11:8006"
+      PVE_TIMEOUT_MS: "6000"
+    labels:
+      com.openfaas.scale.min: "1"

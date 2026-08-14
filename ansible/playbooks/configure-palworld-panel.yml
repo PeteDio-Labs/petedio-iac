@@ -36,10 +36,17 @@
     # Session-history DB (PET-266) — the dashboard's durable store. Under the app dir so
     # it survives redeploys (the source copy only replaces backend/ and frontend/).
     panel_db_path: "{{ panel_app_dir }}/panel-sessions.db"
-    # Where the panel's :8080 may be reached from — see the ufw task at the bottom.
-    panel_ingress_subnets:
-      - 192.168.50.0/24
-      - 192.168.86.0/24
+    # PET-266 lockdown: bind loopback, not 0.0.0.0. The only legitimate callers are a browser
+    # on this machine and the co-located cloudflared connector, both over 127.0.0.1. This
+    # replaces the old ufw allow-list — a closed socket beats a firewall rule, and ufw is
+    # inactive on palworld-mc anyway, so those rules were never actually enforcing anything.
+    panel_bind: 127.0.0.1
+    # Identity of this install, for attributing console-originated actions. Inventory
+    # hostname rather than the live hostname so a laptop rename doesn't rewrite history.
+    panel_id: "{{ inventory_hostname }}"
+    # Same two people as the Cloudflare Access allow-list for palworld.pdlab.dev — the link
+    # is only reachable by someone Access already authenticated as that address.
+    panel_identity_map: "soniasdelgadillo@gmail.com=SoniaDillo,pedelgadillo@gmail.com=PeteDillo"
 
   pre_tasks:
     - name: Assert required secret extra-vars were provided (use scripts/deploy-palworld-panel.sh)
@@ -150,6 +157,22 @@
         directory_mode: "0755"
       notify: Restart palworld-panel
 
+    # shared/ is the backend<->frontend contract directory, and the backend imports it at
+    # ../../shared/*. It used to be TYPE-ONLY (`import type`), which Bun erases at runtime, so
+    # not copying it was invisible. The moment a real runtime import landed (shared/identity.ts,
+    # PET-266's surfaceFor) the service crash-looped on the host with
+    # "Cannot find module '../../shared/identity'" — while CI stayed green, because tests and
+    # the Vite build run from the repo where shared/ exists. Copy it, and assert it below.
+    - name: Copy the shared contract directory (backend imports it at runtime)
+      ansible.builtin.copy:
+        src: "{{ palworld_panel_src }}/shared/"
+        dest: "{{ panel_app_dir }}/shared/"
+        owner: "{{ panel_user }}"
+        group: "{{ panel_group }}"
+        mode: "0644"
+        directory_mode: "0755"
+      notify: Restart palworld-panel
+
     # Vite content-hashes every asset filename, so a redeploy never OVERWRITES an old chunk —
     # it adds a new one beside it. copy: is additive-only (it never prunes), so without this
     # the target would accumulate every hashed filename from every deploy forever. Wipe the
@@ -220,19 +243,36 @@
         state: started
         daemon_reload: true
 
-    # ---- Firewall: allow the panel web port from the LAN (CF tunnel connector reaches it there) ----
-    # Both segments, deliberately: the cloudflared connector lives on .50 (LXC 112) but the
-    # baremetal host is .86-only, so depending on whether the router preserves or rewrites the
-    # source address the packet arrives from either range. Allowing both keeps one rule set
-    # correct on the LXC and on the laptop. (PET-266)
-    - name: Allow the panel web port from the LAN + mesh (UFW)
+    # A green deploy that leaves a crash-looping service is the failure mode this play just
+    # had: systemd "started" the unit, the unit died on a missing module, and Ansible reported
+    # success. Poll the app's own health endpoint so the deploy fails where the cause is.
+    - name: Wait for the panel to answer on loopback (proves it actually booted)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ panel_port }}/api/health"
+        status_code: [200]
+      register: panel_up
+      retries: 10
+      delay: 3
+      until: panel_up.status == 200
+
+    # ---- Firewall: withdraw the old LAN allow-rules ----
+    # The panel now binds 127.0.0.1 (panel_bind), so nothing off-box can reach :8080 at all
+    # and these rules grant access to a socket that isn't listening. Deleted rather than left
+    # behind: a stale "allow 8080 from the play segment" rule would quietly become real again
+    # the moment someone set PANEL_BIND=0.0.0.0 to debug something.
+    #
+    # `delete: true` is a no-op when the rule isn't there, so this is safe on a fresh host and
+    # on one that never had ufw enabled (which is the case on palworld-mc today).
+    - name: Withdraw the pre-lockdown panel web-port allow rules (UFW)
       community.general.ufw:
         rule: allow
         port: "{{ panel_port }}"
         proto: tcp
         from_ip: "{{ item }}"
-        comment: "Palworld control panel web (PET-266)"
-      loop: "{{ panel_ingress_subnets }}"
+        delete: true
+      loop:
+        - 192.168.50.0/24
+        - 192.168.86.0/24
 
   handlers:
     - name: Reload systemd

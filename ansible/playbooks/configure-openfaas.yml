@@ -14,9 +14,9 @@
 # (see scripts/lxc-features-241.sh — without tun, functions deploy but won't network).
 #
 # REGISTRY (PET-88): also writes /var/lib/faasd/.docker/config.json so faasd/containerd can
-# pull our function images from the private Nexus registry (docker.pdlab.dev — publicly-trusted,
-# so NO CA / insecure-registries needed, same as Docker on 230). nexus_username/nexus_password
-# come from Vault (kv/services/nexus) via the wrapper, no_log.
+# pull our function images from the private registry (docker.pdlab.dev — publicly-trusted,
+# so NO CA / insecure-registries needed, same as Docker on 230). registry_username/registry_password
+# come from Vault (kv/services/registry) via the wrapper, no_log.
 #
 # Run via: scripts/deploy-openfaas.sh
 # Inventory: the `openfaas` group -> 192.168.50.241, root over the TF-installed SSH key.
@@ -40,7 +40,7 @@
     faas_cli: /usr/local/bin/faas-cli
     openfaas_smoke_test: true
     smoke_function: nodeinfo
-    nexus_registry: docker.pdlab.dev
+    registry_host: docker.pdlab.dev
     # PET-204/F1: lock the LAN-exposed gateway down to the co-latro backend. faasd does NOT
     # authenticate /function/* invokes, so without this anything on the LAN can mint/list/validate
     # invites with no credential. See templates/faasd-gateway-lockdown.service.j2.
@@ -62,14 +62,14 @@
           (non-zero is OK if keyctl isn't installed — the real test is faasd/containerd
           starting below; if THAT fails, run scripts/lxc-features-241.sh).
 
-    - name: Assert the Nexus pull creds were provided (use scripts/deploy-openfaas.sh)
+    - name: Assert the registry pull creds were provided (use scripts/deploy-openfaas.sh)
       ansible.builtin.assert:
         that:
-          - nexus_username is defined and nexus_username | length > 0
-          - nexus_password is defined and nexus_password | length > 0
+          - registry_username is defined and registry_username | length > 0
+          - registry_password is defined and registry_password | length > 0
         fail_msg: >-
-          Missing nexus_username/nexus_password. Don't run this playbook directly — run
-          scripts/deploy-openfaas.sh, which resolves them from Vault (kv/services/nexus).
+          Missing registry_username/registry_password. Don't run this playbook directly — run
+          scripts/deploy-openfaas.sh, which resolves them from Vault (kv/services/registry).
       no_log: true
 
   tasks:
@@ -105,7 +105,7 @@
         - faasd-provider
         - faasd
 
-    # ---- Private-registry (Nexus) pull auth: faasd/containerd reads this to pull our images ----
+    # ---- Private-registry (zot) pull auth: faasd/containerd reads this to pull our images ----
     - name: Ensure the faasd docker-creds directory exists
       ansible.builtin.file:
         path: /var/lib/faasd/.docker
@@ -114,11 +114,11 @@
         group: root
         mode: "0700"
 
-    - name: Write the Nexus pull credentials (faasd reads /var/lib/faasd/.docker/config.json)
+    - name: Write the registry pull credentials (faasd reads /var/lib/faasd/.docker/config.json)
       ansible.builtin.copy:
         dest: /var/lib/faasd/.docker/config.json
         content: |
-          {"auths":{"{{ nexus_registry }}":{"auth":"{{ (nexus_username ~ ':' ~ nexus_password) | b64encode }}"}}}
+          {"auths":{"{{ registry_host }}":{"auth":"{{ (registry_username ~ ':' ~ registry_password) | b64encode }}"}}}
         owner: root
         group: root
         mode: "0600"
@@ -162,6 +162,10 @@
     - name: Log in to the gateway with faasd's own password (read from disk; file has no newline)
       ansible.builtin.shell:
         cmd: "set -o pipefail; cat {{ faasd_secrets_dir }}/basic-auth-password | {{ faas_cli }} login --gateway {{ faasd_gateway }} -u admin --password-stdin"
+      args:
+        # Same bashism as above — /bin/sh is dash on Debian and rejects `set -o pipefail`.
+        # Latent here (gated behind openfaas_smoke_test) but it would fail the same way.
+        executable: /bin/bash
       register: faas_login
       changed_when: false
       no_log: true
@@ -199,7 +203,7 @@
 
   handlers:
     # faasd-provider is the component that pulls function images; restart it so a changed
-    # /var/lib/faasd/.docker/config.json (Nexus creds) is picked up for subsequent pulls.
+    # /var/lib/faasd/.docker/config.json (registry creds) is picked up for subsequent pulls.
     - name: Restart faasd-provider
       ansible.builtin.systemd:
         name: faasd-provider

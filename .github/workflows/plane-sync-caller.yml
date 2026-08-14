@@ -1,0 +1,22 @@
+# The three lines every other repo needs. Copy this file verbatim into a repo's
+# .github/workflows/ and set its PLANE_PROJECT_ID variable — nothing else.
+#
+# It is inert until PLANE_BASE_URL / PLANE_WORKSPACE / PLANE_PROJECT_ID are set:
+# scripts/plane-sync.sh warns and exits 0 when they are missing, so adding this to a
+# repo can never break that repo's CI.
+name: plane-sync
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    uses: PeteDio-Labs/petedio-iac/.github/workflows/plane-sync.yml@main
+    permissions:
+      contents: read
+      id-token: write

@@ -24,10 +24,17 @@ module "cloudflare_ingress" {
 
   # KEEP — live services. Everything else is dropped by the ingress rewrite.
   routes = {
-    "auth.pdlab.dev"     = { service = "http://192.168.50.119:9000" } # Authentik
-    "docker.pdlab.dev"   = { service = "http://192.168.50.111:8082" } # Nexus (docker)
-    "registry.pdlab.dev" = { service = "http://192.168.50.111:8081" } # Nexus (registry)
-    "seer.pdlab.dev"     = { service = "http://192.168.50.33:5055" }  # Overseerr
+    "auth.pdlab.dev" = { service = "http://192.168.50.119:9000" } # Authentik
+    "seer.pdlab.dev" = { service = "http://192.168.50.33:5055" }  # Overseerr
+
+    # docker.pdlab.dev / registry.pdlab.dev REMOVED from the tunnel — Nexus is
+    # gone, replaced by zot on the same LXC. The registry is deliberately no
+    # longer reachable from the internet: its only consumers (runner-232/233,
+    # faasd on 241) are all on the LAN, so routing them out to Cloudflare and
+    # back in was pure latency and pure attack surface. docker.pdlab.dev is now
+    # a plain A record straight to the box — see cloudflare_dns_record.registry
+    # below. registry.pdlab.dev is retired outright: it fronted Nexus's web UI,
+    # which zot replaces with its own, LAN-only.
 
     # Co-latro — the game, prealpha (PET-58). nginx on VM-230 (poker-api) serves the frontend
     # dist/ and reverse-proxies /api to the backend on :3020 (same origin, relative API calls).
@@ -58,20 +65,9 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com"]
     }
 
-    # Palworld control panel (PET-266). Origin is the panel's Bun service on the game host
-    # (:8080 — native co-located deploy, PR #152; serves the SPA + /api + SSE). Since the
-    # PET-266 cutover that host is BAREMETAL — the mission-control laptop — which took over
-    # the LXC's mesh address 192.168.86.234 so no player had to re-enter a server IP. The
-    # cloudflared connector sits on .50 and reaches .86 across the router (verified). Gated by
-    # Cloudflare Access with Authentik OIDC login, same pattern as admin.pdlab.dev; the email
-    # allow-list AUTHORIZES after Authentik authenticates. The panel can power the game server
-    # off/on, so keep this list tight: sonia + pedro.
-    "palworld.pdlab.dev" = {
-      service       = "http://192.168.86.234:8080"
-      access        = true
-      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
-      access_emails = ["soniasdelgadillo@gmail.com", "pedelgadillo@gmail.com"]
-    }
+    # NOTE: palworld.pdlab.dev MOVED off this tunnel — see module.cloudflare_ingress_palworld
+    # at the bottom of this file. Its connector now runs on the game host itself so the panel
+    # can bind loopback only (PET-266).
 
     # Resume builder (Resume Builder milestone, P1). Origin is the SvelteKit app on
     # resume-242 (:8080 — same co-located-deploy pattern as the palworld panel; ex
@@ -84,6 +80,31 @@ module "cloudflare_ingress" {
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["soniasdelgadillo@gmail.com", "pedelgadillo@gmail.com"]
+    }
+
+    # Water fast tracker (petedio-water-fast). Origin is the Bun service on waterfast-243
+    # (:8080 — same native co-located-deploy pattern as the resume builder and the palworld
+    # panel). Gated by Cloudflare Access with Authentik OIDC login; the email allow-list
+    # AUTHORIZES after Authentik authenticates.
+    #
+    # THIS LIST IS THE APP'S USER LIST. The app has no signup and no login screen of its
+    # own — it trusts the Cf-Access-Jwt-Assertion header and creates a user row on first
+    # authenticated request. So adding someone here grants them an account, and the address
+    # must match their Authentik user's email exactly or they authenticate successfully and
+    # are then denied, which is a confusing failure to diagnose after the fact.
+    #
+    # Michelle and Marcos need Authentik accounts created by hand before their entries here
+    # do anything (the automation never mutates the SSO box — see cloudflare-oidc.tf).
+    "fast.pdlab.dev" = {
+      service      = "http://192.168.50.243:8080"
+      access       = true
+      allowed_idps = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = [
+        "pedelgadillo@gmail.com",
+        "soniasdelgadillo@gmail.com",
+        "delg369@gmail.com",          # Michelle
+        "antonio.meletich@gmail.com", # Marcos
+      ]
     }
   }
 }
@@ -101,14 +122,95 @@ import {
   id = "${local.cloudflare_zone_id}/61c79a4269f9bd3113d1f306219009e9"
 }
 import {
-  to = module.cloudflare_ingress.cloudflare_dns_record.route["docker.pdlab.dev"]
-  id = "${local.cloudflare_zone_id}/cc952b328455a928811c5ad980f11599"
-}
-import {
-  to = module.cloudflare_ingress.cloudflare_dns_record.route["registry.pdlab.dev"]
-  id = "${local.cloudflare_zone_id}/0bc0916310c01640872d57482f14c637"
-}
-import {
   to = module.cloudflare_ingress.cloudflare_dns_record.route["seer.pdlab.dev"]
   id = "${local.cloudflare_zone_id}/553f672178651906b01c66cdca2c9de7"
+}
+
+# ============================================================================================
+# Palworld panel — its own tunnel, connector ON the game host (PET-266 lockdown)
+# ============================================================================================
+#
+# WHY A SECOND TUNNEL. The panel binds 127.0.0.1 now, so whatever serves palworld.pdlab.dev
+# has to be ON palworld-mc. Ingress config is per-TUNNEL, not per-connector: a rule pointing
+# at http://127.0.0.1:8080 applies to EVERY connector on that tunnel, so adding a second
+# connector to the main tunnel would make the .50 connector start 502'ing this hostname (it
+# has nothing on its own :8080). A dedicated tunnel keeps each connector's ingress honest.
+#
+# Cloudflare Access is HOSTNAME-scoped, not tunnel-scoped, so the Authentik gate and the
+# sonia+pedro allow-list ride along unchanged — same module, same arguments as before.
+#
+# The tunnel UUID is a REQUIRED variable (no default) — see variables.tf. It used to be
+# count-guarded for convenience, but a disabled module plus the `moved` blocks below reads
+# as "source removed" and destroys the live Access app + CNAME. Hard-failing the plan on a
+# missing ID is the safe outcome; there is no benign version of that apply.
+module "cloudflare_ingress_palworld" {
+  source = "../../modules/cloudflare-ingress"
+
+  account_id   = local.cloudflare_account_id
+  zone_id      = local.cloudflare_zone_id
+  tunnel_id    = var.cloudflare_palworld_tunnel_id
+  tunnel_cname = "${var.cloudflare_palworld_tunnel_id}.cfargotunnel.com"
+
+  routes = {
+    # Origin is loopback ON the connector's own host. The panel serves the SPA + /api + SSE
+    # from one Bun process; it has no auth of its own, so Access IS the gate for the web
+    # path, and the loopback bind is what stops the play segment bypassing it entirely.
+    # The panel can power the game server off/on — keep this list tight: sonia + pedro.
+    "palworld.pdlab.dev" = {
+      service       = "http://127.0.0.1:8080"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["soniasdelgadillo@gmail.com", "pedelgadillo@gmail.com"]
+    }
+  }
+}
+
+# Migrate the LIVE Access application, its policy, and the CNAME between module instances
+# rather than letting TF destroy + recreate them. Without these, an apply would tear down the
+# Access app on a public hostname and rebuild it — a window where palworld.pdlab.dev resolves
+# ungated, plus a new app ID for no reason. `moved` makes it a state rename: zero API churn.
+moved {
+  from = module.cloudflare_ingress.cloudflare_zero_trust_access_application.route["palworld.pdlab.dev"]
+  to   = module.cloudflare_ingress_palworld.cloudflare_zero_trust_access_application.route["palworld.pdlab.dev"]
+}
+moved {
+  from = module.cloudflare_ingress.cloudflare_zero_trust_access_policy.route["palworld.pdlab.dev"]
+  to   = module.cloudflare_ingress_palworld.cloudflare_zero_trust_access_policy.route["palworld.pdlab.dev"]
+}
+moved {
+  from = module.cloudflare_ingress.cloudflare_dns_record.route["palworld.pdlab.dev"]
+  to   = module.cloudflare_ingress_palworld.cloudflare_dns_record.route["palworld.pdlab.dev"]
+}
+
+# ============================================================================================
+# Registry DNS — docker.pdlab.dev straight to the box, no tunnel
+# ============================================================================================
+#
+# zot (which replaced Nexus on CT106) serves the OCI API on :443 with a real
+# Let's Encrypt cert obtained by DNS-01. So the hostname needs to resolve, but
+# nothing needs to PROXY it — hence a plain A record with proxied = false.
+#
+# WHY KEEP THE HOSTNAME AT ALL instead of using the IP: `docker.pdlab.dev` is
+# baked into both co-latro CI workflows, the frontend e2e compose file,
+# deploy-lab-graph.sh, lab-graph's stack.yml, and faasd's
+# /var/lib/faasd/.docker/config.json. Keeping the name means the registry swap
+# touches none of them.
+#
+# This publishes a private RFC1918 address in public DNS. That is intentional
+# and is the normal trade for LAN-only services that still want a real cert: the
+# record is only useful to something already on the LAN, and the alternative
+# (internal-CA certs) means distributing a CA to every client forever.
+resource "cloudflare_dns_record" "registry" {
+  zone_id = local.cloudflare_zone_id
+  name    = "docker.pdlab.dev"
+  type    = "A"
+  content = "192.168.50.111"
+  ttl     = 300
+  proxied = false # MUST stay false — proxying an RFC1918 origin cannot work.
+  comment = "zot OCI registry on CT106. LAN-only; no tunnel (PET-122 follow-up)."
+
+  # The old CNAME (tunnel) for this name is destroyed when it leaves the
+  # cloudflare_ingress routes map. Cloudflare rejects two records on one name,
+  # so the destroy must land first.
+  depends_on = [module.cloudflare_ingress]
 }
