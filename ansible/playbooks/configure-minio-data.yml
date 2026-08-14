@@ -1,0 +1,49 @@
+---
+# configure-minio-data.yml — configure the APP-DATA MinIO (LXC 245 / .245).
+#
+# The sibling of configure-minio.yml, and the difference is the whole point: .221 holds
+# Terraform's state and is hand-managed by design (Terraform cannot create the host that
+# stores its own state). .245 has no such circularity, so it IS Terraform-managed —
+# environments/homelab/minio-data.tf. App buckets belong here; `tfstate` stays alone
+# on .221.
+#
+# Same `minio` role as .221, pointed at a different bucket list. The buckets are declared
+# in inventory/group_vars/minio_data.yml — that file is the registry; add new app buckets
+# there.
+#
+# First tenant: `obsidian-fs-mcs`, backing Obsidian vault sync for the FS MCS coursework
+# vault across Pedro's devices, reached over the tailnet (tailscale-244 advertises
+# 192.168.50.0/24) with NO public ingress. Client setup, credential rotation and the
+# reason there is deliberately no Cloudflare route: docs/runbooks/obsidian-vault-sync.md.
+#
+# SECRETS: the MinIO root credentials are REQUIRED and have NO committed default — a
+# placeholder would silently become the live root credential on a bare re-run. They live
+# at Vault kv/iac/minio-data-root (fields root_user/root_password), SEPARATE from .221's
+# kv/iac/minio-root so that a compromise of one host's admin credential cannot reach the
+# other. Seed them once with scripts/seed-minio-data-root.sh, then let
+# scripts/deploy-minio-data.sh resolve them into a 0600 JSON @file:
+#
+#   ./scripts/seed-minio-data-root.sh      # once, before the first run
+#   ./scripts/deploy-minio-data.sh         # every run thereafter
+#
+# ORDER OF OPERATIONS on a fresh host:
+#   1. terraform apply creates LXC 245                (apply-on-merge)
+#   2. scripts/seed-minio-data-root.sh                (root creds -> Vault)
+#   3. this play                                      (MinIO + buckets + versioning + quota)
+#   4. scripts/reseed-minio-obsidian-vault.sh         (bucket-scoped svcacct -> Vault)
+#   5. client setup per docs/runbooks/obsidian-vault-sync.md
+# Steps 2 and 4 are separate because 2 must precede MinIO existing and 4 requires it
+# running.
+#
+# NOTE: this play administers MinIO over mc; under `--check` the command-based bucket/
+# versioning/quota tasks are skipped. Use `--check` for the binary/unit/UFW diff; do a
+# real run to converge buckets.
+#
+# Inventory: the `minio_data` group -> 192.168.50.245, root over the ansible-automation key.
+
+- name: Configure the app-data MinIO (LXC 245)
+  hosts: minio_data
+  become: true
+
+  roles:
+    - minio

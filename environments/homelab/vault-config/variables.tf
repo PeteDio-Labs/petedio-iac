@@ -26,8 +26,27 @@ variable "github_oidc_audience" {
 
 # Co-latro app repos allowed to exchange an Actions OIDC token via the colatro-ci
 # JWT role (auth.tf). The app CI (publish-on-merge) + the manual deploy workflow run
-# from these repos; each needs Nexus push + MinIO-write (publish) and the LXC SSH key
+# from these repos; each needs registry push + MinIO-write (publish) and the LXC SSH key
 # (deploy). Kept separate from petedio-iac so app CI never gets the iac creds.
+# Every repo whose CI moves Plane work-item state (plane-sync.yml). Bound to the
+# plane-ci JWT role, whose policy reads exactly ONE secret — see policies.tf. Adding a
+# repo here is what lets its PRs mint that token; it grants nothing else.
+variable "plane_repos" {
+  description = "owner/name of each repo bound to the plane-ci JWT role."
+  type        = list(string)
+  default = [
+    "PeteDio-Labs/petedio-iac",
+    "PeteDio-Labs/petedio-media-iac",
+    "PeteDio-Labs/co-latro-backend",
+    "PeteDio-Labs/co-latro-frontend",
+    "PeteDio-Labs/co-latro-admin",
+    "PeteDio-Labs/petedio-resume-builder",
+    "PeteDio-Labs/petedio-palworld-panel",
+    "PeteDio-Labs/petedio-water-fast",
+    "PeteDio-Labs/petedio-vault",
+  ]
+}
+
 variable "colatro_repos" {
   description = "owner/name of each Co-latro repo bound to the colatro-ci JWT role."
   type        = list(string)
@@ -35,6 +54,30 @@ variable "colatro_repos" {
     "PeteDio-Labs/co-latro-backend",
     "PeteDio-Labs/co-latro-frontend",
   ]
+}
+
+# GitHub repo for the Palworld control panel (petedio-palworld-panel). Bound to its own
+# palworld-panel-cd JWT role (auth.tf) so the panel's deploy-on-merge gets ONLY the ansible
+# SSH key + its own service secret, never the broader iac/ansible scope. (PET-266)
+variable "palworld_panel_repo" {
+  description = "owner/name of the petedio-palworld-panel repo bound to the palworld-panel-cd JWT role."
+  type        = string
+  default     = "PeteDio-Labs/petedio-palworld-panel"
+}
+
+# GitHub repo for the resume builder app (Resume Builder P1). Bound to its own
+# resume-builder-cd JWT role (auth.tf) so its deploy-on-merge gets ONLY the ansible SSH
+# key + its own service secret, never the broader iac/ansible scope.
+variable "resume_builder_repo" {
+  description = "owner/name of the petedio-resume-builder repo bound to the resume-builder-cd JWT role."
+  type        = string
+  default     = "PeteDio-Labs/petedio-resume-builder"
+}
+
+variable "water_fast_repo" {
+  description = "owner/name of the petedio-water-fast repo bound to the water-fast-cd JWT role."
+  type        = string
+  default     = "PeteDio-Labs/petedio-water-fast"
 }
 
 # co-latro-admin repo, bound to its own colatro-admin-ci JWT role (auth.tf, PET-99). The

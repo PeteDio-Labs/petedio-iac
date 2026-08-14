@@ -24,20 +24,6 @@ resource "vault_approle_auth_backend_role" "terraform_local" {
   token_max_ttl  = 3600
 }
 
-# agent-loop role → agent-loop policy. The loop host (LXC 242) runs a Vault Agent that
-# auto-auths with this AppRole and keeps a renewed token in ~agent/.vault-token, so the
-# read-only Proxmox helper self-serves with no per-session login. Unlike the ansible/
-# terraform-local roles (short-lived per-run logins), this token is continuously renewed
-# by the Agent; the secret_id is non-expiring (default) so the Agent can re-auth when
-# token_max_ttl is reached. PET-141.
-resource "vault_approle_auth_backend_role" "agent_loop" {
-  backend        = vault_auth_backend.approle.path
-  role_name      = "agent-loop"
-  token_policies = [vault_policy.agent_loop.name]
-  token_ttl      = 3600
-  token_max_ttl  = 14400
-}
-
 # JWT auth for GitHub Actions OIDC. Mounted at a non-default path (`jwt-github`)
 # so a future second JWT issuer can coexist. type=jwt validates the Actions OIDC
 # token against GitHub's discovery URL.
@@ -103,7 +89,7 @@ resource "vault_jwt_auth_backend_role" "media_ci" {
 }
 
 # colatro-ci role → colatro-ci policy. Same JWT backend, separate role so the Co-latro
-# app repos get ONLY the colatro-ci policy (Nexus + MinIO-write + LXC SSH), never the
+# app repos get ONLY the colatro-ci policy (registry + MinIO-write + LXC SSH), never the
 # iac ci-read creds. Binds main + pull_request subs for BOTH app repos — built from
 # var.colatro_repos and comma-joined into one string (bound_claims_type=string, OR
 # semantics), matching the github-actions role's two-sub pattern. Bind main + PR so a
@@ -131,7 +117,7 @@ resource "vault_jwt_auth_backend_role" "colatro_ci" {
 # openfaas-ci role → openfaas-ci policy. APPLY-on-merge only: ansible-openfaas.yml runs the
 # host-config play against LXC 241 from the runner on push to main. Bound to ONLY the
 # main-push sub (NOT pull_request — the PR job is a no-secrets syntax-check), so this token
-# can't be minted from a PR / fork. Gets only the ansible SSH key + Nexus pull creds.
+# can't be minted from a PR / fork. Gets only the ansible SSH key + registry pull creds.
 resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "openfaas-ci"
@@ -146,25 +132,79 @@ resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   token_ttl      = 900
 }
 
-# colatro-admin-ci role → colatro-admin-ci policy (PET-99). The co-latro-admin repo's deploy
-# workflow (Workflow B) builds the 4 OpenFaaS functions, pushes them to Nexus, and
-# `faas-cli deploy`s them to the faasd gateway on LXC 241 — on push to main (deploy-on-merge).
-# Separate role/policy so the admin repo gets ONLY the admin-deploy creds (admin DB URL, the
-# seam token, the faasd gateway password, Nexus push, LXC SSH to tunnel to :8080) and never the
-# colatro-ci / iac scope. MAIN-PUSH ONLY: bound to exactly the main-push sub (NOT pull_request —
-# the co-latro-admin PR job is a no-secrets typecheck), so no PR/fork run can mint this token.
-# Matches the openfaas-ci / github-actions main-only pattern above.
-resource "vault_jwt_auth_backend_role" "colatro_admin_ci" {
+# palworld-panel-cd role → palworld-panel-cd policy. APPLY-on-merge only: the panel repo's
+# deploy.yml runs configure-palworld-panel.yml against LXC 234 from the runner on push to main.
+# Bound to ONLY the panel repo's main-push sub (the deploy workflow is push-to-main; no PR job
+# mints a token). Gets ONLY the ansible SSH key (to reach 234) + the panel's own service secret
+# (REST admin password + the restricted start-hook key). Mirrors openfaas-ci. (PET-266)
+resource "vault_jwt_auth_backend_role" "palworld_panel_cd" {
   backend           = vault_jwt_auth_backend.github.path
-  role_name         = "colatro-admin-ci"
+  role_name         = "palworld-panel-cd"
   role_type         = "jwt"
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
   bound_claims = {
-    sub = "repo:${var.colatro_admin_repo}:ref:refs/heads/main"
+    sub = "repo:${var.palworld_panel_repo}:ref:refs/heads/main"
   }
-  token_policies = [vault_policy.colatro_admin_ci.name]
+  token_policies = [vault_policy.palworld_panel_cd.name]
+  token_ttl      = 900
+}
+
+# resume-builder-cd role → resume-builder-cd policy (Resume Builder P1). APPLY-on-merge
+# only: the app repo's deploy.yml copies build/ + installs the systemd unit on resume-242
+# from the runner on push to main. Bound to ONLY the repo's main-push sub. Gets ONLY the
+# ansible SSH key (to reach resume-242) + the app's own service secret. Mirrors
+# palworld-panel-cd. Apply BEFORE the CD workflow lands or the first run 403s.
+resource "vault_jwt_auth_backend_role" "resume_builder_cd" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "resume-builder-cd"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  # Bound on `repository` + `ref` rather than on `sub`, unlike palworld-panel-cd above.
+  #
+  # GitHub does not emit one stable `sub` format across repos. The panel's repo produces the
+  # classic `repo:OWNER/NAME:ref:refs/heads/main`, but this (newer) repo produces an
+  # ID-QUALIFIED subject — `repo:PeteDio-Labs@<org-id>/petedio-resume-builder@<repo-id>:ref:…`
+  # — so a literal sub binding can never match and the first CD run fails with
+  # `claim "sub" does not match any associated bound claim values`. Confirmed via
+  # /repos/{owner}/{repo}/actions/oidc/customization/sub, which differs between the two repos.
+  #
+  # `repository` and `ref` are plain claims with no such prefix games, and together they are
+  # exactly as tight as the sub binding was: this repo, pushes to main only (a PR run carries
+  # ref=refs/pull/N/merge and is still excluded). Prefer this form for new CD roles.
+  bound_claims = {
+    repository = var.resume_builder_repo
+    ref        = "refs/heads/main"
+  }
+  token_policies = [vault_policy.resume_builder_cd.name]
+  token_ttl      = 900
+}
+
+# water-fast-cd role → water-fast-cd policy. The petedio-water-fast repo's CD role: its
+# deploy.yml builds the frontend then runs petedio-iac's configure-water-fast.yml against
+# waterfast-243 on push to main. Gets ONLY the ansible SSH key (to reach 243) + the app's
+# own service secret. Apply BEFORE the CD workflow lands or the first run 403s.
+#
+# Bound on `repository` + `ref`, NOT on `sub` — see the resume-builder-cd note above. This
+# repo was created in 2026 and so emits the ID-QUALIFIED subject
+# (`repo:PeteDio-Labs@<org-id>/petedio-water-fast@<repo-id>:ref:...`), which no literal sub
+# binding can match. repository + ref is exactly as tight: this repo, pushes to main only
+# (a PR run carries ref=refs/pull/N/merge and is excluded).
+resource "vault_jwt_auth_backend_role" "water_fast_cd" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "water-fast-cd"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository = var.water_fast_repo
+    ref        = "refs/heads/main"
+  }
+  token_policies = [vault_policy.water_fast_cd.name]
   token_ttl      = 900
 }
 
@@ -191,3 +231,57 @@ resource "vault_approle_auth_backend_role" "poker_api" {
   token_ttl      = 3600
   token_max_ttl  = 14400
 }
+
+# plane-ci role → plane-ci policy. Replaces the GitHub↔Linear auto-advance that was
+# uninstalled 2026-08-13; Plane's own GitHub integration is a paid feature and is not
+# in the self-hosted Community Edition, so CI moves work-item state itself.
+#
+# TWO SUBJECTS, and both are needed:
+#   * ...:pull_request        → plane-sync.yml (pull_request_target: open/ready/merge)
+#   * ...:ref:refs/heads/main → plane-reconcile.yml (nightly schedule runs on main)
+#
+# Binding the pull_request subject is the thing PET-104 forbade for ci-read. It is
+# acceptable HERE, and only here, because vault_policy.plane_ci reads exactly one
+# secret whose worst case is a wrong issue status. Read that policy's comment before
+# touching this role.
+resource "vault_jwt_auth_backend_role" "plane_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "plane-ci"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = join(",", flatten([
+      for r in var.plane_repos : [
+        "repo:${r}:ref:refs/heads/main",
+        "repo:${r}:pull_request",
+      ]
+    ]))
+  }
+  token_policies = [vault_policy.plane_ci.name]
+  token_ttl      = 300
+}
+
+# colatro-admin-ci role → colatro-admin-ci policy (PET-99). The co-latro-admin repo's deploy
+# workflow (Workflow B) builds the 4 OpenFaaS functions, pushes them to Nexus, and
+# `faas-cli deploy`s them to the faasd gateway on LXC 241 — on push to main (deploy-on-merge).
+# Separate role/policy so the admin repo gets ONLY the admin-deploy creds (admin DB URL, the
+# seam token, the faasd gateway password, Nexus push, LXC SSH to tunnel to :8080) and never the
+# colatro-ci / iac scope. MAIN-PUSH ONLY: bound to exactly the main-push sub (NOT pull_request —
+# the co-latro-admin PR job is a no-secrets typecheck), so no PR/fork run can mint this token.
+# Matches the openfaas-ci / github-actions main-only pattern above.
+resource "vault_jwt_auth_backend_role" "colatro_admin_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "colatro-admin-ci"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = "repo:${var.colatro_admin_repo}:ref:refs/heads/main"
+  }
+  token_policies = [vault_policy.colatro_admin_ci.name]
+  token_ttl      = 900
+}
+

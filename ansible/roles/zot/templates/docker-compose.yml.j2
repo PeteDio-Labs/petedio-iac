@@ -1,0 +1,28 @@
+# Managed by Ansible — roles/zot/templates/docker-compose.yml.j2 (petedio-iac).
+# Do not edit on the host; edit the template and re-run configure-registry.yml.
+#
+# zot replaces sonatype/nexus3 on this container. Same host, same NFS-backed
+# blob storage, ~2% of the memory.
+services:
+  zot:
+    image: {{ zot_image }}
+    container_name: {{ zot_container_name }}
+    restart: always
+    ports:
+      - "{{ zot_port }}:{{ zot_port }}"
+    volumes:
+      - {{ zot_config_dir }}/config.json:/etc/zot/config.json:ro
+      - {{ zot_config_dir }}/htpasswd:/etc/zot/htpasswd:ro
+      - {{ zot_data_dir }}:{{ zot_data_dir }}
+{% if zot_tls_enabled %}
+      - {{ zot_tls_dir }}:/etc/zot/tls:ro
+{% endif %}
+    # NO healthcheck block on purpose. The zot image is DISTROLESS — no shell, no
+    # wget, no curl — so every CMD-SHELL probe exits 127 and the container reports
+    # "unhealthy" while serving traffic perfectly. A permanently-failing healthcheck
+    # is worse than none: it makes `docker ps` lie, and anything gating on health
+    # (compose depends_on, restart policies) then misbehaves.
+    #
+    # Liveness is asserted from OUTSIDE instead — roles/zot/tasks/main.yml polls
+    # /v2/ and then does an authenticated catalog read, which proves more than a
+    # port probe ever would.

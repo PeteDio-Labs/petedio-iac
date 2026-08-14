@@ -1,0 +1,89 @@
+---
+# roles/minio/tasks/buckets.yml — converge the buckets this host owns.
+#
+# Split out of main.yml so the bucket logic can be exercised on its own against a
+# throwaway MinIO (any `mc` alias, no systemd, no host) before it is ever pointed at
+# .221. That matters: this same file converges the bucket holding Terraform's state, so
+# "a re-run reports zero changes" is a regression test, not a nicety.
+#
+# Expects an already-authenticated mc alias ({{ minio_mc_alias }}) and `minio_buckets`.
+
+# --- Buckets: create + versioning + quota ----------------------------------------
+# Converges every bucket in `minio_buckets` (defaults to just `tfstate`, so .221 is
+# unaffected by this being a loop). Each stage is read-then-act so a converged host
+# reports zero changes: mc prints a success line on every re-run of `mb`/`version
+# enable`/`quota set`, which would otherwise report "changed" forever.
+#
+# The `when:` guard IS the change detection here, so the acting tasks use
+# `changed_when: true` — inside a loop the task's own registered result is not yet
+# available to `changed_when`, and "it ran at all" already means "it changed".
+
+- name: Check whether each bucket exists
+  ansible.builtin.command:
+    cmd: "{{ mc_bin }} ls {{ minio_mc_alias }}/{{ item.name }}"
+  loop: "{{ minio_buckets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: mc_bucket_check
+  changed_when: false
+  failed_when: false
+
+- name: Create any absent bucket
+  ansible.builtin.command:
+    cmd: "{{ mc_bin }} mb {{ minio_mc_alias }}/{{ item.item.name }}"
+  loop: "{{ mc_bucket_check.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  # `| default(0)` so a --check run (where the probe above is skipped and has no rc)
+  # reads as "exists" and creates nothing, rather than erroring on a missing attribute.
+  when: item.rc | default(0) != 0
+  changed_when: true
+
+- name: Read current versioning state of each bucket
+  ansible.builtin.command:
+    cmd: "{{ mc_bin }} version info {{ minio_mc_alias }}/{{ item.name }}"
+  loop: "{{ minio_buckets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: mc_version_info
+  changed_when: false
+
+# Match case-insensitively — `mc version info` reports either "<bucket> versioning is
+# enabled" or "<bucket> is un-versioned" (verified against MinIO
+# RELEASE.2025-09-07T16-13-09Z / mc RELEASE.2025-08-13T08-35-41Z).
+- name: Enable versioning where it is off (the lock-light backend's recovery net)
+  ansible.builtin.command:
+    cmd: "{{ mc_bin }} version enable {{ minio_mc_alias }}/{{ item.item.name }}"
+  loop: "{{ mc_version_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: "'enabled' not in (item.stdout | default('enabled', true) | lower)"
+  changed_when: true
+
+# `mc quota info --json` emits {"status":"success","bucket":"x"} when NO quota is set and
+# {"status":"success","bucket":"x","quota":<bytes>,"type":"hard"} when one is — hence the
+# `.quota | default(0)` compare (verified against the pinned mc release above).
+- name: Read the current quota of each bucket
+  ansible.builtin.command:
+    cmd: "{{ mc_bin }} quota info --json {{ minio_mc_alias }}/{{ item.name }}"
+  loop: "{{ minio_buckets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: mc_quota_info
+  changed_when: false
+  failed_when: false
+
+- name: Set the hard quota on any bucket that declares one and does not already have it
+  ansible.builtin.command:
+    cmd: >-
+      {{ mc_bin }} quota set {{ minio_mc_alias }}/{{ item.item.name }}
+      --size {{ item.item.quota_bytes }}
+  loop: "{{ mc_quota_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.item.quota_bytes is defined
+    # default('{}', true) so an empty stdout (skipped in --check, or a failed probe)
+    # parses instead of blowing up in from_json.
+    - (item.stdout | default('{}', true) | from_json).quota | default(0) != item.item.quota_bytes
+  changed_when: true

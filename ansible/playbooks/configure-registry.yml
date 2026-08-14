@@ -1,0 +1,51 @@
+# Deploy zot — the OCI registry replacing Nexus on LXC 106 (.111).
+#
+#   cd ansible
+#   VAULT_TOKEN=... ansible-playbook -i inventory/hosts.yml playbooks/configure-registry.yml
+#
+# Credentials come from Vault (kv/services/registry) and are read on the CONTROL
+# node, not the target — the registry host never needs a Vault token. They are
+# passed to the role in memory and no_log'd on the way to the htpasswd file.
+#
+# zot runs on :5000 alongside Nexus (:8081/:8082) so the replacement is proven
+# against the real images before anything is repointed. Nexus teardown is a
+# separate, deliberate step.
+---
+- name: Registry (zot) on the nexus LXC
+  hosts: nexus
+  gather_facts: true
+  pre_tasks:
+    # Read via the `vault` CLI rather than the community.hashi_vault lookup: the
+    # lookup needs the `hvac` Python package inside Ansible's own interpreter,
+    # and every other secret-consuming script in this repo already standardises
+    # on the CLI + the Keychain root token. One auth path, no extra dependency.
+    - name: Read registry credentials from Vault
+      ansible.builtin.command:
+        cmd: "vault kv get -field={{ item }} kv/services/registry"
+      delegate_to: localhost
+      become: false
+      register: registry_creds
+      changed_when: false
+      no_log: true
+      loop:
+        - username
+        - password
+
+    - name: Read the Cloudflare DNS token from Vault (DNS-01 challenge)
+      ansible.builtin.command:
+        cmd: "vault kv get -field=api_token kv/iac/cloudflare"
+      delegate_to: localhost
+      become: false
+      register: cf_token
+      changed_when: false
+      no_log: true
+      when: zot_tls_enabled | default(false) | bool
+
+    - name: Bind credentials to the role
+      ansible.builtin.set_fact:
+        zot_username: "{{ registry_creds.results[0].stdout | trim }}"
+        zot_password: "{{ registry_creds.results[1].stdout | trim }}"
+        zot_cf_dns_token: "{{ cf_token.stdout | default('') | trim }}"
+      no_log: true
+  roles:
+    - zot

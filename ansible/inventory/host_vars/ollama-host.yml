@@ -3,9 +3,12 @@
 ---
 # ollama-host — Ubuntu Server 24.04, MSI X570-A PRO, native Ollama (not Docker).
 # GPUs: GTX 1660 SUPER (6GB) + RTX 3060 Ti (8GB).
-# WORKER INFERENCE LAYOUT (PET-132): each model is pinned ENTIRELY to one GPU via
-# CUDA_VISIBLE_DEVICES (two single-GPU ollama services) — the coder on the 3060 Ti
-# (:11434), qwen2.5:3b on the 1660 SUPER (:11435). See the worker-layout block below.
+# RESUME BUILDER INFERENCE LAYOUT (Resume Builder P1, retuned from the retired fleet's
+# PET-132 worker layout — same GPU pinning, new models). Each lane is pinned ENTIRELY to
+# one GPU via CUDA_VISIBLE_DEVICES (two single-GPU ollama services): the QUALITY lane on
+# the RTX 3060 Ti (:11434) does resume tailoring / cover letters / application Q&A; the
+# FAST lane on the GTX 1660 SUPER (:11435) does keyword extraction, span rewrites, and
+# embeddings (JD<->resume, question<->story). See the layout block below.
 # NIC: eth0, MAC 2c:f0:5d:a2:7f:4f — WoL enabled (magic packet).
 wol_interface: eth0
 wol_mac: "2c:f0:5d:a2:7f:4f"
@@ -21,47 +24,92 @@ ollama_dns:
 ansible_user: ansible
 ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pedro
 
-# ── Worker inference layout (PET-132) ─────────────────────────────────────────
-# Coder served on :11434 pinned to the RTX 3060 Ti; qwen2.5:3b kept resident on the
-# GTX 1660 SUPER via a second pinned instance on :11435. The worker hits :11434.
-ollama_coder_model: "qwen3:8b"   # Q4_K_M, 5.2 GB, tools+thinking (verified ollama.com/library)
+# ── Resume builder inference layout (Resume Builder P1) ───────────────────────
+# Quality lane served on :11434 pinned to the RTX 3060 Ti (8G); fast lane + embeddings
+# on :11435 pinned to the GTX 1660 SUPER (6G). Var names kept from the fleet-era PET-132
+# layout ("coder"/"gemma") since they're really just the GPU-pin identifiers — only the
+# model VALUES changed.
+#
+# qwen3.5:9b was the ONE unverified number in this retune (planning doc §10 risk #2) —
+# VERIFIED LIVE, 2026-07-21: it holds 100% GPU at ctx 8192 (5.7GB / 8192MB). NOTE for
+# future debugging on this host: the first live test showed heavy CPU spill (19-21%
+# GPU) that looked like a genuine capacity miss — it was actually an ORPHANED
+# llama-server process from earlier ad-hoc testing (`keep_alive:0` "unload" calls don't
+# always cleanly kill the backend process) silently holding ~2GB of GPU0's VRAM,
+# surviving even a full `systemctl restart ollama`. Always check `nvidia-smi` for
+# leaked llama-server processes (not just `ollama ps`, which only reports what the
+# CURRENT server process thinks is loaded) before trusting a spill/fit measurement.
+# 16384 ctx was NOT re-verified after finding this — 8192 is what's proven; if a future
+# session wants more context, re-test from a confirmed-clean baseline first.
+ollama_coder_model: "qwen3.5:9b"   # quality lane: resume tailoring, cover letters, Q&A (fallback if ever needed: qwen3:8b, also verified 100% GPU @ ctx 8192)
+ollama_fast_model: "qwen3.5:4b"   # fast lane: keyword extraction, span rewrites
+ollama_embed_model: "qwen3-embedding:0.6b"   # fast lane: JD<->resume + question<->story embeddings
 
 # GPU pins — CUDA_VISIBLE_DEVICES values. MUST be the stable per-card UUIDs (indices can
-# reorder across reboots). Fill from `nvidia-smi -L` on .12 (the loop can't read them):
+# reorder across reboots). Unchanged from PET-132 — the hardware didn't move, only the
+# models pinned to it did. Fill from `nvidia-smi -L` on .12 (the loop can't read them):
 #   …RTX 3060 Ti (UUID: GPU-xxxx…)    -> ollama_coder_gpu
 #   …GTX 1660 SUPER (UUID: GPU-yyyy…) -> ollama_gemma_gpu
 # The ollama-service role asserts these no longer contain REPLACE_WITH before applying.
 ollama_coder_gpu: "GPU-0141644f-f1c4-d527-121f-ae96af5372ed"   # RTX 3060 Ti (8GB) — nvidia-smi -L, 2026-06-23
 ollama_gemma_gpu: "GPU-bdefa4ac-8c14-9baa-db1b-c94bb471b027"   # GTX 1660 SUPER (6GB) — nvidia-smi -L, 2026-06-23
 
-# Pull the coder alongside the 1660S utility model (shared store → one pull per instance).
+# Pull every model this host serves (shared store -> one pull per instance). qwen3:8b
+# stays pulled as a proven fallback even though it's not resident by default.
 ollama_base_models:
-  - qwen2.5:3b
   - "{{ ollama_coder_model }}"
+  - "{{ ollama_fast_model }}"
+  - "{{ ollama_embed_model }}"
+  - qwen3:8b
 
-# PRIMARY service (:11434) — pinned to the 3060 Ti, tuned for the coder: q8_0 KV-cache
-# (halves KV VRAM, requires flash attention), 32K default context (never the silent 4096
-# default), keep_alive=-1 so the coder never unloads.
+# PRIMARY service (:11434) — pinned to the 3060 Ti, tuned for the quality lane: q8_0
+# KV-cache (halves KV VRAM, requires flash attention), keep_alive=-1 so it never unloads.
+# Context is 8192 — VERIFIED LIVE (clean baseline, no leaked processes) as holding
+# qwen3.5:9b at 100% GPU. Always still set num_ctx per-request from the app side, capped
+# well under 8192 (planning doc §6 rule: a bare default silently truncates a long
+# JD+profile — this ceiling is now a hard one, not just a footgun to avoid).
 ollama_extra_env:
   - "CUDA_VISIBLE_DEVICES={{ ollama_coder_gpu }}"
   - "OLLAMA_FLASH_ATTENTION=1"
   - "OLLAMA_KV_CACHE_TYPE=q8_0"
-  - "OLLAMA_CONTEXT_LENGTH=32768"
+  - "OLLAMA_CONTEXT_LENGTH=8192"
   - "OLLAMA_KEEP_ALIVE=-1"
 
-# SECOND pinned instance (:11435) — the 1660 SUPER, keeps qwen2.5:3b resident. (gemma4:e4b
-# is ~9.6 GB and does NOT fit the 6 GB 1660S — PET-132 fix; qwen2.5:3b is ~1.9 GB.)
+# SECOND pinned instance (:11435) — the 1660 SUPER, keeps the fast + embedding models
+# resident together. VERIFIED LIVE (2026-07-21, clean baseline): qwen3.5:4b alone holds
+# 100% GPU at ctx 8192 (3.3GB), confirmed unaffected by the embedding model loading
+# alongside it. qwen3-embedding:0.6b, however, does NOT fully fit alongside it even from
+# a clean state: ~45-55% GPU / rest CPU at ctx 8192, no real improvement at ctx 2048 —
+# its resident size (~2.2-2.6GB) is larger than a 0.6B model's weights alone would
+# suggest, likely fixed compute-buffer overhead in this architecture, not something ctx
+# tuning fixes. Total needed (4b 3.3GB + embed ~2.2GB min) leaves under 700MB margin on
+# a 6GB card — genuinely tight, not a bug. Known, accepted limitation for now: embedding
+# calls still work, just slower than the "sub-second" target in the planning doc's task
+# specs — revisit if it becomes a real bottleneck (candidates: a smaller/different
+# embedding model, or moving it off this card). Turing has no tensor cores either way,
+# so this lane is slow at long-prompt ingest regardless — the app must cap fast-lane
+# inputs to ~4k tokens (planning doc §6); flash attention + q8_0 KV still help decode
+# speed and VRAM headroom even without tensor-core gains.
 ollama_extra_instances:
   - name: ollama-1660s
     port: 11435
-    description: "Ollama (GTX 1660 SUPER) — keeps qwen2.5:3b resident (PET-132)"
+    description: "Ollama (GTX 1660 SUPER) — fast lane + embeddings, resume builder P1"
     env:
       - "CUDA_VISIBLE_DEVICES={{ ollama_gemma_gpu }}"
+      - "OLLAMA_FLASH_ATTENTION=1"
+      - "OLLAMA_KV_CACHE_TYPE=q8_0"
+      - "OLLAMA_CONTEXT_LENGTH=8192"
       - "OLLAMA_KEEP_ALIVE=-1"
 
-# Keep each model warm on its pinned instance/GPU (loaded with keep_alive=-1).
+# Keep each model warm on its pinned instance/GPU (loaded with keep_alive=-1). Two
+# entries on :11435 — both models resident together, same port. The embedding model is
+# tagged `kind: embed` — it doesn't support /api/generate (verified live, 2026-07-21;
+# see roles/ollama-models/tasks/main.yml for the warm-up split this drives).
 ollama_resident_models:
   - model: "{{ ollama_coder_model }}"
     port: 11434
-  - model: qwen2.5:3b
+  - model: "{{ ollama_fast_model }}"
     port: 11435
+  - model: "{{ ollama_embed_model }}"
+    port: 11435
+    kind: embed

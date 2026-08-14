@@ -33,6 +33,20 @@
     palworld_target_host: 127.0.0.1
     palworld_rest_port: 8212
     panel_default_countdown: 5
+    # Session-history DB (PET-266) — the dashboard's durable store. Under the app dir so
+    # it survives redeploys (the source copy only replaces backend/ and frontend/).
+    panel_db_path: "{{ panel_app_dir }}/panel-sessions.db"
+    # PET-266 lockdown: bind loopback, not 0.0.0.0. The only legitimate callers are a browser
+    # on this machine and the co-located cloudflared connector, both over 127.0.0.1. This
+    # replaces the old ufw allow-list — a closed socket beats a firewall rule, and ufw is
+    # inactive on palworld-mc anyway, so those rules were never actually enforcing anything.
+    panel_bind: 127.0.0.1
+    # Identity of this install, for attributing console-originated actions. Inventory
+    # hostname rather than the live hostname so a laptop rename doesn't rewrite history.
+    panel_id: "{{ inventory_hostname }}"
+    # Same two people as the Cloudflare Access allow-list for palworld.pdlab.dev — the link
+    # is only reachable by someone Access already authenticated as that address.
+    panel_identity_map: "soniasdelgadillo@gmail.com=SoniaDillo,pedelgadillo@gmail.com=PeteDillo"
 
   pre_tasks:
     - name: Assert required secret extra-vars were provided (use scripts/deploy-palworld-panel.sh)
@@ -52,6 +66,32 @@
       become: false
       register: panel_src_stat
       failed_when: not panel_src_stat.stat.exists
+
+    # Frontend is a Vite/Preact build now (PET-266 migration off the old static-file SPA) —
+    # this play copies frontend/dist/, it does not build it. The build has to happen on
+    # whatever controller runs this playbook, BEFORE this play does, and write into the
+    # checkout at palworld_panel_src: in CI that checkout is bind-mounted read-only into the
+    # ansible container (see petedio-palworld-panel's deploy.yml), so a delegate_to:localhost
+    # build task HERE cannot write to it. `scripts/deploy-palworld-panel.sh` runs
+    # `bun run build` itself before invoking this play; CI's deploy.yml does the same on the
+    # runner before the ansible/Docker step. Fail loudly and specifically rather than copying
+    # a stale or half-built dist/ (or erroring inside the copy task with a confusing message).
+    - name: Check whether the frontend was built (frontend/dist/ present)
+      ansible.builtin.stat:
+        path: "{{ palworld_panel_src }}/frontend/dist/phone.html"
+      delegate_to: localhost
+      become: false
+      register: panel_dist_stat
+
+    - name: Assert the frontend build is present
+      ansible.builtin.assert:
+        that: panel_dist_stat.stat.exists
+        fail_msg: >-
+          {{ palworld_panel_src }}/frontend/dist/phone.html not found — the frontend hasn't
+          been built. Run `cd frontend && bun install && bun run build` in the panel checkout
+          first (scripts/deploy-palworld-panel.sh and the CI deploy.yml both do this
+          automatically; a manual ansible-playbook run does not).
+        quiet: true
 
   tasks:
     - name: Create the panel service group
@@ -95,6 +135,10 @@
       ansible.builtin.shell:
         cmd: "set -o pipefail; curl -fsSL https://bun.sh/install | BUN_INSTALL={{ bun_install_dir }} bash"
         creates: "{{ bun_bin }}"
+        # `set -o pipefail` is a bashism. Ansible's shell module runs /bin/sh, which on
+        # Ubuntu/Pop!_OS is dash -> "Illegal option -o pipefail" (hit on palworld-mc,
+        # PET-266). It only ever worked because the LXC's /bin/sh happened to be bash.
+        executable: /bin/bash
       when: not bun_stat.stat.exists
 
     - name: Make bun world-readable/executable
@@ -113,15 +157,48 @@
         directory_mode: "0755"
       notify: Restart palworld-panel
 
-    - name: Copy the frontend (static SPA)
+    # shared/ is the backend<->frontend contract directory, and the backend imports it at
+    # ../../shared/*. It used to be TYPE-ONLY (`import type`), which Bun erases at runtime, so
+    # not copying it was invisible. The moment a real runtime import landed (shared/identity.ts,
+    # PET-266's surfaceFor) the service crash-looped on the host with
+    # "Cannot find module '../../shared/identity'" — while CI stayed green, because tests and
+    # the Vite build run from the repo where shared/ exists. Copy it, and assert it below.
+    - name: Copy the shared contract directory (backend imports it at runtime)
       ansible.builtin.copy:
-        src: "{{ palworld_panel_src }}/frontend/public/"
-        dest: "{{ panel_app_dir }}/frontend/public/"
+        src: "{{ palworld_panel_src }}/shared/"
+        dest: "{{ panel_app_dir }}/shared/"
         owner: "{{ panel_user }}"
         group: "{{ panel_group }}"
         mode: "0644"
         directory_mode: "0755"
       notify: Restart palworld-panel
+
+    # Vite content-hashes every asset filename, so a redeploy never OVERWRITES an old chunk —
+    # it adds a new one beside it. copy: is additive-only (it never prunes), so without this
+    # the target would accumulate every hashed filename from every deploy forever. Wipe the
+    # directory first; the copy right after always repopulates it completely from dist/.
+    - name: Clear the previous frontend build before copying the new one
+      ansible.builtin.file:
+        path: "{{ panel_app_dir }}/frontend/dist"
+        state: absent
+
+    - name: Copy the frontend (Vite build output — see the dist/ assert above)
+      ansible.builtin.copy:
+        src: "{{ palworld_panel_src }}/frontend/dist/"
+        dest: "{{ panel_app_dir }}/frontend/dist/"
+        owner: "{{ panel_user }}"
+        group: "{{ panel_group }}"
+        mode: "0644"
+        directory_mode: "0755"
+      notify: Restart palworld-panel
+
+    # Leftover from the pre-Vite static SPA (app.js/index.html/styles.css) — PUBLIC_DIR no
+    # longer points at it and nothing serves from it. Not managed by any task above, so it
+    # never gets cleaned up on its own.
+    - name: Remove the old static-SPA frontend/public/ (superseded by frontend/dist/)
+      ansible.builtin.file:
+        path: "{{ panel_app_dir }}/frontend/public"
+        state: absent
 
     # ---- Secrets: the REST admin password (env-file) + the start-hook private key ----
     - name: Render the backend secret env-file (AdminPassword)
@@ -166,14 +243,36 @@
         state: started
         daemon_reload: true
 
-    # ---- Firewall: allow the panel web port from the LAN (CF tunnel connector reaches it there) ----
-    - name: Allow the panel web port from the LAN (UFW)
+    # A green deploy that leaves a crash-looping service is the failure mode this play just
+    # had: systemd "started" the unit, the unit died on a missing module, and Ansible reported
+    # success. Poll the app's own health endpoint so the deploy fails where the cause is.
+    - name: Wait for the panel to answer on loopback (proves it actually booted)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ panel_port }}/api/health"
+        status_code: [200]
+      register: panel_up
+      retries: 10
+      delay: 3
+      until: panel_up.status == 200
+
+    # ---- Firewall: withdraw the old LAN allow-rules ----
+    # The panel now binds 127.0.0.1 (panel_bind), so nothing off-box can reach :8080 at all
+    # and these rules grant access to a socket that isn't listening. Deleted rather than left
+    # behind: a stale "allow 8080 from the play segment" rule would quietly become real again
+    # the moment someone set PANEL_BIND=0.0.0.0 to debug something.
+    #
+    # `delete: true` is a no-op when the rule isn't there, so this is safe on a fresh host and
+    # on one that never had ufw enabled (which is the case on palworld-mc today).
+    - name: Withdraw the pre-lockdown panel web-port allow rules (UFW)
       community.general.ufw:
         rule: allow
         port: "{{ panel_port }}"
         proto: tcp
-        from_ip: 192.168.50.0/24
-        comment: "Palworld control panel web (PET-266)"
+        from_ip: "{{ item }}"
+        delete: true
+      loop:
+        - 192.168.50.0/24
+        - 192.168.86.0/24
 
   handlers:
     - name: Reload systemd

@@ -4,3 +4,11 @@
 - name: Reload sysctl
   ansible.builtin.command: sysctl -p /etc/sysctl.d/99-tailscale.conf
   changed_when: false
+
+# RemainAfterExit=yes means a changed unit file won't re-run on `state: started` alone —
+# it's already "active". Restart it so an edited unit takes effect in the same run.
+- name: Reapply IP forwarding
+  ansible.builtin.systemd:
+    name: tailscale-ip-forward.service
+    state: restarted
+    daemon_reload: true

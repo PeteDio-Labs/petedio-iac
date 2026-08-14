@@ -1,0 +1,28 @@
+---
+# configure-mongodb.yml — provision native MongoDB 8.0 on resume-242 (Resume Builder P1).
+#
+# Localhost-only (127.0.0.1) — the SvelteKit app runs on this same host, no LAN exposure
+# like the postgres RDS host. security.authorization is on from the start; the app user
+# bootstraps via Mongo's localhost exception (see roles/mongodb/tasks/main.yml).
+#
+# SECRETS: mongodb_app_password and (if the backup timer is enabled)
+# mongodb_backup_minio_access_key/secret_key are REQUIRED extra-vars with NO default —
+# resolve them from Vault kv/services/resume-builder and pass as a no_log extra-vars
+# @file (see scripts/deploy-poker-api.sh for the pattern):
+#
+#   vault kv get -format=json kv/services/resume-builder | \
+#     jq '{mongodb_app_password: .data.data.mongo_app_password,
+#          mongodb_backup_minio_access_key: .data.data.mc_access_key,
+#          mongodb_backup_minio_secret_key: .data.data.mc_secret_key}' \
+#     > /tmp/mongodb-evars.json
+#   ansible-playbook playbooks/configure-mongodb.yml -e @/tmp/mongodb-evars.json
+#   shred -u /tmp/mongodb-evars.json
+#
+# Inventory: the `resume` group -> resume-242 / 192.168.50.242, root over
+# ~/.ssh/id_ed25519_ansible.
+
+- name: Provision MongoDB 8.0 for the resume-builder app (resume-242)
+  hosts: resume
+  become: true
+  roles:
+    - mongodb

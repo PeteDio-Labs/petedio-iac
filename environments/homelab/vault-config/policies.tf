@@ -16,6 +16,23 @@ resource "vault_policy" "ci_read" {
   name = "ci-read"
 
   policy = <<-EOT
+    # water-fast (LXC 243). Scoped to the single secret, NOT kv/data/services/* — CI only
+    # needs this one, and the wider prefix would hand every service's credentials to the
+    # apply job. Required before var.waterfast_db_ready can flip to true: the gated
+    # ephemeral read in waterfast.tf runs as ci-read on apply-on-merge, and without this
+    # grant that apply fails with a permission denied on a path it can see but not read.
+    path "kv/data/services/water-fast" {
+      capabilities = ["read"]
+    }
+
+    # plane (LXC 235). Same single-secret scoping as water-fast above: the gated
+    # ephemeral read in databases.tf runs as ci-read on apply-on-merge, so without this
+    # grant the apply fails with a permission denied on a path it can SEE but not read.
+    # This must land BEFORE the merge that adds `plane = {}` to databases.tf.
+    path "kv/data/db/plane" {
+      capabilities = ["read"]
+    }
+
     path "kv/data/iac/proxmox" {
       capabilities = ["read"]
     }
@@ -45,6 +62,10 @@ resource "vault_policy" "ci_read" {
     }
 
     path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/db/*" {
       capabilities = ["list"]
     }
 
@@ -91,7 +112,7 @@ resource "vault_policy" "terraform" {
 
 # colatro-ci: the policy the Co-latro app repos get via the colatro-ci JWT role
 # (auth.tf). Least-privilege for publish-on-merge + the manual deploy workflow:
-#   - kv/services/nexus            push the backend image to Nexus
+#   - kv/services/registry         push the backend image to the registry (zot)
 #   - kv/services/minio-frontend-ci  WRITE the frontend dist to the MinIO bucket
 #     (distinct from the read-only kv/services/minio-frontend the on-box rollout uses)
 #   - kv/iac/lxc-ssh               SSH key to reach LXC 230 from the deploy workflow
@@ -102,7 +123,7 @@ resource "vault_policy" "colatro_ci" {
   name = "colatro-ci"
 
   policy = <<-EOT
-    path "kv/data/services/nexus" {
+    path "kv/data/services/registry" {
       capabilities = ["read"]
     }
 
@@ -130,7 +151,8 @@ resource "vault_policy" "colatro_ci" {
 #   - kv/admin/db            DATABASE_URL wired into every function's env (stack.yml)
 #   - kv/services/admin      the co-latro <-> admin seam token (users fn: COLATRO_SERVICE_TOKEN)
 #   - kv/services/openfaas   the faasd gateway password (`faas-cli login`)
-#   - kv/services/nexus      push the 4 function images to Nexus (docker login)
+#   - kv/services/registry   push the 4 function images to Nexus (docker login). The path is
+#                            `registry`, NOT `nexus` — see ansible-stack.yml and colatro_ci.
 #   - kv/iac/lxc-ssh         SSH key to open the runner->241:8080 tunnel for the deploy
 #   - kv/poker/db            INVITES_TOKEN (the invites-fn Bearer secret; optional at rollout)
 # READ + per-prefix LIST only — a leaked token reads exactly these deploy inputs and mutates
@@ -151,7 +173,7 @@ resource "vault_policy" "colatro_admin_ci" {
       capabilities = ["read"]
     }
 
-    path "kv/data/services/nexus" {
+    path "kv/data/services/registry" {
       capabilities = ["read"]
     }
 
@@ -194,6 +216,21 @@ resource "vault_policy" "ansible" {
       capabilities = ["read"]
     }
 
+    # kv/db/* — the per-database owner passwords declared in databases.tf.
+    #
+    # WHY ANSIBLE NEEDS THIS AT ALL. Until Plane, every database password was consumed
+    # only by Terraform (ci-read) — Ansible never rendered a connection string, because
+    # the apps holding one either got it from a kv/services/<app> secret or built it on
+    # the box. configure-plane.yml is the first play to render a DATABASE_URL, so
+    # scripts/deploy-plane.sh must read kv/db/plane under this policy. Without it the
+    # deploy dies at "permission denied" on a path it can see but not read — the same
+    # failure mode the ci-read comment warns about, one policy over.
+    #
+    # Scoped to the kv/db/ prefix only. It does NOT widen to poker/* or iac/*.
+    path "kv/data/db/*" {
+      capabilities = ["read"]
+    }
+
     path "kv/data/admin/*" {
       capabilities = ["read"]
     }
@@ -203,6 +240,10 @@ resource "vault_policy" "ansible" {
     }
 
     path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/db/*" {
       capabilities = ["list"]
     }
 
@@ -249,7 +290,7 @@ resource "vault_policy" "media_ci" {
 
 # openfaas-ci: the petedio-iac CI role that APPLIES configure-openfaas.yml to LXC 241 on
 # merge (the runner SSHes in). Least-privilege: ONLY the ansible SSH key (to reach 241) and
-# the Nexus pull creds (written into faasd's /var/lib/faasd/.docker/config.json). NOT the
+# the registry pull creds (written into faasd's /var/lib/faasd/.docker/config.json). NOT the
 # broader ci-read/iac scope. (PET-88)
 resource "vault_policy" "openfaas_ci" {
   name = "openfaas-ci"
@@ -259,7 +300,7 @@ resource "vault_policy" "openfaas_ci" {
       capabilities = ["read"]
     }
 
-    path "kv/data/services/nexus" {
+    path "kv/data/services/registry" {
       capabilities = ["read"]
     }
 
@@ -273,25 +314,83 @@ resource "vault_policy" "openfaas_ci" {
   EOT
 }
 
-# agent-loop: the autonomous loop host (LXC 242) reads ONLY its own service secret
-# (proxmox_ro_token now, github_token later) — strictly narrower than `ansible` (all
-# services/*). A Vault Agent on the box auto-auths with the agent-loop AppRole (auth.tf)
-# and renews a token into ~agent/.vault-token, so the read-only Proxmox helper self-serves
-# with no operator step. Single read path = minimal blast radius for an unattended box.
-# PET-141.
-resource "vault_policy" "agent_loop" {
-  name = "agent-loop"
+# palworld-panel-cd: the petedio-palworld-panel repo's CD role — deploy.yml runs the native
+# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the ansible
+# SSH key (to reach 234) and the panel's own service secret (REST admin password + restricted
+# start-hook key). NOT the broader ci-read/ansible scope. (PET-266)
+resource "vault_policy" "palworld_panel_cd" {
+  name = "palworld-panel-cd"
 
   policy = <<-EOT
-    path "kv/data/services/agent-loop" {
+    path "kv/data/iac/lxc-ssh" {
       capabilities = ["read"]
     }
 
-    # The fleet poller (worker/engine candidates) self-serves the READ-ONLY Linear API key to
-    # enumerate worker-ok/engine-ok Todo issues for auto-launch (PET-184 S1). Read-only path,
-    # read-only key — the loop never writes Linear (status flows via the GitHub-Linear link).
-    path "kv/data/services/linear" {
+    path "kv/data/services/palworld-panel" {
       capabilities = ["read"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
+# water-fast-cd: the petedio-water-fast repo's CD role — deploy.yml copies the built
+# frontend + backend source and installs the systemd unit on waterfast-243 on merge (the
+# runner SSHes in). Least-privilege: ONLY the ansible SSH key (to reach 243) and the app's
+# own service secret (DB password + CF Access team domain/AUD). NOT the broader
+# ci-read/ansible scope. Mirrors resume-builder-cd. Apply BEFORE the CD workflow lands or
+# the first run 403s.
+resource "vault_policy" "water_fast_cd" {
+  name = "water-fast-cd"
+
+  policy = <<-EOT
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/water-fast" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
+# resume-builder-cd: the petedio-resume-builder repo's CD role (Resume Builder P1) —
+# deploy.yml copies build/ + installs the systemd unit on resume-242 on merge (the runner
+# SSHes in). Least-privilege: ONLY the ansible SSH key (to reach resume-242) and the app's
+# own service secret (Mongo creds + CF Access env). NOT the broader ci-read/ansible scope.
+# Mirrors palworld-panel-cd. Apply BEFORE the CD workflow lands or the first run 403s.
+resource "vault_policy" "resume_builder_cd" {
+  name = "resume-builder-cd"
+
+  policy = <<-EOT
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/resume-builder" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
     }
   EOT
 }
@@ -326,6 +425,28 @@ resource "vault_policy" "poker_api" {
 
   policy = <<-EOT
     path "kv/data/poker/db" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+# plane-ci: the ONLY policy a PR-triggered run may hold. Deliberately one path.
+#
+# WHY IT IS THIS NARROW. plane-sync.yml runs on `pull_request_target`, whose OIDC
+# subject (`...:pull_request`) is the SAME one an ordinary `pull_request` presents —
+# so a PR can mint this token. PET-104 removed that subject from ci-read precisely
+# because ci-read reaches Proxmox, MinIO, Cloudflare and Authentik. This policy is
+# the safe counterpart: its entire blast radius is "can change a work item's state
+# and post a comment".
+#
+# ⚠️ NEVER add a second path here, and never attach ci-read to the plane-ci role.
+# The moment this policy can read anything infrastructural, PET-104's exposure is
+# back and it is reachable from any fork's pull request.
+resource "vault_policy" "plane_ci" {
+  name = "plane-ci"
+
+  policy = <<-EOT
+    path "kv/data/services/plane" {
       capabilities = ["read"]
     }
   EOT

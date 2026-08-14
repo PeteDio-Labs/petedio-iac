@@ -52,7 +52,43 @@ address — no per-host Tailscale install, no port-forwarding, no exposed ports.
 
 ## Notes
 - IP forwarding (`net.ipv4.ip_forward`, `net.ipv6.conf.all.forwarding`) is set by this
-  role via `/etc/sysctl.d/99-tailscale.conf`.
+  role via `/etc/sysctl.d/99-tailscale.conf`, and re-applied at boot by the
+  `tailscale-ip-forward.service` oneshot this role installs (see below — the file alone
+  is not enough on this host).
 - The role is safe to run **before** the key exists — it installs everything and only
   skips `tailscale up`, printing a reminder.
 - No secrets live in the repo; the auth key is Vault-only (`kv/services/tailscale`).
+
+## Troubleshooting: "the node stopped pushing the subnets"
+
+The failure to expect on this host looks like a *routing* problem and isn't one. Symptom:
+`192.168.50.244` pings fine, the route is still advertised **and** approved
+(`tailscale status --json` → `PrimaryRoutes: ["192.168.50.0/24"]`), the client still has
+`192.168.50/24` in its routing table — but nothing *behind* the router answers.
+
+Check forwarding first, not Tailscale:
+
+```sh
+ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.244 "sysctl net.ipv4.ip_forward"
+```
+
+`= 0` means the sysctl file was never applied at boot. `systemd-sysctl.service` fails in
+this unprivileged LXC (`status=243/CREDENTIALS`, from `ImportCredential=sysctl.*` on
+systemd 257), so `/etc/sysctl.d` is silently skipped. That is what
+`tailscale-ip-forward.service` exists to work around — confirm it is enabled *and* that it
+actually ran:
+
+```sh
+systemctl status tailscale-ip-forward.service   # active (exited)
+systemctl is-enabled tailscale-ip-forward.service
+```
+
+Re-running this role fixes it and is idempotent.
+
+**The deeper issue:** that failed unit is not alone — ~19 units fail at boot on CT 244
+(`systemd-journald`, `tmp.mount`, `run-lock.mount`, `dev-mqueue.mount`,
+`systemd-tmpfiles-setup`, `systemd-networkd`). That is the signature of an unprivileged
+container missing the mount/credential setup systemd 257 expects; check `features`
+(nesting) in `pct config 244`, which needs `root@pam` on pve01. Practical consequence
+while it stands: **journald is down, so this node keeps no persistent logs** — don't
+expect to find out from the node why it rebooted.

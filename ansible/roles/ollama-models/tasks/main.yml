@@ -21,7 +21,23 @@
 # Load each worker-tier model onto its pinned instance/GPU and keep it warm. An empty
 # prompt with keep_alive=-1 loads the model into that instance's VRAM and pins it there
 # (no idle unload). Requires the target instances to be running (ollama-service role).
-- name: Load each resident model onto its pinned instance (keep_alive=-1)
+#
+# Embedding models (kind: embed) do NOT support /api/generate — verified live
+# (2026-07-21): a generate warm-up against qwen3-embedding:0.6b 400s with
+# `"<model>" does not support generate`. They need /api/embed with an `input` field
+# instead. Set `kind: embed` on an ollama_resident_models entry to route it there;
+# entries with no `kind` (or `kind: generate`) keep the original /api/generate warm-up.
+- name: Split resident models into generate-capable vs embedding
+  ansible.builtin.set_fact:
+    ollama_resident_generate: >-
+      {{ ollama_resident_models | rejectattr('kind', 'defined') | list
+         + ollama_resident_models | selectattr('kind', 'defined')
+         | selectattr('kind', 'equalto', 'generate') | list }}
+    ollama_resident_embed: >-
+      {{ ollama_resident_models | selectattr('kind', 'defined')
+         | selectattr('kind', 'equalto', 'embed') | list }}
+
+- name: Load each resident GENERATE-capable model onto its pinned instance (keep_alive=-1)
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ item.port }}/api/generate"
     method: POST
@@ -31,11 +47,28 @@
       keep_alive: -1
     status_code: 200
     timeout: 300
-  loop: "{{ ollama_resident_models }}"
+  loop: "{{ ollama_resident_generate }}"
   loop_control:
     label: "{{ item.model }} -> :{{ item.port }}"
   changed_when: false
-  when: ollama_resident_models | length > 0
+  when: ollama_resident_generate | length > 0
+
+- name: Load each resident EMBEDDING model onto its pinned instance (keep_alive=-1)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ item.port }}/api/embed"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ item.model }}"
+      input: " "
+      keep_alive: -1
+    status_code: 200
+    timeout: 300
+  loop: "{{ ollama_resident_embed }}"
+  loop_control:
+    label: "{{ item.model }} -> :{{ item.port }} (embed)"
+  changed_when: false
+  when: ollama_resident_embed | length > 0
 
 - name: Report resident models
   ansible.builtin.debug:

@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+# One-shot mongodump -> MinIO (Resume Builder P1). Triggered by resume-mongo-backup.timer.
+[Unit]
+Description=Resume-builder Mongo backup to MinIO
+After=network-online.target mongod.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ mongodb_backup_script_path }}
+# Runs as root to read the 0600 env file; keep the surface small.
+ProtectHome=true
+NoNewPrivileges=true

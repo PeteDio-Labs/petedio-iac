@@ -1,0 +1,31 @@
+---
+# Palworld shared-world overrides (group: palworld). This file is the write target of
+# the panel's World Settings GitOps applier (PET-266) — it upserts exactly these two
+# keys via the GitHub API, so keep the file to simple `key: value` lines. Values are
+# re-templated into PalWorldSettings.ini by the ansible-palworld apply on merge and
+# arm at the NEXT server restart (the panel's stop/start), never mid-session.
+#
+# Held at the vanilla engine defaults: raised limits must be opted into per-change
+# THROUGH the panel (confirm + maintenance window), not pre-baked here. A static
+# override auto-applied 10/20 to the live world with no operator action → reverted.
+palworld_base_camp_max_in_guild: 10 # BaseCampMaxNumInGuild — raised to the native max (10) to try to unlock a guild whose base allowance ratcheted to its count after the cap was lowered below it (destroying a base dropped the in-game max 3→2). Count is now well below 10; a high cap on a fresh load is the community-reported unlock. (PET-266)
+palworld_base_camp_worker_max: 15 # BaseCampWorkerMaxNum (engine default 15, ini max 50, >20 = perf lever)
+
+# Server-wide BaseCampMaxNum is DELIBERATELY NOT MANAGED (decided 2026-07-22).
+# Don't add it — this has been attempted twice and is a trap:
+#   * it is NOT the same key as BaseCampMaxNumInGuild above. BaseCampMaxNum is the
+#     whole-world total (live: 128, the engine default); BaseCampMaxNumInGuild is the
+#     per-guild cap (live: 10). A stale branch templated BaseCampMaxNum at 4 — the
+#     per-guild value copy-pasted onto the server-wide key.
+#   * the world currently holds 7 base camps, so any such value would set the global
+#     cap BELOW live usage, which is exactly the ratchet failure documented above
+#     (lowering a cap under the count pinned the in-game max to the count).
+#   * pre-baking a raised limit here is the thing that got reverted once already.
+# Leaving it untemplated keeps the engine default of 128, which is correct and safe.
+# If it ever needs managing, it goes through the panel's World Settings flow at a value
+# comfortably ABOVE the live camp count — never as a role default.
+
+# The shared world both hosts serve. Pins DedicatedServerName in GameUserSettings.ini —
+# without it a host that has generated any other world boots that one instead, silently,
+# with an empty map (found rehearsing the PET-266 migration). See the role defaults.
+palworld_dedicated_server_name: 0BA20FE97DF7472AADFD2237B5B4EFFC

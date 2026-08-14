@@ -1,0 +1,110 @@
+# Let's Encrypt cert for the registry, via DNS-01.
+#
+# DNS-01 rather than HTTP-01 on purpose: the registry is LAN-only and must stay
+# that way. HTTP-01 would require Let's Encrypt to reach port 80 on this box from
+# the internet, which is exactly the exposure we are removing by dropping the
+# Cloudflare tunnel. DNS-01 proves domain control by writing a TXT record with
+# the Cloudflare API token, so nothing here is ever reachable from outside.
+#
+# lego is a single static binary — no Python/certbot dependency chain on a host
+# whose whole point is being small.
+---
+- name: zot/tls — require a Cloudflare DNS token
+  ansible.builtin.assert:
+    that: (zot_cf_dns_token | length) > 0
+    fail_msg: "zot_cf_dns_token must be supplied from Vault (kv/iac/cloudflare)."
+    quiet: true
+
+- name: zot/tls — directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0750"
+  loop:
+    - "{{ zot_lego_dir }}"
+    - "{{ zot_tls_dir }}"
+
+- name: zot/tls — install lego
+  ansible.builtin.unarchive:
+    src: "https://github.com/go-acme/lego/releases/download/v{{ zot_lego_version }}/lego_v{{ zot_lego_version }}_linux_amd64.tar.gz"
+    dest: "{{ zot_lego_dir }}"
+    remote_src: true
+    creates: "{{ zot_lego_dir }}/lego"
+
+- name: zot/tls — obtain or renew the certificate
+  ansible.builtin.command:
+    # `run` fails if a cert already exists, `renew` fails if it does not — so
+    # pick by what is on disk. --days 30 makes renew a cheap no-op until the
+    # cert is actually close to expiry, which is what lets this run on every
+    # converge without hammering Let's Encrypt's rate limits.
+    cmd: >-
+      {{ zot_lego_dir }}/lego
+      --accept-tos
+      --email {{ zot_acme_email }}
+      --dns cloudflare
+      --domains {{ zot_hostname }}
+      --path {{ zot_lego_dir }}
+      {{ 'renew --days 30' if zot_cert_stat.stat.exists else 'run' }}
+  environment:
+    CF_DNS_API_TOKEN: "{{ zot_cf_dns_token }}"
+    # Resolve the challenge against public resolvers: the LAN resolver may
+    # answer for pdlab.dev and hide the TXT record lego just wrote.
+    LEGO_DISABLE_CNAME_SUPPORT: "false"
+  register: zot_lego
+  changed_when: "'Server responded with a certificate' in (zot_lego.stdout | default(''))"
+  no_log: true
+
+- name: zot/tls — publish cert and key where zot reads them
+  ansible.builtin.copy:
+    src: "{{ zot_lego_dir }}/certificates/{{ zot_hostname }}{{ item.src }}"
+    dest: "{{ zot_tls_dir }}/{{ item.dest }}"
+    remote_src: true
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: ".crt", dest: "server.crt", mode: "0644" }
+    - { src: ".key", dest: "server.key", mode: "0640" }
+  notify: restart zot
+
+# Renewal is a timer, not a cron one-liner, so a failure is visible in
+# `systemctl list-timers` / journalctl rather than silently emailing root.
+- name: zot/tls — renewal service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/zot-cert-renew.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Renew the zot registry TLS certificate (Let's Encrypt, DNS-01)
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      Environment=CF_DNS_API_TOKEN={{ zot_cf_dns_token }}
+      ExecStart={{ zot_lego_dir }}/lego --accept-tos --email {{ zot_acme_email }} \
+        --dns cloudflare --domains {{ zot_hostname }} --path {{ zot_lego_dir }} renew --days 30
+      ExecStartPost=/bin/cp {{ zot_lego_dir }}/certificates/{{ zot_hostname }}.crt {{ zot_tls_dir }}/server.crt
+      ExecStartPost=/bin/cp {{ zot_lego_dir }}/certificates/{{ zot_hostname }}.key {{ zot_tls_dir }}/server.key
+      ExecStartPost=/usr/bin/docker restart {{ zot_container_name }}
+  no_log: true
+
+- name: zot/tls — renewal timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/zot-cert-renew.timer
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Daily renewal check for the zot registry certificate
+
+      [Timer]
+      OnCalendar=daily
+      RandomizedDelaySec=6h
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+
+- name: zot/tls — enable the renewal timer
+  ansible.builtin.systemd_service:
+    name: zot-cert-renew.timer
+    enabled: true
+    state: started
+    daemon_reload: true

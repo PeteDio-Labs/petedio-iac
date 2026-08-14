@@ -62,7 +62,7 @@ check_field kv/services/qbittorrent password
 check_field kv/services/authentik   secret_key
 check_field kv/services/authentik   bootstrap_token
 check_field kv/services/cloudflare  tunnel_token
-check_field kv/services/nexus       admin_password
+check_field kv/services/registry    password
 
 echo
 echo "== 2. Consumer AppRole read of kv/poker/db (terraform-local role) =="

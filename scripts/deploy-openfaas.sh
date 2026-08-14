@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-openfaas.sh — install/validate faasd on LXC 241, configure its private-registry
-# (Nexus) pull auth, then CAPTURE faasd's own gateway password into Vault. (PET-86/88 driver)
+# (zot) pull auth, then CAPTURE faasd's own gateway password into Vault. (PET-86/88 driver)
 #
 # MODEL (capture, not push): configure-openfaas.yml does NOT set the gateway password —
 # faasd generates and owns it (pushing our own value proved unreliable → gateway 401s).
@@ -8,7 +8,7 @@
 # seeds it into Vault (kv/services/openfaas) via reseed-openfaas-vault.sh, so Vault is the
 # source of truth for clients (faas-cli login, the admin functions, etc.).
 #
-# REGISTRY (PET-88): resolves nexus_username/nexus_password (Vault kv/services/nexus) and
+# REGISTRY (PET-88): resolves registry_username/registry_password (Vault kv/services/registry) and
 # passes them as no_log extra-vars so the play can write /var/lib/faasd/.docker/config.json
 # (faasd/containerd pulls our function images from docker.pdlab.dev).
 #
@@ -30,16 +30,16 @@ step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
 for t in ansible-playbook ssh vault python3; do command -v "$t" >/dev/null || die "$t not in PATH"; done
 
-step "Resolve Nexus pull creds (Vault kv/services/nexus)"
+step "Resolve registry pull creds (Vault kv/services/registry)"
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
 [ -n "${VAULT_TOKEN:-}" ] || { read -rsp 'Vault token: ' VAULT_TOKEN; echo; }
 export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault token invalid / Vault unreachable."
-NEXUS_U="$(vault kv get -field=username kv/services/nexus 2>/dev/null || echo admin)"
-NEXUS_P="$(vault kv get -field=admin_password kv/services/nexus)" || die "cannot read kv/services/nexus."
-[ -n "$NEXUS_P" ] || die "nexus password read empty."
+REGISTRY_U="$(vault kv get -field=username kv/services/registry 2>/dev/null || echo admin)"
+REGISTRY_P="$(vault kv get -field=password kv/services/registry)" || die "cannot read kv/services/registry."
+[ -n "$REGISTRY_P" ] || die "registry password read empty."
 
 step "Configure faasd on openfaas ($OPENFAAS_HOST)"
 cd "$ANSIBLE_DIR"
@@ -47,8 +47,8 @@ cd "$ANSIBLE_DIR"
 EVARS="$(mktemp)"; chmod 600 "$EVARS"; trap 'rm -f "$EVARS"' EXIT
 cat > "$EVARS" <<JSON
 {
-  "nexus_username": $(printf '%s' "$NEXUS_U" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
-  "nexus_password": $(printf '%s' "$NEXUS_P" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))')
+  "registry_username": $(printf '%s' "$REGISTRY_U" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
+  "registry_password": $(printf '%s' "$REGISTRY_P" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))')
 }
 JSON
 ansible-playbook playbooks/configure-openfaas.yml -e "@$EVARS"
@@ -62,7 +62,7 @@ GW="$(ssh -i "$OPENFAAS_SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectT
 [ -n "$GW" ] || die "gateway password read empty."
 GATEWAY_PASSWORD="$GW" "$SCRIPT_DIR/reseed-openfaas-vault.sh"
 
-step "Done — faasd up on $OPENFAAS_HOST; Nexus pull auth configured; gateway password captured."
+step "Done — faasd up on $OPENFAAS_HOST; registry pull auth configured; gateway password captured."
 # PET-203 (F1): the faasd compose binds the gateway 0.0.0.0:8080 (it loopback-binds prometheus but
 # NOT the gateway), and 241 has no host/NIC firewall — so the full OpenFaaS CONTROL PLANE is reachable
 # by anything on 192.168.50.0/24 with the basic-auth (confirmed: 241:8080/system/functions -> 401 from

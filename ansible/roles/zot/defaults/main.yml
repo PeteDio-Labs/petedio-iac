@@ -1,0 +1,71 @@
+# zot — the OCI registry that replaces Nexus on LXC 106 (.111).
+#
+# WHY ZOT. Nexus was an 8GB-heap JVM serving three private images and an
+# npm-proxy that nothing referenced. zot is a single Go binary (CNCF, OCI 1.1)
+# that does the same job in a couple hundred MB, and adds the one thing Nexus was
+# never configured for: an on-demand pull-through cache for docker.io. That cache
+# is not a nice-to-have — anonymous Docker Hub pulls are rate-limited per IP
+# (100/6h) and that limit has already broken an update run on the media stack.
+---
+zot_version: "v2.1.3"
+zot_image: "ghcr.io/project-zot/zot-linux-amd64:{{ zot_version }}"
+zot_container_name: zot
+
+# During migration zot runs on 5000 alongside Nexus (8081/8082). After cutover
+# it moves to 443 so `docker.pdlab.dev/<image>` resolves with no explicit port —
+# which is what keeps every existing CI/deploy reference working unchanged.
+zot_port: 5000
+
+# ---------------------------------------------------------------------- TLS --
+# Docker refuses a non-TLS registry unless every client lists it in
+# insecure-registries, so TLS is what makes this reachable without touching a
+# single consumer. The cert is a real Let's Encrypt one obtained by DNS-01 —
+# no inbound port 80, no public exposure of the registry itself; the only thing
+# that has to be public is a TXT record during issuance.
+zot_tls_enabled: false
+zot_hostname: docker.pdlab.dev
+zot_tls_dir: /etc/zot/tls
+zot_acme_email: pedelgadillo@gmail.com
+zot_lego_version: "4.19.2"
+zot_lego_dir: /opt/lego
+# Cloudflare token for the DNS-01 challenge, supplied by the playbook from
+# Vault (kv/iac/cloudflare). Never defaulted to a real value.
+zot_cf_dns_token: ""
+
+# Config + auth live on the container's own disk; the blob store goes on the
+# NFS-backed mount that already serves Nexus, so durability is unchanged.
+zot_config_dir: /etc/zot
+zot_data_dir: /nexus-data/zot
+
+# Credentials come from Vault (kv/services/registry) and are passed in by the
+# playbook — never defaulted to anything real here.
+zot_username: ""
+zot_password: ""
+
+# Pull-through mirrors. Each upstream gets its own local prefix, so a cached
+# image is addressed <registry>/<prefix>/<upstream-repo>:<tag> — e.g.
+# docker.pdlab.dev/docker-hub/library/alpine:3.20.
+#
+# Both upstreams here throttle: Docker Hub caps anonymous pulls at 100/6h per IP
+# (that cap aborted a media-stack update run), and lscr.io burst-limits hard
+# enough that a digest check against it intermittently returns nothing — which
+# means an update to qBittorrent can go unnoticed. Caching both makes the update
+# check deterministic instead of dependent on someone else's rate limiter.
+zot_cache_enabled: true
+zot_cache_prefix: docker-hub
+zot_cache_registries:
+  - { url: "https://registry-1.docker.io", prefix: "docker-hub" }
+  - { url: "https://lscr.io",              prefix: "lscr-io" }
+
+# Derived — keeps every health/verify URL in the role scheme-correct.
+zot_scheme: "{{ 'https' if zot_tls_enabled | bool else 'http' }}"
+
+# Journal retention. Host-level rather than zot-specific, but zot is this
+# container's only role, so it lives here rather than in a one-setting role of
+# its own.
+#
+# systemd's default cap is 10% of the filesystem. On CT106's 40G rootfs that is
+# ~4G, and the journal had duly grown to 3.5G — more than half of everything
+# used on the disk, for a box whose actual workload is a 95MB Go binary. A cap
+# makes that bounded instead of merely slow.
+zot_journal_max_use: 200M

@@ -1,0 +1,131 @@
+# zot — deploy the OCI registry that replaces Nexus on LXC 106.
+#
+# Runs ALONGSIDE Nexus during migration (zot :5000, Nexus :8081/:8082) so the
+# replacement can be proven against the real images before anything cuts over.
+# Removing Nexus is a separate, explicit step (zot_remove_nexus).
+---
+- name: zot — require credentials
+  ansible.builtin.assert:
+    that:
+      - (zot_username | length) > 0
+      - (zot_password | length) > 0
+    fail_msg: >-
+      zot_username/zot_password must be supplied (the playbook reads them from
+      Vault at kv/services/registry). Never hardcode them in the role.
+    quiet: true
+
+- name: zot — cap the systemd journal
+  ansible.builtin.lineinfile:
+    path: /etc/systemd/journald.conf
+    regexp: '^#?SystemMaxUse='
+    line: "SystemMaxUse={{ zot_journal_max_use }}"
+  register: zot_journald_conf
+
+- name: zot — apply the journal cap now (vacuum to the new size)
+  ansible.builtin.command: "journalctl --vacuum-size={{ zot_journal_max_use }}"
+  when: zot_journald_conf is changed
+  changed_when: true
+
+- name: zot — restart journald so the cap holds going forward
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted
+  when: zot_journald_conf is changed
+
+- name: zot — config directory
+  ansible.builtin.file:
+    path: "{{ zot_config_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: zot — blob store directory
+  ansible.builtin.file:
+    path: "{{ zot_data_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: zot — is there already a certificate?
+  ansible.builtin.stat:
+    path: "{{ zot_lego_dir }}/certificates/{{ zot_hostname }}.crt"
+  register: zot_cert_stat
+  when: zot_tls_enabled | bool
+
+- name: zot — obtain TLS certificate
+  ansible.builtin.include_tasks: tls.yml
+  when: zot_tls_enabled | bool
+
+# bcrypt is the ONLY algorithm zot accepts in an htpasswd file — an md5/crypt
+# entry silently fails every login. Generated locally so the password never
+# reaches the host's process table or shell history.
+#
+# The salt is DERIVED, not random. `password_hash('bcrypt')` picks a fresh salt
+# on every call, so the rendered file differed every run, the copy always
+# reported `changed`, and the notify bounced the registry on every converge —
+# the role could never be a no-op. Deriving the salt from the credential itself
+# keeps it per-credential (bcrypt's actual requirement) while making the output
+# stable: same password in, same hash out, no restart unless it really changed.
+# sha256 hex is [0-9a-f], all of which are valid in bcrypt's salt alphabet.
+- name: zot — render htpasswd (bcrypt)
+  ansible.builtin.copy:
+    content: >-
+      {{ zot_username }}:{{ zot_password | password_hash('bcrypt',
+         ((zot_username ~ zot_password) | hash('sha256'))[:22]) }}
+    dest: "{{ zot_config_dir }}/htpasswd"
+    mode: "0640"
+  no_log: true
+  notify: restart zot
+
+- name: zot — render config
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: "{{ zot_config_dir }}/config.json"
+    mode: "0640"
+    validate: "python3 -c \"import json,sys; json.load(open('%s'))\""
+  notify: restart zot
+
+- name: zot — render compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ zot_config_dir }}/docker-compose.yml"
+    mode: "0640"
+  notify: restart zot
+
+- name: zot — bring the stack up
+  community.docker.docker_compose_v2:
+    project_src: "{{ zot_config_dir }}"
+    state: present
+    pull: missing
+
+- name: zot — wait for the registry API
+  ansible.builtin.uri:
+    url: "{{ zot_scheme }}://127.0.0.1:{{ zot_port }}/v2/"
+    # Loopback + no cert validation on purpose: this is a LIVENESS probe, not a
+    # trust check. The cert is issued for docker.pdlab.dev, so verifying it
+    # against 127.0.0.1 would always fail. Real trust is proven from the runner
+    # after the DNS flip.
+    validate_certs: false
+    # 401 is the correct answer from an authenticated registry: it proves the
+    # distribution API is live. Treating only 200 as healthy would hang forever.
+    status_code: [200, 401]
+    timeout: 10
+  register: zot_api
+  until: zot_api.status in [200, 401]
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: zot — verify an authenticated catalog read
+  ansible.builtin.uri:
+    url: "{{ zot_scheme }}://127.0.0.1:{{ zot_port }}/v2/_catalog"
+    validate_certs: false
+    url_username: "{{ zot_username }}"
+    url_password: "{{ zot_password }}"
+    force_basic_auth: true
+    timeout: 15
+  register: zot_catalog
+  changed_when: false
+  no_log: true
+
+- name: zot — report catalog
+  ansible.builtin.debug:
+    msg: "zot up on {{ zot_scheme }}://{{ zot_hostname }}:{{ zot_port }} — repositories: {{ zot_catalog.json.repositories | default([]) }}"

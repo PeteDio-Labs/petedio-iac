@@ -81,4 +81,10 @@
         svc=$(systemctl list-units --type=service --all --no-legend 'actions.runner.*' \
               | awk '{print $1}' | head -1)
         if [ -n "$svc" ]; then systemctl restart "$svc"; else echo "no runner svc found"; fi
+      args:
+        # `set -o pipefail` is a bashism. Ansible's shell module runs /bin/sh, which on
+        # Debian is dash -> "Illegal option -o pipefail" (hit for real on runner-233's
+        # first provision). Same fix already carried by configure-palworld-panel.yml,
+        # configure-resume-builder.yml and configure-plane.yml.
+        executable: /bin/bash
       changed_when: true
