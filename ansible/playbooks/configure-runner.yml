@@ -67,6 +67,30 @@
           field `pat`) and pass it as a no_log @file extra-var. See this play's header.
         quiet: true
 
+    # Tooling the WORKFLOWS assume but nothing installed. runner-232 has these from a manual
+    # setup; runner-233 came off the debian-12 template without them, and nothing in IaC put
+    # them there — the same un-IaC'd state this play's header exists to eliminate.
+    #
+    # It broke the first apply that landed on 233 (2026-08-14): hashicorp/setup-terraform
+    # extracts a .zip and died with "Unable to locate executable file: unzip". A second runner
+    # only adds capacity if it is interchangeable with the first — jobs land on whichever is
+    # free, so any gap becomes an intermittent, host-dependent CI failure.
+    #
+    #   unzip  hashicorp/setup-terraform unpacks the release zip — hard failure without it
+    #   jq     used across the workflows for JSON handling
+    #   sudo   several actions and scripts assume it exists (absent entirely on 233)
+    #   lsof   diagnostics when a job wedges holding a port
+    - name: Install the CI toolchain the workflows expect (runner parity)
+      ansible.builtin.apt:
+        name:
+          - unzip
+          - jq
+          - sudo
+          - lsof
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
     - name: Ensure the unprivileged runner user exists
       ansible.builtin.user:
         name: "{{ runner_user }}"
