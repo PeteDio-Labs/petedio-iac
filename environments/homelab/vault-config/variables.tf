@@ -79,3 +79,13 @@ variable "water_fast_repo" {
   type        = string
   default     = "PeteDio-Labs/petedio-water-fast"
 }
+
+# co-latro-admin repo, bound to its own colatro-admin-ci JWT role (auth.tf, PET-99). The
+# admin deploy workflow (Workflow B) runs from this repo and needs the admin-deploy creds
+# (admin DB URL + seam token + faasd gateway password + Nexus push + LXC SSH). Kept separate
+# from colatro_repos so the app repos never get the admin DB / gateway creds and vice-versa.
+variable "colatro_admin_repo" {
+  description = "owner/name of the co-latro-admin repo bound to the colatro-admin-ci JWT role."
+  type        = string
+  default     = "PeteDio-Labs/co-latro-admin"
+}
