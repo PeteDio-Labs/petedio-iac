@@ -78,7 +78,12 @@ cat > "$EVARS" <<JSON
 }
 JSON
 
-ansible-playbook playbooks/configure-poker-api.yml -e "@$EVARS" "${EXTRA_TAG[@]}"
+# `${EXTRA_TAG[@]+"${EXTRA_TAG[@]}"}` — NOT a bare `"${EXTRA_TAG[@]}"`. macOS ships bash
+# 3.2, where expanding an EMPTY array under `set -u` aborts with "EXTRA_TAG[@]: unbound
+# variable". Since EXTRA_TAG is empty unless IMAGE_TAG is passed, the bare form made this
+# script unrunnable on an operator Mac in its default mode — which is exactly the mode you
+# need it in when you are trying to recover a service.
+ansible-playbook playbooks/configure-poker-api.yml -e "@$EVARS" ${EXTRA_TAG[@]+"${EXTRA_TAG[@]}"}
 
 step "Done — Co-latro rolled out to LXC 230."
 echo "Smoke test: see docs/runbooks/poker-api-deploy.md."
