@@ -24,15 +24,25 @@ API="$BASE/api/v1"
 CURL=(curl -sS --max-time 20 -H "X-API-Key: $KEY" -H "Content-Type: application/json")
 
 step "Resolving the workspace"
-if [ -z "$WS" ]; then
-  WS=$("${CURL[@]}" "$API/workspaces/" 2>/dev/null | python3 -c "
-import sys,json
-try: d=json.load(sys.stdin)
-except Exception: sys.exit(0)
-rows = d.get('results', d if isinstance(d,list) else [])
-print(rows[0]['slug'] if rows else '')" )
-fi
-[ -n "$WS" ] || die "no workspace found — create one in the UI first, or set PLANE_WORKSPACE."
+# Plane has NO list-workspaces endpoint. Every public route is scoped under
+# /workspaces/<slug>/, as plane-sync.sh:50 has always done, so the slug is an INPUT and
+# there is nothing to discover. This block used to call GET /api/v1/workspaces/, get
+# nothing back because the route does not exist, and die with "no workspace found —
+# create one in the UI first" while a workspace plainly existed.
+WS="${WS:-petedio}"
+
+# Validating against a workspace-scoped route checks the key and the slug at once, and
+# distinguishes the failures instead of blaming the token for all of them. The status is
+# what matters, not the body: before this script has run, an EMPTY project list is the
+# correct answer.
+WS_CODE=$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/workspaces/$WS/projects/" 2>/dev/null)
+case "$WS_CODE" in
+  200)     : ;;
+  401|403) die "the API key was rejected (HTTP $WS_CODE). Regenerate it at $BASE/settings/profile/api-tokens/ (note: /settings/, the shorter path redirects)." ;;
+  404)     die "workspace '$WS' not found (HTTP 404). Create it in the UI, or set PLANE_WORKSPACE=<slug>." ;;
+  000)     die "no response from $BASE — is Tailscale up?" ;;
+  *)       die "unexpected HTTP $WS_CODE from $API/workspaces/$WS/projects/" ;;
+esac
 echo "  workspace: $WS"
 
 step "Project with identifier PET"
