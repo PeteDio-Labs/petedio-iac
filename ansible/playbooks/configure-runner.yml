@@ -127,23 +127,55 @@
       no_log: true
       when: (not runner_config.stat.exists) or (runner_force_reconfigure | default(false) | bool)
 
+    # config.sh refuses to run as root, so privileges must drop to the runner user — but
+    # NOT via `become_user`. Ansible's unprivileged become has to hand its temp module file
+    # to the target user, which needs `acl` installed (or a world-readable temp dir); this
+    # minimal Debian LXC template has neither. The module's own JSON output gets mangled and
+    # the task dies with:
+    #
+    #   Module result deserialization failed: No start of json char found
+    #
+    # `no_log: true` (correct — the line carries the registration token) then censors the
+    # output, so the cause is invisible. That is exactly how runner-233 ended up built,
+    # running, and never registered: PET-128 read Done, the container was up, and the org
+    # API reported total_count 1 for weeks. Dropping privileges with `su` from the root
+    # connection reaches the same end state without the unprivileged-become machinery.
     - name: Configure (register) the runner with the org
       ansible.builtin.command:
         cmd: >-
-          ./config.sh --unattended --replace
+          su {{ runner_user }} -s /bin/bash -c
+          './config.sh --unattended --replace
           --url {{ runner_org_url }}
           --token {{ runner_reg_token.json.token }}
           --name {{ inventory_hostname }}
-          --labels {{ runner_labels }}
+          --labels {{ runner_labels }}'
         chdir: "{{ runner_home }}"
-      # config.sh refuses to run as root; run as the unprivileged runner user.
-      become: true
-      become_user: "{{ runner_user }}"
       no_log: true
       # A registration always mutates the runner's config when it runs (it's guarded by the
       # when: below to only run when (re)configuring), so report changed.
       changed_when: true
       when: (not runner_config.stat.exists) or (runner_force_reconfigure | default(false) | bool)
+
+    # The task above must stay no_log, so a failure inside it is unreadable. Assert on the
+    # observable side effect instead: registration writes `.runner`. This turns a silent,
+    # censored failure into a loud one that says what to run to see the real error.
+    - name: Verify the registration actually took (.runner marker)
+      ansible.builtin.stat:
+        path: "{{ runner_home }}/.runner"
+      register: runner_marker
+
+    - name: Fail loudly if the runner did not register
+      ansible.builtin.assert:
+        that: runner_marker.stat.exists
+        fail_msg: >-
+          config.sh did not create {{ runner_home }}/.runner — the runner is NOT registered,
+          whatever the preceding task reported. That task is no_log (it carries the token),
+          so reproduce it by hand on {{ inventory_hostname }} to see the real error:
+          cd {{ runner_home }} && su {{ runner_user }} -s /bin/bash -c
+          './config.sh --unattended --replace --url {{ runner_org_url }} --token <fresh> ...'
+          Mint <fresh> with:
+          gh api -X POST /orgs/PeteDio-Labs/actions/runners/registration-token --jq .token
+        success_msg: "registered — {{ runner_home }}/.runner present"
 
     - name: Install the runner systemd service (svc.sh install)
       ansible.builtin.command:
