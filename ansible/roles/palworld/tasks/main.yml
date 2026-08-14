@@ -134,6 +134,10 @@
     owner: "{{ palworld_user }}"
     group: "{{ palworld_group }}"
     mode: "0644"
+  # The server reads this file only at start, so a changed tunable is inert until it
+  # restarts. Byte-identical on a CI apply (see the password preservation above), so this
+  # notifies only when someone actually changed a setting. See handlers/main.yml.
+  notify: Restart palworld
 
 # Pin which save the server loads. GameUserSettings.ini only exists once the server has
 # run at least once, and the server REWRITES it on shutdown — so this is a converge-time

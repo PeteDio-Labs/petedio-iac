@@ -6,3 +6,23 @@
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
+
+# PalWorldSettings.ini is read at process start, so a settings change does nothing until
+# the server restarts. Without this handler a converge that edits a tunable reports
+# `changed` and leaves the running server on the OLD config — silently ineffective, which
+# is worse than either restarting or refusing.
+#
+# This does NOT fire on CI merge-applies. The apply's Vault role cannot read the game
+# passwords, so PET-278's preservation tasks re-read them from the live host and the
+# render comes out byte-identical — no change, no notify. It fires when an operator
+# actually changes a tunable, which is exactly when a restart is wanted.
+#
+# The guard matters on a prep-only converge (palworld_install_binaries=false): there is no
+# unit to restart there, and an unguarded handler would fail the run.
+- name: Restart palworld
+  ansible.builtin.systemd:
+    name: "{{ palworld_service_name }}"
+    state: restarted
+  when:
+    - palworld_install_binaries | bool
+    - palworld_enable_service | bool
