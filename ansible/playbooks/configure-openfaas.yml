@@ -162,6 +162,10 @@
     - name: Log in to the gateway with faasd's own password (read from disk; file has no newline)
       ansible.builtin.shell:
         cmd: "set -o pipefail; cat {{ faasd_secrets_dir }}/basic-auth-password | {{ faas_cli }} login --gateway {{ faasd_gateway }} -u admin --password-stdin"
+      args:
+        # Same bashism as above — /bin/sh is dash on Debian and rejects `set -o pipefail`.
+        # Latent here (gated behind openfaas_smoke_test) but it would fail the same way.
+        executable: /bin/bash
       register: faas_login
       changed_when: false
       no_log: true
