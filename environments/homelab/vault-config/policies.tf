@@ -451,3 +451,29 @@ resource "vault_policy" "plane_ci" {
     }
   EOT
 }
+
+# infra-reconcile: reads the cluster and files drift as work items (PET-294).
+#
+# This is deliberately NOT a second path on plane-ci. The warning above is exact —
+# plane-ci is mintable from a `pull_request` subject, so anything infrastructural
+# added there is reachable from a fork's PR, which is precisely the PET-104 exposure.
+#
+# The safe counterpart is a separate policy on a MAIN-ONLY role: the reconciler runs
+# from `schedule` on petedio-vault's default branch, whose subject
+# (`...:ref:refs/heads/main`) no fork can present. Same split plane-reconcile relies on.
+#
+# Blast radius: read the Proxmox token (which is itself read-only against the cluster)
+# and the Plane PAT. It cannot write to either — the reconciler files work items and
+# never touches infrastructure.
+resource "vault_policy" "infra_reconcile" {
+  name = "infra-reconcile"
+
+  policy = <<-EOT
+    path "kv/data/iac/proxmox" {
+      capabilities = ["read"]
+    }
+    path "kv/data/services/plane" {
+      capabilities = ["read"]
+    }
+  EOT
+}
