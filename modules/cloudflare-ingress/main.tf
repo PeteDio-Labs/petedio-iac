@@ -92,4 +92,27 @@ resource "cloudflare_zero_trust_access_application" "route" {
   # element passes `terraform validate` (the for_each .id is unknown at validate time) but
   # FAILS the apply plan with "object required, but have string". Use the { id = ... } form.
   policies = [{ id = cloudflare_zero_trust_access_policy.route[each.key].id }]
+
+  # Managed OAuth (PET-292). Present only for routes that asked for it, so every
+  # existing app keeps oauth_configuration unset and plans clean.
+  #
+  # Dynamic client registration is enabled here because that is how the MCP client
+  # obtains a client_id: it registers itself against Access. `allowed_uris` is the
+  # security boundary on that — only these redirect targets can be registered, so
+  # keep it to the exact client callbacks, never a wildcard host.
+  oauth_configuration = each.value.managed_oauth == null ? null : {
+    enabled = each.value.managed_oauth.enabled
+
+    dynamic_client_registration = {
+      enabled                = true
+      allowed_uris           = each.value.managed_oauth.allowed_redirect_uris
+      allow_any_on_localhost = false
+      allow_any_on_loopback  = each.value.managed_oauth.allow_any_on_loopback
+    }
+
+    grant = {
+      access_token_lifetime = each.value.managed_oauth.access_token_lifetime
+      session_duration      = each.value.managed_oauth.session_duration
+    }
+  }
 }
