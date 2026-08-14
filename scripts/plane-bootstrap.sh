@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# plane-bootstrap.sh — create the PET project, prove the sequence_id decision, and add
-# the "In Review" state the CI ladder needs.
+# plane-bootstrap.sh — create the PET project and add the "In Review" state the CI
+# ladder needs.
 #
 # RUN THIS AFTER creating the instance admin at http://192.168.50.235:8080/god-mode/
-# and generating a personal access token (Profile settings -> Personal access tokens).
-# Account creation is deliberately NOT automated here.
+# and generating a personal access token (Profile settings -> Personal access tokens,
+# i.e. /settings/profile/api-tokens/). Account creation is deliberately NOT automated.
 #
 #   PLANE_API_KEY=plane_api_... ./scripts/plane-bootstrap.sh
 #
-# Idempotent: re-running finds the existing project and state and changes nothing.
+# Idempotent, and now actually so: re-running finds the existing project and state and
+# creates nothing. It no longer probes sequence_id — see the note below for why that
+# question is closed and where work-item numbering really lives.
 set -uo pipefail
 
 BASE="${PLANE_BASE_URL:-http://192.168.50.235:8080}"
 WS="${PLANE_WORKSPACE:-}"
 KEY="${PLANE_API_KEY:-}"
-SEQ_START="${PLANE_SEQ_START:-287}"
 
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -65,34 +66,28 @@ else
 fi
 
 # ---------------------------------------------------------------------------------
-# THE DECISION THIS SCRIPT EXISTS TO SETTLE.
+# THE NUMBERING QUESTION — SETTLED 2026-08-13. DO NOT RE-PROBE.
 #
-# Plane assigns sequence_id itself, starting at 1. The create-work-item API *lists*
-# sequence_id as an accepted body field but does not document whether it is honoured.
-# Every commit, branch and PR title in the estate carries PET-<n>, so continuing from
-# 287 rather than restarting at 1 is worth one experiment.
+# There used to be an experiment here that POSTed a work item with an explicit
+# sequence_id to find out whether the API honoured it. It does not, and never could:
+# Issue.save() overwrites the field unconditionally on insert. From Plane's own source
+# at the deployed tag v1.4.1, apps/api/plane/db/models/issue.py:
+#
+#     last_sequence = IssueSequence.objects.filter(project=self.project).aggregate(
+#         largest=models.Max("sequence"))["largest"]
+#     self.sequence_id = last_sequence + 1 if last_sequence else 1
+#
+# So the probe could only ever come back "IGNORED", while creating a junk work item on
+# every run of a script whose header promises idempotence. It is gone.
+#
+# The counter is the `issue_sequences` table (column `sequence`, keyed by project) —
+# NOT issues.sequence_id, which is only the display number. To continue numbering,
+# raise max(sequence) for the project; the next work item gets max+1. Deleting items
+# does not roll it back (issue_sequences.issue is ON DELETE SET_NULL, deliberately).
+#
+# Done once for PET at 286 so the first real item became PET-287. Full method, guards
+# and evidence: vault Projects/plane-handoff.md.
 # ---------------------------------------------------------------------------------
-step "Does the API honour an explicit sequence_id?"
-RESP=$("${CURL[@]}" -X POST "$API/workspaces/$WS/projects/$PID/work-items/" \
-  -d "{\"name\":\"Numbering probe — safe to delete\",\"sequence_id\":$SEQ_START}" 2>/dev/null)
-GOT=$(printf '%s' "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('sequence_id',''))" 2>/dev/null)
-WID=$(printf '%s' "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
-
-if [ "$GOT" = "$SEQ_START" ]; then
-  echo "  ✅ HONOURED — the probe is PET-$GOT. Numbering continues from Linear."
-  echo "     Keep this work item as PET-$SEQ_START (rename it) or delete it and re-create."
-else
-  echo "  ❌ IGNORED — asked for $SEQ_START, got ${GOT:-<none>}."
-  cat <<'EOF'
-     Fall back, in order of preference:
-       1. Set the counter in Postgres on 231 (self-hosting is what makes this legitimate).
-       2. Burn numbers: create and delete throwaway items until the counter reaches 287.
-          Plane does not roll the counter back on delete.
-       3. Accept PET-1 and treat the old range as historical. Last resort — it makes
-          every PET-<n> in git ambiguous.
-EOF
-fi
-[ -n "$WID" ] && echo "  probe work item id: $WID"
 
 step "State: In Review"
 STATES=$("${CURL[@]}" "$API/workspaces/$WS/projects/$PID/states/?per_page=100" 2>/dev/null)
