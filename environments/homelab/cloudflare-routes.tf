@@ -106,6 +106,40 @@ module "cloudflare_ingress" {
         "antonio.meletich@gmail.com", # Marcos
       ]
     }
+
+    # Plane MCP, reachable from the phone (PET-292). This is the FIRST route using
+    # Managed OAuth, and it is a different shape from every entry above: those gate a
+    # BROWSER, this gates an MCP client that speaks OAuth and never renders a page.
+    #
+    # Origin is the Caddy shim on plane-235 (:8790), not the MCP server itself. Caddy
+    # swaps Claude's opaque Access token for the Plane PAT — the server's /http/api-key
+    # mount wants the PAT in a header, and it is the only mount that runs no OAuth of
+    # its own, which is exactly what Managed OAuth requires of an origin.
+    #
+    # Why the origin is a LAN address and not loopback: cloudflared runs on LXC 112, a
+    # DIFFERENT host, so a 127.0.0.1 bind on 235 would be unreachable. Caddy's Access-JWT
+    # check is what gates this, not the bind address (the MCP server itself is loopback-only
+    # behind Caddy and is never published to the LAN).
+    #
+    # access_emails is the WHOLE authorization boundary here. The shim holds a service PAT,
+    # so anyone who passes Access acts as its owner in Plane — keep this list to one person.
+    "mcp.pdlab.dev" = {
+      service       = "http://192.168.50.235:8790"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+
+      managed_oauth = {
+        # Claude's connector callback. This list is the security boundary on dynamic
+        # client registration — only these redirect targets can ever be registered.
+        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+
+        # Short-lived tokens, long-lived grant: the phone re-auths silently for a week
+        # rather than bouncing to Authentik every 15 minutes.
+        access_token_lifetime = "15m"
+        session_duration      = "168h"
+      }
+    }
   }
 }
 

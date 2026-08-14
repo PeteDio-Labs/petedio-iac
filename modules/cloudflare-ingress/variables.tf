@@ -32,6 +32,18 @@ variable "routes" {
           allowed_idps        = ["<authentik-idp-id>"] # from PET-38 (OIDC); empty -> OTP login
           access_email_domain = "pdlab.dev"            # gate by email DOMAIN, or...
           access_emails       = ["you@example.com"]    # ...gate to specific email(s) (takes precedence)
+
+          # Managed OAuth — turns this Access app into an OAuth 2.1 authorization
+          # server for NON-BROWSER clients (MCP, CLIs, agents). With it on, Access
+          # answers 401 + WWW-Authenticate instead of redirecting, and serves
+          # discovery metadata. Only set this for an origin that does NOT run its
+          # own OAuth: Cloudflare documents Managed OAuth as incompatible with
+          # apps that emit their own WWW-Authenticate.
+          managed_oauth = {
+            allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+            access_token_lifetime = "15m"
+            session_duration      = "168h"
+          }
         }
       }
   EOT
@@ -44,6 +56,16 @@ variable "routes" {
     access_email_domain = optional(string)
     access_emails       = optional(list(string), [])
     session_duration    = optional(string, "24h")
+
+    # Omit entirely for ordinary browser-gated apps (the default): a null here
+    # leaves oauth_configuration unset, which is the pre-Managed-OAuth behaviour.
+    managed_oauth = optional(object({
+      enabled               = optional(bool, true)
+      allowed_redirect_uris = optional(list(string), [])
+      allow_any_on_loopback = optional(bool, false)
+      access_token_lifetime = optional(string, "15m")
+      session_duration      = optional(string, "168h")
+    }))
   }))
   default = {}
 }
