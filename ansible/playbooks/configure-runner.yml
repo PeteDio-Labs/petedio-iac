@@ -80,6 +80,32 @@
     #   jq     used across the workflows for JSON handling
     #   sudo   several actions and scripts assume it exists (absent entirely on 233)
     #   lsof   diagnostics when a job wedges holding a port
+    #   gh     the GitHub CLI — see PET-298. plane-reconcile called `gh pr list` and died
+    #          `command not found` (exit 127) on EVERY nightly run since the workflow
+    #          landed; nobody noticed because a scheduled job's failure is silent. That
+    #          job now uses curl, so nothing depends on gh today — but this list is
+    #          precisely "what a workflow may assume is here", and on a GitHub Actions
+    #          runner gh is the most obvious next reach. Installing it closes the gap
+    #          rather than waiting for the next workflow to rediscover it.
+    #
+    # gh is NOT in Debian's repos, so it needs GitHub's own apt source. Same
+    # get_url-key + signed-by pattern configure-runner-docker.yml uses for Docker.
+    # The key is served as BINARY OpenPGP (not ASCII-armored), hence .gpg not .asc —
+    # an .asc extension here makes apt reject the signature.
+    - name: Add the GitHub CLI apt signing key
+      ansible.builtin.get_url:
+        url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+        dest: /usr/share/keyrings/githubcli-archive-keyring.gpg
+        mode: "0644"
+
+    - name: Add the GitHub CLI apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg]
+          https://cli.github.com/packages stable main
+        filename: githubcli
+        state: present
+
     - name: Install the CI toolchain the workflows expect (runner parity)
       ansible.builtin.apt:
         name:
@@ -87,6 +113,7 @@
           - jq
           - sudo
           - lsof
+          - gh
         state: present
         update_cache: true
         cache_valid_time: 3600
