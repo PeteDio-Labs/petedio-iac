@@ -77,8 +77,23 @@ jobs:
           SINCE=$(date -u -d "-${LOOKBACK} days" +%Y-%m-%d 2>/dev/null || date -u -v-"${LOOKBACK}"d +%Y-%m-%d)
           echo "Re-checking PRs merged since $SINCE"
 
-          gh pr list --repo "$GITHUB_REPOSITORY" --state merged --limit 100 \
-            --json number,headRefName,mergedAt,url > /tmp/merged.json
+          # Deliberately curl, not `gh`. This job runs on the homelab self-hosted
+          # runner, and nothing in ansible/ ever installs the GitHub CLI — so
+          # `gh pr list` died with "command not found" (exit 127) on 2026-08-15 and
+          # every night before it. curl is already a hard dependency of the runner
+          # image, so this removes an unmanaged binary rather than adding one.
+          # REST has no "merged" state filter; closed-unmerged PRs come back with
+          # merged_at=null and are dropped by plane-merged-since.py.
+          http=$(curl -sS -w '%{http_code}' -o /tmp/merged.json \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls?state=closed&sort=updated&direction=desc&per_page=100")
+          if [ "$http" != "200" ]; then
+            echo "::error title=plane-reconcile::GitHub API returned HTTP $http"
+            head -c 400 /tmp/merged.json
+            exit 1
+          fi
 
           python3 scripts/plane-merged-since.py /tmp/merged.json "$SINCE" > /tmp/todo.tsv
           echo "in window: $(wc -l < /tmp/todo.tsv) PR(s)"
