@@ -26,3 +26,24 @@ TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API token
 
 ## If you are the autonomous loop
 Work **only** `agent-ok` **Platform** issues in this repo; **never merge** (the loop's token is scoped to push + open PRs). Follow the Linear doc **Agent Loop Operations** for the full per-iteration protocol.
+
+## Writing style
+
+Write in **Google developer documentation style** — the standing default for prose
+in this repo: PR descriptions, commit bodies, work-item comments, docs, and code
+comments.
+
+- **Second person.** The reader is *you*; use *I* for yourself, never *we* for the reader.
+- **Active voice.** Name who does the thing.
+- **Conditions before instructions:** *To rebuild the index, run X* — not *Run X if
+  you want to rebuild the index.*
+- **Answer first**, detail after.
+- **Cut filler:** *just*, *simply*, *easy*, *please note*, *in order to*. Never call
+  something easy.
+- **No time-anchored words** in durable prose: *currently*, *new*, *now*, *latest*,
+  *existing*.
+- **Sentence case** headings; code font for paths, commands, flags, and `PET-<n>` keys.
+- Sentences under 26 words. Write *lets you* not *allows you to*, *run* not *execute*.
+
+This governs how sentences are written, not how many. Don't restyle prose you aren't
+already editing.
