@@ -353,14 +353,18 @@
   delay: 10
   until: palworld_steamcmd is not failed
 
-# Enable on boot + start now (binaries are present). Gated on the binaries being
-# installed so we never try to start a unit whose ExecStart doesn't exist yet.
-- name: Enable + start the Palworld service (auto-starts on container/host boot)
+# Set the unit's BOOT autostart, and nothing else. There is deliberately no
+# `state: started` here: the panel is the only thing that starts this server
+# (2026-08-18). An apply that started a server Pedro had stopped would be the same
+# drift-revives-a-stopped-resource trap .agent/lessons.md records for TF-managed
+# containers — and it is not hypothetical, the 2026-08-18 PET-302 apply did exactly
+# that before this change.
+#
+# Gated on the binaries being installed so we never touch a unit whose ExecStart does
+# not exist yet.
+- name: Set the Palworld unit's boot autostart (never starts it — the panel does that)
   ansible.builtin.systemd:
     name: "{{ palworld_service_name }}"
-    enabled: true
-    state: started
+    enabled: "{{ palworld_service_autostart | bool }}"
     daemon_reload: true
-  when:
-    - palworld_install_binaries | bool
-    - palworld_enable_service | bool
+  when: palworld_install_binaries | bool
