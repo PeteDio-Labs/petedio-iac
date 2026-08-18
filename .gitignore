@@ -20,3 +20,7 @@ plan.txt
 # Secrets
 *.pem
 .secrets/
+
+# Python bytecode caches (scripts/*.py are run directly, never imported as a package)
+__pycache__/
+*.py[cod]
