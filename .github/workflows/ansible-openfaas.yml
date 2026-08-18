@@ -7,7 +7,7 @@ on:
   pull_request:
     paths:
       - ansible/playbooks/configure-openfaas.yml
-      - ansible/inventory/hosts.yml
+      - ansible/inventory/openfaas.yml
       - .github/workflows/ansible-openfaas.yml
       - .github/workflows/ansible-stack.yml
   # NB: ansible-stack.yml is deliberately in pull_request.paths ONLY — shared-logic edits
@@ -17,7 +17,7 @@ on:
     branches: [main]
     paths:
       - ansible/playbooks/configure-openfaas.yml
-      - ansible/inventory/hosts.yml
+      - ansible/inventory/openfaas.yml
       - .github/workflows/ansible-openfaas.yml
 
 # Serialize runs of this workflow: two fast merges would race two ansible applies

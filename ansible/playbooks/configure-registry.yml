@@ -12,7 +12,7 @@
 # separate, deliberate step.
 ---
 - name: Registry (zot) on the nexus LXC
-  hosts: nexus
+  hosts: registry
   gather_facts: true
   pre_tasks:
     # Read via the `vault` CLI rather than the community.hashi_vault lookup: the

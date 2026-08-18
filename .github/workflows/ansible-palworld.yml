@@ -10,7 +10,7 @@ on:
     paths:
       - ansible/playbooks/configure-palworld.yml
       - ansible/roles/palworld/**
-      - ansible/inventory/hosts.yml
+      - ansible/inventory/palworld.yml
       - ansible/inventory/group_vars/palworld.yml
       - ansible/inventory/host_vars/palworld-mc.yml
       - .github/workflows/ansible-palworld.yml
@@ -23,7 +23,7 @@ on:
     paths:
       - ansible/playbooks/configure-palworld.yml
       - ansible/roles/palworld/**
-      - ansible/inventory/hosts.yml
+      - ansible/inventory/palworld.yml
       - ansible/inventory/group_vars/palworld.yml
       - ansible/inventory/host_vars/palworld-mc.yml
       - .github/workflows/ansible-palworld.yml
