@@ -21,13 +21,32 @@
 # Values below are the LIVE config, read read-only via scripts/proxmox-ro-config.sh pve01 106
 # (PVEAuditor token — no mutation) so the import plans as a no-op without guessing specs.
 #
-# IMPORT-ONLY (operator, see docs/runbooks/nexus-import.md — the loop never imports/applies):
+# IMPORT-ONLY (operator, see docs/runbooks/registry-import.md — the loop never imports/applies):
 #   terraform -chdir=environments/homelab import \
-#     'module.nexus.proxmox_virtual_environment_container.this' pve01/106
+#     'module.registry.proxmox_virtual_environment_container.this' pve01/106
 # then `terraform plan` MUST be a no-op (modulo the documented cosmetic description/tags
 # fields). Any add/change/destroy of the LXC, NIC, or mount is a STOP-and-reassess.
 
-module "nexus" {
+# ---------------------------------------------------------------------- moved --
+# Renaming a module changes its RESOURCE ADDRESS, not just a label. Without this
+# block Terraform reads `module.nexus` as deleted and `module.registry` as new,
+# and plans to DESTROY AND RECREATE LXC 106 — a live registry with an NFS blob
+# store. `moved` re-addresses it in state instead, so the plan shows no change.
+#
+# The old name is Nexus, the software this container stopped running on
+# 2026-08-11 (PET-301). The storage-layer names — the `nexus-data` LV, the mount
+# paths, and the hostname `nexus-registry` — deliberately still say nexus: those
+# take the registry offline to change and are paired with the pve02 storage
+# reshape, which recarves the LVs anyway. See vault Projects/registry-storage-reshape.
+#
+# Keep this block after the apply that consumes it. Removing it later re-plans
+# the destroy for anyone whose state predates the rename.
+moved {
+  from = module.nexus
+  to   = module.registry
+}
+
+module "registry" {
   source = "../../modules/proxmox-lxc"
 
   vm_id        = 106
@@ -76,5 +95,5 @@ module "nexus" {
 
 output "nexus_id" {
   description = "VMID of the registry container (zot, ex-Nexus)."
-  value       = module.nexus.vm_id
+  value       = module.registry.vm_id
 }

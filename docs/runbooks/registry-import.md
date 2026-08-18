@@ -4,7 +4,7 @@ This runbook covers the **manual, one-time operator steps** to bring the **alrea
 Nexus registry container — `nexus-registry`, LXC **106** on **pve01**, `192.168.50.111`,
 behind `registry.pdlab.dev` + `docker.pdlab.dev` — under `petedio-iac` management
 **without recreating it**. Linear: **PET-122** (decision: PET-101). The container is
-declared in `environments/homelab/nexus.tf` as `module.nexus`.
+declared in `environments/homelab/registry.tf` as `module.registry`.
 
 > [!CAUTION]
 > **`terraform import` rewrites the SHARED MinIO state.** Single-operator procedure on a
@@ -17,14 +17,14 @@ declared in `environments/homelab/nexus.tf` as `module.nexus`.
 
 ## Why import first (do not skip this)
 
-`module.nexus` is in config but the running container is **not** in Terraform state. A bare
+`module.registry` is in config but the running container is **not** in Terraform state. A bare
 `terraform apply` would plan to **create** LXC 106 from scratch — against a VMID that already
 exists, that is destructive/failing, and it would clobber the **load-bearing NFS-backed blob
 store** bind mount. Importing writes the live container into state **first**, so the
 subsequent plan is a diff against reality (ideally empty) instead of a create-from-nothing.
 
 This container was **not** created by `modules/proxmox-lxc` — it's a community-scripts
-"Docker LXC". `nexus.tf` + the PET-122 module knobs were authored to match its **live** config
+"Docker LXC". `registry.tf` + the PET-122 module knobs were authored to match its **live** config
 (read read-only via `scripts/proxmox-ro-config.sh pve01 106`), specifically:
 
 | Live (`pct config` equivalent)                         | How it's captured |
@@ -45,7 +45,7 @@ bpg's container import ID is `<node>/<vmid>`.
 
 | Resource address (TF)                               | Live object | Import ID  |
 |-----------------------------------------------------|-------------|------------|
-| `module.nexus.proxmox_virtual_environment_container.this` | LXC 106 on pve01 | `pve01/106` |
+| `module.registry.proxmox_virtual_environment_container.this` | LXC 106 on pve01 | `pve01/106` |
 
 ---
 
@@ -54,12 +54,12 @@ bpg's container import ID is `<node>/<vmid>`.
 ```sh
 cd environments/homelab
 
-# 0. Pre-flight: confirm the live specs nexus.tf was written against haven't drifted.
+# 0. Pre-flight: confirm the live specs registry.tf was written against haven't drifted.
 #    (read-only; from the loop host or anywhere with the PVEAuditor token)
 ../../scripts/proxmox-ro-config.sh pve01 106
 
 # 1. Import the running container into state.
-terraform import 'module.nexus.proxmox_virtual_environment_container.this' pve01/106
+terraform import 'module.registry.proxmox_virtual_environment_container.this' pve01/106
 
 # 2. The acceptance gate: this plan MUST be a no-op for the LXC/NIC/mount.
 terraform plan
@@ -73,7 +73,7 @@ terraform plan
   the module knobs.
 - **Expected cosmetic, non-destructive diffs** (safe to apply; both are UI-notes fields, not
   runtime behaviour):
-  - `description` — community-scripts ships a big HTML blob; `nexus.tf` sets a clean
+  - `description` — community-scripts ships a big HTML blob; `registry.tf` sets a clean
     TF-managed string. The plan will show this one-field update.
   - `tags` — the live container has a whitespace-only `tags` value that bpg may normalise.
   - State-side noise, not API mutations: `+ vm_id = 106` and `+ timeout_*` lines (import
