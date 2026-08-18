@@ -1,0 +1,36 @@
+# palworld — a SEPARATE inventory source, deliberately not part of hosts.yml.
+#
+# WHY ITS OWN FILE. ansible-palworld.yml watches its inventory under push.paths,
+# so every edit to the file holding this group re-applies configure-palworld.yml
+# on merge. While that file was hosts.yml, a one-line comment fix anywhere in the
+# shared inventory revalidated 12-15 GB of SteamCMD binaries on the live game
+# host the family plays on. Splitting the group out means only a real change to
+# THIS group can trigger that apply (PET-302).
+#
+# palworld — the Palworld 1.0 dedicated game server + co-located control panel, fully
+# provisioned by configure-palworld.yml (PET-157) and configure-palworld-panel.yml
+# (PET-266): SteamCMD + steam user + server binaries (app 2394010) + a systemd unit
+# enabled & started. Applied on merge by the ansible-palworld.yml workflow. Ran on LXC
+# 234 until the PET-266 cutover moved it to baremetal; root over the fleet ansible key.
+# See docs/runbooks/palworld-baremetal-cutover.md.
+---
+all:
+  children:
+    palworld:
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
+        # PET-168: dual-homed onto the .86 mesh — open 8211/udp from that segment too.
+        palworld_mesh_enabled: true
+      hosts:
+        # The live game host since the PET-266 cutover: the ex-mission-control laptop
+        # (Pop!_OS 24.04), wired straight into the .86 play segment in the same room as the
+        # clients. Not a container — no Terraform owns it; host_vars/palworld-mc.yml carries
+        # the physical-host flags. It TOOK OVER 192.168.86.234 from the retired LXC so no
+        # player had to re-enter a server IP.
+        #
+        # palworld-234 (the LXC) is deliberately absent: it is stopped and held that way by
+        # `start_on_boot = false` in palworld.tf, kept only as a rollback until that file is
+        # deleted. Listing an unreachable host here would fail every apply for the group.
+        palworld-mc:
+          ansible_host: 192.168.86.234

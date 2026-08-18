@@ -1,0 +1,20 @@
+# openfaas — a SEPARATE inventory source, deliberately not part of hosts.yml.
+#
+# WHY ITS OWN FILE. ansible-openfaas.yml watches its inventory under push.paths,
+# so every edit to the file holding this group re-applies configure-openfaas.yml
+# to LXC 241 on merge. While that file was hosts.yml, an unrelated one-line
+# change anywhere in the shared inventory was enough to redeploy faasd. Splitting
+# the group out means only a real change to THIS group can trigger it (PET-302).
+#
+# openfaas (LXC 241) — homelab serverless (faasd) host, configured by
+# configure-openfaas.yml (PET-86). TF-created LXC; Ansible installs faasd.
+---
+all:
+  children:
+    openfaas:
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
+      hosts:
+        openfaas-241:
+          ansible_host: 192.168.50.241
