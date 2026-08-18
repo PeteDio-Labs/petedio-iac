@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Managed by Ansible — roles/uptime-kuma/templates/kuma-backup.sh.j2 (petedio-iac).
+#
+# Backs kuma.db up to the HDD-backed NFS export on pve02, so an SD-card failure
+# cannot take the study's baseline with it.
+#
+# Writes STRAIGHT to the share. That is deliberate: staging a copy on the SD card
+# first would add exactly the writes this is meant to spare.
+set -euo pipefail
+
+DB={{ uptime_kuma_data_dir }}/kuma.db
+MOUNT={{ uptime_kuma_backup_mount }}
+DEST="$MOUNT/{{ uptime_kuma_backup_subdir }}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+OUT="$DEST/kuma-$STAMP.db"
+
+# Poke the mount point so systemd's automount triggers, then PROVE the share is
+# really mounted before writing a byte.
+#
+# This check is the whole point of the guard. Without it, an inactive automount
+# leaves $MOUNT as an ordinary empty directory on the SD card, and the backup
+# writes there, reports success, and quietly does the opposite of its job — it
+# ADDS SD writes and stores the only copy on the disk it was protecting against.
+# That is not hypothetical: it is what this script did before the check existed.
+ls "$MOUNT" >/dev/null 2>&1 || true
+if ! findmnt --types nfs,nfs4 --target "$MOUNT" >/dev/null 2>&1; then
+  echo "$MOUNT is not an NFS mount — refusing to write to the SD card. Skipping." >&2
+  exit 0
+fi
+
+mkdir -p "$DEST"
+sqlite3 "$DB" ".backup '$OUT'"
+
+# A liveness check is not a correctness check: sqlite3 exits 0 having written a
+# perfectly valid EMPTY database. Assert the data actually made it, and throw
+# away a backup that did not rather than letting it rotate a good one out.
+if ! sqlite3 "$OUT" "PRAGMA integrity_check;" | grep -qx ok; then
+  echo "integrity check FAILED for $OUT — removing" >&2
+  rm -f "$OUT"; exit 1
+fi
+BEATS="$(sqlite3 "$OUT" 'SELECT COUNT(*) FROM heartbeat;')"
+MONS="$(sqlite3 "$OUT" 'SELECT COUNT(*) FROM monitor;')"
+if [ "$MONS" -lt 1 ] || [ "$BEATS" -lt 1 ]; then
+  echo "backup is empty (monitors=$MONS beats=$BEATS) — removing" >&2
+  rm -f "$OUT"; exit 1
+fi
+
+echo "ok $OUT monitors=$MONS beats=$BEATS bytes=$(stat -c%s "$OUT")"
+
+# Prune oldest, newest {{ uptime_kuma_backup_keep }} kept.
+ls -1t "$DEST"/kuma-*.db 2>/dev/null | tail -n +{{ uptime_kuma_backup_keep | int + 1 }} | while read -r old; do
+  rm -f "$old" && echo "pruned $old"
+done

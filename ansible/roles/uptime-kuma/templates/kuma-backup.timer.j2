@@ -1,0 +1,12 @@
+# Managed by Ansible — roles/uptime-kuma/templates/kuma-backup.timer.j2.
+[Unit]
+Description=Periodic Uptime Kuma database backup to the pve02 HDD export
+
+[Timer]
+OnCalendar={{ uptime_kuma_backup_oncalendar }}
+# Catch up after a reboot so a power cut does not silently skip a window.
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

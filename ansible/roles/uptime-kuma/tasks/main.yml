@@ -88,6 +88,96 @@
   delay: 5
   until: kuma_up.status in [200, 302]
 
+# ------------------------------------------------------------------- backup --
+# See defaults/main.yml for why backups go to the HDD but the live database does
+# not, and why the mount must be soft.
+- name: Configure the HDD backup
+  when: uptime_kuma_backup_enabled | bool
+  block:
+    - name: Install the NFS client
+      ansible.builtin.apt:
+        name: nfs-common
+        state: present
+
+    - name: Create the backup mount point
+      ansible.builtin.file:
+        path: "{{ uptime_kuma_backup_mount }}"
+        state: directory
+        mode: "0755"
+
+    # noauto + x-systemd.automount: mounted only while a backup runs, so a dead
+    # pve02 cannot wedge boot. soft + timeo=50 (5s) + retrans=2: an NFS outage
+    # returns EIO in ~10s instead of blocking in D state forever, which matters
+    # because this study breaks that export on purpose.
+    - name: Mount the pve02 backup export on demand
+      ansible.posix.mount:
+        path: "{{ uptime_kuma_backup_mount }}"
+        src: "{{ uptime_kuma_backup_nfs_export }}"
+        fstype: nfs
+        opts: "noauto,x-systemd.automount,x-systemd.idle-timeout=60,soft,timeo=50,retrans=2,noatime"
+        state: present
+
+    - name: Reload systemd so the automount unit is generated
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    # fstab only GENERATES the automount unit; it stays inactive until something
+    # starts it. Leaving that step out is not a no-op — an inactive automount
+    # makes the mount point an ordinary directory on the SD card, and the backup
+    # silently writes there instead. Resolve the unit name with systemd-escape
+    # rather than by hand: /mnt/pve02-backups becomes mnt-pve02\x2dbackups, and
+    # the hyphen escaping is easy to get wrong.
+    - name: Resolve the automount unit name
+      ansible.builtin.command:
+        cmd: systemd-escape --path --suffix=automount {{ uptime_kuma_backup_mount }}
+      register: kuma_automount_unit
+      changed_when: false
+
+    - name: Enable and start the automount unit
+      ansible.builtin.systemd:
+        name: "{{ kuma_automount_unit.stdout }}"
+        enabled: true
+        state: started
+
+    - name: Remove any backups written to the SD card while the automount was down
+      ansible.builtin.shell: |
+        set -o pipefail
+        if ! findmnt --types nfs,nfs4 --target {{ uptime_kuma_backup_mount }} >/dev/null 2>&1; then
+          echo "still-not-mounted"; exit 0
+        fi
+        # With the share mounted, anything left underneath is shadowed. Unmount,
+        # clear the local remnants, remount.
+        umount {{ uptime_kuma_backup_mount }} || exit 0
+        rm -rf {{ uptime_kuma_backup_mount }}/{{ uptime_kuma_backup_subdir }}
+        ls {{ uptime_kuma_backup_mount }} >/dev/null 2>&1 || true
+        echo "cleaned"
+      args:
+        executable: /bin/bash
+      register: kuma_sd_cleanup
+      changed_when: "'cleaned' in kuma_sd_cleanup.stdout"
+
+    - name: Install the backup script
+      ansible.builtin.template:
+        src: kuma-backup.sh.j2
+        dest: /usr/local/bin/kuma-backup
+        mode: "0755"
+
+    - name: Install the backup service and timer
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - kuma-backup.service
+        - kuma-backup.timer
+
+    - name: Enable the backup timer
+      ansible.builtin.systemd:
+        name: kuma-backup.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
 # --------------------------------------------------------------- provisioning --
 # Kuma v1 exposes no REST API for creating monitors; the admin surface is
 # Socket.IO. uptime-kuma-api speaks it, so the monitor set stays declarative in

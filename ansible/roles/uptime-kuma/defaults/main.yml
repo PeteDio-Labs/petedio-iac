@@ -156,3 +156,31 @@ uptime_kuma_monitors:
     dns_resolve_type: A
     port: 53
     description: "Router resolver at 192.168.50.1. The isolated DNS fault probe."
+
+# ------------------------------------------------------- backup to the HDD --
+# The database lives on an SD card (mmcblk0p2) and this box has no local disk —
+# no USB device is attached. At 14 monitors x 20s that is ~60k row writes a day,
+# and an SD card that fails mid-study takes the baseline with it.
+#
+# pve02 exports /mnt/backups (295G, 1% used) to the whole 192.168.50.0/24
+# already, so the Pi can mount it with NO change to pve02.
+#
+# ⚠ THE BACKUP TARGET IS ALSO A FAULT TARGET. pve02 and its NFS export are two of
+# the things this study deliberately breaks, so the mount must never be able to
+# hang the instrument: `soft` with a short timeo turns an NFS outage into a fast
+# I/O error, and x-systemd.automount means the mount is only live while a backup
+# is actually running. A failed backup during an injected fault is correct
+# behaviour — it retries on the next tick.
+#
+# ⚠ AND THE DATABASE ITSELF STAYS ON THE SD CARD. Putting the live kuma.db on
+# this NFS share would stop the instrument recording during exactly the NFS and
+# pve02 faults it exists to measure. Backups go to the HDD; the working database
+# does not.
+uptime_kuma_backup_enabled: true
+uptime_kuma_backup_nfs_export: "192.168.50.11:/mnt/backups"
+uptime_kuma_backup_mount: /mnt/pve02-backups
+uptime_kuma_backup_subdir: uptime-kuma
+# Every 6 hours. The backup is disaster recovery for an SD failure, not an
+# archive — kuma.db itself holds the 45 days the study reads.
+uptime_kuma_backup_oncalendar: "00/6:10:00"
+uptime_kuma_backup_keep: 30

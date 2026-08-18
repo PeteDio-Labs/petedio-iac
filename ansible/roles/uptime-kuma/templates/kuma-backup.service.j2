@@ -1,0 +1,13 @@
+# Managed by Ansible — roles/uptime-kuma/templates/kuma-backup.service.j2.
+[Unit]
+Description=Back up the Uptime Kuma database to the pve02 HDD export
+# No Wants= on the automount unit. Its systemd name needs path escaping
+# (pve02-backups -> pve02\x2dbackups) which is easy to get subtly wrong, and it
+# buys nothing: the script's own mkdir -p on the mount point triggers the
+# automount, and a soft mount means an unavailable pve02 returns an error rather
+# than hanging. The study deliberately breaks that host, so a skipped backup is
+# expected behaviour, not a unit failure.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kuma-backup
