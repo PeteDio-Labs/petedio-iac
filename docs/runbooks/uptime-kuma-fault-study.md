@@ -148,14 +148,60 @@ Use the **SQLite `heartbeat` table**. The other two surfaces cannot answer
 Times in the database are **UTC**: the container runs `TZ=UTC` so a DST boundary
 cannot put a one-hour step inside a 30-day window.
 
-## Backup
+## Backup to the HDD
+
+The database lives on an SD card and Pete-Pi has no local disk — no USB device is
+attached. At 14 monitors on a 20-second interval that is roughly 60,000 row
+writes a day, and an SD failure mid-study takes the baseline with it.
+
+pve02 already exports `/mnt/backups` (295 GB, 1% used) to the whole
+`192.168.50.0/24`, so Pete-Pi mounts it with **no change to pve02**. A systemd
+timer runs every 6 hours and writes `sqlite3 .backup` straight to the share.
+Straight, because staging a copy on the SD card first would add exactly the
+writes this is meant to spare.
 
 ```bash
-ssh pedro@192.168.50.4 "sudo sqlite3 /opt/uptime-kuma/data/kuma.db \".backup '/opt/uptime-kuma/backups/kuma-\$(date +%F).db'\""
+ssh pete-pi "sudo systemctl start kuma-backup.service"   # run one now
+ssh pete-pi "systemctl list-timers kuma-backup.timer"    # when the next one runs
+ssh pve02 "ls -lt /mnt/backups/uptime-kuma/ | head"      # what actually landed
 ```
 
-Use `.backup` rather than `cp`. The database runs in WAL mode, so a plain copy
-can miss committed data sitting in the write-ahead log.
+Backups are kept newest-30 and pruned automatically. The script asserts
+`PRAGMA integrity_check` and non-zero monitor and heartbeat counts before keeping
+a file, and deletes a backup that fails either — a liveness check is not a
+correctness check, and `sqlite3` exits 0 having written a perfectly valid empty
+database.
+
+### What happens when pve02 is down
+
+**Nothing is written, and nothing can be** — the backup target is a disk inside
+pve02. The script checks with `findmnt` that the destination is genuinely an NFS
+mount, refuses to write if it is not, exits 0, and the timer retries on the next
+tick.
+
+That refusal is load-bearing, not defensive padding. `fstab` only *generates* the
+automount unit; it stays inactive until something starts it, and an inactive
+automount leaves `/mnt/pve02-backups` as an ordinary directory **on the SD card**.
+The first version of this backup wrote there and reported success — storing the
+only copy on the disk it was meant to protect against. The role now starts the
+automount unit explicitly, and the script will not write to a non-NFS path.
+
+**A pve02 outage costs backup coverage, not data.** The live database keeps
+recording the whole time because it is local to the Pi. Losing anything requires
+the SD card to fail *inside* the same window. To close even that gap, run a
+backup by hand after restoring pve02 — or add a second target that is not pve02
+(all three `network-storage` volumes — `/mnt/backups`, `/mnt/shared`,
+`/mnt/nexus-data` — live on pve02, so a fallback has to be MinIO on `.245` or
+pve01's own export).
+
+The mount is `noauto,x-systemd.automount,soft,timeo=50,retrans=2`: live only
+while a backup runs, and an NFS outage returns `EIO` in about 10 seconds instead
+of blocking in `D` state forever. That matters because this study breaks that
+export on purpose.
+
+> **The live `kuma.db` stays on the SD card, deliberately.** Moving it onto this
+> share would stop the instrument recording during exactly the NFS and pve02
+> faults it exists to measure.
 
 ## Persistence
 
