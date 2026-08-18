@@ -20,7 +20,7 @@ TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API token
 
 ## Workflow (trunk-based GitOps)
 - Branch `pet-<n>-<slug>` off **fresh `main`** → PR → **squash-merge**. Mention `PET-<n>` in the PR.
-- CI on the self-hosted runner (LXC 232): **`terraform plan` on PR, `apply` on merge**.
+- CI: **`validate` on PR** (GitHub-hosted, no Vault/LAN/state) and **`plan` + `apply` on merge** (self-hosted runner, LXC 232). There is no plan-on-PR (PET-104/163) — the authoritative plan is your local one or the apply-on-merge log.
 - **Verify before done:** `terraform fmt`/`validate`/`plan` — and *read the actual plan* (a green check ≠ a good plan; an empty plan block is a failure). **Never `apply` by hand.**
 - Minimal impact, root-cause, no temp hacks. Plan first for non-trivial (3+ step / architectural) work; if something goes sideways, STOP and re-plan.
 

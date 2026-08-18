@@ -16,15 +16,17 @@ environments/homelab/   # current target — Proxmox / MinIO state backend
 modules/                # (to come) proxmox-vm, proxmox-lxc, s3-bucket, postgres-db, ...
 ansible/                # host config (runner registration, LXC features)
 docs/GOTCHAS.md         # hard-won bpg/MinIO/runner patterns — READ THIS
-.github/workflows/terraform.yml   # Workflow B: plan-on-PR, apply-on-merge
+.github/workflows/terraform.yml   # Workflow B: validate-on-PR, plan+apply-on-merge
 ```
 
 ## Workflow B (CONVENTIONS §4)
 
 1. Branch `pedelgadillo/pet-<n>-<slug>` off `main` (Linear's branch name).
-2. **On PR:** `init` · `fmt -check` · `validate` · `plan` (posted as a PR comment) —
-   the plan **is** the review surface. Runs on the self-hosted runner.
-3. **On merge to `main` (squash):** `terraform apply -auto-approve`.
+2. **On PR:** `init` · `fmt -check` · `validate`, on a **GitHub-hosted** runner with no
+   Vault, no LAN and no state. **There is no plan on PR** — a real plan needs the LAN
+   backend and provider creds that PR runs deliberately withhold (PET-104/163).
+3. **On merge to `main` (squash):** `terraform plan`, then `apply`, on the self-hosted
+   runner. The apply log is the authoritative plan; the other one is your local run.
 4. Linear `PET-<n>` rides Todo → In Progress (PR) → Done (merge).
 
 State in MinIO S3 with S3-native locking (`use_lockfile`, PET-105) and a

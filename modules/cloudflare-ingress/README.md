@@ -1,7 +1,7 @@
 # cloudflare-ingress — the URL factory (PET-35)
 
 Turn a **route map** into Cloudflare Tunnel ingress + proxied DNS (+ optional Access gating).
-Adding a public, SSO-gated URL becomes: add one map entry → plan-on-PR → apply.
+Adding a public, SSO-gated URL becomes: add one map entry → validate on PR → plan and apply on merge.
 
 ## Usage
 
