@@ -104,11 +104,13 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
 - Needs `use_path_style = true` + all four `skip_*` flags
   (`skip_credentials_validation`, `skip_region_validation`, `skip_metadata_api_check`,
   `skip_requesting_account_id`). `region` is required by Terraform but ignored by MinIO.
-- **No locking** (MinIO doesn't speak DynamoDB). Single operator; never run concurrent
-  applies (local + CI). **Bucket versioning is the safety net** — enable it
-  (`mc version enable <alias>/<bucket>`) so a corrupt state can roll back.
-- Creds come from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (env locally, Actions
-  secrets in CI). Never inline in `backend.tf`.
+- **S3-native locking** (`use_lockfile = true`, PET-105) — a conditional `If-None-Match`
+  PUT of a `.tflock` object beside the state key, which modern MinIO supports. There is
+  no DynamoDB table and none is needed. **Bucket versioning is still the safety net** —
+  enable it (`mc version enable <alias>/<bucket>`) so a corrupt state can roll back.
+- Backend creds come from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in your local
+  environment. **CI sources every credential from Vault** — the four static Actions
+  secrets were deleted in PET-29. Never inline creds in `backend.tf`.
 
 ## CI / runner
 

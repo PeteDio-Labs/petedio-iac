@@ -22,7 +22,7 @@ is least-privilege (see [`vault-seed.md`](./vault-seed.md) policy map):
 | Secret | Vault path | Read by | Why |
 |---|---|---|---|
 | `DATABASE_URL` | `kv/poker/db` | **`poker-api` AppRole → Vault Agent on 230** (PET-57) | rendered on-host to a tmpfs env-file, never at rest / never through the deploy; policy `poker-api` reads only `kv/poker/db`. |
-| Nexus creds | `kv/services/nexus` | `ansible`/`terraform` (both read `services/*` or via the wrapper) | registry pull auth |
+| Registry creds | `kv/services/registry` | `ansible`/`terraform` (both read `services/*` or via the wrapper) | registry pull auth |
 | Frontend MinIO creds | `kv/services/minio-frontend` | `ansible` policy | a **bucket-scoped** svcacct (`kv/iac/minio` is tfstate-only and can't read this bucket) |
 
 `scripts/deploy-poker-api.sh` logs in with the **`ansible`** AppRole and resolves only the
@@ -43,7 +43,7 @@ auto-auths with the `poker-api` AppRole and renders it to `/run/co-latro/co-latr
   `vault read -field=role_id auth/approle/role/poker-api/role-id` and
   `vault write -f -field=secret_id auth/approle/role/poker-api/secret-id`. Without it the
   agent (and so the backend) won't start — the playbook warns and skips starting the agent.
-- `kv/services/nexus` seeded (PET-42). `kv/services/minio-frontend` seeded — run
+- `kv/services/registry` seeded (PET-42). `kv/services/minio-frontend` seeded — run
   `scripts/reseed-minio-frontend-vault.sh` once if missing (mints a `co-latro-frontend`-only
   MinIO svcacct).
 - Backend image pushed to Nexus (`docker.pdlab.dev/co-latro-backend:<sha>` + `:latest`) and the

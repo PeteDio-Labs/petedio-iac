@@ -115,7 +115,7 @@ The real values originate from **two** places:
 | `kv/services/qbittorrent` | `username`, `password`                               | `homelab-infra` → `qbittorrent.vault.yml`                               |
 | `kv/services/authentik`   | `secret_key`, `bootstrap_token`                      | `homelab-infra` → authentik creds vault file                            |
 | `kv/services/cloudflare`  | `tunnel_token`                                       | `homelab-infra` → cloudflare tunnel vault file                          |
-| `kv/services/nexus`       | `admin_password`                                     | `homelab-infra` → nexus creds vault file (or password manager)          |
+| `kv/services/registry`    | `password` (+ optional `username`, default `admin`)  | zot htpasswd user (password manager)                                    |
 
 ---
 
@@ -164,8 +164,8 @@ vault kv put kv/services/authentik \
 vault kv put kv/services/cloudflare \
     tunnel_token="<CLOUDFLARE_TUNNEL_TOKEN>"
 
-vault kv put kv/services/nexus \
-    admin_password="<NEXUS_ADMIN_PASSWORD>"
+vault kv put kv/services/registry \
+    password="<REGISTRY_PASSWORD>"
 ```
 
 > [!CAUTION]

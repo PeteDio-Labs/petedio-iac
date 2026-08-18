@@ -222,7 +222,7 @@ With the `kv/` mount in place, seed the initial secrets. The commands below use
 | `kv/services/qbittorrent` | `username`, `password`                      | media stack                                |
 | `kv/services/authentik` | `secret_key`, `bootstrap_token`               | auth                                        |
 | `kv/services/cloudflare`| `tunnel_token`                                | Cloudflare tunnel                          |
-| `kv/services/nexus`     | `admin_password`                              | registry                                   |
+| `kv/services/registry`  | `password` (+ optional `username`, default `admin`) | registry                             |
 
 ### Example commands (placeholders only)
 
@@ -253,7 +253,7 @@ vault kv put kv/poker/db \
 vault kv put kv/services/qbittorrent username="<QBT_USER>" password="<QBT_PASSWORD>"
 vault kv put kv/services/authentik    secret_key="<AUTHENTIK_SECRET_KEY>" bootstrap_token="<AUTHENTIK_BOOTSTRAP_TOKEN>"
 vault kv put kv/services/cloudflare   tunnel_token="<CLOUDFLARE_TUNNEL_TOKEN>"
-vault kv put kv/services/nexus        admin_password="<NEXUS_ADMIN_PASSWORD>"
+vault kv put kv/services/registry     password="<REGISTRY_PASSWORD>"
 ```
 
 > [!CAUTION]
