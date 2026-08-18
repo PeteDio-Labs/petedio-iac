@@ -1,0 +1,24 @@
+# Managed by Ansible — roles/uptime-kuma/templates/docker-compose.yml.j2 (petedio-iac).
+# Do not edit on the host; edit the template and re-run configure-pete-pi.yml.
+services:
+  uptime-kuma:
+    image: {{ uptime_kuma_image }}
+    container_name: {{ uptime_kuma_container_name }}
+    # unless-stopped, not always: a container the operator stops by hand during
+    # the study stays stopped across a reboot instead of silently resurrecting
+    # and writing beats nobody expects. docker.service is enabled, so a power
+    # cut still brings this back on its own.
+    restart: unless-stopped
+    ports:
+      - "{{ uptime_kuma_port }}:3001"
+    volumes:
+      # Bind mount, not a named volume. The study reads kuma.db directly with
+      # sqlite3 on the host, and the backup one-liner copies it from here.
+      - {{ uptime_kuma_data_dir }}:/app/data
+    environment:
+      # UTC on purpose. The baseline compares response times across a 30-day
+      # window; a local zone would put a one-hour DST discontinuity inside that
+      # window and silently shift every timestamp either side of it.
+      - TZ={{ uptime_kuma_tz }}
+    # The image ships a healthcheck already (extra/healthcheck), so none is
+    # declared here — a second one would only add a way to disagree with it.

@@ -1,0 +1,34 @@
+# pete-pi — a SEPARATE inventory source, deliberately not part of hosts.yml.
+#
+# WHY ITS OWN FILE. ansible-palworld.yml and ansible-openfaas.yml both list
+# `ansible/inventory/hosts.yml` under push.paths, so ANY edit to that file
+# re-applies their playbooks to the live Palworld game host and to openfaas-241
+# on merge. Adding a monitoring host is not a reason to redeploy a game server
+# the family is playing on. Keeping this group in its own file means the merge
+# triggers neither, and ansible.cfg loads both sources so `-i` is never needed.
+#
+# Pete-Pi is a Raspberry Pi 4 Model B (Debian 13 trixie, aarch64) hosting Uptime
+# Kuma as the fault-injection study's measurement instrument (PET-300,
+# configure-pete-pi.yml). NOT a cluster member and no Terraform owns it — that
+# is the point: it keeps recording while pve01 or pve02 is the thing being
+# broken.
+#
+# DUAL-HOMED, and both legs are load-bearing: eth0 192.168.50.4 (default route,
+# metric 100) reaches the cluster/Vault/zot/ollama, and wlan0 192.168.86.46 is
+# the only route to plex on 192.168.86.140.
+#
+# ⚠ There is only ONE Pi. The old pete-pi-1 / pete-pi-2 SSH aliases pointed at
+# two expired DHCP leases (192.168.86.25, 192.168.50.6) and described this same
+# machine. A parallel SSH sweep of both /24s found exactly one.
+#
+# Unlike the LXCs, this box logs in as `pedro` (passwordless sudo), not root.
+---
+all:
+  children:
+    pete_pi:
+      vars:
+        ansible_user: pedro
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pete_pi_2
+      hosts:
+        pete-pi:
+          ansible_host: 192.168.50.4

@@ -1,0 +1,29 @@
+---
+# configure-pete-pi.yml — Uptime Kuma on Pete-Pi, the fault-injection study's
+# measurement instrument (PET-300).
+#
+# WHY THIS HOST IS NOT A CONTAINER. Every other Docker host in this inventory is
+# a TF-created LXC on the cluster. This one is deliberately outside it: the
+# instrument has to keep recording while pve01 or pve02 is down, which anything
+# running on the cluster cannot do. No Terraform owns Pete-Pi — it is physical,
+# like palworld-mc.
+#
+# WHAT IT REACHES, AND HOW. Pete-Pi is dual-homed: eth0 on 192.168.50.4 (default
+# route, metric 100) and wlan0 on 192.168.86.46 (metric 600). The .50 leg covers
+# the cluster, Vault, zot and ollama; the .86 leg is the only path to plex on
+# 192.168.86.140. No tailscale hop is involved in either, so a tailnet outage
+# cannot masquerade as a service fault in the data.
+#
+# THIS PLAY TOUCHES NO MONITORED SERVICE. It installs nothing on pve01, pve02 or
+# any LXC, and every probe it configures is read-only against an endpoint those
+# services already expose.
+#
+# Run it through scripts/deploy-uptime-kuma.sh, which resolves the admin
+# credentials from Vault. Running ansible-playbook directly will fail the
+# credential assertion, by design.
+
+- name: Configure Pete-Pi (Uptime Kuma fault-study instrument)
+  hosts: pete_pi
+  become: true
+  roles:
+    - uptime-kuma

@@ -1,0 +1,186 @@
+# uptime-kuma — the measurement instrument for the controlled fault-injection
+# study (PET-300).
+#
+# WHY THIS HOST. The instrument has to keep recording while the thing it is
+# measuring is down, so it cannot live on an LXC guest or on either Proxmox
+# node. Pete-Pi is outside the cluster and dual-homed: eth0 on the .50 homelab
+# LAN (default route, metric 100) and wlan0 on the .86 home LAN (metric 600).
+# That second leg is not incidental — plex answers on 192.168.86.140 and is
+# reachable no other way from here.
+#
+# WHY v1 AND NOT v2. The study reads raw heartbeats out of SQLite to compute a
+# per-monitor response-time baseline. v1 keeps every beat in one `heartbeat`
+# table in kuma.db; v2 restructures storage and adds a MariaDB option. Pin v1
+# until the analysis no longer depends on that table shape.
+---
+uptime_kuma_version: "1.23.17"
+uptime_kuma_image: "louislam/uptime-kuma:{{ uptime_kuma_version }}"
+uptime_kuma_container_name: uptime-kuma
+uptime_kuma_port: 3001
+
+# Bind mount, not a named volume, so the database is visible to sqlite3 on the
+# host without entering the container — the backup and the baseline queries both
+# depend on that. /app/data/kuma.db is the file.
+uptime_kuma_dir: /opt/uptime-kuma
+uptime_kuma_data_dir: "{{ uptime_kuma_dir }}/data"
+
+# Docker's compose plugin is absent on this box: Debian ships docker.io (26.1.5)
+# and trixie carries no docker-compose-plugin. Installing Docker CE's apt repo
+# would mean replacing a working docker.io, so the plugin binary is dropped in
+# instead — no apt sources touched, and removable with one rm.
+uptime_kuma_compose_version: "v2.29.7"
+uptime_kuma_compose_plugin_path: /usr/local/lib/docker/cli-plugins/docker-compose
+
+# --------------------------------------------------------------- study knobs --
+# 20s heartbeat: a 5-minute fault window yields ~15 samples, enough to separate
+# a real transition from one unlucky probe. retries=1 means the second
+# consecutive failure marks DOWN — a fault registers in ~40s instead of being
+# smoothed away, which is the point of the experiment.
+uptime_kuma_interval: 20
+uptime_kuma_max_retries: 1
+uptime_kuma_retry_interval: 20
+
+# Raw beats are pruned on this schedule. 45 > the 30 days the study needs, and
+# 14 monitors x 4320 beats/day x 45 days is ~2.7M rows — a few hundred MB of
+# SQLite, comfortable on 49G free.
+uptime_kuma_retention_days: 45
+
+# UTC on purpose — see the compose template. The UI renders in this zone and
+# the study's timestamps stay monotonic across a DST boundary.
+uptime_kuma_tz: "UTC"
+
+uptime_kuma_status_page_slug: fault-study
+uptime_kuma_status_page_title: "Fault Injection Study"
+uptime_kuma_api_key_name: fault-study
+
+# Admin credentials are never defaulted to anything real. deploy-uptime-kuma.sh
+# resolves them from Vault (kv/services/uptime-kuma) and passes them as no_log
+# extra-vars.
+uptime_kuma_admin_user: ""
+uptime_kuma_admin_password: ""
+
+# ------------------------------------------------------------------ monitors --
+# EVERY target is a raw IP. A monitor that resolved a name would go DOWN during
+# an injected DNS fault and report a service outage that never happened — the
+# single deliberate DNS monitor is the only thing here allowed to depend on the
+# resolver.
+#
+# No public hostname appears either: everything behind Cloudflare Access answers
+# 403 to a non-browser client, which would read as a permanent DOWN and poison
+# the baseline before the study started.
+uptime_kuma_monitors:
+  # -- the cross-node pair. Deliberately TWO monitors, never one. --------------
+  # zot's blob store is an NFS mount from pve02, so stopping nfs-server on pve02
+  # breaks a registry running on pve01. Cause and symptom sit on different hosts
+  # and that gap is the object of study; collapsing these would erase it.
+  # /v2/_catalog is used rather than /v2/ on purpose — it reads the storage
+  # layer, so the NFS fault actually surfaces here. /v2/ answers from memory and
+  # would stay green through the outage.
+  - name: zot-registry
+    type: http
+    url: "https://192.168.50.111/v2/_catalog"
+    ignore_tls: true          # LE cert is for docker.pdlab.dev; we dial by IP
+    description: "OCI registry, LXC 106 on pve01. Blob store is NFS from pve02."
+
+  - name: nfs-pve02
+    type: port
+    hostname: "192.168.50.11"
+    port: 2049
+    description: "The NFS export zot depends on. The CAUSE side of the pair."
+
+  # -- Vault: sealed must read as DOWN, not as an error ------------------------
+  # /v1/sys/health answers 200 unsealed-active and 503 sealed. Accepting only
+  # 2xx therefore maps a sealed Vault onto DOWN, which is the wanted semantics
+  # since sealing is an injected fault. HTTPS is mandatory: the same path over
+  # plain http returns a bare 400 that looks like a broken server and isn't.
+  - name: vault
+    type: http
+    url: "https://192.168.50.223:8200/v1/sys/health"
+    ignore_tls: true          # self-signed; CA is iac/environments/homelab/vault-ca.crt
+    accepted_statuscodes: ["200-299"]
+    description: "Sealed returns 503 and is recorded as DOWN by design."
+
+  # -- the cluster nodes themselves -------------------------------------------
+  - name: pve01
+    type: port
+    hostname: "192.168.50.10"
+    port: 8006
+    description: "Proxmox node 1."
+  - name: pve02
+    type: port
+    hostname: "192.168.50.11"
+    port: 8006
+    description: "Proxmox node 2. Also serves the NFS export above."
+
+  # -- arr stack behind /mnt/media --------------------------------------------
+  - name: lidarr
+    type: http
+    url: "http://192.168.50.14:8686/"
+  - name: sonarr
+    type: http
+    url: "http://192.168.50.15:8989/"
+  - name: radarr
+    type: http
+    url: "http://192.168.50.16:7878/"
+  - name: prowlarr
+    type: http
+    url: "http://192.168.50.20:9696/"
+  - name: qbittorrent
+    type: http
+    url: "http://192.168.50.21:8080/"
+  - name: seerr
+    # Answers 307 to /login unauthenticated. Kuma follows redirects, so the beat
+    # lands on the 200; verified end state is 200 after one hop.
+    type: http
+    url: "http://192.168.50.33:5055/"
+  - name: plex
+    # The one .86 target. /identity is the unauthenticated liveness endpoint —
+    # the web root needs a token and would answer 401.
+    type: http
+    url: "http://192.168.86.140:32400/identity"
+
+  # -- inference host ----------------------------------------------------------
+  - name: ollama
+    type: http
+    url: "http://192.168.50.12:11434/api/version"
+
+  # -- the one monitor that is ALLOWED to depend on the resolver ---------------
+  # DNS is not self-hosted, so the router is a real single point of failure and
+  # an injectable fault. Kuma queries the named server directly rather than
+  # going through /etc/resolv.conf, so this measures 192.168.50.1 specifically
+  # and nothing else in the list moves when it fails.
+  - name: dns-router
+    type: dns
+    hostname: google.com
+    dns_resolve_server: "192.168.50.1"
+    dns_resolve_type: A
+    port: 53
+    description: "Router resolver at 192.168.50.1. The isolated DNS fault probe."
+
+# ------------------------------------------------------- backup to the HDD --
+# The database lives on an SD card (mmcblk0p2) and this box has no local disk —
+# no USB device is attached. At 14 monitors x 20s that is ~60k row writes a day,
+# and an SD card that fails mid-study takes the baseline with it.
+#
+# pve02 exports /mnt/backups (295G, 1% used) to the whole 192.168.50.0/24
+# already, so the Pi can mount it with NO change to pve02.
+#
+# ⚠ THE BACKUP TARGET IS ALSO A FAULT TARGET. pve02 and its NFS export are two of
+# the things this study deliberately breaks, so the mount must never be able to
+# hang the instrument: `soft` with a short timeo turns an NFS outage into a fast
+# I/O error, and x-systemd.automount means the mount is only live while a backup
+# is actually running. A failed backup during an injected fault is correct
+# behaviour — it retries on the next tick.
+#
+# ⚠ AND THE DATABASE ITSELF STAYS ON THE SD CARD. Putting the live kuma.db on
+# this NFS share would stop the instrument recording during exactly the NFS and
+# pve02 faults it exists to measure. Backups go to the HDD; the working database
+# does not.
+uptime_kuma_backup_enabled: true
+uptime_kuma_backup_nfs_export: "192.168.50.11:/mnt/backups"
+uptime_kuma_backup_mount: /mnt/pve02-backups
+uptime_kuma_backup_subdir: uptime-kuma
+# Every 6 hours. The backup is disaster recovery for an SD failure, not an
+# archive — kuma.db itself holds the 45 days the study reads.
+uptime_kuma_backup_oncalendar: "00/6:10:00"
+uptime_kuma_backup_keep: 30

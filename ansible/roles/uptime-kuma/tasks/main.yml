@@ -1,0 +1,275 @@
+---
+# uptime-kuma on Pete-Pi — see roles/uptime-kuma/defaults/main.yml for why this
+# host and why v1.
+
+- name: Fail early if the admin credentials were not passed in
+  ansible.builtin.assert:
+    that:
+      - uptime_kuma_admin_user | default('') | length > 0
+      - uptime_kuma_admin_password | default('') | length >= 12
+    fail_msg: >-
+      Missing admin credentials. Run this via scripts/deploy-uptime-kuma.sh, which
+      resolves them from Vault (kv/services/uptime-kuma) and passes them as no_log
+      extra-vars — never hardcode them here.
+  no_log: true
+
+- name: Install host prerequisites
+  # sqlite3 is not incidental: the study's baseline queries and the backup
+  # one-liner both run against kuma.db from the host, outside the container.
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - sqlite3
+      - python3-venv
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Debian trixie carries no docker-compose-plugin and this box runs Debian's
+# docker.io, so adding Docker CE's apt repo would mean replacing a working
+# Docker. The plugin is a single static binary; dropping it in leaves apt
+# untouched and is undone with one rm.
+- name: Check whether the compose plugin is already present
+  ansible.builtin.stat:
+    path: "{{ uptime_kuma_compose_plugin_path }}"
+  register: kuma_compose_bin
+
+- name: Install the Docker compose plugin binary
+  when: not kuma_compose_bin.stat.exists
+  block:
+    - name: Create the cli-plugins directory
+      ansible.builtin.file:
+        path: "{{ uptime_kuma_compose_plugin_path | dirname }}"
+        state: directory
+        mode: "0755"
+
+    - name: Download the compose plugin
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/docker/compose/releases/download/{{ uptime_kuma_compose_version }}/docker-compose-linux-aarch64
+        dest: "{{ uptime_kuma_compose_plugin_path }}"
+        mode: "0755"
+
+- name: Ensure Docker is enabled and running
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Create the deployment and data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ uptime_kuma_dir }}"
+    - "{{ uptime_kuma_data_dir }}"
+
+- name: Render the compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ uptime_kuma_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: restart uptime-kuma
+
+- name: Bring up the stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ uptime_kuma_dir }}"
+    state: present
+    pull: missing
+
+- name: Wait for the web interface to answer
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ uptime_kuma_port }}/"
+    status_code: [200, 302]
+  register: kuma_up
+  retries: 30
+  delay: 5
+  until: kuma_up.status in [200, 302]
+
+# ------------------------------------------------------------------- backup --
+# See defaults/main.yml for why backups go to the HDD but the live database does
+# not, and why the mount must be soft.
+- name: Configure the HDD backup
+  when: uptime_kuma_backup_enabled | bool
+  block:
+    - name: Install the NFS client
+      ansible.builtin.apt:
+        name: nfs-common
+        state: present
+
+    - name: Create the backup mount point
+      ansible.builtin.file:
+        path: "{{ uptime_kuma_backup_mount }}"
+        state: directory
+        mode: "0755"
+
+    # noauto + x-systemd.automount: mounted only while a backup runs, so a dead
+    # pve02 cannot wedge boot. soft + timeo=50 (5s) + retrans=2: an NFS outage
+    # returns EIO in ~10s instead of blocking in D state forever, which matters
+    # because this study breaks that export on purpose.
+    - name: Mount the pve02 backup export on demand
+      ansible.posix.mount:
+        path: "{{ uptime_kuma_backup_mount }}"
+        src: "{{ uptime_kuma_backup_nfs_export }}"
+        fstype: nfs
+        opts: "noauto,x-systemd.automount,x-systemd.idle-timeout=60,soft,timeo=50,retrans=2,noatime"
+        state: present
+
+    - name: Reload systemd so the automount unit is generated
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    # fstab only GENERATES the automount unit; it stays inactive until something
+    # starts it. Leaving that step out is not a no-op — an inactive automount
+    # makes the mount point an ordinary directory on the SD card, and the backup
+    # silently writes there instead. Resolve the unit name with systemd-escape
+    # rather than by hand: /mnt/pve02-backups becomes mnt-pve02\x2dbackups, and
+    # the hyphen escaping is easy to get wrong.
+    - name: Resolve the automount unit name
+      ansible.builtin.command:
+        cmd: systemd-escape --path --suffix=automount {{ uptime_kuma_backup_mount }}
+      register: kuma_automount_unit
+      changed_when: false
+
+    - name: Enable and start the automount unit
+      ansible.builtin.systemd:
+        name: "{{ kuma_automount_unit.stdout }}"
+        enabled: true
+        state: started
+
+    - name: Remove any backups written to the SD card while the automount was down
+      ansible.builtin.shell: |
+        set -o pipefail
+        if ! findmnt --types nfs,nfs4 --target {{ uptime_kuma_backup_mount }} >/dev/null 2>&1; then
+          echo "still-not-mounted"; exit 0
+        fi
+        # With the share mounted, anything left underneath is shadowed. Unmount,
+        # clear the local remnants, remount.
+        umount {{ uptime_kuma_backup_mount }} || exit 0
+        rm -rf {{ uptime_kuma_backup_mount }}/{{ uptime_kuma_backup_subdir }}
+        ls {{ uptime_kuma_backup_mount }} >/dev/null 2>&1 || true
+        echo "cleaned"
+      args:
+        executable: /bin/bash
+      register: kuma_sd_cleanup
+      changed_when: "'cleaned' in kuma_sd_cleanup.stdout"
+
+    - name: Install the backup script
+      ansible.builtin.template:
+        src: kuma-backup.sh.j2
+        dest: /usr/local/bin/kuma-backup
+        mode: "0755"
+
+    - name: Install the backup service and timer
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - kuma-backup.service
+        - kuma-backup.timer
+
+    - name: Enable the backup timer
+      ansible.builtin.systemd:
+        name: kuma-backup.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+# --------------------------------------------------------------- provisioning --
+# Kuma v1 exposes no REST API for creating monitors; the admin surface is
+# Socket.IO. uptime-kuma-api speaks it, so the monitor set stays declarative in
+# defaults/main.yml instead of being clicked into the UI by hand.
+- name: Create the provisioning virtualenv
+  ansible.builtin.command:
+    cmd: python3 -m venv {{ uptime_kuma_dir }}/venv
+    creates: "{{ uptime_kuma_dir }}/venv/bin/python"
+
+- name: Install uptime-kuma-api into the virtualenv
+  ansible.builtin.pip:
+    name: "uptime-kuma-api==1.2.1"
+    virtualenv: "{{ uptime_kuma_dir }}/venv"
+    state: present
+
+- name: Install the provisioner
+  ansible.builtin.copy:
+    src: provision_kuma.py
+    dest: "{{ uptime_kuma_dir }}/provision_kuma.py"
+    mode: "0755"
+
+# The analysis tool. Lives on the host rather than in the container because it
+# reads kuma.db through sqlite3 directly — see its docstring for why the raw
+# heartbeat table is the only source that can answer "what was normal before".
+- name: Install the baseline analysis tool
+  ansible.builtin.copy:
+    src: kuma-baseline.py
+    dest: /usr/local/bin/kuma-baseline
+    mode: "0755"
+
+- name: Create the backup directory
+  ansible.builtin.file:
+    path: "{{ uptime_kuma_dir }}/backups"
+    state: directory
+    mode: "0755"
+
+# The config file carries the admin password, so it is root-only and is removed
+# again below — it exists for the duration of one command and never appears in
+# the process table.
+- name: Render the provisioning config
+  ansible.builtin.copy:
+    content: "{{ kuma_provision_config | to_nice_json }}"
+    dest: /root/.kuma-provision.json
+    mode: "0600"
+  vars:
+    kuma_provision_config:
+      url: "http://127.0.0.1:{{ uptime_kuma_port }}"
+      admin_user: "{{ uptime_kuma_admin_user }}"
+      admin_password: "{{ uptime_kuma_admin_password }}"
+      interval: "{{ uptime_kuma_interval }}"
+      max_retries: "{{ uptime_kuma_max_retries }}"
+      retry_interval: "{{ uptime_kuma_retry_interval }}"
+      retention_days: "{{ uptime_kuma_retention_days }}"
+      status_page_slug: "{{ uptime_kuma_status_page_slug }}"
+      status_page_title: "{{ uptime_kuma_status_page_title }}"
+      api_key_name: "{{ uptime_kuma_api_key_name }}"
+      monitors: "{{ uptime_kuma_monitors }}"
+  no_log: true
+
+- name: Reconcile monitors, retention, status page and API key
+  ansible.builtin.command:
+    cmd: "{{ uptime_kuma_dir }}/venv/bin/python {{ uptime_kuma_dir }}/provision_kuma.py /root/.kuma-provision.json"
+  register: kuma_provision
+  changed_when: >-
+    (kuma_provision.stdout | from_json).created | length > 0
+    or (kuma_provision.stdout | from_json).updated | length > 0
+
+- name: Remove the provisioning config
+  ansible.builtin.file:
+    path: /root/.kuma-provision.json
+    state: absent
+
+# The API key is minted once and never shown again, so it must be captured — but
+# it must not land in a playbook log or a CI transcript. Print everything except
+# the key, then surface the key on its own with no_log lifted only for the single
+# run that created it.
+- name: Report what the reconcile did
+  ansible.builtin.debug:
+    msg: "{{ kuma_provision.stdout | from_json | dict2items | rejectattr('key', 'eq', 'api_key') | items2dict }}"
+
+- name: Store the freshly minted metrics API key
+  when: (kuma_provision.stdout | from_json).api_key is defined
+  ansible.builtin.copy:
+    content: "{{ (kuma_provision.stdout | from_json).api_key }}"
+    dest: "{{ uptime_kuma_dir }}/.metrics-api-key"
+    mode: "0600"
+  no_log: true
+
+- name: Say where the key went
+  when: (kuma_provision.stdout | from_json).api_key is defined
+  ansible.builtin.debug:
+    msg: >-
+      A metrics API key was minted. Kuma shows it once only. It is written to
+      {{ uptime_kuma_dir }}/.metrics-api-key (0600, root) on the host — copy it into
+      Vault kv/services/uptime-kuma field metrics_api_key, then delete that file.
