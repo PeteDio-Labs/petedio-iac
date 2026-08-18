@@ -263,6 +263,28 @@ resource "vault_jwt_auth_backend_role" "plane_ci" {
   token_ttl      = 300
 }
 
+# infra-reconcile role → infra-reconcile policy (PET-294). The nightly job in
+# petedio-vault diffs `pct list` against the vault's own host notes and files drift
+# as Plane work items.
+#
+# MAIN-PUSH ONLY, and that is the whole security argument. It holds a Proxmox
+# credential, so it must never be mintable from a `pull_request` subject the way
+# plane-ci is — see the policy comment and PET-104. One repo, one subject: the
+# vault is the register being verified, so its own CI is what verifies it.
+resource "vault_jwt_auth_backend_role" "infra_reconcile" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "infra-reconcile"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = "repo:PeteDio-Labs/petedio-vault:ref:refs/heads/main"
+  }
+  token_policies = [vault_policy.infra_reconcile.name]
+  token_ttl      = 300
+}
+
 # colatro-admin-ci role → colatro-admin-ci policy (PET-99). The co-latro-admin repo's deploy
 # workflow (Workflow B) builds the 4 OpenFaaS functions, pushes them to Nexus, and
 # `faas-cli deploy`s them to the faasd gateway on LXC 241 — on push to main (deploy-on-merge).
