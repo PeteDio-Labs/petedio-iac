@@ -14,17 +14,30 @@ palworld_steamcmd_dir: "{{ palworld_home }}/steamcmd"
 palworld_server_dir: "{{ palworld_home }}/palworld" # app 2394010 installs here
 palworld_steam_app_id: 2394010
 
-# The systemd unit is installed and — when palworld_enable_service — enabled + started
-# once the binaries are present, so the server auto-starts on container/host boot.
+# The systemd unit is installed once the binaries are present. Whether it starts at BOOT
+# is palworld_service_autostart below; nothing in this role ever starts it directly.
 palworld_service_name: palworld
 # AppExec path the unit launches; lives under the server dir once binaries land.
 palworld_server_exec: "{{ palworld_server_dir }}/PalServer.sh"
 
-# Install/update the SteamCMD server binaries (app 2394010) during the play, and
-# enable+start the unit — so the box is fully launch-ready (power on + go) and the
-# launch-day converge auto-pulls the 1.0 build. Set false for "ready-for-binaries" only.
+# Install/update the SteamCMD server binaries (app 2394010) during the play. Set false
+# for a "ready-for-binaries" prep converge.
 palworld_install_binaries: true
-palworld_enable_service: true
+
+# Whether systemd starts the server AT BOOT.
+#
+# FALSE, deliberately: the server starts only when Pedro starts it from the panel
+# (decided 2026-08-18). The role does not start it either — the unit task below sets
+# enablement but never `state: started`, and the restart handler refuses to start a
+# server that is already stopped.
+#
+# This does not disable the panel. palctl-remote runs `systemctl start palworld`, and
+# systemd starts a DISABLED unit perfectly well — enablement governs boot only. Verified
+# on the live host 2026-08-18: disabled the unit, started it, it came up with 8211/udp
+# listening, stopped it again.
+#
+# Set true only for a host that genuinely should come back by itself after a power cut.
+palworld_service_autostart: false
 
 # --- PalWorldSettings.ini tunables (exposed so the .ini stays declarative) --------
 palworld_server_name: "PeteDio Palworld"

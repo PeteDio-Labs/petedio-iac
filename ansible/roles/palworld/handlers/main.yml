@@ -12,17 +12,36 @@
 # `changed` and leaves the running server on the OLD config — silently ineffective, which
 # is worse than either restarting or refusing.
 #
-# This does NOT fire on CI merge-applies. The apply's Vault role cannot read the game
-# passwords, so PET-278's preservation tasks re-read them from the live host and the
-# render comes out byte-identical — no change, no notify. It fires when an operator
-# actually changes a tunable, which is exactly when a restart is wanted.
+# ⚠ THIS COMMENT USED TO CLAIM "this does NOT fire on CI merge-applies", on the reasoning
+# that PET-278's preservation tasks re-read the game passwords from the live host so the
+# render comes out byte-identical. THAT CLAIM IS FALSE, and was disproved by watching it:
+# the PET-302 merge-apply on 2026-08-18 reported
+#   TASK [palworld : Template PalWorldSettings.ini] changed
+#   RUNNING HANDLER [palworld : Restart palworld] changed
+# on the live game host. Do not restore the old wording without a run that actually shows
+# no notify.
 #
-# The guard matters on a prep-only converge (palworld_install_binaries=false): there is no
-# unit to restart there, and an unguarded handler would fail the run.
-- name: Restart palworld
-  ansible.builtin.systemd:
-    name: "{{ palworld_service_name }}"
-    state: restarted
-  when:
-    - palworld_install_binaries | bool
-    - palworld_enable_service | bool
+# So the handler must be safe to fire on any apply. `state: restarted` is NOT safe: systemd
+# STARTS a stopped unit on restart, so a CI apply would revive a server Pedro had
+# deliberately stopped. The panel is the only thing that starts this server (2026-08-18).
+#
+# Restart only what is already running. A stopped server stays stopped and picks the new
+# settings up whenever the panel next starts it, which is the same moment it would have
+# read them anyway.
+#
+# The binaries guard matters on a prep-only converge (palworld_install_binaries=false):
+# there is no unit to restart there, and an unguarded handler would fail the run.
+- name: Restart palworld (only if it is already running)
+  ansible.builtin.shell: |
+    set -e
+    if systemctl is-active --quiet {{ palworld_service_name }}; then
+      systemctl restart {{ palworld_service_name }}
+      echo RESTARTED
+    else
+      echo "STOPPED — left stopped; new settings apply when the panel next starts it"
+    fi
+  args:
+    executable: /bin/bash
+  register: palworld_restart_result
+  changed_when: "'RESTARTED' in palworld_restart_result.stdout"
+  when: palworld_install_binaries | bool
