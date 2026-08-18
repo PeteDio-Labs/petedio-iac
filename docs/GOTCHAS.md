@@ -28,7 +28,7 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   (`scripts/proxmox-ro-config.sh <node> <vmid>`) and expect only **cosmetic**
   `description`/`tags` diffs after import, plus state-side noise (`+ vm_id`, `+ timeout_*`
   — provider attributes import doesn't populate, not API mutations). Full procedure:
-  `docs/runbooks/nexus-import.md`.
+  `docs/runbooks/registry-import.md`.
 
 - **More brownfield divergences, from the Authentik capture** (PET-123, LXC 119): not every
   captured LXC is a community-scripts box, but the same "match it exactly" rule applies to

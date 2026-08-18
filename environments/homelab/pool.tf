@@ -48,7 +48,7 @@ locals {
   # add it here in the same PR. ollama-host is NOT here on purpose — it is bare metal
   # (modules/baremetal-host), not a container, so it has no VMID to put in a pool.
   pool_lxc_members = var.manage_resource_pool ? {
-    nexus      = module.nexus.vm_id
+    registry   = module.registry.vm_id
     vault      = module.vault.vm_id
     poker_api  = module.poker_api.vm_id
     postgres   = module.postgres_host.vm_id
@@ -95,4 +95,14 @@ resource "proxmox_pool_membership" "lxc" {
 
   pool_id = proxmox_virtual_environment_pool.homelab[0].pool_id
   vm_id   = each.value
+}
+
+# `proxmox_pool_membership.lxc` is a for_each over the map above, so renaming the
+# key changes that member's address from ["nexus"] to ["registry"]. Pool
+# membership is additive and never mutates the container, so a churn here is
+# harmless — but it is still noise in the plan, and noise is how a real change
+# hides. Re-address it explicitly (PET-301).
+moved {
+  from = proxmox_pool_membership.lxc["nexus"]
+  to   = proxmox_pool_membership.lxc["registry"]
 }
