@@ -128,6 +128,14 @@ resource "proxmox_virtual_environment_container" "this" {
       # an apply strip it. Greenfield consumers declare neither block → no-op.
       idmap,
       console,
+      # startup: boot order and up/down delays are set on the node with
+      # `pct set <id> --startup order=N,up=S,down=S`. Nothing here declares them,
+      # so an apply would otherwise strip the ordering on the next merge. The
+      # order is load-bearing on a cold start: postgres-231 must precede the apps
+      # that hold connections to it, and registry 106 must not start before its
+      # NFS blob store on pve02 is mounted. Recorded in
+      # docs/runbooks/lab-move.md, which is also where the current order lives.
+      startup,
     ]
   }
 }

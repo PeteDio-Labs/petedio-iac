@@ -78,6 +78,29 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
 
 ## pve01 / pve02 cluster + storage (PET-127)
 
+- **`startup` is not declared in TF, so an apply strips it — keep it in `ignore_changes`.**
+  Boot order and up/down delays are set on the node with
+  `pct set <id> --startup order=N,up=S,down=S`. `modules/proxmox-lxc` declares no `startup`
+  block, so without the `ignore_changes` entry the next apply-on-merge silently removes the
+  ordering. Same class as `features` / `mount_point` / `idmap`: set out-of-band, ignored in
+  state. The order is load-bearing on a cold start — postgres-231 must precede the apps
+  holding connections to it, and registry 106 must not start before its NFS blob store is
+  mounted. Current order: `docs/runbooks/lab-move.md`.
+
+- **A cold boot of one node alone starts nothing.** The cluster is `Expected votes: 2,
+  Quorum: 2` with no `two_node: 1` in the `quorum {}` block, so a single surviving node is
+  inquorate, `/etc/pve` mounts read-only, and `pct start` refuses for every guest. You cannot
+  fix it by editing a file, because the file system you would edit is the read-only one.
+  Recover with `pvecm expected 1` on the survivor — never while the other node is alive but
+  unreachable, which is how you split-brain.
+
+- **pve01's NFS mounts from pve02 dictate power order in both directions.** They are
+  `vers=4.2,hard`, and a hard mount against a dead server never times out. Shut pve02 down
+  first and pve01 hangs on unmount indefinitely. So: **pve01 down first, pve02 down last;
+  pve02 up first, pve01 up second.** The mounts carry `nofail,x-systemd.mount-timeout=60`
+  so a late pve02 cannot wedge pve01's boot — the tradeoff is that a missing mount is now
+  silent, and CT106 needs `mount -a && pct restart 106` once pve02 is back.
+
 - **pve01 + pve02 are a quorate 2-node cluster** ("Homelab"), so `/etc/pve/storage.cfg`
   is **cluster-shared** — a storage entry without an explicit `nodes <name>` line is
   offered on BOTH nodes. Always scope node-local storage with `nodes pve01` / `nodes pve02`.
