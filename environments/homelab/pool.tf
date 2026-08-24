@@ -55,7 +55,6 @@ locals {
     runner     = module.runner.vm_id
     runner_2   = module.runner_2.vm_id
     openfaas   = module.openfaas.vm_id
-    agent_loop = module.agent_loop.vm_id
     authentik  = module.authentik.vm_id
     tailscale  = module.tailscale.vm_id
     minio_data = module.minio_data.vm_id

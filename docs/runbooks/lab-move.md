@@ -118,16 +118,6 @@ ssh -i ~/.ssh/id_ed25519_pete_pi_2 pedro@192.168.50.4 \
 Guest configs for both nodes are already saved at `/root/pre-move-backup/lxc/` on each
 node, alongside `fstab` and `corosync.conf` copies. Pull those to the Mac too.
 
-### Decide what `resume-242` should do
-
-`resume-242` was shut down on 2026-08-20 and is stopped today, but its config still
-carries `onboot: 1`. The move will therefore start it. Decide which you want before you
-power down, because it changes what "everything is running" means on the other side:
-
-- To leave it down through the move, set `onboot: 0` — `pct set 242 --onboot 0`.
-- To let it come back, change nothing and expect **20 running on pve01**, not the 19
-  you see today.
-
 ### The export drive: move it inside the chassis
 
 `pve02` is the file server for the whole `/24`, and the disk it serves from is external.
@@ -304,8 +294,7 @@ curl -s --cacert environments/homelab/vault-ca.crt \
 Work down the list. Every one of these should pass before you call the move done. Run
 them from the repo root — two use `environments/homelab/vault-ca.crt` as a relative path.
 
-**Cluster is quorate and every guest is running.** 3 on `pve02`, and on `pve01` either
-20 or 19 depending on what you decided about `resume-242` above:
+**Cluster is quorate and every guest is running.** 18 on `pve01`, 3 on `pve02`:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 \
@@ -594,8 +583,6 @@ shutdown may take. Guests sharing an order start by ascending VMID.
 | 5 | 232 | runner-232 | `up=0,down=30` | |
 | 5 | 235 | plane-235 | `up=5,down=60` | |
 | 5 | 241 | openfaas-241 | `up=5,down=30` | |
-| 5 | 242 | resume-242 | `up=5,down=30` | |
-| 5 | 243 | waterfast-243 | `up=5,down=30` | |
 | 6 | 110 | qbittorrent-vpn | `up=20,down=30` | Gluetun needs the VPN up before its consumers |
 | 7 | 100 | lidarr | `up=0,down=15` | Media stack last |
 | 7 | 101 | seerr | `up=0,down=15` | |
