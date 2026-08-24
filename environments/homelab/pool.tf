@@ -43,8 +43,8 @@ locals {
   # This map must list EVERY proxmox-lxc module in this environment — the pool's whole point
   # is that it accounts for every container, so a module missing here is silent drift. It had drifted
   # once already: authentik-119 and runner-233 were left out after their PRs merged (this file
-  # still carried the "will be added when their PRs merge" TODO), and waterfast-243 /
-  # tailscale-244 / minio-data-245 followed that precedent. When you add a proxmox-lxc module,
+  # still carried the "will be added when their PRs merge" TODO), and tailscale-244 /
+  # minio-data-245 followed that precedent. When you add a proxmox-lxc module,
   # add it here in the same PR. ollama-host is NOT here on purpose — it is bare metal
   # (modules/baremetal-host), not a container, so it has no VMID to put in a pool.
   pool_lxc_members = var.manage_resource_pool ? {
@@ -57,7 +57,6 @@ locals {
     openfaas   = module.openfaas.vm_id
     agent_loop = module.agent_loop.vm_id
     authentik  = module.authentik.vm_id
-    waterfast  = module.waterfast.vm_id
     tailscale  = module.tailscale.vm_id
     minio_data = module.minio_data.vm_id
   } : {}
