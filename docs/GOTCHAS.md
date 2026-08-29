@@ -78,6 +78,17 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
 
 ## pve01 / pve02 cluster + storage (PET-127)
 
+- **Seven drives faulting in lockstep is the controller, not the drives — and a controller
+  missing from inventory is not necessarily dead.** On 2026-08-28 pve01's SEL showed all seven
+  drives `operating normally` then all seven `Fault detected` ~95 s later, twice; the H710 Mini
+  was absent from both the hardware and firmware inventories and logged `Integrated RAID
+  Controller 1 on NULL`. That looks exactly like a dead card. **It was a poorly seated one** —
+  reseating it brought all seven drives back and the array imported with `/mnt/media` intact.
+  It is a mezzanine card flat under two blue latches, not a PCIe card in a riser, so it seats
+  unevenly. Reseat and cold-boot before ordering parts; a live card reports a firmware version
+  in `Overview → Server → System Inventory`. RAID config lives on the disks, so import foreign
+  VDs and **never create new ones**.
+
 - **An open chassis stops an R620 booting, and fabricates drive faults.** With the cover off,
   pve01 reports `Server Status: ON` while drawing **0 Watts**; every power command appears to
   succeed and does nothing. It also logs seven simultaneous "Fault detected on drive N in disk
