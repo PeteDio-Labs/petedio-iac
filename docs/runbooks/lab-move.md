@@ -506,6 +506,12 @@ Then open `https://192.168.0.120/start.html`. Remove the alias with `sudo ifconf
 Set **Plug-in Type: HTML5** under Virtual Console before launching, or the Launch link
 downloads a Java `.jnlp` that will not run.
 
+> **iDRAC is only reachable while its dedicated port is cabled.** The port shares a
+> location with the LOM ports and is easy to leave unplugged when restoring normal cabling.
+> If it is unplugged, this entire section does not apply and pve01 is a black box again.
+> Cabling it takes one port and a few watts, and on 2026-08-28 it was the only thing that
+> made the fault visible at all.
+>
 > **Worth fixing:** give iDRAC a DHCP reservation on a sane subnet so this stops needing an
 > alias, and change its password if it is still the `root` / `calvin` default — it is a full
 > remote-console interface sharing a network with every phone and TV in the house.
@@ -525,6 +531,28 @@ The chassis is open while the power is on.
 ```
 
 Read the SEL before believing any storage fault on this machine, and check the cover first.
+
+### Seven drives faulting together means the controller, not the drives
+
+On 2026-08-28 the SEL showed all seven drives report `is operating normally`, then all seven
+report `Fault detected` about 95 seconds later — twice. Drives fail one at a time. Anything
+that takes out all of them in lockstep is upstream: the H710, its SAS cable to the backplane,
+or the backplane itself.
+
+**The resolution that time was reseating the H710 Mini.** It is a mezzanine card lying flat
+in a dedicated slot under two blue latches, not a PCIe card in a riser, and it can look
+seated while making poor contact. Press evenly across the heatsink, and check each corner
+rather than the middle.
+
+**A card missing from the hardware and firmware inventory is not proof it is dead.** A poorly
+seated H710 fails to identify itself — logging `Integrated RAID Controller 1 on NULL` and
+appearing in neither inventory — and looks exactly like a failed card. It was not. Reseat
+before ordering parts, and re-test with a cold boot plus
+`Overview → Server → System Inventory`: a live card reports a firmware version.
+
+The array itself is safe through all of this. RAID config lives on the disks, so a
+re-seated or replaced controller imports the virtual disks as **foreign**. Import them.
+**Never create a new virtual disk** — that is what destroys `/mnt/media` and every guest.
 
 ### A LOM that answers ping does not mean the host is running
 
