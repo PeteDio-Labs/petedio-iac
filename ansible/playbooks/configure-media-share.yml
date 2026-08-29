@@ -1,0 +1,26 @@
+---
+# configure-media-share.yml — export /mnt/media + /mnt/downloads from pve01 and
+# mount them on pve02, so Plex can run on pve02 and use its Quick Sync iGPU
+# (PET-311).
+#
+# WHY. The media lives on pve01's sdb (media-vg, 3.2 TB, 2.6 TB used) and is not
+# moving. pve01's Xeon E5-2690 v2 pair has no integrated GPU, so every Plex
+# transcode there is software. pve02's i5-6500T does have one (/dev/dri/
+# renderD128). Putting Plex next to the GPU rather than next to the disk is the
+# cheaper trade: a 4K remux streams at well under a gigabit, and transcoding is
+# what actually saturates pve01.
+#
+# ORDER MATTERS, hence serial: 1 with pve01 first in the inventory. pve02 cannot
+# mount an export that does not exist yet.
+#
+# THE NODES NOW MOUNT FROM EACH OTHER. pve01 already mounts nexus-data, backups
+# and shared FROM pve02; this adds media in the other direction. Every entry on
+# both sides carries nofail and a bounded timeout, so neither node can wedge the
+# other's boot. Do not remove those options.
+
+- name: Share the media library from pve01 to pve02
+  hosts: proxmox
+  become: true
+  serial: 1
+  roles:
+    - media-share

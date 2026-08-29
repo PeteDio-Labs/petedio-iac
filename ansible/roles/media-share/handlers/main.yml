@@ -1,0 +1,4 @@
+---
+- name: Re-export the NFS filesystems
+  ansible.builtin.command: exportfs -ra
+  changed_when: true
