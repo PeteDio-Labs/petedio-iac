@@ -139,7 +139,10 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   first and pve01 hangs on unmount indefinitely. So: **pve01 down first, pve02 down last;
   pve02 up first, pve01 up second.** The mounts carry `nofail,x-systemd.mount-timeout=60`
   so a late pve02 cannot wedge pve01's boot — the tradeoff is that a missing mount is now
-  silent, and CT106 needs `mount -a && pct restart 106` once pve02 is back.
+  silent, and CT106 needs `mount -a && pct exec 106 -- docker restart zot` once pve02 is
+  back. **Restarting the LXC is not enough** — verified 2026-08-29: `pct restart 106` left
+  the zot container running with the empty view it started with, bind mount correct and
+  catalog still empty. Restart the container, not the guest.
 
 - **pve01 + pve02 are a quorate 2-node cluster** ("Homelab"), so `/etc/pve/storage.cfg`
   is **cluster-shared** — a storage entry without an explicit `nodes <name>` line is
