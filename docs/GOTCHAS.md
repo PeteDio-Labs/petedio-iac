@@ -78,6 +78,35 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
 
 ## pve01 / pve02 cluster + storage (PET-127)
 
+- **An open chassis stops an R620 booting, and fabricates drive faults.** With the cover off,
+  pve01 reports `Server Status: ON` while drawing **0 Watts**; every power command appears to
+  succeed and does nothing. It also logs seven simultaneous "Fault detected on drive N in disk
+  drive bay 1" entries and `RAC0501: There are no physical disks to be displayed` — none of
+  them real. The SEL says `The chassis is open while the power is on`. **Read the SEL before
+  believing any storage fault on this machine.** Cost hours on 2026-08-28.
+
+- **A LOM answering ping is NOT proof the host is running.** pve01's NICs stay powered from
+  the standby rail via NC-SI, so both bridges answer IPv6 link-local with the machine at zero
+  watts. The distinguishing test is TCP: a running host answers *something*. ICMPv6 replies
+  with ports 22 and 8006 silent on both bridges means the host is down — go to iDRAC, not to
+  the network.
+
+- **iDRAC on pve01 is at `192.168.0.120`, the factory default, and is invisible to every
+  normal scan.** It is on neither `.50` nor `.86` and answers no NDP multicast, so subnet
+  sweeps find nothing. Reach it by aliasing the Mac onto that subnet
+  (`sudo ifconfig en0 alias 192.168.0.240 255.255.255.0`). It is iDRAC7 **Enterprise**, so
+  Virtual Console works — set Plug-in Type to HTML5 first or Launch downloads a Java `.jnlp`.
+  pve01 is VGA-only and there is no VGA monitor here, so **this is the only way to see its
+  screen**. Diagnose pve01 at iDRAC first, network second.
+
+- **`.50` is NATed behind `.86`, so the two networks are nested, not isolated.** `.50` → `.86`
+  works; `.86` → `.50` does not. Verified 2026-08-28 from pve02 (no `.86` leg, reached
+  `.86.140:32400`) and from mission-control (`.86`-only, reached nothing on `.50`). This
+  corrects `vault/Hosts/004-pete-pi.md`, which claims the `.86` leg is the only path to plex —
+  it is not. It also makes **Pete-Pi the jump host** into `.50` when `tailscale-244` is down,
+  since that subnet router is a guest on pve01 and dies with it: `ssh -A -i
+  ~/.ssh/id_ed25519_pete_pi_2 pedro@192.168.86.46`.
+
 - **`startup` is not declared in TF, so an apply strips it — keep it in `ignore_changes`.**
   Boot order and up/down delays are set on the node with
   `pct set <id> --startup order=N,up=S,down=S`. `modules/proxmox-lxc` declares no `startup`

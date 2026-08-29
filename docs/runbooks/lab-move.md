@@ -480,7 +480,123 @@ moving day.
 
 ---
 
+## Out-of-band access: iDRAC on pve01
+
+**This is the single most useful thing in this document.** pve01 outputs VGA only, and there
+is no VGA monitor here. When it fails to boot, iDRAC is the only way to see the screen.
+
+| | |
+|---|---|
+| Address | `192.168.0.120` — the **factory default static**, not DHCP |
+| MAC | `f8:bc:12:37:ef:c6` |
+| Licence | **iDRAC7 Enterprise** — includes Virtual Console (full remote KVM) |
+| Port | Dedicated iDRAC NIC, cabled to the `.86` segment |
+
+**It is invisible to every normal scan.** It sits on `192.168.0.0/24`, answers no NDP
+multicast, and appears on neither `.50` nor `.86`. Sweeping those two subnets finds nothing.
+To reach it, alias your Mac onto its subnet:
+
+```bash
+sudo ifconfig en0 alias 192.168.0.240 255.255.255.0
+```
+
+Then open `https://192.168.0.120/start.html`. Remove the alias with `sudo ifconfig en0
+-alias 192.168.0.240`; it does not survive a reboot or a wifi reconnect.
+
+Set **Plug-in Type: HTML5** under Virtual Console before launching, or the Launch link
+downloads a Java `.jnlp` that will not run.
+
+> **Worth fixing:** give iDRAC a DHCP reservation on a sane subnet so this stops needing an
+> alias, and change its password if it is still the `root` / `calvin` default — it is a full
+> remote-console interface sharing a network with every phone and TV in the house.
+
+### The intrusion switch will stop the machine booting
+
+**With the chassis cover off, the R620 will not complete power-on.** It reports
+`Server Status: ON` while drawing **0 Watts**, and the front LEDs look normal. Every power
+button press and every iDRAC power command appears to succeed and does nothing.
+
+It also generates **spurious drive faults** — seven simultaneous "Fault detected on drive N
+in disk drive bay 1" entries, plus `RAC0501: There are no physical disks to be displayed`.
+None of those are real. The SEL records the actual cause plainly:
+
+```
+The chassis is open while the power is on.
+```
+
+Read the SEL before believing any storage fault on this machine, and check the cover first.
+
+### A LOM that answers ping does not mean the host is running
+
+pve01's NICs stay powered from the standby rail via NC-SI, so both bridges answer **IPv6
+link-local** even with the host completely off. During the 2026-08-28 outage this looked
+exactly like "the machine is booted but its services failed", and it was not — the server
+was drawing zero watts the entire time.
+
+**The test that distinguishes them:** a running host answers TCP. If ICMPv6 replies but
+ports 22 and 8006 are both silent on both bridges, the host is not running — go to iDRAC,
+not to the network.
+
+### Diagnostic order for pve01
+
+Do these in order. Tonight's outage took hours because this was done backwards.
+
+1. **iDRAC first** — `Server Status`, `Present Reading` watts, and the SEL. Watts is the
+   honest signal; `Server Status` can say ON when nothing is powered.
+2. **Virtual Console** — read the actual screen.
+3. Only then the network, cables and switch.
+
+---
+
+## The two networks are nested, not isolated
+
+`.50` sits **behind** `.86`: the `192.168.50.1` router has its WAN on the `.86` segment and
+NATs outbound. Verified 2026-08-28:
+
+- **`.50` → `.86` works.** pve02, with no `.86` leg, reached `192.168.86.140:32400` and
+  `192.168.86.234:22`.
+- **`.86` → `.50` does not.** mission-control, which is `.86`-only, could reach none of
+  pve01:8006, Pete-Pi:3001 or pve02:2049.
+
+Two consequences.
+
+**The vault is wrong about Pete-Pi.** `004-pete-pi.md` says the `.86` leg is *"the only path
+to plex on 192.168.86.140"*, and the Uptime Kuma monitor design cites it. That is false —
+`.50` reaches `.86` fine. The `wlan0` leg is not needed for that monitor.
+
+**Pete-Pi is your way in when the tailnet is down.** `tailscale-244` is a guest on pve01, so
+it dies with that host, and a Mac on `.86` then has no route into `.50`. Pete-Pi is
+dual-homed and reachable from `.86`, which makes it the jump host:
+
+```bash
+ssh -A -i ~/.ssh/id_ed25519_pete_pi_2 pedro@192.168.86.46
+```
+
+Use `-A` so the Proxmox key stays on your Mac rather than being copied to the Pi.
+
+---
+
 ## When it goes wrong
+
+### pve01 powers on but never reaches the network
+
+The 2026-08-28 outage. Symptoms: no IPv4, no TCP on any port, but both bridges answer IPv6
+link-local, and the front LEDs look fine. Work it in this order.
+
+1. **iDRAC → Power/Thermal.** If `Present Reading` is **0 Watts**, the machine is not
+   running whatever `Server Status` claims. Check the chassis cover — see
+   [the intrusion switch](#the-intrusion-switch-will-stop-the-machine-booting).
+2. **iDRAC → Logs.** The SEL names the real fault. Ignore drive faults until you have
+   confirmed the cover is on; an open chassis fabricates them.
+3. **Virtual Console.** `Boot Failed: proxmox / No boot device available` means POST is
+   fine and the PERC is not presenting the array.
+4. **iDRAC → Storage.** `RAC0501` with 0 physical and 0 virtual disks, plus *"no
+   out-of-band capable controllers detected"*, means iDRAC cannot see the PERC at all.
+5. **Ctrl+R at POST** for the controller's own view. Virtual disks showing as **foreign**
+   is an import and recoverable. No drives at all is the card or the backplane.
+
+> **Never** initialize, clear or recreate an array in the PERC BIOS. That destroys
+> `/mnt/media` and every guest on pve01.
 
 ### Single node came up
 
@@ -692,7 +808,14 @@ Budget it as an application migration rather than a network change. The media st
 references itself by raw IP inside app databases — Sonarr's download client points at
 `192.168.50.21` — and Uptime Kuma's fourteen monitors are deliberately raw IPs too.
 
-### 7. A UPS
+### 7. AC Power Recovery, on both nodes
+
+Neither node came back on its own after the 2026-08-25 power cut. Set **AC Power
+Recovery** to *Last State* — R620 under System Setup &rarr; System Security, OptiPlex under
+Power Management. Do it through iDRAC's virtual console on pve01 rather than hunting a VGA
+monitor.
+
+### 8. A UPS
 
 No node has one; `nut` and `apcupsd` are both inactive. The Palworld laptop is the only
 machine in the estate with a battery.
