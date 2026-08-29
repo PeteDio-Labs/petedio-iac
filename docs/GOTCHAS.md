@@ -165,6 +165,51 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   **Nexus's blob store (CT106) is an NFS mount of pve02's `/mnt/nexus-data`** — never
   touch that export or `nfs-server` on pve02 or you break `docker.pdlab.dev`.
 
+- **The bridge numbers are INVERTED between the two nodes.** This is the single easiest way to
+  strand a container:
+
+  | | `vmbr0` | `vmbr1` |
+  |---|---|---|
+  | **pve01** | `.86` Google mesh (no host IP) | `.50` LAN — `192.168.50.10` |
+  | **pve02** | `.50` LAN — `192.168.50.11` | *(does not exist)* |
+
+  So `bridge = "vmbr1"` means the LAN on pve01 and **nothing** on pve02, while `vmbr0` means the
+  mesh on pve01 and **the LAN** on pve02. `pct migrate` moves a container without rewriting its
+  bridge, so a guest migrated between nodes lands on the wrong network and cannot reach its
+  gateway. Set the bridge as part of the move, before starting it on the target:
+
+      pct stop <id>; pct migrate <id> <target>
+      pct set <id> -net0 name=eth0,bridge=<right one>,hwaddr=<KEEP IT>,...
+      pct start <id>
+
+  Keep the original `hwaddr` — DHCP reservations and firewall rules are keyed on it. This bit
+  flaresolverr (102) during the PET-311 move to pve01 and is why `runner.tf` and `media.tf`
+  both carry the warning inline.
+
+- **A ping to the `.86` mesh from pve02 does NOT mean pve02 is on the `.86` network.** `.50` is
+  NATed behind `.86`, so `.50 → .86` succeeds outbound and proves only that the gateway forwards.
+  Whether a container on that node can *hold* a `.86` address is an L2 question, and the
+  discriminator is **ARP**, not ICMP:
+
+      arping -c2 -I vmbr0 192.168.86.1     # from pve02: zero replies -> no L2 path
+
+  Beware the near-miss: `arping 192.168.86.140` (plex) DOES answer from pve02, because plex is
+  dual-homed and its `.50` NIC replies for its `.86` address (Linux ARP flux, `arp_ignore=0`).
+  The reply's MAC gives it away — it is the `.50` interface's. Always arping the **gateway**,
+  which exists on one segment only.
+
+  Consequence: pve02 has one physical NIC, on `.50`, so nothing there can serve the mesh clients.
+  A `.86` presence on pve02 needs a second NIC bridged as its own `vmbr`, cabled either to a Nest
+  LAN port or to pve01's free `eno4` after adding `eno4` to pve01's `vmbr0`.
+
+- **`pct migrate` refuses a container that has a snapshot**, with
+  `can't migrate local volume '...': non-migratable snapshot exists`. It aborts in about two
+  seconds having changed nothing — but if you stopped the guest first, it is now **down** and
+  stays down until you start it again. Check `pct listsnapshot <id>` BEFORE stopping anything,
+  and restore service first and think second. Hit on 112, the Cloudflare tunnel, which carried a
+  six-month-old snapshot named `asdf`; the tunnel is every public hostname, so the cost of
+  finding out the slow way is an outage of everything.
+
 ## MinIO S3 state backend
 
 - Needs `use_path_style = true` + all four `skip_*` flags
