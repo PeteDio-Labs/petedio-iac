@@ -646,11 +646,15 @@ have quorum is how you split-brain a cluster.
 of hanging — the cost is that a missing mount is silent. Fix it once `pve02` is up:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 'mount -a && pct restart 106'
+ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 \
+  'mount -a && pct exec 106 -- docker restart zot'
 ```
 
-The restart is required. The bind mount is established at container start, so 106 holds
-an empty directory until it is restarted.
+**Restart zot itself, not the LXC.** `pct restart 106` is not enough: verified on
+2026-08-29, the LXC came back while the zot Docker container kept running with the empty
+view it started with (`docker ps` showed it still up from before the mount). The bind mount
+was correct and the catalog was still `{"repositories":[]}`. Restarting the container is
+what makes zot re-read the storage layer.
 
 ### Vault stays sealed
 
@@ -684,7 +688,8 @@ disk is dead — a bridge chip that failed to enumerate looks identical to a dea
 established at container start:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 'mount -a && pct restart 106'
+ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 \
+  'mount -a && pct exec 106 -- docker restart zot'
 ```
 
 **What `nofail` bought, and what it cost.** Before it, a missing drive meant no `pve02`
