@@ -1,0 +1,112 @@
+---
+# ---------------------------------------------------------------------------
+# SERVER SIDE — pve01, which physically holds the media LVs.
+# ---------------------------------------------------------------------------
+
+# No update_cache on either apt task: pve01/pve02 point at the subscription-gated
+# Proxmox enterprise repo, so refreshing the cache 401s and fails the play. Both
+# packages already ship on a PVE node, so `state: present` is a no-op that still
+# fails loudly if one is ever missing.
+- name: Install the NFS server
+  ansible.builtin.apt:
+    name: nfs-kernel-server
+    state: present
+  when: inventory_hostname == media_share_server_host
+
+# Export a mount point that is not mounted and you export an empty directory on
+# the root filesystem. The client then mounts it, sees nothing, and every check
+# downstream passes while Plex finds an empty library. Fail here instead.
+# `findmnt --target` reports the mount point CONTAINING the path, so an
+# unmounted /mnt/media answers with "/". Comparing that back to the path is the
+# discriminator: equal means the LV is mounted, "/" means it is not.
+- name: Assert each exported path is a real mounted filesystem on the server
+  ansible.builtin.command: findmnt --noheadings --first-only --output TARGET --target {{ item.path }}
+  register: media_share_src
+  changed_when: false
+  failed_when: media_share_src.rc != 0 or media_share_src.stdout | trim != item.path
+  loop: "{{ media_share_exports }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: inventory_hostname == media_share_server_host
+
+- name: Export the media filesystems to pve02
+  ansible.builtin.blockinfile:
+    path: /etc/exports
+    marker: "# {mark} ANSIBLE MANAGED BLOCK — media-share"
+    block: |
+      {% for e in media_share_exports %}
+      {{ e.path }} {{ media_share_client_ip }}({{ e.export_options }})
+      {% endfor %}
+    create: false
+    backup: true
+  when: inventory_hostname == media_share_server_host
+  notify: Re-export the NFS filesystems
+
+- name: Enable and start the NFS server
+  ansible.builtin.systemd:
+    name: nfs-server
+    enabled: true
+    state: started
+  when: inventory_hostname == media_share_server_host
+
+- name: Flush handlers so the exports are live before the client mounts them
+  ansible.builtin.meta: flush_handlers
+
+# ---------------------------------------------------------------------------
+# CLIENT SIDE — pve02, which reads the library over the wire.
+# ---------------------------------------------------------------------------
+
+- name: Install the NFS client
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+  when: inventory_hostname != media_share_server_host
+
+- name: Create the mount points
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ media_share_exports }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: inventory_hostname != media_share_server_host
+
+# nofail + a bounded mount-timeout for the same reason every other NFS entry in
+# this repo carries them: pve01 being down must not stop pve02 from booting.
+# The two nodes now mount from each other, so a hard mount here would let a
+# single node's outage wedge both.
+- name: Mount the media filesystems
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: "{{ media_share_server_ip }}:{{ item.path }}"
+    fstype: nfs
+    opts: "{{ item.mount_options }}"
+    state: mounted
+  loop: "{{ media_share_exports }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: inventory_hostname != media_share_server_host
+
+- name: Assert each mount really is NFS and not an empty local directory
+  ansible.builtin.command: findmnt --types nfs,nfs4 --target {{ item.path }}
+  changed_when: false
+  loop: "{{ media_share_exports }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: inventory_hostname != media_share_server_host
+
+# The whole point of no_root_squash + numeric IDs. If this drifts to 65534
+# (nobody), Plex's uid 999 cannot read the library and the failure would
+# otherwise look like a Plex problem rather than an NFS one.
+- name: Assert the numeric owner survived the export
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: media_share_stat
+  failed_when: media_share_stat.stat.uid | int != media_share_expected_uid | int
+  loop: "{{ media_share_exports }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when:
+    - inventory_hostname != media_share_server_host
+    - item.path == '/mnt/media'

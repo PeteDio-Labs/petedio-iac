@@ -1,0 +1,31 @@
+---
+# media-share — export the media library from the node that physically holds it
+# (pve01) to the node that needs to read it (pve02).
+#
+# WHY THIS EXISTS. /mnt/media (3.2 TB) and /mnt/downloads are LVM volumes on
+# pve01's sdb. Plex-on-pve02 (LXC 107) needs them, and moving 2.6 TB of media is
+# not on the table, so pve02 reads them over NFS instead.
+#
+# The paths are IDENTICAL on both nodes on purpose. A Plex container's bind
+# mounts (`mp0: /mnt/media,mp=/mnt/media`) then resolve on either node, which is
+# what makes the container node-independent.
+
+media_share_server_host: pve01
+media_share_server_ip: 192.168.50.10
+media_share_client_ip: 192.168.50.11
+
+# downloads is exported read-only: only qbittorrent-vpn (110, on pve01) writes
+# there, and Plex has never needed more than read.
+media_share_exports:
+  - path: /mnt/media
+    export_options: rw,sync,no_subtree_check,no_root_squash
+    mount_options: defaults,_netdev,nofail,x-systemd.mount-timeout=60
+  - path: /mnt/downloads
+    export_options: ro,sync,no_subtree_check,no_root_squash
+    mount_options: ro,defaults,_netdev,nofail,x-systemd.mount-timeout=60
+
+# The host-side owner of /mnt/media. 100999 is uid 999 inside an unprivileged
+# container (the 100000 offset), which is what Plex runs as. Asserted on the
+# client after mounting: if NFS ID mapping squashes these to nobody, Plex reads
+# nothing, and that must fail the play rather than surface as an empty library.
+media_share_expected_uid: 100999
