@@ -1,0 +1,54 @@
+---
+# backup-store — give the cluster somewhere to back up to that neither node owns.
+#
+# WHY THIS EXISTS. Surveyed 2026-08-31: there were no scheduled backups anywhere,
+# and exactly ONE archive existed in the whole cluster — a 164 MB hand-taken dump
+# of 112. The "295 GB reserved" target was /mnt/pete/backups, which is an NFS
+# mount FROM pve02, so pve01 backed up to pve02 while pve02 would have backed up
+# to itself. That protects nothing.
+#
+# ollama-host is a THIRD machine, independent of both nodes, and its disk is
+# mostly unused: sda3 is 901.6 GB of physical volume while the root LV is 100 GB,
+# the Ubuntu installer default. This claims part of that space.
+#
+# ⚠ THIS IS NOT 3-2-1. One extra copy on one extra machine, same building, same
+# power, same LAN, single disk with no redundancy. It is a large improvement on
+# zero scheduled backups and it is not offsite. Anything genuinely irreplaceable
+# — Vault's data above all — wants a second destination.
+
+backup_store_server: ollama-host
+backup_store_server_ip: 192.168.50.12
+backup_store_clients:
+  - 192.168.50.10   # pve01
+  - 192.168.50.11   # pve02
+
+backup_store_vg: ubuntu-vg
+backup_store_lv: backup-lv
+backup_store_path: /srv/backups
+
+# ~82 GB of real data across 22 guests, so roughly 45 GB a run compressed.
+# 500 GB is about 11 full generations.
+backup_store_size: 500G
+
+# Root sits at 76% (71 G of 98 G) and the Ollama models keep growing. Claiming
+# backup space is the moment to relieve that, while the free extents are there.
+backup_store_extend_root: true
+backup_store_root_lv: ubuntu-lv
+backup_store_root_add: +100G
+
+# Leave headroom rather than consuming the whole volume group. Asserted before
+# anything is created, so a too-greedy change fails loudly instead of filling
+# the disk that also holds the models.
+backup_store_min_free_after: 150
+
+backup_store_export_options: rw,sync,no_subtree_check,no_root_squash
+backup_store_mount_options: defaults,_netdev,nofail,x-systemd.mount-timeout=60
+
+# Client side
+backup_store_client_mount: /mnt/ollama-backups
+backup_store_pve_storage_id: ollama-backups
+
+# Retention. vzdump writes a full archive every run, so these multiply.
+backup_store_keep_daily: 7
+backup_store_keep_weekly: 3
+backup_store_schedule: "02:30"

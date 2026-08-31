@@ -1,0 +1,96 @@
+---
+- name: Install the NFS client
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the mount point
+  ansible.builtin.file:
+    path: "{{ backup_store_client_mount }}"
+    state: directory
+    mode: "0755"
+
+# nofail and a bounded timeout are not optional here. These are Proxmox nodes,
+# and a hard NFS mount to a box that is off will hang the boot — the same
+# discipline the media-share role uses in the other direction.
+- name: Mount the backup store
+  ansible.posix.mount:
+    path: "{{ backup_store_client_mount }}"
+    src: "{{ backup_store_server_ip }}:{{ backup_store_path }}"
+    fstype: nfs
+    opts: "{{ backup_store_mount_options }}"
+    state: mounted
+
+# A mount that silently failed leaves an empty local directory that every
+# downstream check still passes, and backups would then be written to the node's
+# own root disk while appearing to succeed.
+- name: Assert this really is NFS and not an empty local directory
+  ansible.builtin.command: findmnt -no FSTYPE {{ backup_store_client_mount }}
+  register: backup_fstype
+  changed_when: false
+  failed_when: "'nfs' not in backup_fstype.stdout"
+
+- name: Prove it is writable from this node
+  ansible.builtin.copy:
+    dest: "{{ backup_store_client_mount }}/.write-test-{{ inventory_hostname }}"
+    content: "written by {{ inventory_hostname }}\n"
+    mode: "0644"
+
+- name: Read the configured Proxmox storages
+  ansible.builtin.command: pvesm status
+  register: backup_pvesm
+  changed_when: false
+  failed_when: false
+
+- name: Register the store with Proxmox
+  ansible.builtin.command: >-
+    pvesm add dir {{ backup_store_pve_storage_id }}
+    --path {{ backup_store_client_mount }}
+    --content backup
+    --prune-backups keep-daily={{ backup_store_keep_daily }},keep-weekly={{ backup_store_keep_weekly }}
+  when: backup_store_pve_storage_id not in (backup_pvesm.stdout | default(''))
+  register: backup_storage_added
+  changed_when: backup_storage_added.rc == 0
+
+- name: Read existing backup jobs
+  ansible.builtin.command: pvesh get /cluster/backup --output-format json
+  register: backup_jobs
+  changed_when: false
+  failed_when: false
+
+# One job per node, each backing up only its own guests. A single cluster-wide
+# job would have one node reaching for the other's guests, and these two nodes
+# are not a real HA cluster.
+- name: Schedule a nightly backup of this node's guests
+  ansible.builtin.command: >-
+    pvesh create /cluster/backup
+    --schedule "{{ backup_store_schedule }}"
+    --storage {{ backup_store_pve_storage_id }}
+    --mode snapshot
+    --compress zstd
+    --node {{ inventory_hostname }}
+    --all 1
+    --notes-template "{% raw %}{{guestname}}{% endraw %}"
+    --comment "backup-store nightly ({{ inventory_hostname }})"
+  when: backup_store_pve_storage_id not in (backup_jobs.stdout | default(''))
+  register: backup_job_added
+  changed_when: backup_job_added.rc == 0
+
+# Derived from what the probes actually returned, never from `.changed`. In a dry
+# run the probes are skipped, and `.changed | default(false)` then reports
+# "already present" — a claim about a state nothing ever looked at.
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {% if backup_pvesm.skipped | default(false) -%}
+      not checked (dry run) — would register the storage and a nightly job if absent.
+      {%- elif backup_store_pve_storage_id in (backup_pvesm.stdout | default('')) -%}
+      storage {{ backup_store_pve_storage_id }} present.
+      {%- else -%}
+      storage {{ backup_store_pve_storage_id }} registered.
+      {%- endif %}
+      Schedule {{ backup_store_schedule }}, keeping {{ backup_store_keep_daily }} daily
+      + {{ backup_store_keep_weekly }} weekly.

@@ -1,0 +1,98 @@
+---
+- name: Read the volume group before changing anything
+  ansible.builtin.command: vgs --noheadings --units g -o vg_free --nosuffix {{ backup_store_vg }}
+  register: backup_vg_free
+  changed_when: false
+  check_mode: false
+
+# Refuse to fill the disk that also holds the Ollama models. Everything this role
+# creates is additive, so the only real risk is greed — check it up front rather
+# than discovering it when inference starts failing on a full root.
+- name: Assert there is room for the store, the root growth, and headroom
+  ansible.builtin.assert:
+    that:
+      - (backup_vg_free.stdout | trim | float) >=
+        (backup_store_size | regex_replace('[^0-9.]','') | float)
+        + (backup_store_extend_root | ternary(backup_store_root_add | regex_replace('[^0-9.]','') | float, 0))
+        + (backup_store_min_free_after | float)
+    fail_msg: >-
+      {{ backup_store_vg }} has only {{ backup_vg_free.stdout | trim }} GB free.
+      Wanted {{ backup_store_size }} for backups
+      {{ '+ ' ~ backup_store_root_add ~ ' for root' if backup_store_extend_root else '' }}
+      and {{ backup_store_min_free_after }} GB left spare.
+    success_msg: >-
+      {{ backup_vg_free.stdout | trim }} GB free — enough for {{ backup_store_size }}
+      plus headroom.
+
+# Online ext4 growth only. Nothing here ever shrinks a volume: shrinking ext4
+# requires an unmount and loses data if the size is miscalculated, and this is
+# the root filesystem of a live host.
+- name: Extend the root volume while the free extents are here
+  when: backup_store_extend_root | bool
+  community.general.lvol:
+    vg: "{{ backup_store_vg }}"
+    lv: "{{ backup_store_root_lv }}"
+    size: "{{ backup_store_root_add }}"
+    resizefs: true
+  register: backup_root_grown
+
+- name: Create the backup volume
+  community.general.lvol:
+    vg: "{{ backup_store_vg }}"
+    lv: "{{ backup_store_lv }}"
+    size: "{{ backup_store_size }}"
+    state: present
+  register: backup_lv_created
+
+- name: Put a filesystem on it
+  community.general.filesystem:
+    fstype: ext4
+    dev: "/dev/{{ backup_store_vg }}/{{ backup_store_lv }}"
+    # never force: a filesystem already here means this ran before, and
+    # reformatting it would destroy every archive it holds.
+    force: false
+
+- name: Mount it
+  ansible.posix.mount:
+    path: "{{ backup_store_path }}"
+    src: "/dev/{{ backup_store_vg }}/{{ backup_store_lv }}"
+    fstype: ext4
+    opts: defaults,nofail
+    state: mounted
+
+- name: Install the NFS server
+  ansible.builtin.apt:
+    name: nfs-kernel-server
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Export the store to both Proxmox nodes
+  ansible.builtin.blockinfile:
+    path: /etc/exports
+    marker: "# {mark} ANSIBLE MANAGED BLOCK — backup-store"
+    block: |
+      {% for c in backup_store_clients %}
+      {{ backup_store_path }} {{ c }}({{ backup_store_export_options }})
+      {% endfor %}
+    create: true
+    mode: "0644"
+  notify: reload nfs exports
+
+- name: Enable and start the NFS server
+  ansible.builtin.systemd_service:
+    name: nfs-kernel-server
+    enabled: true
+    state: started
+
+- name: Flush handlers so the exports are live before any client mounts
+  ansible.builtin.meta: flush_handlers
+
+- name: Report the store
+  ansible.builtin.command: df -h {{ backup_store_path }}
+  register: backup_store_df
+  changed_when: false
+
+- name: Show it
+  ansible.builtin.debug:
+    msg: "{{ backup_store_df.stdout_lines }}"
