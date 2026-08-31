@@ -210,6 +210,36 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   six-month-old snapshot named `asdf`; the tunnel is every public hostname, so the cost of
   finding out the slow way is an outage of everything.
 
+- **A node with one NIC can still hold an address on a network it has no cable to.** pve02 has a
+  single port, on `.50`, and the TVs live on the `.86` mesh — which `.50` cannot be reached from,
+  since `.50` is NATed behind `.86`. The fix needed no hardware: a **VXLAN** wraps mesh Ethernet
+  frames in ordinary UDP addressed pve02 → pve01, and pve01 — which *is* cabled to the mesh —
+  unwraps them into its own mesh bridge (`vmbr0`, port `eno1`). pve02 gets `vmbr1` backed only by
+  the tunnel. The inner frame is never rewritten, so this is a real layer-2 presence: no NAT, no
+  proxy, no custom access URLs, native client discovery, and the consumer mesh router needs no
+  configuration at all. Managed by `ansible/playbooks/configure-mesh-vxlan.yml`.
+
+  Two things to get right, both of which fail quietly:
+
+  - **MTU.** VXLAN spends 50 of the underlay's 1500 bytes on headers, so the guest leg runs at
+    **1450**. Leave it at 1500 and small packets pass while large ones vanish — it reads as an
+    application bug, not a network one.
+  - **Don't give the second leg a gateway** unless you mean to move the default route. 236 keeps
+    its default on `.50` so the NFS media path is unchanged, and reaches `.86` as a
+    directly-connected route. A gateway on both legs installs two default routes.
+
+  The verification that actually proves it is ARP to the **gateway**, plus one better signal: the
+  mesh router handed 236 an IPv6 address from its own advertisements, which only happens across a
+  genuine L2 link.
+
+- **`systemctl stop` is not `systemctl disable`, and the difference is a reboot.** When plex-gpu
+  took over, 103 was stopped by hand — but left enabled, so the next container reboot would have
+  put two Plex servers back on the network, with clients silently landing on whichever they saw
+  last. Worse, the `plex` role hardcoded `enabled: true, state: started`, so the next
+  `configure-media` run would have done the same thing sooner. Which server serves is now a
+  variable (`plex_primary`) enforced by `plex-primary.yml`, and it sets **both** state and enabled.
+  Any "temporarily turn this off" that is not also `disable`d is a pause, not a decision.
+
 ## MinIO S3 state backend
 
 - Needs `use_path_style = true` + all four `skip_*` flags

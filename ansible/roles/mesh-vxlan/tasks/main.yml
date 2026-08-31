@@ -1,0 +1,119 @@
+---
+- name: Identify this node's role in the tunnel
+  ansible.builtin.set_fact:
+    mesh_is_anchor: "{{ inventory_hostname == mesh_vxlan_anchor_host }}"
+    mesh_local_ip: >-
+      {{ mesh_vxlan_anchor_ip if inventory_hostname == mesh_vxlan_anchor_host
+         else mesh_vxlan_remote_ip }}
+    mesh_peer_ip: >-
+      {{ mesh_vxlan_remote_ip if inventory_hostname == mesh_vxlan_anchor_host
+         else mesh_vxlan_anchor_ip }}
+
+- name: Back up the interfaces file before first modification
+  ansible.builtin.copy:
+    src: /etc/network/interfaces
+    dest: /etc/network/interfaces.bak-pre-mesh-vxlan
+    remote_src: true
+    force: false          # never clobber the pristine pre-change copy
+    mode: "0644"
+
+# The tunnel interface itself. Identical shape on both nodes; only the endpoints
+# swap. ifupdown2 understands vxlan natively, so this needs no scripts.
+- name: Declare the VXLAN interface
+  ansible.builtin.blockinfile:
+    path: /etc/network/interfaces
+    marker: "# {mark} ANSIBLE MANAGED BLOCK — mesh-vxlan"
+    block: |
+      auto {{ mesh_vxlan_name }}
+      iface {{ mesh_vxlan_name }}
+          vxlan-id {{ mesh_vxlan_id }}
+          vxlan-local-tunnelip {{ mesh_local_ip }}
+          vxlan-remoteip {{ mesh_peer_ip }}
+          mtu {{ mesh_vxlan_mtu }}
+    insertafter: EOF
+  register: mesh_vxlan_iface
+
+# On the anchor the tunnel joins the EXISTING mesh bridge beside the real cable,
+# so the bridge floods between copper and tunnel without knowing the difference.
+# This edits a PVE-managed line, so it is a precise match rather than a rewrite.
+- name: Anchor — add the tunnel to the mesh bridge's ports
+  when: mesh_is_anchor
+  ansible.builtin.replace:
+    path: /etc/network/interfaces
+    regexp: '^(\s*bridge-ports\s+eno1)(?!.*{{ mesh_vxlan_name }})(.*)$'
+    replace: '\1\2 {{ mesh_vxlan_name }}'
+  register: mesh_vxlan_anchor_port
+
+# On the remote node the tunnel is the ONLY port of a brand-new bridge. Nothing
+# existing is touched; vmbr0 there stays the .50 LAN.
+- name: Remote — declare the mesh bridge backed by the tunnel
+  when: not mesh_is_anchor
+  ansible.builtin.blockinfile:
+    path: /etc/network/interfaces
+    marker: "# {mark} ANSIBLE MANAGED BLOCK — mesh-vxlan bridge"
+    block: |
+      auto {{ mesh_vxlan_remote_bridge }}
+      iface {{ mesh_vxlan_remote_bridge }} inet manual
+          bridge-ports {{ mesh_vxlan_name }}
+          bridge-stp off
+          bridge-fd 0
+          mtu {{ mesh_vxlan_mtu }}
+      #google mesh via {{ mesh_vxlan_name }} to {{ mesh_vxlan_anchor_host }}
+    insertafter: EOF
+  register: mesh_vxlan_remote_bridge_cfg
+
+# ------------------------------------------------------------- verification --
+# Syntax first. A bad interfaces file on pve01 is a drive-to-the-basement event,
+# and it would not surface until the next boot.
+- name: Validate the interfaces file without applying it
+  ansible.builtin.command: ifreload -a -n
+  register: mesh_vxlan_check
+  changed_when: false
+  failed_when: mesh_vxlan_check.rc != 0
+
+# ARP, not ping. pve02 can ping 192.168.86.1 even with no mesh path at all,
+# because the .50 gateway NATs it outbound — see docs/GOTCHAS.md. Whether a
+# container here can HOLD a mesh address is a layer-2 question, and only ARP
+# answers it. Always arping the gateway, which exists on one segment only.
+- name: Remote — prove layer 2 actually reaches the mesh gateway
+  when: not mesh_is_anchor
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    arping -c3 -w4 -I {{ mesh_vxlan_remote_bridge }} 192.168.86.1
+    | grep -c 'Unicast reply' || true
+  args: { executable: /bin/bash }
+  register: mesh_vxlan_arp
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Remote — report the layer-2 result
+  when: not mesh_is_anchor
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'mesh reachable at layer 2 (' ~ (mesh_vxlan_arp.stdout | trim) ~ ' ARP replies)'
+         if (mesh_vxlan_arp.stdout | trim | int) > 0
+         else 'NO ARP replies from the mesh gateway. The config is written and valid but
+               the tunnel is not live — run `ifreload -a` on both nodes, anchor first.' }}
+
+# Deliberately NOT reloading the network automatically. pve01 carries Vault,
+# MinIO, Plane, Authentik and the whole media stack; an automatic ifreload there
+# is not worth the convenience. The config is written and validated, so a reboot
+# comes up correct either way.
+# A changed file does NOT mean the tunnel is down — the config may simply have
+# been brought under management after the interfaces were already up by hand. ARP
+# is the source of truth on the remote node, so trust it over the file diff and
+# only send the operator to `ifreload` when layer 2 is genuinely not working.
+- name: Say what is left to do by hand, if anything
+  when: >-
+    (mesh_vxlan_iface.changed
+     or mesh_vxlan_anchor_port.changed | default(false)
+     or mesh_vxlan_remote_bridge_cfg.changed | default(false))
+    and (mesh_is_anchor or (mesh_vxlan_arp.stdout | default('0') | trim | int) == 0)
+  ansible.builtin.debug:
+    msg: >-
+      Config changed on {{ inventory_hostname }} and passed validation.
+      {{ 'Layer 2 is NOT up — run `ifreload -a` on ' ~ mesh_vxlan_anchor_host ~
+         ' first, then ' ~ mesh_vxlan_remote_host ~ '.'
+         if not mesh_is_anchor
+         else 'This is the anchor; the far end reports whether the tunnel is live.' }}
