@@ -99,7 +99,36 @@ existing media LXCs must plan unchanged. Any change or destroy among them is a
 STOP: it means the module is stripping something set out-of-band, which is how
 the `startup` boot-order regression surfaced on 2026-08-31.
 
-## Step 3 — install Plex on 236
+## Step 3 — apply the out-of-band settings, then install Plex on 236
+
+Terraform creates 236 carrying **none** of its bind mounts, its render device, or
+its `features`. Proxmox gates all of those behind a hardcoded `root@pam` check,
+and the provider authenticates with an API token, so a create carrying any of
+them fails:
+
+    Permission check failed (mount point type bind is only allowed for root@pam)
+    Permission check failed (configuring device passthrough is only allowed for root@pam)
+
+Proxmox reports these **one at a time**, so removing only the block that errored
+moves the failure rather than fixing it. The gated set is `features`,
+`device_passthrough`, `mount_point` and `idmap`; the module lists all four in
+`ignore_changes`, and that list is the catalogue.
+
+The seven existing media LXCs escape this because they were imported — Terraform
+adopted settings it never had to create. 236 is the first container built from
+scratch, so it is the first to hit it.
+
+```bash
+cd ~/petedio/media-iac && ./scripts/lxc-oob-236.sh
+```
+
+That sets `mp0` `/mnt/media`, `mp1` `/mnt/downloads` (ro), `dev0`
+`/dev/dri/renderD128,gid=44,mode=0660`, and `features nesting=1` in one run. It is
+idempotent, and it refuses to bind a host path that is not a real mount — binding
+an unmounted mount point ships an empty library while every check downstream
+still passes.
+
+Then install Plex:
 
 ```bash
 cd ~/petedio/media-iac/ansible && ansible-playbook playbooks/bootstrap-plex-gpu.yml
@@ -109,6 +138,14 @@ The play asserts the three things that otherwise fail silently: the render node
 reached the container, `plex` is in group `video` (gid 44, which is what lets it
 open the device), and `/mnt/media` is mounted and non-empty from inside the
 container.
+
+⚠ **The apt repo and its key are not the obvious pair.** `repo.plex.tv` is
+current; `downloads.plex.tv` is legacy and stuck on 1.42.2. They are signed by
+different keys, and `PlexSign.key` — the only key Plex publishes at a well-known
+URL — verifies neither on Debian 13, because its self-signature is SHA-1 and
+trixie's apt rejects that from 2026-02-01. 103 is Debian 12 and accepts it, so
+this looks like a Plex outage rather than a distro policy change. The role
+vendors the correct key and asserts its fingerprint.
 
 Claiming is interactive and stays manual. Open `http://192.168.50.236:32400/web`
 from the LAN or the tailnet, sign in, add a library on `/mnt/media`, then enable
