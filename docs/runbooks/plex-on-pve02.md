@@ -16,15 +16,21 @@ well under a gigabit, while transcoding is what saturates a CPU.
 
 This adds a **second** Plex. `plex` (103) stays untouched on pve01. Two Plex
 servers each need their own identity — copying 103's database would give both the
-same machine identifier and they would contend for one entry on plex.tv — so 107
+same machine identifier and they would contend for one entry on plex.tv — so 236
 is a fresh install scanning the same library, and 103 stays rollback-ready.
 
 ## Target state
 
 | Node | Guests |
 |---|---|
-| pve02 | `233` runner-233, `107` plex-gpu |
+| pve02 | `233` runner-233, `236` plex-gpu |
 | pve01 | everything else, including `103` plex |
+
+`236` follows the platform convention rather than the media one: every non-media
+service takes a 2xx VMID whose last octet matches its IP (221 minio, 231 postgres,
+233 runner, 235 plane). The 1xx block is the pve01 media stack, and this server is
+not in it. 234 is skipped because it was palworld-234, and the vault keys its host
+notes on VMID.
 
 ## State when this runbook was written
 
@@ -32,7 +38,7 @@ is a fresh install scanning the same library, and 103 stays rollback-ready.
   identical paths. Verified from pve02: 2.6 TB, 319 movies, owner `100999`.
 - `102 flaresolverr` has moved to pve01, `192.168.50.150`.
 - `112 cloud-flare-main` is still on pve02, blocked by a snapshot.
-- `107` is declared in Terraform but does not exist yet.
+- `236` is declared in Terraform but does not exist yet.
 
 ## Step 1 — move `112` off pve02
 
@@ -75,7 +81,7 @@ ssh root@192.168.50.10 'pct exec 112 -- docker ps --format "{{.Names}} {{.Status
 
 ## Step 2 — merge, in this order
 
-The NFS share must exist before 107 boots and bind-mounts it.
+The NFS share must exist before 236 boots and bind-mounts it.
 
 ```bash
 gh pr merge 231 --repo PeteDio-Labs/petedio-iac --squash --delete-branch
@@ -87,11 +93,13 @@ gh pr merge 22 --repo PeteDio-Labs/petedio-media-iac --squash --delete-branch
 
 Then **read the apply log**, do not just check for green. A PR run cannot show a
 plan here — it runs GitHub-hosted with no Vault, LAN or state — so the
-apply-on-merge log is the authoritative plan. Expect **1 to add** (107) and
-nothing changed or destroyed. `device_passthrough` defaults to an empty list, so
-the seven existing media LXCs must plan unchanged. Any destroy is a STOP.
+apply-on-merge log is the authoritative plan. Expect **2 to add** — the container
+and its Proxmox pool membership — and nothing changed or destroyed. The seven
+existing media LXCs must plan unchanged. Any change or destroy among them is a
+STOP: it means the module is stripping something set out-of-band, which is how
+the `startup` boot-order regression surfaced on 2026-08-31.
 
-## Step 3 — install Plex on 107
+## Step 3 — install Plex on 236
 
 ```bash
 cd ~/petedio/media-iac/ansible && ansible-playbook playbooks/bootstrap-plex-gpu.yml
@@ -102,13 +110,13 @@ reached the container, `plex` is in group `video` (gid 44, which is what lets it
 open the device), and `/mnt/media` is mounted and non-empty from inside the
 container.
 
-Claiming is interactive and stays manual. Open `http://192.168.50.107:32400/web`
+Claiming is interactive and stays manual. Open `http://192.168.50.236:32400/web`
 from the LAN or the tailnet, sign in, add a library on `/mnt/media`, then enable
 **Settings → Transcoder → Use hardware acceleration when available**.
 
 ## Step 4 — give pve02 a `.86` leg (needs hardware)
 
-Until this is done, 107 is reachable only from the `.50` LAN and the tailnet. It
+Until this is done, 236 is reachable only from the `.50` LAN and the tailnet. It
 is **invisible to every TV and phone**, because Plex clients live on the `.86`
 Google mesh and `.86` does not route to `.50`.
 
@@ -141,7 +149,7 @@ it in `/etc/network/interfaces`:
 Confirm `arping -I vmbr1 192.168.86.1` now answers, then add the second leg to
 `module "plex_gpu"` in media-iac's `environments/media/media.tf`:
 
-    net1_address  = "192.168.86.107/24"
+    net1_address  = "192.168.86.236/24"
     net1_gateway  = "192.168.86.1"
     net1_bridge   = "vmbr1"
     net1_firewall = true
@@ -150,13 +158,13 @@ Confirm `arping -I vmbr1 192.168.86.1` now answers, then add the second leg to
 on pve01. Do not copy 103's values.
 
 Note the default route: 103 carries its default gateway on the `.86` leg. Decide
-deliberately which leg holds 107's, since it changes which path outbound traffic
+deliberately which leg holds 236's, since it changes which path outbound traffic
 and Plex's own relay connection take.
 
 ## Rollback
 
 Nothing here touches 103, so the rollback for the Plex work is to keep using it
-and stop 107. The library is read-only shared, so both servers reading it
+and stop 236. The library is read-only shared, so both servers reading it
 concurrently is safe.
 
 To undo the NFS share, unmount on pve02 and remove the `media-share` block from
