@@ -1,0 +1,32 @@
+---
+# configure-mesh-vxlan.yml — give pve02 a layer-2 presence on the .86 Google mesh
+# over the .50 cable it already has, so plex-gpu (236) is reachable from the TVs
+# without a second NIC. (PET-311)
+#
+# WHY THIS EXISTS. pve02 has ONE physical NIC and no WiFi. The TVs and phones live
+# on the .86 mesh, and .86 -> .50 does not route (the .50 network is NATed behind
+# .86), so a Plex server on pve02 is invisible from the couch. The obvious fix is
+# a USB-to-Ethernet adapter; this is the fix that needs no hardware.
+#
+# HOW. A VXLAN wraps mesh Ethernet frames inside ordinary UDP addressed
+# pve02 -> pve01 and sends them down the LAN cable. pve01, which IS cabled to the
+# mesh, unwraps them into its own mesh bridge. The inner frame is never rewritten,
+# so 236 holds a real 192.168.86.236 with native client discovery — not a proxy,
+# not a port forward, no NAT and no custom access URLs.
+#
+#   ansible-playbook playbooks/configure-mesh-vxlan.yml
+#
+# ORDER MATTERS, hence serial: 1 with pve01 first. The anchor must be able to
+# accept the tunnel before the far end offers it.
+#
+# THIS PLAY DOES NOT RELOAD NETWORKING. pve01 carries Vault, MinIO, Plane,
+# Authentik and the media stack; an automatic `ifreload` there is not worth the
+# convenience. The play writes the config, proves it parses, and tells you if a
+# manual reload is still needed. A reboot comes up correct either way.
+
+- name: Extend the .86 mesh to pve02 over VXLAN
+  hosts: proxmox
+  become: true
+  serial: 1
+  roles:
+    - mesh-vxlan

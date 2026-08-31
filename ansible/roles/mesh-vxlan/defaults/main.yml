@@ -1,0 +1,34 @@
+---
+# mesh-vxlan — carry the .86 Google mesh to pve02 over the .50 cable it already
+# has, so plex-gpu (236) can hold a real mesh address without a second NIC.
+#
+# pve02 has ONE physical NIC (Intel I219-LM), on .50, and no WiFi. pve01 is
+# cabled to BOTH networks (eno1 -> mesh, eno2/eno3 -> LAN). A VXLAN wraps mesh
+# Ethernet frames in ordinary UDP addressed pve02 -> pve01; pve01 unwraps them
+# into its own mesh bridge. The inner frame is never rewritten, so this is a real
+# layer-2 presence, not a proxy or a port forward: no NAT, no custom access URLs,
+# and native Plex client discovery.
+
+mesh_vxlan_name: vxlan86
+mesh_vxlan_id: 86
+
+# The node cabled to the mesh, and the bridge that cable belongs to. This end
+# bridges the tunnel INTO the existing mesh bridge.
+mesh_vxlan_anchor_host: pve01
+mesh_vxlan_anchor_bridge: vmbr0
+
+# The node with no mesh cable, and the new bridge created to hold the tunnel.
+# ⚠ The bridge numbers are INVERTED between the nodes: on pve01 vmbr0 is the mesh
+# and vmbr1 is the LAN; on pve02 vmbr0 is the LAN and this vmbr1 is the mesh.
+# See docs/GOTCHAS.md before touching any interface on either node.
+mesh_vxlan_remote_host: pve02
+mesh_vxlan_remote_bridge: vmbr1
+
+# Underlay endpoints — the .50 addresses the tunnel rides between.
+mesh_vxlan_anchor_ip: 192.168.50.10
+mesh_vxlan_remote_ip: 192.168.50.11
+
+# 1500 underlay - 50 bytes of VXLAN header. Getting this wrong fails in the ugly
+# way: small packets pass and large ones vanish, so it reads as an application
+# bug rather than an MTU one.
+mesh_vxlan_mtu: 1450

@@ -1,8 +1,25 @@
 # Plex on pve02 with Quick Sync (PET-311)
 
-Finish moving Plex onto pve02 so transcoding uses hardware. This runbook picks up
-from a partly-completed state: the NFS media share is live, `102` has moved, and
-both PRs are open and green.
+**`plex-gpu` (236) on pve02 is the Plex server the house uses. `plex` (103) on
+pve01 is the cold spare — installed and current, but stopped and disabled.**
+
+To change which one serves, see [Switching which Plex serves](#switching-which-plex-serves).
+That is the section to reach for when pve02 dies; the rest of this runbook is how
+the thing was built and why.
+
+| | Primary | Cold spare |
+|---|---|---|
+| Server | `plex-gpu` 236 | `plex` 103 |
+| Node | pve02 | pve01 |
+| LAN | `192.168.50.236` | `192.168.50.140` |
+| Mesh | `192.168.86.236` (over VXLAN) | `192.168.86.140` (real NIC) |
+| Transcoding | Intel Quick Sync | software only, no GPU |
+| Service | running, enabled | stopped, **disabled** |
+
+Measured on the same 1080p 35.7 Mbps remux, both containers 4 cores / 4 GB:
+236 sustains **8.5x realtime on under 1 core**, 103 manages **4.2x while pegging
+all four**. At six concurrent streams 236 still delivers 3.1x each; 103 drops to
+0.77x and stutters.
 
 **Read `docs/GOTCHAS.md` first** — the inverted bridge numbering trips every step
 that touches a network interface.
@@ -19,7 +36,7 @@ servers each need their own identity — copying 103's database would give both 
 same machine identifier and they would contend for one entry on plex.tv — so 236
 is a fresh install scanning the same library, and 103 stays rollback-ready.
 
-## Target state
+## Target state — reached
 
 | Node | Guests |
 |---|---|
@@ -32,13 +49,24 @@ service takes a 2xx VMID whose last octet matches its IP (221 minio, 231 postgre
 not in it. 234 is skipped because it was palworld-234, and the vault keys its host
 notes on VMID.
 
-## State when this runbook was written
+## What is done, and what is not
+
+Done:
 
 - `/mnt/media` + `/mnt/downloads` export from pve01 and mount on pve02 at
-  identical paths. Verified from pve02: 2.6 TB, 319 movies, owner `100999`.
-- `102 flaresolverr` has moved to pve01, `192.168.50.150`.
-- `112 cloud-flare-main` is still on pve02, blocked by a snapshot.
-- `236` is declared in Terraform but does not exist yet.
+  identical paths. Verified from pve02: 2.6 TB, owner `100999`.
+- `102 flaresolverr` has moved to pve01.
+- `236` exists, is claimed, and serves the house. Four libraries mirror 103
+  exactly, and the counts match: Movies 271, TV Shows 57, Music 1.
+- Hardware transcoding is live and proven from an Apple TV over the mesh.
+- The `.86` leg exists over VXLAN — no USB NIC was needed. See step 4.
+- `plex` 103 is stopped and disabled, managed by `plex-primary.yml`.
+
+Not done:
+
+- `112 cloud-flare-main` is still on pve02, blocked by a snapshot — step 1. It is
+  the only thing left between here and the target state, and it costs about 60
+  seconds of every public hostname, so it waits for a convenient moment.
 
 ## Step 1 — move `112` off pve02
 
@@ -151,58 +179,130 @@ Claiming is interactive and stays manual. Open `http://192.168.50.236:32400/web`
 from the LAN or the tailnet, sign in, add a library on `/mnt/media`, then enable
 **Settings → Transcoder → Use hardware acceleration when available**.
 
-## Step 4 — give pve02 a `.86` leg (needs hardware)
+## Step 4 — give pve02 a `.86` leg — DONE, over VXLAN, with no new hardware
 
-Until this is done, 236 is reachable only from the `.50` LAN and the tailnet. It
-is **invisible to every TV and phone**, because Plex clients live on the `.86`
+Until this existed, 236 was reachable only from the `.50` LAN and the tailnet, and
+was **invisible to every TV and phone**, because Plex clients live on the `.86`
 Google mesh and `.86` does not route to `.50`.
 
-pve02 has one physical NIC, on `.50`. The proof is ARP, not ping — pve02 pings
-`192.168.86.1` fine because the `.50` gateway NATs it outbound:
+pve02 has one physical NIC, on `.50`, and no WiFi. The proof is ARP, not ping —
+pve02 pings `192.168.86.1` fine because the `.50` gateway NATs it outbound:
 
 ```bash
 ssh root@192.168.50.11 'arping -c2 -I vmbr0 192.168.86.1'
 ```
 
-Zero replies means no L2 path, so no container there can hold a `.86` address.
+**Beware the near-miss.** `arping 192.168.86.140` DOES answer from pve02 — but the
+reply's MAC is plex 103's *`.50`* NIC answering for its `.86` address (Linux ARP
+flux). Always arping the **gateway**, which exists on one segment only.
 
-**Beware the near-miss.** `arping 192.168.86.140` DOES answer from pve02 — but
-the reply's MAC is `BC:24:11:B3:E2:78`, which is plex 103's *`.50`* NIC answering
-for its `.86` address (Linux ARP flux). Always arping the **gateway**, which
-exists on one segment only.
+The original plan was a USB-to-Ethernet adapter. That is no longer needed.
 
-To fix, plug a USB-to-Ethernet adapter into pve02 and cable it either to a Nest
-LAN port, or to pve01's free `eno4` after adding `eno4` to pve01's `vmbr0` — which
-turns pve01's mesh bridge into a two-port switch. Then on pve02 add a bridge for
-it in `/etc/network/interfaces`:
+### What was done instead
 
-    auto vmbr1
-    iface vmbr1 inet manual
-        bridge-ports <new-nic>
-        bridge-stp off
-        bridge-fd 0
-    #google mesh
+A **VXLAN** carries mesh layer-2 across the `.50` cable pve02 already has. pve01
+*is* cabled to the mesh (`eno1` on its `vmbr0`), so it anchors the tunnel and
+bridges it into that same mesh bridge. pve02 gets `vmbr1`, backed only by the
+tunnel, and 236's second NIC lives there.
 
-Confirm `arping -I vmbr1 192.168.86.1` now answers, then add the second leg to
-`module "plex_gpu"` in media-iac's `environments/media/media.tf`:
+The inner Ethernet frame is never rewritten, so this is a genuine layer-2
+presence: **no NAT, no proxy, no port forward, no custom access URLs**, and
+native Plex client discovery. The Google router was never touched — it simply
+sees one more device appear.
 
-    net1_address  = "192.168.86.236/24"
-    net1_gateway  = "192.168.86.1"
+```bash
+cd ~/petedio/iac/ansible && ansible-playbook playbooks/configure-mesh-vxlan.yml
+```
+
+The play writes and validates the interface config on both nodes and proves layer
+2 with ARP. It deliberately does **not** reload networking: pve01 carries Vault,
+MinIO, Plane, Authentik and the media stack, and an automatic `ifreload` there is
+not worth the convenience. If a reload is genuinely needed the play says so —
+run `ifreload -a` on pve01 first, then pve02.
+
+The container's own leg is Terraform, in media-iac's `module "plex_gpu"`:
+
     net1_bridge   = "vmbr1"
+    net1_address  = "192.168.86.236/24"
     net1_firewall = true
+    net1_mtu      = 1450
 
-⚠ On pve02 the mesh is `vmbr1` and the LAN is `vmbr0` — the opposite of plex 103
-on pve01. Do not copy 103's values.
+⚠ **`net1_mtu = 1450` is load-bearing.** VXLAN spends 50 of the underlay's 1500
+bytes on its own headers. A guest still sending 1500 produces frames that cannot
+fit, and it fails in the ugly way: small packets pass, large ones vanish, so it
+reads as an application bug rather than an MTU one.
 
-Note the default route: 103 carries its default gateway on the `.86` leg. Decide
-deliberately which leg holds 236's, since it changes which path outbound traffic
-and Plex's own relay connection take.
+⚠ **No `net1_gateway`, deliberately.** 236's default route stays on the `.50` leg
+so the NFS media path from pve01 is unchanged; `.86` is a directly-connected
+route. Giving both legs a gateway installs two default routes. Note this differs
+from 103, which *does* carry its default on the `.86` leg.
+
+⚠ **On pve02 the mesh is `vmbr1` and the LAN is `vmbr0`** — the opposite of plex
+103 on pve01. Do not copy 103's values.
+
+### What this costs
+
+pve01 is now in the path for 236's mesh traffic: if pve01 is down, 236 loses its
+mesh address. In practice that adds no new fragility, because 236 already reads
+the whole library from pve01 over NFS, so a pve01 outage took Plex down anyway.
+
+Jumbo frames on the `.50` underlay would remove the MTU compromise and let the
+guest keep a full 1500. Both NICs report `maxmtu 9000`; whether the switch between
+them agrees is untested.
+
+## Switching which Plex serves
+
+Exactly one Plex runs at a time. Two live servers is not redundancy — clients pick
+whichever they saw last, and from the couch you cannot tell which one you are on.
+The other server is stopped **and disabled**, so a container reboot cannot quietly
+bring it back.
+
+**Normal state** — `plex-gpu` serves, 103 is the spare:
+
+```bash
+cd ~/petedio/media-iac/ansible && ansible-playbook playbooks/plex-primary.yml
+```
+
+**Failover** — pve02 is down or 236 is broken, promote 103:
+
+```bash
+cd ~/petedio/media-iac/ansible && ansible-playbook playbooks/plex-primary.yml -e plex_primary=plex
+```
+
+That second command is the one to remember. It works **while pve02 is down**: the
+play sets `ignore_unreachable`, because the failover case is precisely that 236
+cannot be reached — and it does not need to be demoted, since it is already off
+the network.
+
+The play refuses to demote a server that is mid-stream rather than cutting the
+viewer off. For a planned cutover, add `-e plex_primary_force=true`. Promotion is
+never blocked; starting a server harms nobody.
+
+**What follows you across the switch, and what does not.** The library is
+read-only shared and each server keeps its own database, so flipping back and
+forth is safe. Watched state lives on your Plex account rather than on either
+server, so it follows you. Resume positions do **not** — they are per-server, so
+a half-watched film restarts from the beginning on the other one.
+
+Failing over to 103 means going back to software transcoding: roughly half the
+throughput, all four cores pegged by a single stream, and stuttering beyond about
+four concurrent viewers.
 
 ## Rollback
 
-Nothing here touches 103, so the rollback for the Plex work is to keep using it
-and stop 236. The library is read-only shared, so both servers reading it
-concurrently is safe.
+Nothing here ever touched 103's data, so the rollback for the Plex work is to
+promote it again — one command, in
+[Switching which Plex serves](#switching-which-plex-serves). The library is
+read-only shared, so both servers reading it concurrently is safe.
+
+To undo the mesh tunnel at runtime, on both nodes:
+
+```bash
+ip link del vxlan86
+```
+
+Nothing else is modified by it, and each node keeps a pre-change copy of its
+interfaces file at `/etc/network/interfaces.bak-pre-mesh-vxlan`.
 
 To undo the NFS share, unmount on pve02 and remove the `media-share` block from
 pve01's `/etc/exports`. To restore `112` as it was:
