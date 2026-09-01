@@ -28,6 +28,38 @@
   register: tz_applied
   changed_when: true
 
+# ⚠ THE CONTAINER FILE IS NOT ENOUGH. Proxmox has its own `timezone:` key in the
+# guest config, and it REWRITES /etc/timezone and /etc/localtime every time the
+# container starts. Setting the files alone looks correct until the next reboot
+# and then silently reverts.
+#
+# Proved rather than assumed: 102 read America/New_York after the file was set,
+# and America/Chicago again after `pct reboot`. Three guests carried a stale key
+# (100, 101, 102), all from the community-script templates that created them.
+- name: Align the Proxmox-level timezone key with the files
+  when:
+    - timezone_include_guests | bool
+    - tz_guests.rc | default(1) == 0
+  ansible.builtin.shell: |
+    set -o pipefail
+    cur=$(pct config {{ item }} | grep -oP '^timezone: \K.*' || true)
+    if [ -n "$cur" ] && [ "$cur" != "{{ homelab_timezone }}" ]; then
+      pct set {{ item }} --timezone {{ homelab_timezone }} && echo "changed {{ item }}: $cur -> {{ homelab_timezone }}"
+    fi
+  args: { executable: /bin/bash }
+  loop: "{{ tz_guests.stdout_lines[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
+  loop_control:
+    label: "guest {{ item }}"
+  register: tz_pct_key
+  changed_when: "'changed' in tz_pct_key.stdout"
+
+- name: Report any Proxmox-level keys corrected
+  when: tz_pct_key is defined and tz_pct_key.results is defined
+  ansible.builtin.debug:
+    msg: >-
+      {{ tz_pct_key.results | selectattr('stdout','defined') | map(attribute='stdout')
+         | select('search','changed') | list | default(['no stale pct timezone keys'], true) }}
+
 # ------------------------------------------------------------- verification --
 - name: Read back what every guest now believes the time is
   when:
