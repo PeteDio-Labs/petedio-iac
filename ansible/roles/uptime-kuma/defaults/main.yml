@@ -113,9 +113,6 @@ uptime_kuma_monitors:
     description: "Proxmox node 2. Also serves the NFS export above."
 
   # -- arr stack behind /mnt/media --------------------------------------------
-  - name: lidarr
-    type: http
-    url: "http://192.168.50.14:8686/"
   - name: sonarr
     type: http
     url: "http://192.168.50.15:8989/"
