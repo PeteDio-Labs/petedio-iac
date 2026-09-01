@@ -34,7 +34,11 @@ backup_store_size: 500G
 # backup space is the moment to relieve that, while the free extents are there.
 backup_store_extend_root: true
 backup_store_root_lv: ubuntu-lv
-backup_store_root_add: +100G
+# ⚠ ABSOLUTE, never relative. `size: +100G` means "add 100G" and lvol applies it
+# on EVERY run, so a relative value here grows root by 100G each time the play is
+# executed until the volume group is empty. An absolute target is idempotent:
+# lvol grows to it once and then does nothing, and it never shrinks.
+backup_store_root_target: 200G
 
 # Leave headroom rather than consuming the whole volume group. Asserted before
 # anything is created, so a too-greedy change fails loudly instead of filling

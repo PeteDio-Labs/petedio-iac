@@ -1,10 +1,19 @@
 ---
-- name: Install the NFS client
+# Deliberately does NOT refresh the apt cache. nfs-common ships with Proxmox and
+# is already present on both nodes, and pve01 carries a stale third-party
+# nodesource repo that makes `apt-get update` fail outright. Refreshing a cache
+# we do not need would make this role fail on unrelated repo drift.
+- name: Check whether the NFS client is already present
+  ansible.builtin.command: dpkg-query -W -f=${Status} nfs-common
+  register: backup_nfs_pkg
+  changed_when: false
+  failed_when: false
+
+- name: Install the NFS client only if it is missing
+  when: "'install ok installed' not in backup_nfs_pkg.stdout"
   ansible.builtin.apt:
     name: nfs-common
     state: present
-    update_cache: true
-    cache_valid_time: 3600
 
 - name: Create the mount point
   ansible.builtin.file:
@@ -60,9 +69,21 @@
   changed_when: false
   failed_when: false
 
-# One job per node, each backing up only its own guests. A single cluster-wide
-# job would have one node reaching for the other's guests, and these two nodes
-# are not a real HA cluster.
+# Must match on THIS NODE, not just on the storage name. /etc/pve is a shared
+# cluster filesystem, so pve02 can see the job pve01 created — and that job
+# carries --node pve01, so it backs up none of pve02's guests. Guarding on the
+# storage name alone therefore left pve02 silently unprotected, which is exactly
+# the failure this whole ticket exists to fix.
+- name: Decide whether this node already has its own job
+  ansible.builtin.set_fact:
+    backup_job_exists: >-
+      {{ (backup_jobs.stdout | default('[]') | from_json
+          | selectattr('storage', 'defined')
+          | selectattr('storage', 'equalto', backup_store_pve_storage_id)
+          | selectattr('node', 'defined')
+          | selectattr('node', 'equalto', inventory_hostname)
+          | list | length) > 0 }}
+
 - name: Schedule a nightly backup of this node's guests
   ansible.builtin.command: >-
     pvesh create /cluster/backup
@@ -74,13 +95,10 @@
     --all 1
     --notes-template "{% raw %}{{guestname}}{% endraw %}"
     --comment "backup-store nightly ({{ inventory_hostname }})"
-  when: backup_store_pve_storage_id not in (backup_jobs.stdout | default(''))
+  when: not backup_job_exists
   register: backup_job_added
   changed_when: backup_job_added.rc == 0
 
-# Derived from what the probes actually returned, never from `.changed`. In a dry
-# run the probes are skipped, and `.changed | default(false)` then reports
-# "already present" — a claim about a state nothing ever looked at.
 - name: Report
   ansible.builtin.debug:
     msg: >-
@@ -92,5 +110,6 @@
       {%- else -%}
       storage {{ backup_store_pve_storage_id }} registered.
       {%- endif %}
+      Nightly job for this node {{ 'already present' if backup_job_exists | default(false) else 'created' }}.
       Schedule {{ backup_store_schedule }}, keeping {{ backup_store_keep_daily }} daily
       + {{ backup_store_keep_weekly }} weekly.

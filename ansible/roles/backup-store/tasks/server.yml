@@ -5,36 +5,52 @@
   changed_when: false
   check_mode: false
 
-# Refuse to fill the disk that also holds the Ollama models. Everything this role
-# creates is additive, so the only real risk is greed — check it up front rather
-# than discovering it when inference starts failing on a full root.
-- name: Assert there is room for the store, the root growth, and headroom
+- name: See what already exists
+  ansible.builtin.stat:
+    path: "/dev/{{ backup_store_vg }}/{{ backup_store_lv }}"
+  register: backup_lv_dev
+  check_mode: false
+
+- name: Read the root volume's current size
+  ansible.builtin.command: lvs --noheadings --units g -o lv_size --nosuffix {{ backup_store_vg }}/{{ backup_store_root_lv }}
+  register: backup_root_now
+  changed_when: false
+  check_mode: false
+
+# Only assert on space still to be claimed. The first version compared free space
+# against the FULL requirement every run, so once the volume existed the guard
+# could never pass again — it demanded 750 GB free on a disk whose space it had
+# itself just consumed. A guard that fails after succeeding is not a guard.
+- name: Work out what still needs allocating
+  ansible.builtin.set_fact:
+    backup_need_gb: >-
+      {{ ((0 if backup_lv_dev.stat.exists
+           else (backup_store_size | regex_replace('[^0-9.]','') | float))
+          + (([(backup_store_root_target | regex_replace('[^0-9.]','') | float)
+               - (backup_root_now.stdout | trim | float), 0] | max)
+             if backup_store_extend_root | bool else 0)) | round(2) }}
+
+- name: Assert there is room for what is left to do, plus headroom
   ansible.builtin.assert:
     that:
-      - (backup_vg_free.stdout | trim | float) >=
-        (backup_store_size | regex_replace('[^0-9.]','') | float)
-        + (backup_store_extend_root | ternary(backup_store_root_add | regex_replace('[^0-9.]','') | float, 0))
-        + (backup_store_min_free_after | float)
+      - (backup_vg_free.stdout | trim | float) >= (backup_need_gb | float) + (backup_store_min_free_after | float)
     fail_msg: >-
-      {{ backup_store_vg }} has only {{ backup_vg_free.stdout | trim }} GB free.
-      Wanted {{ backup_store_size }} for backups
-      {{ '+ ' ~ backup_store_root_add ~ ' for root' if backup_store_extend_root else '' }}
-      and {{ backup_store_min_free_after }} GB left spare.
+      {{ backup_store_vg }} has {{ backup_vg_free.stdout | trim }} GB free but still
+      needs {{ backup_need_gb }} GB, and {{ backup_store_min_free_after }} GB must
+      remain spare for the Ollama models.
     success_msg: >-
-      {{ backup_vg_free.stdout | trim }} GB free — enough for {{ backup_store_size }}
-      plus headroom.
+      {{ backup_vg_free.stdout | trim }} GB free; {{ backup_need_gb }} GB still to
+      allocate, leaving at least {{ backup_store_min_free_after }} GB spare.
 
-# Online ext4 growth only. Nothing here ever shrinks a volume: shrinking ext4
-# requires an unmount and loses data if the size is miscalculated, and this is
-# the root filesystem of a live host.
-- name: Extend the root volume while the free extents are here
-  when: backup_store_extend_root | bool
+- name: Grow the root volume to its target
+  when:
+    - backup_store_extend_root | bool
+    - (backup_root_now.stdout | trim | float) < (backup_store_root_target | regex_replace('[^0-9.]','') | float)
   community.general.lvol:
     vg: "{{ backup_store_vg }}"
     lv: "{{ backup_store_root_lv }}"
-    size: "{{ backup_store_root_add }}"
+    size: "{{ backup_store_root_target }}"
     resizefs: true
-  register: backup_root_grown
 
 - name: Create the backup volume
   community.general.lvol:
@@ -44,6 +60,17 @@
     state: present
   register: backup_lv_created
 
+# In check mode the volume above was not really created, so everything that
+# touches the device would fail on a device that does not exist yet. That is an
+# artefact of the dry run, not a fault — but left alone it stops the dry run a
+# third of the way in and the rest of the chain never gets validated.
+- name: Note what the dry run cannot check
+  when: ansible_check_mode and not backup_lv_dev.stat.exists
+  ansible.builtin.debug:
+    msg: >-
+      Dry run: the volume does not exist yet, so the filesystem, mount and export
+      steps below are skipped. They will run on a real pass.
+
 - name: Put a filesystem on it
   community.general.filesystem:
     fstype: ext4
@@ -51,6 +78,7 @@
     # never force: a filesystem already here means this ran before, and
     # reformatting it would destroy every archive it holds.
     force: false
+  when: not (ansible_check_mode and not backup_lv_dev.stat.exists)
 
 - name: Mount it
   ansible.posix.mount:
@@ -59,6 +87,7 @@
     fstype: ext4
     opts: defaults,nofail
     state: mounted
+  when: not (ansible_check_mode and not backup_lv_dev.stat.exists)
 
 - name: Install the NFS server
   ansible.builtin.apt:
@@ -79,11 +108,39 @@
     mode: "0644"
   notify: reload nfs exports
 
+# On a first pass in check mode the package above was not really installed, so
+# systemd has no such unit to report on. Not a fault — just the limit of a dry
+# run over a chain of dependent state.
 - name: Enable and start the NFS server
+  when: not ansible_check_mode
   ansible.builtin.systemd_service:
     name: nfs-kernel-server
     enabled: true
     state: started
+
+# ufw on this host defaults to deny-incoming and only had 22 and the two Ollama
+# ports open, so the export was live but unreachable and the client mount timed
+# out. Opened per client IP rather than to 192.168.50.0/24 — the whole LAN does
+# not need to reach the backups, and the existing Ollama rules are already
+# broader than they need to be.
+- name: Check whether a firewall is in the way
+  ansible.builtin.command: ufw status
+  register: backup_ufw
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Open NFS to the Proxmox nodes only
+  when: "'Status: active' in (backup_ufw.stdout | default(''))"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.1 }}"
+    proto: "{{ item.2 }}"
+    src: "{{ item.0 }}"
+    comment: "NFS backup store - {{ item.0 }} (PET-288)"
+  loop: "{{ backup_store_clients | product([2049, 111]) | map('flatten') | product(['tcp', 'udp']) | map('flatten') | list }}"
+  loop_control:
+    label: "{{ item.0 }} {{ item.1 }}/{{ item.2 }}"
 
 - name: Flush handlers so the exports are live before any client mounts
   ansible.builtin.meta: flush_handlers
@@ -92,7 +149,9 @@
   ansible.builtin.command: df -h {{ backup_store_path }}
   register: backup_store_df
   changed_when: false
+  when: not (ansible_check_mode and not backup_lv_dev.stat.exists)
 
 - name: Show it
+  when: backup_store_df.stdout_lines is defined
   ansible.builtin.debug:
     msg: "{{ backup_store_df.stdout_lines }}"
