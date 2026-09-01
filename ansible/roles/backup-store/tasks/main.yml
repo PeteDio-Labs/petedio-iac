@@ -1,0 +1,8 @@
+---
+- name: Build the store on the machine that holds the disk
+  ansible.builtin.include_tasks: server.yml
+  when: inventory_hostname == backup_store_server
+
+- name: Consume it from the Proxmox nodes
+  ansible.builtin.include_tasks: client.yml
+  when: inventory_hostname != backup_store_server

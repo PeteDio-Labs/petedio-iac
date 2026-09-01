@@ -1,0 +1,31 @@
+---
+# configure-timezone.yml — one timezone across the whole homelab. (PET-288 audit)
+#
+# Audited 2026-08-31: the estate was split. Both Proxmox hosts were
+# America/Chicago and four media guests matched them, while plex, plex-gpu,
+# prowlarr, qbittorrent-vpn, authentik, runner-233 and the tunnel were Etc/UTC.
+#
+# NOT COSMETIC. Plex schedules maintenance between ButlerStartHour and
+# ButlerEndHour in SERVER LOCAL TIME. Both Plex servers had 02:00-05:00, which on
+# UTC is 21:00-00:00 Eastern — an overnight window landing in prime viewing time.
+#
+#   ansible-playbook playbooks/configure-timezone.yml
+#
+# Guests are reached through their node with `pct exec` rather than over SSH,
+# because they are split across two repos' inventories and several appear in
+# neither. Iterating `pct list` on each node is the only way to cover them all.
+
+- name: Set one timezone across the cluster and its guests
+  hosts: proxmox
+  become: true
+  roles:
+    - timezone
+
+- name: And on the bare-metal hosts
+  hosts: ollama-host
+  become: true
+  vars:
+    ansible_user: ansible
+    timezone_include_guests: false
+  roles:
+    - timezone

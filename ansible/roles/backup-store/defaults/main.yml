@@ -1,0 +1,83 @@
+---
+# backup-store — give the cluster somewhere to back up to that neither node owns.
+#
+# WHY THIS EXISTS. Surveyed 2026-08-31: there were no scheduled backups anywhere,
+# and exactly ONE archive existed in the whole cluster — a 164 MB hand-taken dump
+# of 112. The "295 GB reserved" target was /mnt/pete/backups, which is an NFS
+# mount FROM pve02, so pve01 backed up to pve02 while pve02 would have backed up
+# to itself. That protects nothing.
+#
+# ollama-host is a THIRD machine, independent of both nodes, and its disk is
+# mostly unused: sda3 is 901.6 GB of physical volume while the root LV is 100 GB,
+# the Ubuntu installer default. This claims part of that space.
+#
+# ⚠ THIS IS NOT 3-2-1. One extra copy on one extra machine, same building, same
+# power, same LAN, single disk with no redundancy. It is a large improvement on
+# zero scheduled backups and it is not offsite. Anything genuinely irreplaceable
+# — Vault's data above all — wants a second destination.
+
+backup_store_server: ollama-host
+backup_store_server_ip: 192.168.50.12
+backup_store_clients:
+  - 192.168.50.10   # pve01
+  - 192.168.50.11   # pve02
+
+backup_store_vg: ubuntu-vg
+backup_store_lv: backup-lv
+backup_store_path: /srv/backups
+
+# ~82 GB of real data across 22 guests, so roughly 45 GB a run compressed.
+# 500 GB is about 11 full generations.
+backup_store_size: 500G
+
+# Root sits at 76% (71 G of 98 G) and the Ollama models keep growing. Claiming
+# backup space is the moment to relieve that, while the free extents are there.
+backup_store_extend_root: true
+backup_store_root_lv: ubuntu-lv
+# ⚠ ABSOLUTE, never relative. `size: +100G` means "add 100G" and lvol applies it
+# on EVERY run, so a relative value here grows root by 100G each time the play is
+# executed until the volume group is empty. An absolute target is idempotent:
+# lvol grows to it once and then does nothing, and it never shrinks.
+backup_store_root_target: 200G
+
+# Leave headroom rather than consuming the whole volume group. Asserted before
+# anything is created, so a too-greedy change fails loudly instead of filling
+# the disk that also holds the models.
+backup_store_min_free_after: 150
+
+backup_store_export_options: rw,sync,no_subtree_check,no_root_squash
+backup_store_mount_options: defaults,_netdev,nofail,x-systemd.mount-timeout=60
+
+# Client side
+backup_store_client_mount: /mnt/ollama-backups
+backup_store_pve_storage_id: ollama-backups
+
+# Retention. vzdump writes a full archive every run, so these multiply.
+backup_store_keep_daily: 7
+backup_store_keep_weekly: 3
+backup_store_schedule: "02:30"
+
+# ---------------------------------------------------------------- tmpdir ----
+# vzdump rsyncs a container into a temporary directory and THEN compresses it.
+# Left at its default that temp dir lands on the backup target itself, so every
+# small file crosses NFS twice. Measured: a 823 MB container reached 382 MB in
+# two and a half hours and was still going. Proxmox warns about it in the task
+# log and is ignored, because the default silently works — just not usefully.
+#
+# It matters more than speed. 14 of pve01's 19 guests sit on thick LVM, which
+# cannot snapshot, so vzdump falls back to SUSPEND mode: first sync while the
+# guest runs, suspend, delta sync, resume. With the temp dir on NFS that first
+# sync is the slow part and the suspend window stretches with it. On local disk
+# the delta is seconds.
+backup_store_tmpdir: /var/tmp/vzdump
+
+# Space the tmpdir needs — one guest's used size, with margin. pve01's largest
+# is runner-232 at 18 GB.
+backup_store_tmpdir_need_gb: 30
+
+# When the node's root filesystem has less than that free, carve a dedicated
+# volume instead. pve01 has 16 GB free on root but 226 GB free in its VG; pve02
+# has 48 GB free on root and needs no volume at all.
+backup_store_tmpdir_lv: vzdump-tmp
+backup_store_tmpdir_lv_size: 40G
+backup_store_tmpdir_vg: pve

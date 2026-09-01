@@ -1,0 +1,174 @@
+---
+# Deliberately does NOT refresh the apt cache. nfs-common ships with Proxmox and
+# is already present on both nodes, and pve01 carries a stale third-party
+# nodesource repo that makes `apt-get update` fail outright. Refreshing a cache
+# we do not need would make this role fail on unrelated repo drift.
+- name: Check whether the NFS client is already present
+  ansible.builtin.command: dpkg-query -W -f=${Status} nfs-common
+  register: backup_nfs_pkg
+  changed_when: false
+  failed_when: false
+
+- name: Install the NFS client only if it is missing
+  when: "'install ok installed' not in backup_nfs_pkg.stdout"
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+
+- name: Create the mount point
+  ansible.builtin.file:
+    path: "{{ backup_store_client_mount }}"
+    state: directory
+    mode: "0755"
+
+# nofail and a bounded timeout are not optional here. These are Proxmox nodes,
+# and a hard NFS mount to a box that is off will hang the boot — the same
+# discipline the media-share role uses in the other direction.
+- name: Mount the backup store
+  ansible.posix.mount:
+    path: "{{ backup_store_client_mount }}"
+    src: "{{ backup_store_server_ip }}:{{ backup_store_path }}"
+    fstype: nfs
+    opts: "{{ backup_store_mount_options }}"
+    state: mounted
+
+# A mount that silently failed leaves an empty local directory that every
+# downstream check still passes, and backups would then be written to the node's
+# own root disk while appearing to succeed.
+- name: Assert this really is NFS and not an empty local directory
+  ansible.builtin.command: findmnt -no FSTYPE {{ backup_store_client_mount }}
+  register: backup_fstype
+  changed_when: false
+  failed_when: "'nfs' not in backup_fstype.stdout"
+
+- name: Prove it is writable from this node
+  ansible.builtin.copy:
+    dest: "{{ backup_store_client_mount }}/.write-test-{{ inventory_hostname }}"
+    content: "written by {{ inventory_hostname }}\n"
+    mode: "0644"
+
+# ------------------------------------------------------------------ tmpdir --
+- name: Measure free space on this node's root filesystem
+  ansible.builtin.command: df -BG --output=avail /
+  register: backup_root_avail
+  changed_when: false
+  check_mode: false
+
+- name: Decide whether this node needs a dedicated volume for the tmpdir
+  ansible.builtin.set_fact:
+    backup_tmpdir_needs_lv: >-
+      {{ (backup_root_avail.stdout_lines[1] | regex_replace('[^0-9]','') | int)
+         < (backup_store_tmpdir_need_gb | int) }}
+
+- name: Carve a volume for the tmpdir where root is too small
+  when: backup_tmpdir_needs_lv | bool
+  community.general.lvol:
+    vg: "{{ backup_store_tmpdir_vg }}"
+    lv: "{{ backup_store_tmpdir_lv }}"
+    size: "{{ backup_store_tmpdir_lv_size }}"
+    state: present
+
+- name: Put a filesystem on it
+  when: backup_tmpdir_needs_lv | bool
+  community.general.filesystem:
+    fstype: ext4
+    dev: "/dev/{{ backup_store_tmpdir_vg }}/{{ backup_store_tmpdir_lv }}"
+    force: false
+
+- name: Mount the tmpdir volume
+  when: backup_tmpdir_needs_lv | bool
+  ansible.posix.mount:
+    path: "{{ backup_store_tmpdir }}"
+    src: "/dev/{{ backup_store_tmpdir_vg }}/{{ backup_store_tmpdir_lv }}"
+    fstype: ext4
+    opts: defaults,nofail
+    state: mounted
+
+- name: Otherwise just make the directory on local disk
+  when: not (backup_tmpdir_needs_lv | bool)
+  ansible.builtin.file:
+    path: "{{ backup_store_tmpdir }}"
+    state: directory
+    mode: "0700"
+
+# Without this line vzdump puts the temp directory on the backup target.
+- name: Point vzdump at the local tmpdir
+  ansible.builtin.lineinfile:
+    path: /etc/vzdump.conf
+    regexp: '^\s*#?\s*tmpdir:'
+    line: "tmpdir: {{ backup_store_tmpdir }}"
+    create: true
+    mode: "0644"
+
+- name: Prove vzdump will not use NFS for scratch
+  ansible.builtin.command: findmnt -no FSTYPE --target {{ backup_store_tmpdir }}
+  register: backup_tmpdir_fs
+  changed_when: false
+  failed_when: "'nfs' in backup_tmpdir_fs.stdout"
+
+- name: Read the configured Proxmox storages
+  ansible.builtin.command: pvesm status
+  register: backup_pvesm
+  changed_when: false
+  failed_when: false
+
+- name: Register the store with Proxmox
+  ansible.builtin.command: >-
+    pvesm add dir {{ backup_store_pve_storage_id }}
+    --path {{ backup_store_client_mount }}
+    --content backup
+    --prune-backups keep-daily={{ backup_store_keep_daily }},keep-weekly={{ backup_store_keep_weekly }}
+  when: backup_store_pve_storage_id not in (backup_pvesm.stdout | default(''))
+  register: backup_storage_added
+  changed_when: backup_storage_added.rc == 0
+
+- name: Read existing backup jobs
+  ansible.builtin.command: pvesh get /cluster/backup --output-format json
+  register: backup_jobs
+  changed_when: false
+  failed_when: false
+
+# Must match on THIS NODE, not just on the storage name. /etc/pve is a shared
+# cluster filesystem, so pve02 can see the job pve01 created — and that job
+# carries --node pve01, so it backs up none of pve02's guests. Guarding on the
+# storage name alone therefore left pve02 silently unprotected, which is exactly
+# the failure this whole ticket exists to fix.
+- name: Decide whether this node already has its own job
+  ansible.builtin.set_fact:
+    backup_job_exists: >-
+      {{ (backup_jobs.stdout | default('[]') | from_json
+          | selectattr('storage', 'defined')
+          | selectattr('storage', 'equalto', backup_store_pve_storage_id)
+          | selectattr('node', 'defined')
+          | selectattr('node', 'equalto', inventory_hostname)
+          | list | length) > 0 }}
+
+- name: Schedule a nightly backup of this node's guests
+  ansible.builtin.command: >-
+    pvesh create /cluster/backup
+    --schedule "{{ backup_store_schedule }}"
+    --storage {{ backup_store_pve_storage_id }}
+    --mode snapshot
+    --compress zstd
+    --node {{ inventory_hostname }}
+    --all 1
+    --notes-template "{% raw %}{{guestname}}{% endraw %}"
+    --comment "backup-store nightly ({{ inventory_hostname }})"
+  when: not backup_job_exists
+  register: backup_job_added
+  changed_when: backup_job_added.rc == 0
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {% if backup_pvesm.skipped | default(false) -%}
+      not checked (dry run) — would register the storage and a nightly job if absent.
+      {%- elif backup_store_pve_storage_id in (backup_pvesm.stdout | default('')) -%}
+      storage {{ backup_store_pve_storage_id }} present.
+      {%- else -%}
+      storage {{ backup_store_pve_storage_id }} registered.
+      {%- endif %}
+      Nightly job for this node {{ 'already present' if backup_job_exists | default(false) else 'created' }}.
+      Schedule {{ backup_store_schedule }}, keeping {{ backup_store_keep_daily }} daily
+      + {{ backup_store_keep_weekly }} weekly.

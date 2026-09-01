@@ -1,0 +1,29 @@
+---
+# timezone — one timezone across the whole homelab.
+#
+# WHY THIS EXISTS. Audited 2026-08-31 and found the estate split: both Proxmox
+# hosts were America/Chicago, lidarr/seerr/sonarr/radarr matched them, and plex,
+# plex-gpu, prowlarr, qbittorrent-vpn, authentik, runner-233 and the tunnel were
+# all Etc/UTC.
+#
+# That is not cosmetic. Plex runs maintenance between ButlerStartHour and
+# ButlerEndHour in SERVER LOCAL TIME, and both Plex servers had 02:00-05:00 set —
+# which on UTC is 21:00-00:00 Eastern. The whole point of an overnight window is
+# to avoid disturbing viewers, and it was landing in the middle of prime time.
+#
+# Split timezones also make correlating logs across guests during an incident
+# needlessly hard, which is exactly when you can least afford it.
+
+homelab_timezone: America/New_York
+
+# Guests are reached through the node rather than over SSH on purpose: they are
+# split across two repos' inventories and several are in neither, so iterating
+# `pct list` on each node is the only way to cover all of them.
+timezone_include_guests: true
+
+# Services that read TZ once at start and cache it. Setting the timezone under a
+# running Plex leaves it scheduling against the old offset until it restarts.
+timezone_restart_services:
+  - plexmediaserver
+# Never interrupt a viewer to fix a clock. Override for a planned window.
+timezone_force_restart: false

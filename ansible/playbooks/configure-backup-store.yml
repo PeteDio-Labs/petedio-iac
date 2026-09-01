@@ -1,0 +1,49 @@
+---
+# configure-backup-store.yml — give the cluster a backup target that neither
+# Proxmox node owns, on ollama-host. (PET-288)
+#
+# WHY. Surveyed 2026-08-31: no scheduled backups existed anywhere, and exactly
+# ONE archive existed in the whole cluster. The "295 GB reserved" target was an
+# NFS mount FROM pve02, so pve01 backed up to pve02 and pve02 would have backed
+# up to itself — which protects nothing.
+#
+# ollama-host is a third machine and its disk is mostly unclaimed: 901.6 GB of
+# physical volume behind a 100 GB root LV, the Ubuntu installer default.
+#
+#   ansible-playbook playbooks/configure-backup-store.yml
+#
+# NO -K NEEDED. ollama-host carries a dedicated `ansible` account (uid 1001, in
+# the sudo group) that has passwordless sudo, reached with the same
+# id_ed25519_typeshit key as `pedro`. `pedro` itself has a password nobody
+# remembers, and it is never prompted for because sshd there is key-only
+# (PasswordAuthentication no) — so the password only ever mattered for sudo.
+#
+# The connection user is set on the play rather than in inventory/hosts.yml on
+# purpose. That file is shared, and editing it is the documented way to change
+# what other stacks do on merge — see .agent/lessons.md on CI blast radius.
+#
+# ORDER MATTERS, hence serial and the server first: a node cannot mount an export
+# that does not exist yet.
+#
+# ⚠ WHAT THIS DOES NOT PROTECT. The 2.6 TB media library is on bind mounts, which
+# vzdump excludes for LXC by default. That is correct — it is re-downloadable and
+# including it would make backups impossible — but "we have backups" must not be
+# read as covering it.
+#
+# ⚠ NOT 3-2-1. One extra copy, one extra machine, same building, same power,
+# single disk. Vault's data in particular wants a second destination.
+
+- name: Build the backup store
+  hosts: ollama-host
+  become: true
+  vars:
+    ansible_user: ansible
+  roles:
+    - backup-store
+
+- name: Point the Proxmox nodes at it
+  hosts: proxmox
+  become: true
+  serial: 1
+  roles:
+    - backup-store
