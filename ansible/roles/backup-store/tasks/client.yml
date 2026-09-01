@@ -84,12 +84,27 @@
     opts: defaults,nofail
     state: mounted
 
+# Set explicitly rather than trusting the filesystem default, so both code paths
+# provably end up the same. See the note on the directory case below.
+- name: Ensure the mounted tmpdir is traversable by the mapped user
+  when: backup_tmpdir_needs_lv | bool
+  ansible.builtin.file:
+    path: "{{ backup_store_tmpdir }}"
+    state: directory
+    mode: "0755"
+
+# 0755, NOT 0700. vzdump runs its tar inside a user-namespace mapping
+# (lxc-usernsexec -m u:0:100000:65536), so the tar process is an unprivileged
+# mapped UID and cannot traverse a root-only directory. With 0700 every backup
+# on this node failed with "Cannot open: Permission denied" while pve01 worked,
+# purely because there the tmpdir is a MOUNT POINT and inherits 0755. Two code
+# paths, two different permissions, one of them broken.
 - name: Otherwise just make the directory on local disk
   when: not (backup_tmpdir_needs_lv | bool)
   ansible.builtin.file:
     path: "{{ backup_store_tmpdir }}"
     state: directory
-    mode: "0700"
+    mode: "0755"
 
 # Without this line vzdump puts the temp directory on the backup target.
 - name: Point vzdump at the local tmpdir
