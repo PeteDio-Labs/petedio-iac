@@ -1,0 +1,63 @@
+---
+- name: "{{ src.name }} — is the source file even present?"
+  ansible.builtin.stat:
+    path: "{{ src.source_file }}"
+  register: apt_src_stat
+
+- name: "{{ src.name }} — checks before removing anything"
+  when:
+    - apt_src_stat.stat.exists
+    - (src.package | default('') | length) > 0
+    - apt_hygiene_verify_unused | bool
+  block:
+    - name: "{{ src.name }} — what depends on {{ src.package }}?"
+      ansible.builtin.command: "apt-cache rdepends --installed {{ src.package }}"
+      register: apt_rdeps
+      changed_when: false
+      check_mode: false
+
+    - name: "{{ src.name }} — simulate the removal"
+      ansible.builtin.command: "apt-get -s purge {{ src.package }}"
+      register: apt_sim
+      changed_when: false
+      check_mode: false
+
+    # apt prints "no longer required" and "will be REMOVED" as separate lists,
+    # and reading them as one makes an autoremove candidate look like a casualty
+    # of the purge. Count what apt itself says it will remove instead.
+    # apt prints "no longer required" and "will be REMOVED" as separate lists, and
+    # reading them as one list makes an autoremove candidate look like a casualty
+    # of the purge. That nearly happened here: a careless grep showed a pve kernel
+    # alongside nodejs and implied the purge would take the kernel with it. Assert
+    # on the count apt itself states instead of parsing the lists.
+    - name: "{{ src.name }} — refuse if the removal reaches further than expected"
+      ansible.builtin.assert:
+        that:
+          - (apt_rdeps.stdout_lines | reject('search', 'Reverse Depends')
+             | reject('equalto', '') | list | length) <= 1
+          - "'1 to remove' in apt_sim.stdout"
+        fail_msg: >-
+          Refusing to purge {{ src.package }} on {{ inventory_hostname }}: apt does not
+          report exactly 1 package to remove. Reverse deps:
+          {{ apt_rdeps.stdout_lines | join(', ') }}
+        success_msg: "{{ src.package }} is unused; apt reports exactly 1 package to remove."
+
+- name: "{{ src.name }} — remove the package"
+  when:
+    - apt_src_stat.stat.exists
+    - (src.package | default('') | length) > 0
+  ansible.builtin.apt:
+    name: "{{ src.package }}"
+    state: absent
+    purge: true
+
+- name: "{{ src.name }} — remove the apt source"
+  ansible.builtin.file:
+    path: "{{ src.source_file }}"
+    state: absent
+
+- name: "{{ src.name }} — remove its keyring"
+  when: (src.keyring | default('') | length) > 0
+  ansible.builtin.file:
+    path: "{{ src.keyring }}"
+    state: absent
