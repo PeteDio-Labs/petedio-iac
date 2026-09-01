@@ -47,6 +47,65 @@
     content: "written by {{ inventory_hostname }}\n"
     mode: "0644"
 
+# ------------------------------------------------------------------ tmpdir --
+- name: Measure free space on this node's root filesystem
+  ansible.builtin.command: df -BG --output=avail /
+  register: backup_root_avail
+  changed_when: false
+  check_mode: false
+
+- name: Decide whether this node needs a dedicated volume for the tmpdir
+  ansible.builtin.set_fact:
+    backup_tmpdir_needs_lv: >-
+      {{ (backup_root_avail.stdout_lines[1] | regex_replace('[^0-9]','') | int)
+         < (backup_store_tmpdir_need_gb | int) }}
+
+- name: Carve a volume for the tmpdir where root is too small
+  when: backup_tmpdir_needs_lv | bool
+  community.general.lvol:
+    vg: "{{ backup_store_tmpdir_vg }}"
+    lv: "{{ backup_store_tmpdir_lv }}"
+    size: "{{ backup_store_tmpdir_lv_size }}"
+    state: present
+
+- name: Put a filesystem on it
+  when: backup_tmpdir_needs_lv | bool
+  community.general.filesystem:
+    fstype: ext4
+    dev: "/dev/{{ backup_store_tmpdir_vg }}/{{ backup_store_tmpdir_lv }}"
+    force: false
+
+- name: Mount the tmpdir volume
+  when: backup_tmpdir_needs_lv | bool
+  ansible.posix.mount:
+    path: "{{ backup_store_tmpdir }}"
+    src: "/dev/{{ backup_store_tmpdir_vg }}/{{ backup_store_tmpdir_lv }}"
+    fstype: ext4
+    opts: defaults,nofail
+    state: mounted
+
+- name: Otherwise just make the directory on local disk
+  when: not (backup_tmpdir_needs_lv | bool)
+  ansible.builtin.file:
+    path: "{{ backup_store_tmpdir }}"
+    state: directory
+    mode: "0700"
+
+# Without this line vzdump puts the temp directory on the backup target.
+- name: Point vzdump at the local tmpdir
+  ansible.builtin.lineinfile:
+    path: /etc/vzdump.conf
+    regexp: '^\s*#?\s*tmpdir:'
+    line: "tmpdir: {{ backup_store_tmpdir }}"
+    create: true
+    mode: "0644"
+
+- name: Prove vzdump will not use NFS for scratch
+  ansible.builtin.command: findmnt -no FSTYPE --target {{ backup_store_tmpdir }}
+  register: backup_tmpdir_fs
+  changed_when: false
+  failed_when: "'nfs' in backup_tmpdir_fs.stdout"
+
 - name: Read the configured Proxmox storages
   ansible.builtin.command: pvesm status
   register: backup_pvesm

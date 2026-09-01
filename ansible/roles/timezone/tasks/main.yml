@@ -1,0 +1,95 @@
+---
+- name: Set the timezone on the node itself
+  community.general.timezone:
+    name: "{{ homelab_timezone }}"
+  register: tz_host
+
+- name: Find the guests on this node
+  ansible.builtin.command: pct list
+  register: tz_guests
+  changed_when: false
+  failed_when: false
+  when: timezone_include_guests | bool
+
+- name: Set the timezone inside every guest
+  when:
+    - timezone_include_guests | bool
+    - tz_guests.rc | default(1) == 0
+  # /etc/timezone plus the /etc/localtime symlink, rather than timedatectl: an
+  # unprivileged container cannot set the system clock, so timedatectl refuses
+  # there even though the timezone itself is just a file.
+  ansible.builtin.command: >-
+    pct exec {{ item }} -- sh -c
+    'ln -sf /usr/share/zoneinfo/{{ homelab_timezone }} /etc/localtime;
+     echo {{ homelab_timezone }} > /etc/timezone'
+  loop: "{{ tz_guests.stdout_lines[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
+  loop_control:
+    label: "guest {{ item }}"
+  register: tz_applied
+  changed_when: true
+
+# ------------------------------------------------------------- verification --
+- name: Read back what every guest now believes the time is
+  when:
+    - timezone_include_guests | bool
+    - tz_guests.rc | default(1) == 0
+  ansible.builtin.command: >-
+    pct exec {{ item }} -- date +%Z
+  loop: "{{ tz_guests.stdout_lines[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
+  loop_control:
+    label: "guest {{ item }}"
+  register: tz_verify
+  changed_when: false
+  failed_when: false
+
+- name: Report
+  when: tz_verify is defined and tz_verify.results is defined
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} ({{ homelab_timezone }}):
+      {{ tz_verify.results | selectattr('stdout', 'defined')
+         | map(attribute='stdout') | list | unique | join(', ') }}
+      across {{ tz_verify.results | length }} guests.
+
+# Plex reads TZ once at start, so until it restarts it keeps scheduling against
+# the old offset — which is the actual bug this role exists to fix. Restarting
+# drops any in-flight stream, so never do it to someone who is watching.
+- name: Find Plex guests that need restarting to pick up the change
+  when: timezone_include_guests | bool
+  ansible.builtin.shell: |
+    set -o pipefail
+    for id in $(pct list | awk 'NR>1{print $1}'); do
+      if pct exec "$id" -- systemctl is-active plexmediaserver >/dev/null 2>&1; then echo "$id"; fi
+    done
+  args: { executable: /bin/bash }
+  register: tz_plex
+  changed_when: false
+  failed_when: false
+
+- name: Restart Plex only where nobody is watching
+  when:
+    - timezone_include_guests | bool
+    - tz_plex.stdout_lines | default([]) | length > 0
+  ansible.builtin.shell: |
+    set -o pipefail
+    TOK=$(pct exec {{ item }} -- grep -oE 'PlexOnlineToken="[^"]*"' \
+      '/var/lib/plexmediaserver/Library/Application Support/Plex Media Server/Preferences.xml' \
+      | sed 's/.*="//;s/"//')
+    N=$(pct exec {{ item }} -- curl -s --max-time 8 -H "X-Plex-Token: $TOK" \
+      http://127.0.0.1:32400/status/sessions | grep -oE 'size="[0-9]+"' | head -1 | grep -oE '[0-9]+')
+    if [ "${N:-0}" -gt 0 ] && [ "{{ timezone_force_restart }}" != "True" ]; then
+      echo "SKIPPED: ${N} active stream(s) on {{ item }}"
+    else
+      pct exec {{ item }} -- systemctl restart plexmediaserver && echo "restarted {{ item }}"
+    fi
+  args: { executable: /bin/bash }
+  loop: "{{ tz_plex.stdout_lines | default([]) }}"
+  loop_control:
+    label: "plex on {{ item }}"
+  register: tz_plex_restart
+  changed_when: "'restarted' in tz_plex_restart.stdout"
+
+- name: Report the Plex outcome
+  when: tz_plex_restart is defined and tz_plex_restart.results is defined
+  ansible.builtin.debug:
+    msg: "{{ tz_plex_restart.results | selectattr('stdout', 'defined') | map(attribute='stdout') | select('!=', '') | list }}"
