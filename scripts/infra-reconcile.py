@@ -230,19 +230,32 @@ def main():
 
     endpoint = os.environ.get("PROXMOX_ENDPOINT", "https://192.168.50.10:8006")
     token = os.environ.get("PROXMOX_API_TOKEN", "")
+    # FAIL, never warn-and-pass. A reconciler that could not read the cluster has
+    # not found zero drift — it has found nothing, and those are different results.
+    #
+    # These three paths used to `return 0`, so the nightly job went green every
+    # night from 2026-08-18 while checking nothing at all: its Vault role did not
+    # exist, the token was empty, and the first branch below swallowed it. Fourteen
+    # green runs, no cluster reads, and the drift it was built to catch (242 and 243
+    # documented but destroyed, 236 live but undocumented) sat unreported for two
+    # weeks. A green check that verifies nothing is worse than no check, because it
+    # buys confidence nobody earned. PET-317.
     if not token:
-        print("::warning title=infra-reconcile::No PROXMOX_API_TOKEN — nothing checked.")
-        return 0
+        print("::error title=infra-reconcile::No PROXMOX_API_TOKEN — could not read the "
+              "cluster, so nothing was verified. Check the Vault OIDC role and its bound "
+              "subject; GitHub migrates repos to immutable ID-based subjects and a role "
+              "bound only to the name form silently stops matching.")
+        return 1
 
     if not os.path.isdir(os.path.join(args.vault, "Hosts")):
-        print(f"::warning title=infra-reconcile::No vault at {args.vault} — nothing checked.")
-        return 0
+        print(f"::error title=infra-reconcile::No vault at {args.vault} — nothing verified.")
+        return 1
 
     try:
         live = live_guests(endpoint, token)
     except Exception as e:
-        print(f"::warning title=infra-reconcile::Proxmox unreachable ({e}) — nothing checked.")
-        return 0
+        print(f"::error title=infra-reconcile::Proxmox unreachable ({e}) — nothing verified.")
+        return 1
 
     documented = documented_guests(args.vault)
     print(f"\n{DIM}cluster{OFF} {len(live)} guests   {DIM}vault{OFF} {len(documented)} documented live\n")

@@ -278,8 +278,28 @@ resource "vault_jwt_auth_backend_role" "infra_reconcile" {
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
+  # ⚠ BOTH SUBJECT FORMS, and that is not belt-and-braces.
+  #
+  # GitHub is migrating repositories to IMMUTABLE, ID-BASED OIDC subjects. A
+  # migrated repo stops sending
+  #     repo:PeteDio-Labs/petedio-vault:ref:refs/heads/main
+  # and starts sending
+  #     repo:PeteDio-Labs@268380060/petedio-vault@1312503638:ref:refs/heads/main
+  # so a role bound only to the name form can never match again. Read the live
+  # prefix with:
+  #     gh api /repos/PeteDio-Labs/<repo>/actions/oidc/customization/sub
+  #
+  # petedio-vault has already migrated. That is why infra-reconcile could not mint
+  # a token — and because the job only WARNED on failure, it reported success
+  # nightly while checking nothing (PET-317). Binding both forms means a role
+  # keeps working across the migration in either direction, with no wildcards:
+  # a glob here would loosen the one control that stops another repo minting a
+  # Proxmox credential.
   bound_claims = {
-    sub = "repo:PeteDio-Labs/petedio-vault:ref:refs/heads/main"
+    sub = join(",", [
+      "repo:PeteDio-Labs/petedio-vault:ref:refs/heads/main",
+      "repo:PeteDio-Labs@${var.github_org_id}/petedio-vault@${var.github_repo_id_vault}:ref:refs/heads/main",
+    ])
   }
   token_policies = [vault_policy.infra_reconcile.name]
   token_ttl      = 300
