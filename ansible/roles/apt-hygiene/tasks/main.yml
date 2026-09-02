@@ -1,0 +1,41 @@
+---
+- name: Handle each stale source
+  ansible.builtin.include_tasks: one_source.yml
+  loop: "{{ apt_hygiene_stale_sources }}"
+  loop_control:
+    loop_var: src
+    label: "{{ src.name }}"
+
+# Proving apt works again is the point of the whole role, so check it rather
+# than assuming the removals were sufficient.
+- name: Prove apt update now succeeds
+  ansible.builtin.command: apt-get update
+  register: apt_hygiene_update
+  changed_when: false
+  failed_when: apt_hygiene_update.rc != 0
+
+- name: Assert nothing is still failing to verify
+  ansible.builtin.assert:
+    that:
+      - "'not bound' not in apt_hygiene_update.stderr | default('')"
+      - "'signature verification' not in (apt_hygiene_update.stderr | default('') | lower)"
+    fail_msg: >-
+      apt-get update still reports a signature problem:
+      {{ apt_hygiene_update.stderr | default('') | truncate(300) }}
+    success_msg: "apt-get update is clean on {{ inventory_hostname }}."
+
+# Not acted on, only surfaced. Upgrading 190 packages on the node that carries
+# Vault, MinIO, Plane, Authentik and the media stack is a planned window, not a
+# side effect of a repo cleanup.
+- name: Report pending upgrades without touching them
+  ansible.builtin.command: apt-get -s upgrade
+  register: apt_hygiene_pending
+  changed_when: false
+
+- name: Say how much drift is left
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: apt is healthy.
+      {{ apt_hygiene_pending.stdout_lines | select('search', 'not upgraded') | first | default('pending upgrades unknown') }}
+      — deliberately NOT applied here.
+      ⚠ Never run `apt autoremove` on a Proxmox node; it lists a pve kernel as removable.

@@ -89,3 +89,21 @@ variable "colatro_admin_repo" {
   type        = string
   default     = "PeteDio-Labs/co-latro-admin"
 }
+
+# GitHub's numeric IDs, used to build the IMMUTABLE OIDC subject form. GitHub is
+# migrating repositories from name-based to ID-based subjects, and a migrated repo
+# stops sending the name form entirely. Read the current prefix for any repo with:
+#   gh api /repos/PeteDio-Labs/<repo>/actions/oidc/customization/sub
+# As of 2026-09-01, three have migrated: petedio-vault, petedio-resume-builder and
+# petedio-water-fast. The rest still send the name form.
+variable "github_org_id" {
+  description = "Numeric GitHub org ID for PeteDio-Labs, used in immutable OIDC subjects."
+  type        = string
+  default     = "268380060"
+}
+
+variable "github_repo_id_vault" {
+  description = "Numeric repo ID for petedio-vault, used in its immutable OIDC subject."
+  type        = string
+  default     = "1312503638"
+}

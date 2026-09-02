@@ -1,0 +1,33 @@
+---
+# apt-hygiene — remove third-party apt sources that no longer verify, and the
+# orphaned packages they served.
+#
+# WHY THIS EXISTS. `apt-get update` failed outright on pve01, which blocks every
+# package operation on the primary node — including anything Ansible installs.
+# The cause was NodeSource signing with a SHA-1 key: Proxmox 9 is Debian 13,
+# which verifies with sqv and rejects SHA-1 binding signatures from 2026-02-01.
+#
+# ⚠ THIS IS THE SECOND REPO TO BREAK THIS WAY. Plex's PlexSign.key failed
+# identically during PET-311. Debian 13's stricter crypto policy is quietly
+# breaking third-party apt repos, and each one presents as an unrelated
+# application fault rather than a distro policy change. Expect more, and reach
+# for the verifier before the vendor.
+
+# Each entry: the sources file, its keyring, and the package it served.
+# `package` may be null when only the source should go.
+apt_hygiene_stale_sources:
+  - name: nodesource
+    source_file: /etc/apt/sources.list.d/nodesource.list
+    keyring: /usr/share/keyrings/nodesource.gpg
+    package: nodejs
+    # Verified on pve01 before writing this: no installed package depends on
+    # nodejs, no host script or cron calls node/npm/npx, and every running node
+    # process is inside a container with its own runtime — lxc/232's Actions
+    # runner bundles externals/node20, lxc/235 is Plane, lxc/101 is seerr. A
+    # Proxmox host sees container PIDs, so this reads as host usage and is not.
+    # Installed was v20.20.0; Node 20 went end-of-life April 2026.
+    reason: "SHA-1 signing key rejected by Debian 13 sqv; nothing on the host uses Node"
+
+# Removing a package is not reversible in a hurry, so the role refuses unless it
+# has proved nothing depends on it. Set false only with a specific reason.
+apt_hygiene_verify_unused: true
