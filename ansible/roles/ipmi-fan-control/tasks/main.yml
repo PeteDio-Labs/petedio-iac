@@ -1,0 +1,88 @@
+---
+# Refuse to run anywhere the measured duty-cycle table does not apply. The raw
+# 0x30 0x30 commands are Dell 12th-gen; on other hardware they may mean something
+# else entirely, and "something else" is being sent to a fan controller.
+- name: Assert this is a Dell PowerEdge
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["system_vendor"] is search("Dell")
+      - ansible_facts["product_name"] is search("PowerEdge")
+    fail_msg: >-
+      ipmi-fan-control targets Dell PowerEdge only; this host reports
+      {{ ansible_facts["system_vendor"] }} / {{ ansible_facts["product_name"] }}.
+
+- name: Install ipmitool
+  ansible.builtin.apt:
+    name: ipmitool
+    state: present
+    update_cache: false
+
+# Proves the BMC answers over KCS before anything writes a fan setting.
+- name: Check the BMC responds
+  ansible.builtin.command: ipmitool mc info
+  register: ipmi_mc
+  changed_when: false
+
+- name: Install the watchdog script
+  ansible.builtin.template:
+    src: ipmi-fan-control.sh.j2
+    dest: /usr/local/sbin/ipmi-fan-control.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart ipmi-fan-control
+
+- name: Install the service unit
+  ansible.builtin.template:
+    src: ipmi-fan-control.service.j2
+    dest: /etc/systemd/system/ipmi-fan-control.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart ipmi-fan-control
+
+- name: Enable and start it
+  ansible.builtin.systemd:
+    name: ipmi-fan-control
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Flush handlers so the verification below sees the running config
+  ansible.builtin.meta: flush_handlers
+
+# Let the watchdog get through resume_samples polls before believing anything.
+# The service must see resume_samples CONSECUTIVE cool polls after it starts, so
+# waiting exactly that long races its own start-up and the assert below fails on a
+# node that is in fact fine. The extra polls are margin, not politeness.
+- name: Wait for the watchdog to take hold
+  ansible.builtin.pause:
+    seconds: "{{ (ipmi_fan_poll_seconds | int) * (ipmi_fan_resume_samples | int + 8) }}"
+
+- name: Read back fan speed and CPU temperature
+  ansible.builtin.shell: |
+    set -o pipefail
+    rpm=$(ipmitool sdr type fan | awk -F'|' '/Fan1A/{gsub(/[^0-9]/,"",$5); print $5}')
+    tmp=$(ipmitool sdr type temperature | awk -F'|' '/0Eh|0Fh/{gsub(/[^0-9]/,"",$5); if($5>m)m=$5} END{print m}')
+    echo "${rpm:-0} ${tmp:-0}"
+  args:
+    executable: /bin/bash
+  register: ipmi_fan_readback
+  changed_when: false
+
+- name: Assert the fans actually came down and the node is not hot
+  ansible.builtin.assert:
+    that:
+      - (ipmi_fan_readback.stdout.split() | first | int) > 0
+      - (ipmi_fan_readback.stdout.split() | first | int) < 2600
+      - (ipmi_fan_readback.stdout.split() | last | int) < (ipmi_fan_revert_temp_c | int)
+    fail_msg: >-
+      Fans did not settle as expected — Fan1A
+      {{ ipmi_fan_readback.stdout.split() | first }} RPM at
+      {{ ipmi_fan_readback.stdout.split() | last }} C.
+      Automatic control holds ~2760 RPM, so anything at or above that means the
+      duty cycle never took.
+    success_msg: >-
+      Fan1A {{ ipmi_fan_readback.stdout.split() | first }} RPM,
+      CPU {{ ipmi_fan_readback.stdout.split() | last }} C
+      (automatic control holds ~2760 RPM).

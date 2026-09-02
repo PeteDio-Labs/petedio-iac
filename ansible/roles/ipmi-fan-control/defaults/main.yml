@@ -1,0 +1,57 @@
+---
+# Quiet the R620's fans without giving up thermal protection.
+#
+# The BMC's automatic curve holds ~2760 RPM on an idle pve01 (108 W drawn against
+# 260 W of CPU, CPUs at 47 C). That floor is sized for a worst case this node does
+# not reach, and pve01 sits where Pedro works.
+#
+# Measured on pve01, 2026-09-02, stepping the duty cycle down and letting each step
+# settle for ~2 min:
+#
+#   duty   Fan1A      max CPU
+#   30%    6480 RPM   41 C      louder than automatic — the scale is ~21600 RPM full
+#   12%    3480 RPM   43 C
+#   10%    3240 RPM   43 C
+#    8%    2640 RPM   45 C
+#    6%    1800 RPM   47 C
+#    5%    1680 RPM   48 C   <- the BMC clamps here
+#    4%    1680 RPM   49 C      identical to 5% — below the clamp nothing changes
+#    3%    1680 RPM   49 C      identical again
+#
+# So 5% is the floor worth asking for: 1680 RPM against automatic's 2760, for 2 C.
+# Anything lower is the same speed with a less honest number in the config.
+ipmi_fan_duty_percent: 5
+
+# Hand control back to the BMC at this temperature. E5-2690 v2 throttles near 80 C.
+#
+# Measured under a 40-core load on 2026-09-02: at 1680 RPM the CPUs went 52 C ->
+# 78 C in UNDER 20 SECONDS. A threshold alone is not enough at this fan speed —
+# by the time an absolute reading crosses the line, most of the headroom is
+# already spent. Hence 60 C rather than 65, a 5 s poll rather than 20 s, and the
+# rate trigger below.
+ipmi_fan_revert_temp_c: 60
+
+# Revert if the CPU climbs this fast between polls, whatever the absolute reading.
+#
+# Set from measurement, twice. A 40-core spike moved the CPUs ~6.5 C per 5 s poll,
+# so this has to sit above that to be a real backstop — but the first attempt at
+# 4 C tripped on ordinary idle fluctuation while the node was merely cooling down,
+# which parked the fans in automatic (2760 RPM, louder than doing nothing).
+# 8 C catches only a genuinely violent ramp; the 60 C absolute check at a 5 s poll
+# does the everyday work.
+ipmi_fan_revert_rate_c: 8
+
+# Resume manual control only after the node has been this cool for
+# ipmi_fan_resume_samples consecutive polls. The gap between revert and resume is
+# what stops it oscillating around a single threshold under a bursty load.
+#
+# 24 samples at a 5 s poll is two full minutes of quiet before the fans drop
+# again. That is deliberate: a build or a backup that pauses for a few seconds
+# should not be read as "cool", and fans cycling up and down is more distracting
+# than fans simply running.
+# Must sit ABOVE the idle temperature the quiet setting itself produces (~50-52 C
+# at 5%), or the watchdog can never resume once it has reverted.
+ipmi_fan_resume_temp_c: 56
+ipmi_fan_resume_samples: 24
+
+ipmi_fan_poll_seconds: 5

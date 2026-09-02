@@ -1,0 +1,6 @@
+---
+- name: Restart ipmi-fan-control
+  ansible.builtin.systemd:
+    name: ipmi-fan-control
+    state: restarted
+    daemon_reload: true
