@@ -1,0 +1,22 @@
+---
+# apt-hygiene.yml — remove third-party apt sources that no longer verify. (PET-314)
+#
+# apt-get update failed outright on pve01, blocking every package operation on
+# the primary node. NodeSource signs with a SHA-1 key, and Proxmox 9 is Debian 13,
+# which verifies with sqv and rejects SHA-1 binding signatures from 2026-02-01.
+#
+#   ansible-playbook playbooks/apt-hygiene.yml
+#
+# Removing a package is not something to undo in a hurry, so the role proves the
+# package is unused and that apt would remove exactly one thing before it acts,
+# and proves apt update is clean afterwards.
+#
+# ⚠ It deliberately does NOT apply the 190 pending upgrades on pve01, and never
+# runs `apt autoremove` — which on a Proxmox node lists a pve kernel as removable.
+
+- name: Clean up stale apt sources
+  hosts: proxmox
+  become: true
+  serial: 1
+  roles:
+    - apt-hygiene
