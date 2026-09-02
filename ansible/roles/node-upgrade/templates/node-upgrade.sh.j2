@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Deployed by Ansible (role: node-upgrade, PET-315). Do not edit on the node.
+#
+# Installs pending upgrades, but only if this node has a backup from tonight.
+# Never reboots: both nodes have a kernel pending, and activating it is a human
+# decision made while someone is watching.
+set -uo pipefail
+LOG=/var/log/node-upgrade.log
+exec >>"$LOG" 2>&1
+echo "===== $(date -Is) starting on $(hostname) ====="
+
+BK="{{ node_upgrade_backup_dir }}"
+MAXH={{ node_upgrade_backup_max_age_h }}
+
+# The gate. A missing or stale backup means no restore point, so do not upgrade.
+if [ ! -d "$BK" ]; then
+  echo "ABORT: backup directory $BK is not present — is the store mounted?"
+  exit 1
+fi
+# Check THIS NODE'S OWN guests, not "any fresh archive". The store is shared
+# between both nodes, so a plain find matches the other node's backups too — and
+# a gate that passes on someone else's evidence is worse than no gate. Archives
+# are named by VMID (vzdump-lxc-<vmid>-<timestamp>.tar.zst), so ask pct which
+# guests live here and require a fresh archive for every one of them.
+GUESTS=$(pct list 2>/dev/null | awk 'NR>1{print $1}')
+if [ -z "$GUESTS" ]; then
+  echo "ABORT: could not enumerate guests on $(hostname -s)."
+  exit 1
+fi
+MISSING=""
+COVERED=0
+for id in $GUESTS; do
+  if [ -n "$(find "$BK" -name "vzdump-lxc-${id}-*.tar.zst" -mmin -$((MAXH*60)) 2>/dev/null | head -1)" ]; then
+    COVERED=$((COVERED+1))
+  else
+    MISSING="$MISSING $id"
+  fi
+done
+TOTAL=$(echo "$GUESTS" | wc -w)
+if [ -n "$MISSING" ]; then
+  echo "ABORT: no backup newer than ${MAXH}h for guest(s):$MISSING"
+  echo "       ($COVERED of $TOTAL covered on $(hostname -s)). Refusing to upgrade without a restore point."
+  exit 1
+fi
+echo "OK: all $TOTAL guests on $(hostname -s) have an archive newer than ${MAXH}h — proceeding."
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update || { echo "ABORT: apt-get update failed"; exit 1; }
+
+echo "--- pending before ---"
+apt-get -s {{ node_upgrade_command }} 2>/dev/null | tail -1
+
+apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold {{ node_upgrade_command }}
+RC=$?
+echo "--- {{ node_upgrade_command }} exit: $RC ---"
+
+# Never autoremove here: on a Proxmox node it offers to remove a pve kernel.
+{% if not node_upgrade_autoremove %}
+echo "NOTE: autoremove deliberately skipped (would offer to remove a pve kernel)."
+{% endif %}
+
+if [ -f /var/run/reboot-required ] || [ "$(uname -r)" != "$(ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's|.*/vmlinuz-||' | sort -V | tail -1)" ]; then
+  echo "REBOOT REQUIRED: running $(uname -r), newest installed $(ls -1 /boot/vmlinuz-* | sed 's|.*/vmlinuz-||' | sort -V | tail -1)"
+  touch /var/run/node-upgrade-reboot-required
+fi
+
+echo "--- guests still running: $(pct list 2>/dev/null | awk 'NR>1 && $2=="running"' | wc -l) ---"
+echo "===== $(date -Is) finished rc=$RC ====="
+exit $RC

@@ -1,0 +1,29 @@
+---
+# schedule-node-upgrade.yml — install pending upgrades on both Proxmox nodes
+# overnight, gated on a fresh backup, without rebooting. (PET-315)
+#
+# WHY NOW. pve01 is 190 packages behind and pve02 116, on the nodes carrying
+# Vault, MinIO, Plane, Authentik, postgres and the media stack. Verified before
+# scheduling that dist-upgrade would REMOVE 0 packages on either node.
+#
+# ⚠ BOTH NODES HAVE A KERNEL PENDING. pve01 jumps series, 6.17.13-2 -> 7.0.14-14;
+# pve02 takes a point update inside 7.0. Installing a kernel is safe and changes
+# nothing until boot. THIS PLAY NEVER REBOOTS — rebooting pve01 is a whole-
+# homelab outage and stays a human decision made while someone is watching. The
+# script leaves /var/run/node-upgrade-reboot-required behind instead.
+#
+# THE BACKUP GATE IS THE POINT. If no archive newer than 6 hours exists, the run
+# aborts rather than upgrading without a restore point. That is what PET-288 was
+# for.
+#
+#   ansible-playbook playbooks/schedule-node-upgrade.yml
+#
+# serial: 1 so pve02 is scheduled first. If something about the mechanism is
+# wrong, it shows up on the less critical node.
+
+- name: Schedule tonight's node upgrades
+  hosts: proxmox
+  become: true
+  serial: 1
+  roles:
+    - node-upgrade

@@ -1,0 +1,29 @@
+---
+# node-upgrade — install pending package upgrades on the Proxmox nodes overnight,
+# gated on a fresh backup, and never reboot.
+#
+# WHY GATED ON A BACKUP. Upgrading the node that carries Vault, MinIO, Plane,
+# Authentik, postgres and the whole media stack without a restore point is a bet,
+# not a maintenance window. PET-288 built the backup store precisely so this could
+# be done safely; the gate is what makes that pay off.
+#
+# WHY IT NEVER REBOOTS. Both nodes have a new kernel pending — pve01 jumps series
+# (6.17 -> 7.0.14) and pve02 takes a point update within 7.0. Installing a kernel
+# is safe and changes nothing until boot. Rebooting pve01 is a whole-homelab
+# outage, so it stays a human decision made while someone is watching.
+
+node_upgrade_hour: "04:00"
+
+# The backup must be newer than this many hours, or the run aborts. The nightly
+# job starts at 02:30, so a 6-hour window covers it with room while still
+# refusing to run against yesterday's archive.
+node_upgrade_backup_max_age_h: 6
+node_upgrade_backup_dir: /mnt/ollama-backups/dump
+
+# dist-upgrade rather than upgrade: on Proxmox, plain `upgrade` holds back
+# anything needing a new dependency, which is most of a point release. Verified
+# on both nodes that dist-upgrade would REMOVE 0 packages before scheduling this.
+node_upgrade_command: dist-upgrade
+
+# ⚠ Never autoremove on a Proxmox node — it lists a pve kernel as removable.
+node_upgrade_autoremove: false

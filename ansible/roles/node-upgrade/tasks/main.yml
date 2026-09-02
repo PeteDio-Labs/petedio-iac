@@ -1,0 +1,35 @@
+---
+- name: Install the upgrade script
+  ansible.builtin.template:
+    src: node-upgrade.sh.j2
+    dest: /usr/local/sbin/node-upgrade.sh
+    mode: "0755"
+    owner: root
+    group: root
+
+# A transient timer rather than a permanent unit: this is a one-off maintenance
+# window, and a persistent timer that silently upgrades a hypervisor every night
+# is a different decision from the one being made here.
+- name: Cancel any previous scheduled run
+  ansible.builtin.command: systemctl stop node-upgrade.timer
+  changed_when: false
+  failed_when: false
+
+- name: Schedule tonight's run
+  ansible.builtin.command: >-
+    systemd-run --unit=node-upgrade --on-calendar="{{ node_upgrade_hour }}"
+    --timer-property=AccuracySec=1min
+    /usr/local/sbin/node-upgrade.sh
+  register: node_upgrade_scheduled
+  changed_when: true
+
+- name: Confirm it is actually scheduled
+  ansible.builtin.command: systemctl list-timers node-upgrade.timer --no-pager
+  register: node_upgrade_timer
+  changed_when: false
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: upgrade scheduled for {{ node_upgrade_hour }}.
+      {{ node_upgrade_timer.stdout_lines | select('search', 'node-upgrade') | first | default('timer not listed') }}
