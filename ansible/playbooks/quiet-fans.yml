@@ -1,0 +1,28 @@
+---
+# quiet-fans.yml — hold pve01's chassis fans at a low duty cycle. (PET-321)
+#
+# pve01 is a 1U R620 with two 130 W E5-2690 v2s. Dell's automatic curve sizes the
+# fan floor for 260 W of CPU, so it holds ~2760 RPM even though the node draws
+# 108 W idle and sits at 47 C. It also sits where Pedro works, and it is loud.
+#
+#   ansible-playbook playbooks/quiet-fans.yml
+#
+# Measured on the machine rather than assumed. The duty cycle is NOT a percentage
+# of the speed you hear: 30% produced 6480 RPM, more than twice automatic, because
+# full scale is ~21600 RPM and automatic idles at roughly 13%. The useful range is
+# below that, and the BMC clamps at 1680 RPM — 5%, 4% and 3% are all the same
+# speed. So 5% is the floor, giving 1680 RPM against automatic's 2760 for 2 C.
+# The full step table is in the role's defaults.
+#
+# ⚠ Manual fan control means the BMC stops ramping. The watchdog restores
+# automatic control above 65 C and on every exit path; do not set a duty cycle by
+# hand and walk away, which is the same command without the part that saves you.
+#
+# Targets pve01 only. pve02 is a different chassis in a different room, and none
+# of the numbers above were measured there.
+
+- name: Quiet the chassis fans, with a thermal watchdog
+  hosts: pve01
+  become: true
+  roles:
+    - ipmi-fan-control

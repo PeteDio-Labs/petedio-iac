@@ -1,0 +1,108 @@
+#!/bin/bash
+# {{ ansible_managed }}
+#
+# Hold the fans at a fixed low duty cycle, and hand control back to the BMC the
+# moment the node gets warm.
+#
+# Manual fan control on a PowerEdge means exactly that: the BMC stops ramping. A
+# fixed duty cycle with no supervision is how a hypervisor cooks itself, so every
+# path out of this script — error, signal, stop, shutdown — restores automatic
+# control. The quiet setting is the thing that needs justifying; automatic is the
+# resting state.
+
+set -u
+
+DUTY_PCT={{ ipmi_fan_duty_percent }}
+REVERT_C={{ ipmi_fan_revert_temp_c }}
+REVERT_RATE={{ ipmi_fan_revert_rate_c }}
+RESUME_C={{ ipmi_fan_resume_temp_c }}
+RESUME_SAMPLES={{ ipmi_fan_resume_samples }}
+POLL={{ ipmi_fan_poll_seconds }}
+
+IPMI=/usr/bin/ipmitool
+DUTY_HEX=$(printf '0x%02x' "$DUTY_PCT")
+
+log() { echo "$*"; }
+
+automatic() { "$IPMI" raw 0x30 0x30 0x01 0x01 >/dev/null 2>&1; }
+manual()    { "$IPMI" raw 0x30 0x30 0x01 0x00 >/dev/null 2>&1 \
+              && "$IPMI" raw 0x30 0x30 0x02 0xff "$DUTY_HEX" >/dev/null 2>&1; }
+
+# Restore automatic control on ANY exit. systemd also calls ExecStop, but a kill
+# -9 skips that, so the trap is the one that has to be right.
+cleanup() { log "restoring automatic fan control"; automatic; }
+# EXIT covers normal and error paths. INT/TERM must ALSO exit explicitly — a bare
+# trap runs the handler and then resumes the loop, which leaves systemd waiting
+# for a process that never stops until it escalates to SIGKILL.
+trap cleanup EXIT
+trap 'exit 0' INT TERM
+
+# Max of the two CPU temperature sensors (0Eh, 0Fh). Prints nothing if ipmitool
+# fails or returns something unparseable — the caller treats that as "too hot".
+max_cpu_temp() {
+    "$IPMI" sdr type temperature 2>/dev/null | awk -F'|' '
+        /0Eh|0Fh/ { gsub(/[^0-9]/, "", $5); if ($5 != "" && $5+0 > m) m = $5+0 }
+        END { if (m > 0) print m }'
+}
+
+mode=""          # "manual" | "auto" — empty forces a first-pass decision
+cool_streak=0
+
+prev_temp=""
+
+log "starting: duty=${DUTY_PCT}% revert>=${REVERT_C}C or +${REVERT_RATE}C/poll, resume<=${RESUME_C}C x${RESUME_SAMPLES}, poll=${POLL}s"
+
+while :; do
+    temp=$(max_cpu_temp)
+
+    if [ -z "$temp" ]; then
+        # Could not read a temperature. Never hold a fixed duty cycle blind.
+        if [ "$mode" != "auto" ]; then
+            log "cannot read CPU temperature — falling back to automatic"
+            automatic; mode="auto"
+        fi
+        cool_streak=0
+        sleep "$POLL"; continue
+    fi
+
+    # Rate trigger. A 40-core load takes this node from 52C to 78C in under 20s at
+    # 1680 RPM, so an absolute threshold on its own reacts too late. A steep climb
+    # is the signal that the fans are already behind, whatever the reading says.
+    rising_fast=0
+    if [ -n "$prev_temp" ] && [ $((temp - prev_temp)) -ge "$REVERT_RATE" ]; then
+        rising_fast=1
+    fi
+    prev_temp="$temp"
+
+    if [ "$temp" -ge "$REVERT_C" ] || [ "$rising_fast" -eq 1 ]; then
+        if [ "$mode" != "auto" ]; then
+            if [ "$rising_fast" -eq 1 ] && [ "$temp" -lt "$REVERT_C" ]; then
+                log "CPU ${temp}C, rising >=${REVERT_RATE}C per poll — handing control back to the BMC"
+            else
+                log "CPU ${temp}C >= ${REVERT_C}C — handing control back to the BMC"
+            fi
+            automatic; mode="auto"
+        fi
+        cool_streak=0
+
+    elif [ "$mode" != "manual" ]; then
+        # Only resume once it has been genuinely cool for several polls running,
+        # so a load that hovers near the threshold does not flap the fans.
+        if [ "$temp" -le "$RESUME_C" ]; then
+            cool_streak=$((cool_streak + 1))
+            if [ "$cool_streak" -ge "$RESUME_SAMPLES" ]; then
+                if manual; then
+                    log "CPU ${temp}C, cool for ${cool_streak} polls — holding fans at ${DUTY_PCT}%"
+                    mode="manual"; cool_streak=0
+                else
+                    log "failed to set manual control — staying automatic"
+                    automatic; mode="auto"
+                fi
+            fi
+        else
+            cool_streak=0
+        fi
+    fi
+
+    sleep "$POLL"
+done

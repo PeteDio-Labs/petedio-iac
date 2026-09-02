@@ -1,0 +1,23 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Hold the chassis fans at a low duty cycle, with a thermal watchdog
+Documentation=https://github.com/PeteDio-Labs/petedio-iac
+# The BMC is reachable over the local KCS interface, so this needs no network and
+# no iDRAC address (PET-313 is still open).
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/ipmi-fan-control.sh
+# Belt and braces: the script's own EXIT trap restores automatic control, and so
+# does this, for the paths where the trap cannot run.
+ExecStop=/usr/bin/ipmitool raw 0x30 0x30 0x01 0x01
+Restart=always
+RestartSec=10s
+# If it cannot stay up, stop retrying and leave the BMC in charge rather than
+# flapping between manual and automatic forever.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
