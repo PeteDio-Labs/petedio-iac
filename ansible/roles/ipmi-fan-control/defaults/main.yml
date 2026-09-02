@@ -8,7 +8,7 @@
 # Measured on pve01, 2026-09-02, stepping the duty cycle down and letting each step
 # settle for ~2 min:
 #
-#   duty   Fan1A      max CPU
+#   duty   Fan1A      CPU (see the warning below about these temperatures)
 #   30%    6480 RPM   41 C      louder than automatic — the scale is ~21600 RPM full
 #   12%    3480 RPM   43 C
 #   10%    3240 RPM   43 C
@@ -17,6 +17,12 @@
 #    5%    1680 RPM   48 C   <- the BMC clamps here
 #    4%    1680 RPM   49 C      identical to 5% — below the clamp nothing changes
 #    3%    1680 RPM   49 C      identical again
+#
+# ⚠ THE RPM FIGURES ABOVE ARE GOOD; THE TEMPERATURES ARE NOT. Each step ran only
+# ~110 s, which is long enough for a fan to change speed and nowhere near long
+# enough for this chassis to reach thermal equilibrium. A 14-minute soak at 5%
+# put the real plateau at 54 C, not 48 C — the table caught the curve on the way
+# up. Fan speed settles in seconds, case temperature in ten minutes or more.
 #
 # So 5% is the floor worth asking for: 1680 RPM against automatic's 2760, for 2 C.
 # Anything lower is the same speed with a less honest number in the config.
@@ -27,9 +33,15 @@ ipmi_fan_duty_percent: 5
 # Measured under a 40-core load on 2026-09-02: at 1680 RPM the CPUs went 52 C ->
 # 78 C in UNDER 20 SECONDS. A threshold alone is not enough at this fan speed —
 # by the time an absolute reading crosses the line, most of the headroom is
-# already spent. Hence 60 C rather than 65, a 5 s poll rather than 20 s, and the
-# rate trigger below.
-ipmi_fan_revert_temp_c: 60
+# already spent. Hence a 5 s poll rather than 20 s, and the rate trigger below.
+#
+# ⚠ THIS MUST SIT WELL ABOVE THE EQUILIBRIUM THE QUIET SETTING PRODUCES. Set to
+# 60 C first, which was only 6 C above the real 54 C plateau, so ordinary work
+# from authentik, plane and pvestatd pushed it to 60-61 C and tripped the guard.
+# The fans then cycled quiet -> loud -> quiet every 5-9 minutes, which is more
+# annoying than leaving them loud. 68 C clears the observed 61 C transients by
+# 7 C and still leaves 12 C before the CPUs throttle.
+ipmi_fan_revert_temp_c: 68
 
 # Revert if the CPU climbs this fast between polls, whatever the absolute reading.
 #
@@ -49,9 +61,11 @@ ipmi_fan_revert_rate_c: 8
 # again. That is deliberate: a build or a backup that pauses for a few seconds
 # should not be read as "cool", and fans cycling up and down is more distracting
 # than fans simply running.
-# Must sit ABOVE the idle temperature the quiet setting itself produces (~50-52 C
-# at 5%), or the watchdog can never resume once it has reverted.
-ipmi_fan_resume_temp_c: 56
+# Must sit ABOVE the idle temperature the quiet setting itself produces, or the
+# watchdog can never resume once it has reverted. Automatic control settles this
+# node at ~52 C, so 58 C is comfortably reachable while still leaving a 10 C gap
+# below the revert threshold — that gap is the hysteresis that stops the cycling.
+ipmi_fan_resume_temp_c: 58
 ipmi_fan_resume_samples: 24
 
 ipmi_fan_poll_seconds: 5
