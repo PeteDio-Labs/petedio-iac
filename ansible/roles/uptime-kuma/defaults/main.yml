@@ -112,10 +112,14 @@ uptime_kuma_monitors:
     port: 8006
     description: "Proxmox node 2. Also serves the NFS export above."
 
+  # ⚠ THE PROVISIONER ADDS AND EDITS, IT DOES NOT PRUNE. Deleting a monitor from
+  # this list stops it being managed; it does NOT remove it from Uptime Kuma, so a
+  # monitor for a decommissioned host stays and goes permanently red — which
+  # trains you to ignore the dashboard, the opposite of what the fault study needs.
+  # Noticed while removing lidarr in PET-319. That one turned out never to have
+  # been provisioned, so nothing was orphaned, but the gap is real: after removing
+  # an entry here, delete the monitor in the UI or via uptime-kuma-api as well.
   # -- arr stack behind /mnt/media --------------------------------------------
-  - name: lidarr
-    type: http
-    url: "http://192.168.50.14:8686/"
   - name: sonarr
     type: http
     url: "http://192.168.50.15:8989/"

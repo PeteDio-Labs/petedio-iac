@@ -2,7 +2,7 @@
 # timezone — one timezone across the whole homelab.
 #
 # WHY THIS EXISTS. Audited 2026-08-31 and found the estate split: both Proxmox
-# hosts were America/Chicago, lidarr/seerr/sonarr/radarr matched them, and plex,
+# hosts were America/Chicago, seerr/sonarr/radarr matched them, and plex,
 # plex-gpu, prowlarr, qbittorrent-vpn, authentik, runner-233 and the tunnel were
 # all Etc/UTC.
 #
