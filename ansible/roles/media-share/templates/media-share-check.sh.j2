@@ -1,0 +1,42 @@
+#!/bin/bash
+# {{ ansible_managed }}
+#
+# Remount the NFS media shares if they are missing.
+#
+# The fstab entries carry `nofail` on purpose: pve01 and pve02 mount from each
+# other, so a hard mount would let one node's outage wedge both. The cost of that
+# choice is that a mount which fails at boot stays failed and says nothing.
+#
+# On 2026-09-02 pve02 rebooted at 00:35, mnt-media.mount timed out at 00:37, and
+# nofail let the boot continue. It sat failed for 20 hours. Plex kept running and
+# serving an empty library: /mnt/media inside CT 236 resolved to pve02's own root
+# filesystem, so the bind mount was present and the media simply was not.
+#
+# Nothing was lost — no library item or media part was marked deleted — but that
+# was luck, not design. A scan against an empty library path is exactly how a
+# Plex library deletes itself.
+#
+# `findmnt --types nfs,nfs4` is the check that matters. A plain directory test
+# passes on the empty local directory, which is the failure being detected.
+set -u
+
+rc=0
+{% for e in media_share_exports %}
+if findmnt --types nfs,nfs4 --target "{{ e.path }}" >/dev/null 2>&1; then
+    :
+else
+    echo "{{ e.path }} is not an NFS mount — remounting"
+    if timeout 90 mount "{{ e.path }}" 2>&1; then
+        if findmnt --types nfs,nfs4 --target "{{ e.path }}" >/dev/null 2>&1; then
+            echo "{{ e.path }} remounted"
+        else
+            echo "{{ e.path }} mount returned success but is still not NFS"
+            rc=1
+        fi
+    else
+        echo "{{ e.path }} remount failed (is {{ media_share_server_ip }} up?)"
+        rc=1
+    fi
+fi
+{% endfor %}
+exit $rc

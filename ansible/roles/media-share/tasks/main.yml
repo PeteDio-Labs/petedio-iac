@@ -88,6 +88,39 @@
     label: "{{ item.path }}"
   when: inventory_hostname != media_share_server_host
 
+# The fstab entries carry nofail so one node's outage cannot wedge the other at
+# boot. The price is that a mount failing at boot stays failed silently — which
+# happened on 2026-09-02 and left Plex serving an empty library for 20 hours. This
+# timer buys back the retry without giving up the nofail guarantee.
+- name: Install the mount health check
+  ansible.builtin.template:
+    src: media-share-check.sh.j2
+    dest: /usr/local/sbin/media-share-check.sh
+    owner: root
+    group: root
+    mode: "0755"
+  when: inventory_hostname != media_share_server_host
+
+- name: Install the health-check units
+  ansible.builtin.template:
+    src: "media-share-check.{{ item }}.j2"
+    dest: "/etc/systemd/system/media-share-check.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - service
+    - timer
+  when: inventory_hostname != media_share_server_host
+
+- name: Enable the health-check timer
+  ansible.builtin.systemd:
+    name: media-share-check.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: inventory_hostname != media_share_server_host
+
 - name: Assert each mount really is NFS and not an empty local directory
   ansible.builtin.command: findmnt --types nfs,nfs4 --target {{ item.path }}
   changed_when: false

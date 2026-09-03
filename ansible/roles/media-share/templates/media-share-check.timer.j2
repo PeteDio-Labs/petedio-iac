@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Check the NFS media shares are still mounted
+
+[Timer]
+# Soon after boot, because a boot-time timeout is the case that caused this, then
+# steadily. Five minutes bounds how long Plex can serve an empty library.
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

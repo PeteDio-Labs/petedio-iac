@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Remount the NFS media shares if they have gone missing
+Documentation=https://github.com/PeteDio-Labs/petedio-iac
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/media-share-check.sh
