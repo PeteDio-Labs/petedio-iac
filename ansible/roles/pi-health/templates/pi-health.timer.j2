@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Check Pete-Pi thermal state
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec={{ pi_health_interval }}
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

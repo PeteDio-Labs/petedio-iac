@@ -1,0 +1,34 @@
+---
+# pi-health — record whether Pete-Pi actually copes without its fan, and stop it
+# booting to a desktop nobody looks at.
+#
+# WHY. The fan on this Pi is wired to constant 5 V: no cooling_device, no PWM
+# hwmon, nothing in config.txt, so software cannot touch it. It ran flat out
+# permanently while the Pi sat at 32 C. Pedro removed it on 2026-09-02.
+#
+# Measured with the fan gone, letting each state actually plateau:
+#
+#   idle, 7 min soak            39.9 C   (32.1 C with the fan)
+#   100% on all 4 cores, 3 min  80.3 C   <- reaches the soft-throttle point
+#   45 s after load removed     58.4 C
+#
+# So: fine for what this host does, and with no headroom for sustained full load.
+# Its real load average is 0.00-0.01 — it is a measurement instrument that sits
+# and records — so the ceiling is unlikely to matter. This role exists so that
+# claim is checked against data rather than re-argued from memory.
+
+# vcgencmd's own record is the authority, not the temperature. The flags latch,
+# so they catch a throttle event that happened while nobody was looking:
+#   bit 0  under-voltage now        bit 16  under-voltage has occurred
+#   bit 1  ARM frequency capped     bit 17  frequency cap has occurred
+#   bit 2  currently throttled      bit 18  throttling has occurred
+#   bit 3  soft temp limit active   bit 19  soft temp limit has occurred
+pi_health_warn_temp_c: 70
+
+# Every 5 min is enough to characterise a host whose load average is 0.00, and
+# quiet enough that the journal stays readable.
+pi_health_interval: "5min"
+
+# Boot to console instead of a desktop. Nothing plugs a screen into this Pi, and
+# the GUI costs both memory and idle heat. Set false if a display is ever wanted.
+pi_health_disable_desktop: true
