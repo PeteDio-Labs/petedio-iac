@@ -17,9 +17,16 @@
 # metric 100) reaches the cluster/Vault/zot/ollama, and wlan0 192.168.86.46 is
 # the only route to plex on 192.168.86.140.
 #
-# ⚠ There is only ONE Pi. The old pete-pi-1 / pete-pi-2 SSH aliases pointed at
-# two expired DHCP leases (192.168.86.25, 192.168.50.6) and described this same
-# machine. A parallel SSH sweep of both /24s found exactly one.
+# ⚠ There are TWO Pis. Pi 1 is live and inventoried here; Pi 2 exists and is
+# packed away, so it has no entry until it is racked and addressed.
+#
+# This comment previously claimed there was only one, concluding it from a
+# parallel SSH sweep of both /24s on 2026-08-18 that found exactly one. A sweep
+# distinguishes responding from not responding; it cannot tell "does not exist"
+# from "unplugged and in a box". vault/Hosts/004-pete-pi.md was corrected on
+# 2026-08-31 and this file was missed — the same split-record problem as PET-317,
+# where the reconciler read per-note frontmatter while the summary was the thing
+# being fixed. Pedro confirmed the second Pi again on 2026-09-03.
 #
 # Unlike the LXCs, this box logs in as `pedro` (passwordless sudo), not root.
 ---
