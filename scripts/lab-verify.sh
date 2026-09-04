@@ -105,6 +105,71 @@ for e in "104|sonarr|192.168.50.15:8989|/var/lib/sonarr/config.xml" "105|radarr|
   h=$(on "$hostnode" "curl -s -m 10 -H 'X-Api-Key: $k' http://$addr/api/v3/health | grep -c '\"type\":\"error\"'")
   [ "${h:-0}" -eq 0 ] && ok "$nm health" "no errors" || bad "$nm health" "$h error-level issues"
 done
+# The library itself, per guest, at whatever path that guest actually mounts it.
+#
+# WHY THIS EXISTS. sonarr/radarr/prowlarr moved to pve03 on 2026-09-04 and pve03
+# has NO ZFS -- `media` and `downloads` are pve02's pools reached over NFS. The
+# library became a network dependency for the apps that import into it, and
+# nothing here noticed. PET-322 exists because these mounts do go missing.
+#
+# A failed mount leaves an EMPTY DIRECTORY behind, which reads as a library with
+# nothing in it rather than as an error. So: mounted, then non-empty, then
+# actually written to.
+#
+# ⚠ NEVER HARDCODE THE IN-CONTAINER PATH. It differs per guest, and assuming it
+# is how this check first went wrong (PET-333):
+#     104 sonarr    /mnt/media   /downloads
+#     109 prowlarr  /media       /downloads
+#     236 plex-gpu  /mnt/media   /mnt/downloads (ro)
+# In 104, `/mnt/downloads` is a stray empty directory on the 4 G rootfs -- writable,
+# and nothing to do with the pool. A check that touched it would pass while proving
+# the opposite of what it claims. The path is read from `pct config`'s mp= field.
+#
+# ⚠ AND TEST FROM INSIDE THE CONTAINER, never from the host account. The paths are
+# owned by the unprivileged-LXC mapped ids with no o+w (media 100000:100999,
+# downloads 101000:100000), so an operator's own uid is CORRECTLY refused.
+#
+# The group assertion is `file inherits directory`, not a literal: media and
+# downloads have different groups, so either constant would be wrong for the other.
+pct_config() {  # node, vmid
+  if [ "$1" = "$PVE03" ]; then on "$1" "sudo /usr/sbin/pct config $2"
+  else on "$1" "pct config $2"; fi
+}
+for e in "104|sonarr" "105|radarr" "109|prowlarr" "110|qbittorrent" "236|plex-gpu"; do
+  IFS='|' read -r id nm <<< "$e"
+  hostnode=$(node_for "$id")
+  [ -z "$hostnode" ] && { bad "$nm library" "guest not found on any node"; continue; }
+  cfg=$(pct_config "$hostnode" "$id" | grep -E '^mp[0-9]+:')
+  [ -z "$cfg" ] && { skip "$nm library" "declares no mount points"; continue; }
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    d=$(sed -n 's/.*,mp=\([^,]*\).*/\1/p' <<< "$line")
+    [ -z "$d" ] && continue
+    ro=0; grep -q ',ro=1' <<< "$line" && ro=1
+    label="$nm $d"
+    if ! pct_on "$hostnode" "$id" "mountpoint -q $d"; then
+      bad "$label" "not mounted -- the app sees an empty directory"; continue
+    fi
+    n=$(pct_on "$hostnode" "$id" "ls -A $d" | wc -l | tr -d ' ')
+    if [ "${n:-0}" -eq 0 ]; then
+      bad "$label" "mounted but EMPTY -- export gone, or mounted over"; continue
+    fi
+    read -r fg dg <<< "$(pct_on "$hostnode" "$id" \
+      "sh -c 'T=$d/.lab-verify.\$\$; touch \$T 2>/dev/null || exit 1; stat -c %g \$T; stat -c %g $d; rm -f \$T'" | tr '\n' ' ')"
+    if [ "$ro" = "1" ]; then
+      # Declared ro=1. Writable here would mean the flag is not in force.
+      [ -z "$fg" ] && ok "$label" "$n entries, read-only as declared, on $hostnode" \
+                   || bad "$label" "declared ro=1 but IS WRITABLE"
+    elif [ -z "$fg" ]; then
+      bad "$label" "$n entries, NOT writable -- imports will fail"
+    elif [ "$fg" != "$dg" ]; then
+      bad "$label" "writable but setgid lost (file $fg, dir $dg) -- other apps will not read it"
+    else
+      ok "$label" "$n entries, writable, setgid ($fg) on $hostnode"
+    fi
+  done <<< "$cfg"
+done
+
 # The kill switch is only real if qbit has no network of its own.
 NS=$(on $PVE02 "pct exec 110 -- docker inspect qbittorrent --format '{{.HostConfig.NetworkMode}}' 2>/dev/null")
 case "$NS" in container:*) ok "qbit inside gluetun netns" "no path out if the tunnel drops";; *) bad "qbit netns" "got '${NS:-unknown}' — traffic may bypass the VPN";; esac
