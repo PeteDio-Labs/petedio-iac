@@ -1,0 +1,61 @@
+---
+# Run against the QDevice HOST (the Pi), not the cluster nodes. The nodes need
+# `corosync-qdevice` instead, which configure-pve-node.yml installs.
+#
+# WHY A QDEVICE AT ALL. Two nodes give expected votes 2 and quorum 2, so losing
+# either leaves the survivor below quorum: /etc/pve goes read-only and no guest
+# starts. pve02 carries every guest, so without a third vote the whole stack is
+# hostage to the other node. With the Pi voting, a survivor holds 2 of 3.
+
+- name: Install the QDevice network daemon
+  ansible.builtin.apt:
+    name: corosync-qnetd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable the QDevice network daemon
+  ansible.builtin.systemd:
+    name: corosync-qnetd
+    enabled: true
+
+# ⚠ THE TRAP THIS ROLE EXISTS FOR.
+#
+# `pvecm qdevice setup` runs as root on the cluster node and creates the NSS
+# certificate store on this host owned root:root, mode 770. The service runs as
+# coroqnetd and cannot read its own certificates:
+#
+#   corosync-qnetd[...]: Can't open NSS DB directory (13): Permission denied
+#
+# The cluster still reports `Expected votes: 3` while the QDevice sits at `NV`
+# -- registered, alive, and contributing nothing. So the configuration looks
+# finished and delivers none of the protection it was added for. Check for `A,V`
+# in `pvecm status`, never just the vote count.
+- name: Give the qnetd user its own certificate store
+  ansible.builtin.file:
+    path: "{{ cluster_qdevice_nssdb }}"
+    state: directory
+    owner: "{{ cluster_qdevice_user }}"
+    group: "{{ cluster_qdevice_user }}"
+    recurse: true
+  register: qdevice_nssdb
+  failed_when: false
+  notify: Restart qnetd
+
+- name: Start the QDevice network daemon
+  ansible.builtin.systemd:
+    name: corosync-qnetd
+    state: started
+
+- name: Confirm it is actually serving
+  ansible.builtin.command: corosync-qnetd-tool -s
+  register: qdevice_status
+  changed_when: false
+  failed_when: false
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      qnetd {{ 'is serving' if qdevice_status.rc == 0 else 'is NOT serving — check ownership of ' ~ cluster_qdevice_nssdb }}.
+      Verify the vote is counted with `pvecm status` on a node: the QDevice line
+      must read A,V and not A,NV.

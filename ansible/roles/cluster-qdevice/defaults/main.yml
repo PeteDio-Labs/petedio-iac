@@ -1,0 +1,10 @@
+---
+# The QDevice host is deliberately NOT a cluster node and NOT a guest. It has to
+# survive whatever takes a node down, so it lives on the Pi -- outside the
+# cluster, on its own power, with no dependency on Proxmox at all.
+cluster_qdevice_host: "192.168.50.4"
+
+# corosync-qnetd runs as this user and must own its certificate store. pvecm
+# creates that store as root, which is the whole reason this role exists.
+cluster_qdevice_user: "coroqnetd"
+cluster_qdevice_nssdb: "/etc/corosync/qnetd/nssdb"
