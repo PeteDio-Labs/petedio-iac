@@ -35,6 +35,11 @@
     - role: cluster-qdevice
       tags: [qdevice]
 
+    # The TVs are on the mesh and Plex is not. pve01 used to bridge the two;
+    # this proxies the port instead.
+    - role: plex-bridge
+      tags: [plex-bridge]
+
     - role: lab-digest
       # Tagged so the digest can be deployed without touching the Kuma
       # container, which is the fault-study instrument and should not be

@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+#
+# Media exported from {{ media_export_server }} to the node running the arr
+# stack. Plex is deliberately NOT a client: it lives on this node with the
+# disks, so playback never crosses the network.
+{% for p in media_export_paths %}
+{% for c in media_export_clients %}
+{{ p.path }} {{ c }}({{ p.options }})
+{% endfor %}
+{% endfor %}

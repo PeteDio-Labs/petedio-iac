@@ -1,0 +1,4 @@
+---
+- name: Reload exports
+  ansible.builtin.command: exportfs -ra
+  listen: Reload exports

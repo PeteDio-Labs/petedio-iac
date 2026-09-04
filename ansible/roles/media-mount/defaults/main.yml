@@ -1,0 +1,15 @@
+---
+# Mount the media pools exported by the node that holds the disks.
+#
+# The paths are IDENTICAL to the server's on purpose. An arr container's bind
+# mounts (`mp0: /mnt/media,mp=/mnt/media`) then resolve on either node, which is
+# what makes the container movable without editing its config.
+media_mount_server_ip: 192.168.50.11
+media_mount_paths:
+  - /mnt/media
+  - /mnt/downloads
+
+# nofail and _netdev together are the difference between a slow boot and a
+# hung one: without them a node whose NFS server is down blocks at boot waiting
+# for a mount, which turns the server's outage into the client's outage too.
+media_mount_options: "defaults,_netdev,nofail,x-systemd.mount-timeout=30,x-systemd.automount"

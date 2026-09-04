@@ -1,0 +1,29 @@
+---
+# Export the media pools from the node that physically holds the disks to the
+# node running the apps that write to them.
+#
+# ⚠ THIS REINTRODUCES A CROSS-NODE DEPENDENCY, DELIBERATELY AND IN ONE DIRECTION
+# ONLY. The identical arrangement — pve01 exporting to pve02 — is what made pve02
+# collateral damage on 2026-09-03: pve02 never faulted, it lost the export, and
+# the whole media stack went down with a node that was still running.
+#
+# The difference is which way it points. Plex STAYS on the node with the disks,
+# so playback never crosses the network; only the arr stack, whose work is bulk
+# copies on a schedule, depends on the mount. A pve02 outage now stops imports.
+# It does not stop watching, and it does not stop the library existing.
+media_export_server: pve02
+media_export_server_ip: 192.168.50.11
+media_export_clients:
+  - 192.168.50.10        # pve03, running the arr stack
+
+media_export_paths:
+  - path: /mnt/media
+    # The arr apps write imports here, so this cannot be read-only.
+    options: "rw,sync,no_subtree_check,no_root_squash"
+  - path: /mnt/downloads
+    options: "rw,sync,no_subtree_check,no_root_squash"
+
+# no_root_squash is load-bearing and worth stating plainly: the arr containers
+# write as root (host uid 100000 through the unprivileged offset). Squash root
+# to nobody and every import fails on permissions, days after the change, with
+# an error that points at the app rather than the export.

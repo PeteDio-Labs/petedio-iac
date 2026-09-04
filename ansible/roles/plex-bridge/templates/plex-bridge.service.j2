@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Proxy Plex from the mesh network to the LAN
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# fork + reuseaddr so a restart does not wait on TIME_WAIT, and so each client
+# gets its own child rather than queueing behind one connection.
+ExecStart=/usr/bin/socat -d TCP4-LISTEN:{{ plex_bridge_listen_port }},bind={{ plex_bridge_listen_ip }},fork,reuseaddr,keepalive TCP4:{{ plex_bridge_target }}:{{ plex_bridge_target_port }},keepalive
+Restart=always
+RestartSec=5
+# A stream proxy needs no privilege beyond binding a high port.
+DynamicUser=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

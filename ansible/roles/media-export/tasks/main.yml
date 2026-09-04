@@ -1,0 +1,62 @@
+---
+- name: Install the NFS server
+  ansible.builtin.apt:
+    name: nfs-kernel-server
+    state: present
+
+# Exporting a path that is not mounted exports an EMPTY DIRECTORY on the root
+# filesystem. The client mounts it, sees nothing, and every symptom points at
+# the client. findmnt --target reports the mount point CONTAINING the path, so
+# an unmounted /mnt/media answers "/" — comparing that back to the path is the
+# discriminator.
+- name: Refuse to export a path that is not a real mounted filesystem
+  ansible.builtin.command: "findmnt -n -o TARGET --target {{ item.path }}"
+  loop: "{{ media_export_paths }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: export_mounted
+  changed_when: false
+  failed_when: export_mounted.rc != 0 or export_mounted.stdout | trim != item.path
+
+- name: Write the exports
+  ansible.builtin.template:
+    src: exports.j2
+    dest: /etc/exports
+    mode: "0644"
+  notify: Reload exports
+
+# systemd derives RequiresMountsFor on nfs-server from /etc/exports, and caches
+# it. pve02 was still exporting three paths whose storage died with pve01, so
+# nfs-server refused to start with "a dependency job failed" -- naming no path
+# and pointing at nothing. Rewriting the file is not enough; systemd has to
+# recompute, and the stale failure has to be cleared.
+- name: Recompute the mount dependencies derived from /etc/exports
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Clear any stale failure before starting
+  ansible.builtin.command: systemctl reset-failed nfs-server
+  changed_when: false
+  failed_when: false
+
+- name: Enable the NFS server
+  ansible.builtin.systemd:
+    name: nfs-server
+    enabled: true
+    state: started
+
+- name: Flush handlers so the exports are live before any client mounts
+  ansible.builtin.meta: flush_handlers
+
+- name: Confirm each path is actually exported
+  ansible.builtin.command: exportfs -s
+  register: export_list
+  changed_when: false
+
+- name: Assert the export list matches what was declared
+  ansible.builtin.assert:
+    that: item.path in export_list.stdout
+    fail_msg: "{{ item.path }} is not in exportfs output — the export did not take"
+  loop: "{{ media_export_paths }}"
+  loop_control:
+    label: "{{ item.path }}"
