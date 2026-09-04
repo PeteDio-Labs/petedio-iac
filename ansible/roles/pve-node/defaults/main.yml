@@ -32,3 +32,8 @@ pve_node_is_laptop: true
 pve_node_remove_debian_kernel: false
 
 pve_node_repo_component: pve-no-subscription
+
+# The bridge stanza inherits no resolver, so name it explicitly.
+pve_node_nameservers:
+  - 192.168.50.1
+  - 1.1.1.1

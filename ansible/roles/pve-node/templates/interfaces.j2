@@ -33,6 +33,13 @@ iface {{ pve_node_bridge }} inet static
         bridge-ports {{ pve_node_lan_interface }}
         bridge-stp off
         bridge-fd 0
+{% if pve_node_nameservers | length > 0 %}
+        # Without this the node has no resolver at all: the static stanza does
+        # not inherit what NetworkManager used to supply, and the first symptom
+        # is apt failing with "Temporary failure in name resolution" long after
+        # the network itself is fine.
+        dns-nameservers {{ pve_node_nameservers | join(' ') }}
+{% endif %}
 {% for i in ansible_facts["interfaces"] | select("match", "^wl") | sort %}
 
 # Left manual so PVE does not claim it; NetworkManager keeps this as the

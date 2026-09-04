@@ -119,6 +119,18 @@
       Components: {{ pve_node_repo_component }}
       Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
 
+# The proxmox-ve package ships an enterprise repository that requires a paid
+# subscription. Left enabled it returns 401 on every apt update, which reads as
+# a broken mirror rather than a licensing choice, and blocks any later install
+# on the node. Disable it AFTER the repo is added but BEFORE anything installs.
+- name: Disable the enterprise repository
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list.d/pve-enterprise.sources
+    regexp: "^Enabled:"
+    line: "Enabled: false"
+    create: false
+  failed_when: false
+
 - name: Install proxmox-ve
   ansible.builtin.apt:
     name:
