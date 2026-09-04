@@ -12,12 +12,42 @@
 # node named in ITS STATE. The supported repair is state rm + import, per
 # resource, which is what this does.
 #
-# RUN IT FROM environments/homelab WITH THE USUAL CREDENTIALS EXPORTED.
 # It is deliberately not run by CI: it rewrites state, and MinIO versioning on
 # the tfstate bucket is the only undo.
+#
+# Credentials are resolved here rather than assumed. The terraform S3 backend
+# needs the MinIO keys, and without them it falls back to the AWS credential
+# chain and fails with "No valid credential sources found" plus an EC2 IMDS
+# error, which reads as an AWS problem and is not.
 set -euo pipefail
 
 cd "$(dirname "$0")/../environments/homelab"
+
+if [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
+  ROOT_TOKEN="$(security find-generic-password -s vault-root-token -a vault-223 -w 2>/dev/null)" || {
+    echo "no Vault root token in the Keychain (vault-root-token / vault-223)" >&2; exit 1; }
+  vget() {
+    curl -sk -m 10 -H "X-Vault-Token: $ROOT_TOKEN" \
+      "https://192.168.50.223:8200/v1/kv/data/iac/$1" 2>/dev/null \
+      | python3 -c "import sys,json;print((json.load(sys.stdin).get('data',{}).get('data') or {}).get('$2',''))"
+  }
+  export AWS_ACCESS_KEY_ID="$(vget minio access_key)"
+  export AWS_SECRET_ACCESS_KEY="$(vget minio secret_key)"
+  export TF_VAR_proxmox_api_token="$(vget proxmox api_token)"
+  export TF_VAR_ssh_public_key="$(vget lxc-ssh public_key)"
+  export TF_VAR_cloudflare_api_token="$(vget cloudflare api_token)"
+  export TF_VAR_cloudflare_account_id="$(vget cloudflare account_id)"
+  export TF_VAR_cloudflare_zone_id="$(vget cloudflare zone_id)"
+  export TF_VAR_cloudflare_tunnel_id="$(vget cloudflare tunnel_id)"
+  export TF_VAR_cloudflare_palworld_tunnel_id="$(vget cloudflare palworld_tunnel_id)"
+  export VAULT_ADDR="https://192.168.50.223:8200"
+  export VAULT_TOKEN="$ROOT_TOKEN"
+  export VAULT_SKIP_VERIFY=true
+  # Match CI, or the pool resource shows a spurious destroy.
+  export TF_VAR_manage_resource_pool=true
+  [ -n "$AWS_ACCESS_KEY_ID" ] || { echo "could not read MinIO keys from Vault" >&2; exit 1; }
+  echo "credentials resolved from Vault"
+fi
 
 BACKUP="/tmp/tfstate-pre-repoint-$(date +%Y%m%d-%H%M%S).json"
 terraform state pull > "$BACKUP"
