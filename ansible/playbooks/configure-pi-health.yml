@@ -1,0 +1,26 @@
+---
+# configure-pi-health.yml — thermal monitoring for Pete-Pi, and boot to console.
+# (PET-323)
+#
+#   ansible-playbook playbooks/configure-pi-health.yml
+#
+# Deliberately SEPARATE from configure-pete-pi.yml, which configures Uptime Kuma
+# and must be run through scripts/deploy-uptime-kuma.sh because it asserts Vault
+# credentials. This play needs no secrets, so folding it in would mean resolving
+# Kuma's admin credentials to install a temperature check.
+#
+# WHY. Pete-Pi's fan was wired to constant 5 V — no cooling_device, no PWM hwmon,
+# nothing in config.txt, so software could not touch it — and it ran flat out
+# permanently while the Pi sat at 32 C. Pedro removed it on 2026-09-02. Measured
+# fanless: 39.9 C idle after a 7-minute soak, and 80.3 C under 100% load on all
+# four cores, which is the soft-throttle point. Fine for a host whose load average
+# is 0.00, with no headroom for sustained full load.
+#
+# This records whether that judgement holds. vcgencmd's throttle flags latch, so
+# they catch an event that happened while nobody was watching.
+
+- name: Monitor Pete-Pi's temperature and boot it to console
+  hosts: pete_pi
+  become: true
+  roles:
+    - pi-health

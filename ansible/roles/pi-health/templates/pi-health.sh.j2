@@ -1,0 +1,57 @@
+#!/bin/bash
+# {{ ansible_managed }}
+#
+# Record thermal state, and say something only when it matters.
+#
+# Two signals, and the second is the one that counts:
+#   - temperature, which says how hot it is now
+#   - vcgencmd get_throttled, which LATCHES. Bits 16-19 record that an event
+#     happened even if conditions are fine again by the time anyone looks.
+#
+# A quiet journal here is the evidence that running fanless was the right call.
+set -u
+
+WARN_C={{ pi_health_warn_temp_c }}
+HIGH_WATER=/var/lib/pi-health/high-water
+
+mkdir -p "$(dirname "$HIGH_WATER")"
+
+temp_milli=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0)
+temp=$((temp_milli / 1000))
+throttled=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
+throttled=${throttled:-unknown}
+
+prev=0
+[ -f "$HIGH_WATER" ] && prev=$(cat "$HIGH_WATER" 2>/dev/null || echo 0)
+[ "$temp" -gt "$prev" ] && { echo "$temp" > "$HIGH_WATER"; prev=$temp; }
+
+# Decode the latched bits rather than printing a hex value nobody remembers.
+flags=""
+if [ "$throttled" != "0x0" ] && [ "$throttled" != "unknown" ]; then
+    v=$((throttled))
+    [ $(( (v >> 0) & 1 )) -eq 1 ] && flags="$flags under-voltage-NOW"
+    [ $(( (v >> 1) & 1 )) -eq 1 ] && flags="$flags freq-capped-NOW"
+    [ $(( (v >> 2) & 1 )) -eq 1 ] && flags="$flags throttled-NOW"
+    [ $(( (v >> 3) & 1 )) -eq 1 ] && flags="$flags soft-temp-limit-NOW"
+    [ $(( (v >> 16) & 1 )) -eq 1 ] && flags="$flags under-voltage-has-occurred"
+    [ $(( (v >> 17) & 1 )) -eq 1 ] && flags="$flags freq-cap-has-occurred"
+    [ $(( (v >> 18) & 1 )) -eq 1 ] && flags="$flags throttling-has-occurred"
+    [ $(( (v >> 19) & 1 )) -eq 1 ] && flags="$flags soft-temp-limit-has-occurred"
+fi
+
+if [ -n "$flags" ]; then
+    echo "THROTTLE FLAGS SET ($throttled):$flags — temp ${temp}C, high-water ${prev}C"
+    echo "the fan was removed on 2026-09-02; this is the signal that it mattered"
+    exit 0
+fi
+
+if [ "$temp" -ge "$WARN_C" ]; then
+    echo "temp ${temp}C >= ${WARN_C}C (high-water ${prev}C, no throttle flags yet)"
+    exit 0
+fi
+
+# Healthy. Say so once an hour so the log shows the check is alive, not just
+# silent, without a line every five minutes.
+if [ "$(date +%M)" -lt 5 ]; then
+    echo "ok: ${temp}C, high-water ${prev}C, throttled=${throttled}"
+fi
