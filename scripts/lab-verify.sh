@@ -37,6 +37,59 @@ V=$(on $PVE02 'pvecm status 2>/dev/null | grep -c "A,V,"')
 W=$(on $PVE02 'touch /etc/pve/.verify 2>/dev/null && rm -f /etc/pve/.verify && echo yes')
 [ "$W" = "yes" ] && ok "/etc/pve writable" || bad "/etc/pve writable" "lost quorum?"
 
+# ── Placement (PET-334) ───────────────────────────────────────────────────────
+# pve02 is the MEDIA node: it holds the disks, Plex and qBittorrent, and nothing
+# else. Everything platform-tier lives on pve03, which has twice the cores and
+# ten times the free space, and — the actual reason — is not the node carrying
+# the fragile USB storage.
+#
+# This is asserted rather than assumed because a guest can move without anyone
+# deciding it should: an HA failover, a half-finished migration, or a `pct
+# migrate` typed against the wrong node. Nothing else here would notice. The
+# services would all still answer, from the wrong machine, until pve02 lost a
+# USB enclosure and took the platform down with it.
+#
+# ⚠ Terraform cannot hold this line for you. `node_name` and `datastore_id` both
+# force REPLACEMENT on the bpg provider, so a config edit destroys and rebuilds
+# the container rather than moving it. Placement is changed with `pct migrate`
+# and then reconciled into state — see docs/runbooks/pve03-platform-move.md.
+sec "Placement matches intent"
+INTENT_PVE02="110 236"
+PLACEMENT=$(on $PVE02 'pvesh get /cluster/resources --type vm --output-format json' 2>/dev/null)
+if [ -z "$PLACEMENT" ]; then
+  bad "placement readable" "could not read /cluster/resources"
+else
+  # ⚠ Assign the command substitution to a variable, THEN eval it. Writing
+  # `eval "$(python3 <<'"'"'PYEOF'"'"' ...)"` looks equivalent and is not: inside the
+  # outer double quotes bash stops honouring the quoted heredoc delimiter, the
+  # body is expanded, and the python arrives mangled. It still RUNS -- it printed
+  # `101('"'"''"'"')` where the guest name belonged -- so the check reports garbage
+  # rather than failing. Found writing this check (PET-334).
+  _placement_eval=$(PLACEMENT="$PLACEMENT" WANT02="$INTENT_PVE02" python3 <<'PYEOF'
+import json, os
+want02 = set(os.environ["WANT02"].split())
+rows = json.loads(os.environ["PLACEMENT"])
+wrong = []
+for r in rows:
+    vmid = str(r.get("vmid") or "")
+    if not vmid: continue
+    node = r.get("node") or ""
+    expect = "pve02" if vmid in want02 else "pve03"
+    if node != expect:
+        wrong.append(f"{vmid}({r.get('name','')}) on {node}, want {expect}")
+print("WRONG=%s" % json.dumps(";".join(wrong)))
+print("NGUESTS=%d" % len(rows))
+PYEOF
+)
+  eval "$_placement_eval"
+  if [ -z "$WRONG" ]; then
+    ok "every guest on its intended node" "$NGUESTS guests; only 110+236 on pve02"
+  else
+    IFS=';' read -ra W <<< "$WRONG"
+    for w in "${W[@]}"; do bad "misplaced guest" "$w"; done
+  fi
+fi
+
 sec "Storage"
 for p in media downloads; do
   H=$(on $PVE02 "zpool list -H -o health $p")
