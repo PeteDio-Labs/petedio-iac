@@ -1,0 +1,37 @@
+# pve03 — a SEPARATE inventory file, deliberately not in hosts.yml.
+#
+# WHY ITS OWN FILE. ansible-palworld.yml and ansible-openfaas.yml both list
+# ansible/inventory/hosts.yml under push.paths, so any edit to that file
+# re-applies their playbooks on merge. Adding a node under construction is not a
+# reason to redeploy anything. Same reasoning as pete-pi.yml.
+#
+# WHAT THIS MACHINE IS. The HP Spectre, formerly palworld-mc. i7-11390H 4c/8t to
+# 5.0 GHz, 15 GiB, 922 GB — the fastest CPU in the fleet and, with Iris Xe, the
+# best Quick Sync available, which is why Plex moves here. Rebuilt as Debian 13
+# on 2026-09-04 after pve01 died; Palworld returns as an LXC from the
+# ollama-host backup.
+#
+# ⚠ IT IS A LAPTOP. A closed lid suspends the hypervisor and every guest with
+# it. pve_node_is_laptop masks the sleep targets and writes a logind drop-in.
+# palworld-mc needed exactly this in PET-266.
+#
+# ⚠ THE LAN IS A USB DONGLE. enx9c69d3140f0c derives its name from MAC
+# 9c:69:d3:14:0f:0c — swapping the adapter renames the interface and breaks the
+# bridge. Pin it with a systemd .link file if it is ever replaced.
+#
+# ⚠ .50.241 COLLIDES with openfaas-241 in the pve01 guest configs
+# (.agent/pve01-recovery/241.conf in petedio-workspace). One of the two must be
+# renumbered before openfaas is restored.
+---
+all:
+  children:
+    pve_new:
+      hosts:
+        pve03:
+          ansible_host: 192.168.50.241
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
+          pve_node_lan_interface: enx9c69d3140f0c
+          pve_node_address: 192.168.50.241/24
+          pve_node_gateway: 192.168.50.1
+          pve_node_is_laptop: true

@@ -1,0 +1,117 @@
+---
+- name: Assert the required variables are set
+  ansible.builtin.assert:
+    that:
+      - pve_node_lan_interface | length > 0
+      - pve_node_address | length > 0
+    fail_msg: >-
+      pve_node_lan_interface and pve_node_address must be set. There is no safe
+      default: guessing the interface on a host reached only through it means
+      guessing your way out of a lockout.
+
+- name: Assert this is Debian 13
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["distribution"] == "Debian"
+      - ansible_facts["distribution_major_version"] is version("13", ">=")
+    fail_msg: >-
+      Proxmox VE 9 is built on Debian 13. This host reports
+      {{ ansible_facts["distribution"] }} {{ ansible_facts["distribution_version"] }}.
+      Ubuntu and Pop!_OS cannot be converted — reinstall as Debian.
+
+- name: Assert the LAN interface actually exists
+  ansible.builtin.assert:
+    that:
+      - pve_node_lan_interface in ansible_facts["interfaces"]
+    fail_msg: >-
+      {{ pve_node_lan_interface }} is not present on this host. Interfaces seen:
+      {{ ansible_facts["interfaces"] | join(", ") }}. On a USB dongle the name
+      derives from its MAC, so a swapped adapter renames it.
+
+# A laptop node suspends on lid close and takes its guests with it. Do this
+# BEFORE the long package install, so a lid close mid-run cannot kill it.
+- name: Stop the lid and idle from suspending a laptop node
+  when: pve_node_is_laptop | bool
+  block:
+    - name: Mask the sleep targets
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        masked: true
+      loop:
+        - sleep.target
+        - suspend.target
+        - hibernate.target
+        - hybrid-sleep.target
+
+    - name: Write the logind drop-in
+      ansible.builtin.copy:
+        dest: /etc/systemd/logind.conf.d/10-pve-node-no-suspend.conf
+        mode: "0644"
+        content: |
+          # {{ ansible_managed }}
+          # A closed lid must not suspend a hypervisor.
+          [Login]
+          HandleLidSwitch=ignore
+          HandleLidSwitchDocked=ignore
+          HandleLidSwitchExternalPower=ignore
+          HandleSuspendKey=ignore
+          IdleAction=ignore
+      notify: Restart logind
+
+# Proxmox resolves its own node name to a real address for clustering. If the
+# hostname maps to 127.0.1.1 — the Debian installer default — pvecm fails in
+# ways that read as a corosync problem.
+- name: Point the hostname at the node's real address in /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\s*{{ pve_node_address | ansible.utils.ipaddr("address") }}\s'
+    line: "{{ pve_node_address | ansible.utils.ipaddr('address') }}\t{{ inventory_hostname }}.local {{ inventory_hostname }}"
+    state: present
+
+- name: Remove the 127.0.1.1 mapping for this hostname
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    state: absent
+
+- name: Add the Proxmox repository key
+  ansible.builtin.get_url:
+    url: https://enterprise.proxmox.com/debian/proxmox-release-{{ ansible_facts["distribution_release"] }}.gpg
+    dest: /usr/share/keyrings/proxmox-archive-keyring.gpg
+    mode: "0644"
+
+- name: Add the Proxmox repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/pve-install-repo.sources
+    mode: "0644"
+    content: |
+      # {{ ansible_managed }}
+      Types: deb
+      URIs: http://download.proxmox.com/debian/pve
+      Suites: {{ ansible_facts["distribution_release"] }}
+      Components: {{ pve_node_repo_component }}
+      Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+
+- name: Install proxmox-ve
+  ansible.builtin.apt:
+    name:
+      - proxmox-ve
+      - postfix
+      - open-iscsi
+      - chrony
+    state: present
+    update_cache: true
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  register: pve_install
+  async: 1800
+  poll: 30
+
+- name: Report what the install did
+  ansible.builtin.debug:
+    msg: "proxmox-ve install changed={{ pve_install.changed }}"
+
+# The bridge is the lockout risk, so it only runs when asked for by tag.
+- name: Configure the LAN bridge
+  ansible.builtin.include_tasks: bridge.yml
+  tags: [bridge, never]

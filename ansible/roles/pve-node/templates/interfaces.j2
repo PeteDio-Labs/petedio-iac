@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+# Proxmox LAN bridge. The physical NIC carries no address; the bridge does.
+#
+# ⚠ Applying this drops every SSH session on {{ pve_node_lan_interface }}.
+# Have a second way in before you run it.
+
+auto lo
+iface lo inet loopback
+
+iface {{ pve_node_lan_interface }} inet manual
+
+auto {{ pve_node_bridge }}
+iface {{ pve_node_bridge }} inet static
+    address {{ pve_node_address }}
+    gateway {{ pve_node_gateway }}
+    bridge-ports {{ pve_node_lan_interface }}
+    bridge-stp off
+    bridge-fd 0
+
+source /etc/network/interfaces.d/*

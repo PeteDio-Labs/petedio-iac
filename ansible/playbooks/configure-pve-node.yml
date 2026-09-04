@@ -1,0 +1,23 @@
+---
+# configure-pve-node.yml — install Proxmox VE onto a Debian host. (PET-324)
+#
+#   ansible-playbook playbooks/configure-pve-node.yml                # install
+#   ansible-playbook playbooks/configure-pve-node.yml --tags bridge  # then bridge
+#
+# Two passes on purpose. The install is safe to run unattended; the bridge tears
+# down the network on the interface you are connected over, so it is gated
+# behind a tag and refuses to run on a single-homed host.
+#
+# Proxmox VE 9 is Debian 13, so this installs onto Debian. It cannot convert
+# Ubuntu or Pop!_OS — the role asserts the distribution and stops.
+#
+# pve03 is a laptop (the ex-palworld-mc Spectre). The role masks the sleep
+# targets and writes a logind drop-in before installing anything, because a
+# closed lid otherwise suspends the hypervisor mid-run. palworld-mc needed the
+# same treatment in PET-266.
+
+- name: Install Proxmox VE on a Debian node
+  hosts: pve_new
+  become: true
+  roles:
+    - pve-node
