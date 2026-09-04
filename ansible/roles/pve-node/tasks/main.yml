@@ -42,6 +42,9 @@
         - suspend.target
         - hibernate.target
         - hybrid-sleep.target
+        # Not implied by the four above: it is its own target and stays
+        # startable when they are masked (found live on pve03, PET-324).
+        - suspend-then-hibernate.target
 
     - name: Write the logind drop-in
       ansible.builtin.copy:
@@ -57,6 +60,30 @@
           HandleSuspendKey=ignore
           IdleAction=ignore
       notify: Restart logind
+
+    # GNOME's power plugin suspends on its own schedule and does not consult
+    # logind. A desktop install left on the node keeps that behaviour unless
+    # it is turned off per-user.
+    - name: Find the logged-in users whose GNOME session could still suspend
+      ansible.builtin.command: loginctl list-users --no-legend
+      register: pve_node_loginctl
+      changed_when: false
+      failed_when: false
+
+    - name: Stop GNOME from suspending on idle
+      ansible.builtin.command: >-
+        sudo -u {{ item.split()[1] }}
+        DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{{ item.split()[0] }}/bus
+        gsettings set org.gnome.settings-daemon.plugins.power
+        {{ setting }} nothing
+      loop: "{{ pve_node_loginctl.stdout_lines | default([]) }}"
+      loop_control:
+        label: "{{ item.split()[1] | default(item) }}"
+      vars:
+        setting: sleep-inactive-ac-type
+      changed_when: false
+      failed_when: false
+      when: pve_node_loginctl.stdout | default("") | length > 0
 
 # Proxmox resolves its own node name to a real address for clustering. If the
 # hostname maps to 127.0.1.1 — the Debian installer default — pvecm fails in
