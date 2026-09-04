@@ -48,7 +48,7 @@ locals {
   # add it here in the same PR. ollama-host is NOT here on purpose — it is bare metal
   # (modules/baremetal-host), not a container, so it has no VMID to put in a pool.
   pool_lxc_members = var.manage_resource_pool ? {
-    registry   = module.registry.vm_id
+    # registry and tailscale are no longer declared — see their .tf files.
     vault      = module.vault.vm_id
     poker_api  = module.poker_api.vm_id
     postgres   = module.postgres_host.vm_id
@@ -56,7 +56,6 @@ locals {
     runner_2   = module.runner_2.vm_id
     openfaas   = module.openfaas.vm_id
     authentik  = module.authentik.vm_id
-    tailscale  = module.tailscale.vm_id
     minio_data = module.minio_data.vm_id
   } : {}
 
