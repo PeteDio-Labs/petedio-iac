@@ -18,13 +18,6 @@
       the bridge would drop the session with no way back except a keyboard.
       Bring up WiFi or a second NIC first.
 
-- name: Back up the current interfaces file
-  ansible.builtin.copy:
-    src: /etc/network/interfaces
-    dest: /etc/network/interfaces.pre-pve-{{ ansible_date_time.epoch }}
-    remote_src: true
-    mode: "0644"
-
 # ORDER IS LOAD-BEARING. Write the replacement config BEFORE releasing the
 # interface from NetworkManager. Reloading NM drops the address on the LAN
 # interface immediately; if the bridge config is not on disk yet, the play loses
@@ -40,6 +33,11 @@
     # `|| true` are passed to ifup as literal interface names and it fails with
     # "cannot find interfaces: >/dev/null". Keep this a single bare command.
     # ifup --no-act is a real syntax check: 0 on a good file, 1 on a bad one.
+    # backup here rather than as a separate task: ansible only writes one when
+    # the file actually changes. A standalone copy with a timestamped name ran
+    # unconditionally and left a new /etc/network/interfaces.pre-pve-<epoch> on
+    # every single run — 7 of them on pve03 before this was noticed.
+    backup: true
     validate: "ifup --no-act --interfaces %s {{ pve_node_bridge }}"
 
 - name: Stop NetworkManager managing the LAN interface
@@ -54,13 +52,47 @@
       unmanaged-devices=interface-name:{{ pve_node_lan_interface }};interface-name:{{ pve_node_bridge }}
   register: nm_unmanaged
 
+# THE WIFI ESCAPE HATCH IS NOT AUTOMATIC, and it fails silently.
+#
+# PVE ships NetworkManager.conf with `[ifupdown] managed=false`, and
+# PVE::INotify enumerates every physical NIC and writes `iface <n> inet manual`
+# into /etc/network/interfaces for the ones it does not configure — wireless
+# included, re-added on every rewrite. Together those mean NM refuses to manage
+# the WiFi NIC at all: the saved profile exists, the driver is bound, the
+# firmware is present, `ip link set wl0 up` works, and the device still sits at
+# `unmanaged` forever, never associating.
+#
+# pve03 was found in exactly that state on 2026-09-04 — `wlo1` DOWN with a saved
+# `Delgadillo` profile that could never activate. It had no second route in.
+#
+# ⚠ Two things that look like the fix and are NOT:
+#   - `[device] managed=1` with match-device. Written, restarted, no effect.
+#   - `nmcli device set wl0 managed yes`. Returns success, changes nothing.
+# Only flipping the ifupdown plugin itself works. The bridge and its port stay
+# safe because they are named explicitly in unmanaged-devices below, which is
+# why that file is written FIRST.
+- name: Let NetworkManager manage interfaces it finds in /etc/network/interfaces
+  ansible.builtin.lineinfile:
+    path: /etc/NetworkManager/NetworkManager.conf
+    regexp: '^\s*managed\s*='
+    line: "managed=true"
+    insertafter: '^\[ifupdown\]'
+    backup: true
+  register: nm_wireless
+
 # Both of these drop the current session on the LAN interface, so they are fired
 # and forgotten; wait_for_connection below is what actually confirms the result.
-- name: Reload NetworkManager
+# ⚠ RESTARTED, not reloaded. `systemctl reload NetworkManager` re-reads config
+# but does NOT re-evaluate which devices it manages, so the ifupdown flip above
+# appears to apply and the WiFi stays `unmanaged`. Verified on pve03: reload left
+# it unmanaged, restart brought it to `connected` on the saved profile. The
+# restart is safe precisely because the bridge and its port are unmanaged — NM
+# does not touch them, and the SSH session riding vmbr0 survives it.
+- name: Restart NetworkManager so it re-evaluates device management
   ansible.builtin.systemd:
     name: NetworkManager
-    state: reloaded
-  when: nm_unmanaged.changed
+    state: restarted
+  when: nm_unmanaged.changed or nm_wireless.changed
   failed_when: false
   async: 30
   poll: 0
@@ -92,7 +124,9 @@
   loop: "{{ pve_node_nm_conns.stdout_lines | default([]) | select('search', 'wireless') | list }}"
   loop_control:
     label: "{{ item.split(':')[0] }}"
-  changed_when: true
+  # nmcli modify is idempotent and reports nothing useful, so a hardcoded
+  # `changed: true` here made every run look like it altered the host.
+  changed_when: false
   failed_when: false
 
 - name: Autoconnect the wireless fallback
@@ -101,7 +135,9 @@
   loop: "{{ pve_node_nm_conns.stdout_lines | default([]) | select('search', 'wireless') | list }}"
   loop_control:
     label: "{{ item.split(':')[0] }}"
-  changed_when: true
+  # nmcli modify is idempotent and reports nothing useful, so a hardcoded
+  # `changed: true` here made every run look like it altered the host.
+  changed_when: false
   failed_when: false
 
 # ifreload applies it without a full ifdown/ifup cycle, which is the difference
