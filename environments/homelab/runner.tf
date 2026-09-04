@@ -112,11 +112,19 @@ output "runner_id" {
 module "runner_2" {
   source = "../../modules/proxmox-lxc"
 
-  vm_id            = 233
-  hostname         = "runner-233"
-  ipv4_address     = "192.168.50.233/24"
-  ssh_public_key   = var.ssh_public_key
-  target_node      = "pve03" # PET-334: pve02 is the media node now
+  vm_id          = 233
+  hostname       = "runner-233"
+  ipv4_address   = "192.168.50.233/24"
+  ssh_public_key = var.ssh_public_key
+  # ⚠ ONE RUNNER PER HOST, DELIBERATELY (PET-335). 233 lives on pve02, 232 on pve03,
+  # and the arm64 runner on pete-pi-1. Both x64 runners briefly shared pve03 after
+  # PET-334 moved the platform tier; that made losing pve03 lose ALL x64 CI, which is
+  # circular — CI is how the estate gets repaired, and pve03 also holds Vault and the
+  # Terraform state.
+  #
+  # This is the ONE exception to "pve02 is media only". A runner is idle except during
+  # a merge, and 236 + 110 use 2.5 GiB of pve02's 15 GB.
+  target_node      = "pve02"
   cores            = 2
   memory_dedicated = 2048
   memory_swap      = 512
@@ -124,7 +132,11 @@ module "runner_2" {
   # Rebuilt on local-lvm 2026-09-04: the original disk lived on pve02-shared and
   # was lost with it. Declaring pve02-shared here reads as destroy-and-recreate
   # of the runner that is executing the apply.
-  datastore_id     = "local"
+  # local-lvm, NOT local: pve02's `local` is a 71 GB directory store on the root
+  # partition shared with pve02-backups, pve02-shared and pete-backups, so a 20 GB raw
+  # file there eats backup space. Its thin pool sits at 24.8% used with 111 GB free.
+  # pve03 is the opposite — no thin pool at all — which is why the repo default is `local`.
+  datastore_id     = "local-lvm"
   bridge           = "vmbr0"
   template_file_id = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   description      = "GitHub Actions self-hosted runner #2 on pve02 (petedio-iac). Managed by Terraform."
