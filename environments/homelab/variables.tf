@@ -25,7 +25,17 @@ variable "target_node" {
   # pve01 was removed from the cluster with `pvecm delnode` after its RAID
   # controller failed. Ten resources take this default, so leaving it pointed at
   # a node that no longer exists asks terraform to reconcile them onto nothing.
-  default = "pve02"
+  #
+  # pve02 until 2026-09-04, then pve03 (PET-334). pve02 is now the MEDIA node and
+  # holds only Plex and qBittorrent, next to the disks; every guest in this repo
+  # is platform-tier and lives on pve03, which has twice the cores, ten times the
+  # free space, and is not carrying the fragile USB enclosures.
+  #
+  # ⚠ Changing this does NOT move anything. `node_name` forces REPLACEMENT on the
+  # bpg provider, so an apply against a mismatch destroys and rebuilds the
+  # container. The guests were moved with `pct migrate` and their state reconciled
+  # by import; this default only records where they already are.
+  default = "pve03"
 }
 
 variable "manage_resource_pool" {

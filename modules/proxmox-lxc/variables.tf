@@ -28,7 +28,12 @@ variable "target_node" {
   type        = string
   # pve01 was removed from the cluster after its RAID controller failed. A module
   # default naming a node that does not resolve fails at refresh, not at plan.
-  default = "pve02"
+  #
+  # pve02 until 2026-09-04, then pve03 (PET-334). pve02 is the MEDIA node and holds
+  # only Plex and qBittorrent, beside the disks; a caller that omits target_node is
+  # platform-tier and belongs on pve03. Leaving this at pve02 would quietly land new
+  # guests on the node this move was meant to clear.
+  default = "pve03"
 }
 
 variable "cores" {
@@ -64,7 +69,15 @@ variable "datastore_id" {
   # the module's ignore_changes, a datastore change is a REPLACEMENT, not an
   # in-place update. The next successful apply would have proposed destroying
   # Vault, Postgres and Authentik.
-  default     = "local-lvm"
+  #
+  # local-lvm until 2026-09-04, then local (PET-334). pve03 has NO LVM thin pool
+  # -- it was installed as plain Debian on ext4, so `local-lvm` is inactive there
+  # and its only container storage is the `local` directory store. Guests moved
+  # with `pct migrate --target-storage local`, which rewrites rootfs from
+  # `local-lvm:vm-<id>-disk-0` to `local:<id>/vm-<id>-disk-0.raw`.
+  #
+  # The REPLACEMENT warning above applies here too, in both directions.
+  default     = "local"
 }
 
 variable "bridge" {

@@ -23,6 +23,26 @@ skip() { SKIP=$((SKIP+1)); [ $QUIET -eq 1 ] || printf "  \033[33m-\033[0m %-42s 
 sec()  { [ $QUIET -eq 1 ] || printf "\n\033[1m%s\033[0m\n" "$1"; }
 on()   { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$1" "$2" 2>/dev/null; }
 
+# Find whichever node actually holds a guest, and exec inside it there.
+#
+# ⚠ NEVER hardcode the node in a check. Guests move: the platform tier left pve02
+# for pve03 on 2026-09-04 (PET-334), and the arr stack moved the day before. A
+# check pinned to a node does not report "moved" -- it reports the SERVICE as
+# broken, because `pct exec` on the wrong host simply fails. That is how a healthy
+# Postgres was reported as "not accepting" minutes after it migrated.
+#
+# pve03 is reached as an unprivileged user, so pct needs sudo there and does not
+# on pve02. That asymmetry is the other reason to funnel every exec through here.
+node_for() {
+  on $PVE02 "pct config $1 >/dev/null 2>&1" && { echo "$PVE02"; return; }
+  on $PVE03 "sudo /usr/sbin/pct config $1 >/dev/null 2>&1" && { echo "$PVE03"; return; }
+  echo ""
+}
+pct_on() {  # node, vmid, command
+  if [ "$1" = "$PVE03" ]; then on "$1" "sudo /usr/sbin/pct exec $2 -- $3"
+  else on "$1" "pct exec $2 -- $3"; fi
+}
+
 sec "Nodes and quorum"
 for n in $PVE02 $PVE03; do
   h=$(on $n 'hostname')
@@ -36,6 +56,59 @@ V=$(on $PVE02 'pvecm status 2>/dev/null | grep -c "A,V,"')
 [ "${V:-0}" -ge 2 ] && ok "qdevice voting" "$V nodes see it" || bad "qdevice voting" "nodes report A,NV — qnetd cannot read its certs?"
 W=$(on $PVE02 'touch /etc/pve/.verify 2>/dev/null && rm -f /etc/pve/.verify && echo yes')
 [ "$W" = "yes" ] && ok "/etc/pve writable" || bad "/etc/pve writable" "lost quorum?"
+
+# ── Placement (PET-334) ───────────────────────────────────────────────────────
+# pve02 is the MEDIA node: it holds the disks, Plex and qBittorrent, and nothing
+# else. Everything platform-tier lives on pve03, which has twice the cores and
+# ten times the free space, and — the actual reason — is not the node carrying
+# the fragile USB storage.
+#
+# This is asserted rather than assumed because a guest can move without anyone
+# deciding it should: an HA failover, a half-finished migration, or a `pct
+# migrate` typed against the wrong node. Nothing else here would notice. The
+# services would all still answer, from the wrong machine, until pve02 lost a
+# USB enclosure and took the platform down with it.
+#
+# ⚠ Terraform cannot hold this line for you. `node_name` and `datastore_id` both
+# force REPLACEMENT on the bpg provider, so a config edit destroys and rebuilds
+# the container rather than moving it. Placement is changed with `pct migrate`
+# and then reconciled into state — see docs/runbooks/pve03-platform-move.md.
+sec "Placement matches intent"
+INTENT_PVE02="110 236"
+PLACEMENT=$(on $PVE02 'pvesh get /cluster/resources --type vm --output-format json' 2>/dev/null)
+if [ -z "$PLACEMENT" ]; then
+  bad "placement readable" "could not read /cluster/resources"
+else
+  # ⚠ Assign the command substitution to a variable, THEN eval it. Writing
+  # `eval "$(python3 <<'"'"'PYEOF'"'"' ...)"` looks equivalent and is not: inside the
+  # outer double quotes bash stops honouring the quoted heredoc delimiter, the
+  # body is expanded, and the python arrives mangled. It still RUNS -- it printed
+  # `101('"'"''"'"')` where the guest name belonged -- so the check reports garbage
+  # rather than failing. Found writing this check (PET-334).
+  _placement_eval=$(PLACEMENT="$PLACEMENT" WANT02="$INTENT_PVE02" python3 <<'PYEOF'
+import json, os
+want02 = set(os.environ["WANT02"].split())
+rows = json.loads(os.environ["PLACEMENT"])
+wrong = []
+for r in rows:
+    vmid = str(r.get("vmid") or "")
+    if not vmid: continue
+    node = r.get("node") or ""
+    expect = "pve02" if vmid in want02 else "pve03"
+    if node != expect:
+        wrong.append(f"{vmid}({r.get('name','')}) on {node}, want {expect}")
+print("WRONG=%s" % json.dumps(";".join(wrong)))
+print("NGUESTS=%d" % len(rows))
+PYEOF
+)
+  eval "$_placement_eval"
+  if [ -z "$WRONG" ]; then
+    ok "every guest on its intended node" "$NGUESTS guests; only 110+236 on pve02"
+  else
+    IFS=';' read -ra W <<< "$WRONG"
+    for w in "${W[@]}"; do bad "misplaced guest" "$w"; done
+  fi
+fi
 
 sec "Storage"
 for p in media downloads; do
@@ -71,8 +144,12 @@ plane|http://192.168.50.235:8080/
 minio|http://192.168.50.221:9001/
 flaresolverr|http://192.168.50.150:8191/
 EOF
-PG=$(on $PVE02 'pct exec 231 -- pg_isready 2>/dev/null | grep -c accepting')
-[ "${PG:-0}" -ge 1 ] && ok "postgres" "accepting connections" || bad "postgres" "not accepting"
+PGNODE=$(node_for 231)
+if [ -z "$PGNODE" ]; then bad "postgres" "guest 231 not found on any node"; else
+  PG=$(pct_on "$PGNODE" 231 "pg_isready" | grep -c accepting)
+  [ "${PG:-0}" -ge 1 ] && ok "postgres" "accepting connections on $PGNODE" \
+    || bad "postgres" "not accepting on $PGNODE"
+fi
 # Vault speaks HTTPS. The same path over http returns a bare 400 that reads as a
 # broken server and is not.
 SEAL=$(on $PVE02 "curl -sk -m 8 https://192.168.50.223:8200/v1/sys/seal-status | grep -o '\"sealed\":[a-z]*'")
@@ -85,15 +162,6 @@ sec "The media pipeline, end to end"
 # The arr apps live on pve03 since 2026-09-04, so look for each guest on whichever
 # node actually holds it. Hard-coding the node makes this SKIP after a migration,
 # and a check that skips silently is worse than one that fails.
-node_for() {
-  on $PVE02 "pct config $1 >/dev/null 2>&1" && { echo "$PVE02"; return; }
-  on $PVE03 "sudo /usr/sbin/pct config $1 >/dev/null 2>&1" && { echo "$PVE03"; return; }
-  echo ""
-}
-pct_on() {  # node, vmid, command
-  if [ "$1" = "$PVE03" ]; then on "$1" "sudo /usr/sbin/pct exec $2 -- $3"
-  else on "$1" "pct exec $2 -- $3"; fi
-}
 for e in "104|sonarr|192.168.50.15:8989|/var/lib/sonarr/config.xml" "105|radarr|192.168.50.16:7878|/var/lib/radarr/config.xml"; do
   IFS='|' read -r id nm addr cfg <<< "$e"
   hostnode=$(node_for "$id")
@@ -171,9 +239,10 @@ for e in "104|sonarr" "105|radarr" "109|prowlarr" "110|qbittorrent" "236|plex-gp
 done
 
 # The kill switch is only real if qbit has no network of its own.
-NS=$(on $PVE02 "pct exec 110 -- docker inspect qbittorrent --format '{{.HostConfig.NetworkMode}}' 2>/dev/null")
+QBNODE=$(node_for 110)
+NS=$(pct_on "${QBNODE:-$PVE02}" 110 "docker inspect qbittorrent --format '{{.HostConfig.NetworkMode}}'" 2>/dev/null)
 case "$NS" in container:*) ok "qbit inside gluetun netns" "no path out if the tunnel drops";; *) bad "qbit netns" "got '${NS:-unknown}' — traffic may bypass the VPN";; esac
-VPN=$(on $PVE02 "pct exec 110 -- docker exec gluetun wget -qO- -T 10 https://api.ipify.org 2>/dev/null")
+VPN=$(pct_on "${QBNODE:-$PVE02}" 110 "docker exec gluetun wget -qO- -T 10 https://api.ipify.org" 2>/dev/null)
 WAN=$(curl -s -m 10 https://api.ipify.org 2>/dev/null)
 if [ -n "$VPN" ] && [ -n "$WAN" ]; then
   [ "$VPN" != "$WAN" ] && ok "vpn exit differs from wan" "$VPN" || bad "VPN LEAK" "torrent traffic leaves on your own address"
