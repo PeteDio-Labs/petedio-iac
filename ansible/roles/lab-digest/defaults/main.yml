@@ -15,3 +15,15 @@ lab_digest_kuma_db: "/opt/uptime-kuma/data/kuma.db"
 lab_digest_output: "/var/lib/lab-digest/digest.md"
 lab_digest_user: "pedro"
 lab_digest_on_calendar: "*-*-* 07:30:00"
+
+# ------------------------------------------------------------ serving it ----
+# The digest used to be written and never read. Serving it read-only on the LAN
+# costs one stdlib process and makes the thing actually usable.
+#
+# ⚠ Bound to the LAN address on purpose, NOT 0.0.0.0. This Pi is dual-homed onto
+# the .86 mesh as well, and the digest names hosts, addresses and download
+# titles. There is no reason for it to be visible from the side of the house
+# where the TVs live.
+lab_digest_web_enabled: true
+lab_digest_web_bind: "192.168.50.4"
+lab_digest_web_port: 8099

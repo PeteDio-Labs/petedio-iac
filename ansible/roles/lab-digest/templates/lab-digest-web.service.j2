@@ -1,0 +1,32 @@
+# Managed by ansible role lab-digest — local edits are overwritten.
+#
+# WHY THIS EXISTS. The digest was written to {{ lab_digest_output }} and nothing
+# read it. A daily summary nobody opens is the same as no summary, and the one
+# that ran on 2026-09-04 was carrying a fact worth seeing: pve03 at 33.4% uptime
+# across 2739 checks.
+#
+# This is deliberately the smallest possible server — python's stdlib, one
+# directory, no framework, no dependency to keep patched. It binds the LAN
+# address only, so nothing here is reachable off the network and no credential
+# is involved.
+[Unit]
+Description=Serve the lab digest read-only on the LAN
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User={{ lab_digest_user }}
+WorkingDirectory={{ lab_digest_output | dirname }}
+ExecStart=/usr/bin/python3 -m http.server {{ lab_digest_web_port }} --bind {{ lab_digest_web_bind }} --directory {{ lab_digest_output | dirname }}
+Restart=on-failure
+RestartSec=10
+# It only ever reads one directory of generated markdown.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadOnlyPaths={{ lab_digest_output | dirname }}
+
+[Install]
+WantedBy=multi-user.target
