@@ -42,8 +42,11 @@ iface {{ pve_node_bridge }} inet static
 {% endif %}
 {% for i in ansible_facts["interfaces"] | select("match", "^wl") | sort %}
 
-# Left manual so PVE does not claim it; NetworkManager keeps this as the
-# out-of-band route in, which is what saved this host.
+# PVE writes this stanza itself on every rewrite, so the template matches it
+# rather than fighting it. ⚠ It does NOT preserve the NetworkManager route in —
+# it is what BREAKS it: NM's ifupdown plugin is managed=false, so any interface
+# named in this file is left unmanaged and never comes up. Management is
+# asserted back in /etc/NetworkManager/conf.d/05-manage-wireless.conf.
 iface {{ i }} inet manual
 {% endfor %}
 
