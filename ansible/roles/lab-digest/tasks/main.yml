@@ -1,0 +1,36 @@
+---
+- name: Create the digest directory
+  ansible.builtin.file:
+    path: "{{ lab_digest_output | dirname }}"
+    state: directory
+    owner: "{{ lab_digest_user }}"
+    mode: "0755"
+
+- name: Install the digest script
+  ansible.builtin.template:
+    src: lab-digest.sh.j2
+    dest: /usr/local/bin/lab-digest
+    mode: "0755"
+
+- name: Install the service
+  ansible.builtin.template:
+    src: lab-digest.service.j2
+    dest: /etc/systemd/system/lab-digest.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install the timer
+  ansible.builtin.template:
+    src: lab-digest.timer.j2
+    dest: /etc/systemd/system/lab-digest.timer
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the timer
+  ansible.builtin.systemd:
+    name: lab-digest.timer
+    enabled: true
+    state: started

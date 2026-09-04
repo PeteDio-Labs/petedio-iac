@@ -27,3 +27,11 @@
   become: true
   roles:
     - uptime-kuma
+    # The digest reads Kuma's database directly and narrates it with a model on
+    # ollama-host. Both this Pi and ollama-host are outside the cluster, so the
+    # digest keeps reporting when the cluster is the thing that is broken.
+    - role: lab-digest
+      # Tagged so the digest can be deployed without touching the Kuma
+      # container, which is the fault-study instrument and should not be
+      # restarted for an unrelated change.
+      tags: [lab-digest]
