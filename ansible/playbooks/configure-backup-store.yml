@@ -41,8 +41,13 @@
   roles:
     - backup-store
 
+# pve03 is in its own inventory group (pve_new), so `proxmox` alone misses it —
+# and a node whose backup store is not mounted does not fail. Its `ollama-backups`
+# storage reports ACTIVE while pointing at an unmounted path on the local root
+# disk, so backups "succeed" onto the wrong filesystem. Found on pve03 on
+# 2026-09-04, after the arr stack had already moved there.
 - name: Point the Proxmox nodes at it
-  hosts: proxmox
+  hosts: proxmox:pve_new
   become: true
   serial: 1
   roles:

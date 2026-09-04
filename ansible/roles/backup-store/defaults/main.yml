@@ -19,7 +19,10 @@
 backup_store_server: ollama-host
 backup_store_server_ip: 192.168.50.12
 backup_store_clients:
-  - 192.168.50.10   # pve01
+  # ⚠ .10 was pve01's address and now belongs to pve03. The export kept working
+  # through the node replacement by coincidence, not design — worth knowing
+  # before anyone "tidies" this list.
+  - 192.168.50.10   # pve03
   - 192.168.50.11   # pve02
 
 backup_store_vg: ubuntu-vg
