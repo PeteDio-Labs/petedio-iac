@@ -88,9 +88,126 @@ jobs:
   # Self-hosted, INSIDE the homelab. Runs ONLY on push to main (post-merge, trusted code) and
   # is gated behind the hosted `validate` job. The only job that mints Vault creds + touches
   # state. `needs: validate` means a fmt/validate failure on the merge commit blocks the apply.
-  apply:
+  # ── The plan gate (added after 2026-09-04) ──────────────────────────────────
+  #
+  # A merge on 2026-09-04 started DESTROYING eight live containers — Vault,
+  # Postgres, Authentik, Plane, MinIO, poker-api, openfaas and the runner. The
+  # module defaults still named `sdb3-storage`, a storage pinned to a node
+  # removed from the cluster, and `disk` is not in the module's ignore_changes,
+  # so a datastore change reads as a REPLACEMENT. Nothing was lost only because
+  # terraform stopped the runner it was executing on before it got further.
+  #
+  # This job makes that class of accident impossible. It plans on every merge
+  # and FAILS if the plan would destroy or replace anything, so `apply` never
+  # starts. Nothing here is a judgement about which destroys are acceptable —
+  # it refuses all of them and asks a human.
+  #
+  # To perform a deliberate destroy: set the repo variable ALLOW_DESTROY=true,
+  # merge, then set it back to false. Leaving it on re-arms the original hazard.
+  plan-gate:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: validate
+    runs-on: [self-hosted, linux, x64, homelab]
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: environments/homelab
+    env:
+      TF_IN_AUTOMATION: "1"
+      VAULT_ADDR: https://192.168.50.223:8200
+      VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+      TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
+      TF_VAR_postgres_db_password_versions: ${{ vars.POSTGRES_DB_PASSWORD_VERSIONS || '{}' }}
+    outputs:
+      safe: ${{ steps.gate.outputs.safe }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+
+      - name: Encode Vault CA
+        id: vault_ca
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Vault — mint creds via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: github-actions
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: true
+          exportEnv: true
+          secrets: |
+            kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;
+            kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY ;
+            kv/data/iac/proxmox api_token | TF_VAR_proxmox_api_token ;
+            kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key ;
+            kv/data/iac/cloudflare api_token | TF_VAR_cloudflare_api_token ;
+            kv/data/iac/cloudflare account_id | TF_VAR_cloudflare_account_id ;
+            kv/data/iac/cloudflare zone_id | TF_VAR_cloudflare_zone_id ;
+            kv/data/iac/cloudflare tunnel_id | TF_VAR_cloudflare_tunnel_id ;
+            kv/data/iac/cloudflare palworld_tunnel_id | TF_VAR_cloudflare_palworld_tunnel_id
+
+      - name: Init
+        run: terraform init -input=false
+
+      # Plan to a file so apply consumes exactly what was inspected here.
+      - name: Plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Refuse to apply a plan that destroys anything
+        id: gate
+        shell: bash
+        run: |
+          terraform show -json tfplan > plan.json
+          python3 - <<'GATE'
+          import json, os, sys
+          plan = json.load(open("plan.json"))
+          destructive = []
+          for r in plan.get("resource_changes", []):
+              actions = r.get("change", {}).get("actions", [])
+              if "delete" in actions:
+                  kind = "replace" if "create" in actions else "destroy"
+                  destructive.append(f"{kind}: {r['address']}")
+          allow = os.environ.get("ALLOW_DESTROY", "false").lower() == "true"
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if destructive:
+              lines = ["## Plan would remove live resources", ""]
+              lines += [f"- `{d}`" for d in destructive]
+              if summary:
+                  with open(summary, "a") as f: f.write("\n".join(lines) + "\n")
+              print("\n".join(lines))
+              if not allow:
+                  print("\nRefusing to apply. Set ALLOW_DESTROY=true to override, "
+                        "and set it back afterwards.")
+                  sys.exit(1)
+              print("\nALLOW_DESTROY is set — continuing.")
+          else:
+              print("Plan removes nothing. Safe to apply.")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("safe=true\n")
+          GATE
+        env:
+          ALLOW_DESTROY: ${{ vars.ALLOW_DESTROY || 'false' }}
+
+      - name: Keep the plan for the apply job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tfplan
+          path: environments/homelab/tfplan
+          retention-days: 1
+
+  apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [validate, plan-gate]
     runs-on: [self-hosted, linux, x64, homelab]
     permissions:
       contents: read
