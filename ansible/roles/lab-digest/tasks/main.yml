@@ -34,3 +34,24 @@
     name: lab-digest.timer
     enabled: true
     state: started
+
+# Serving the digest is separate from producing it: if the web unit fails the
+# timer still writes the file, and vice versa.
+- name: Install the read-only digest server
+  ansible.builtin.template:
+    src: lab-digest-web.service.j2
+    dest: /etc/systemd/system/lab-digest-web.service
+    mode: "0644"
+  when: lab_digest_web_enabled | bool
+  notify: Reload systemd
+
+- name: Flush handlers so the unit exists before it is started
+  ansible.builtin.meta: flush_handlers
+
+- name: Start the digest server
+  ansible.builtin.systemd:
+    name: lab-digest-web
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: lab_digest_web_enabled | bool
