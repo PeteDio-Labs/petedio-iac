@@ -81,13 +81,28 @@ SEAL=$(on $PVE02 "curl -sk -m 8 https://192.168.50.223:8200/v1/sys/seal-status |
 sec "The media pipeline, end to end"
 # A root folder the app cannot see is the difference between a library and a
 # directory listing.
+#
+# The arr apps live on pve03 since 2026-09-04, so look for each guest on whichever
+# node actually holds it. Hard-coding the node makes this SKIP after a migration,
+# and a check that skips silently is worse than one that fails.
+node_for() {
+  on $PVE02 "pct config $1 >/dev/null 2>&1" && { echo "$PVE02"; return; }
+  on $PVE03 "sudo /usr/sbin/pct config $1 >/dev/null 2>&1" && { echo "$PVE03"; return; }
+  echo ""
+}
+pct_on() {  # node, vmid, command
+  if [ "$1" = "$PVE03" ]; then on "$1" "sudo /usr/sbin/pct exec $2 -- $3"
+  else on "$1" "pct exec $2 -- $3"; fi
+}
 for e in "104|sonarr|192.168.50.15:8989|/var/lib/sonarr/config.xml" "105|radarr|192.168.50.16:7878|/var/lib/radarr/config.xml"; do
   IFS='|' read -r id nm addr cfg <<< "$e"
-  k=$(on $PVE02 "pct exec $id -- cat $cfg 2>/dev/null | grep -o '<ApiKey>[^<]*' | cut -c9-")
+  hostnode=$(node_for "$id")
+  [ -z "$hostnode" ] && { bad "$nm" "not found on any node"; continue; }
+  k=$(pct_on "$hostnode" "$id" "cat $cfg" | grep -o '<ApiKey>[^<]*' | cut -c9-)
   [ -z "$k" ] && { skip "$nm root folders" "no api key"; continue; }
-  n=$(on $PVE02 "curl -s -m 10 -H 'X-Api-Key: $k' http://$addr/api/v3/rootfolder | grep -c '\"accessible\": *true'")
-  [ "${n:-0}" -ge 1 ] && ok "$nm root folders" "$n accessible" || bad "$nm root folders" "none accessible"
-  h=$(on $PVE02 "curl -s -m 10 -H 'X-Api-Key: $k' http://$addr/api/v3/health | grep -c '\"type\":\"error\"'")
+  n=$(on "$hostnode" "curl -s -m 10 -H 'X-Api-Key: $k' http://$addr/api/v3/rootfolder | grep -c '\"accessible\": *true'")
+  [ "${n:-0}" -ge 1 ] && ok "$nm root folders" "$n accessible on $hostnode" || bad "$nm root folders" "none accessible"
+  h=$(on "$hostnode" "curl -s -m 10 -H 'X-Api-Key: $k' http://$addr/api/v3/health | grep -c '\"type\":\"error\"'")
   [ "${h:-0}" -eq 0 ] && ok "$nm health" "no errors" || bad "$nm health" "$h error-level issues"
 done
 # The kill switch is only real if qbit has no network of its own.
