@@ -57,14 +57,32 @@
     runner_sha256: ""
 
   tasks:
-    - name: Require the org-runner PAT (resolved from Vault, passed as a no_log extra-var)
+    # EITHER credential works. The PAT is preferred because the play then mints a fresh
+    # registration token itself and nothing expires mid-run.
+    #
+    # But `kv/iac/github-runner-pat` has been EMPTY since the rack loss — both existing
+    # runners were registered from a token an operator minted by hand — so requiring the
+    # PAT made this play unrunnable by anyone who has `gh` auth but no stored PAT. That is
+    # how runner-232 sat as an empty container for seven weeks: registered with the org,
+    # reporting offline, and un-provisionable without a credential nobody had seeded
+    # (PET-335).
+    #
+    # So a pre-minted org registration token is accepted as an alternative:
+    #
+    #   gh api -X POST /orgs/PeteDio-Labs/actions/runners/registration-token --jq .token
+    #
+    # It expires in about an hour, which is fine for a run you are watching and is exactly
+    # why it is the fallback rather than the default.
+    - name: Require an org-runner credential (PAT, or a pre-minted registration token)
       ansible.builtin.assert:
         that:
-          - github_runner_pat is defined
-          - github_runner_pat | length > 0
+          - (github_runner_pat | default('') | length > 0)
+            or (github_runner_reg_token | default('') | length > 0)
         fail_msg: >-
-          github_runner_pat is required — resolve it from Vault (kv/iac/github-runner-pat,
-          field `pat`) and pass it as a no_log @file extra-var. See this play's header.
+          Supply github_runner_pat (from Vault kv/iac/github-runner-pat, field `pat`) or
+          github_runner_reg_token (gh api -X POST
+          /orgs/PeteDio-Labs/actions/runners/registration-token --jq .token), as a no_log
+          @file extra-var. See this play's header.
         quiet: true
 
     # Tooling the WORKFLOWS assume but nothing installed. runner-232 has these from a manual
@@ -176,7 +194,21 @@
         status_code: 201
       register: runner_reg_token
       no_log: true
-      when: (not runner_config.stat.exists) or (runner_force_reconfigure | default(false) | bool)
+      when:
+        - (github_runner_pat | default('') | length > 0)
+        - (not runner_config.stat.exists) or (runner_force_reconfigure | default(false) | bool)
+
+    # One name for the token whichever way it arrived, so the register task below does not
+    # have to know. `runner_reg_token` is skipped-not-failed when a pre-minted token was
+    # supplied, and a skipped register has no .json — hence the guarded default.
+    - name: Settle on the registration token
+      ansible.builtin.set_fact:
+        runner_registration_token: >-
+          {{ github_runner_reg_token
+             | default((runner_reg_token.json.token
+                        if (runner_reg_token is defined and runner_reg_token.json is defined)
+                        else ''), true) }}
+      no_log: true
 
     # config.sh refuses to run as root, so privileges must drop to the runner user — but
     # NOT via `become_user`. Ansible's unprivileged become has to hand its temp module file
@@ -197,7 +229,7 @@
           su {{ runner_user }} -s /bin/bash -c
           './config.sh --unattended --replace
           --url {{ runner_org_url }}
-          --token {{ runner_reg_token.json.token }}
+          --token {{ runner_registration_token }}
           --name {{ inventory_hostname }}
           --labels {{ runner_labels }}'
         chdir: "{{ runner_home }}"

@@ -74,7 +74,9 @@ W=$(on $PVE02 'touch /etc/pve/.verify 2>/dev/null && rm -f /etc/pve/.verify && e
 # the container rather than moving it. Placement is changed with `pct migrate`
 # and then reconciled into state — see docs/runbooks/pve03-platform-move.md.
 sec "Placement matches intent"
-INTENT_PVE02="110 236"
+# 110 qbittorrent + 236 plex sit beside the disks; 233 is the pve02 CI runner, one per
+# host by design (PET-335). Everything else belongs on pve03.
+INTENT_PVE02="110 236 233"
 PLACEMENT=$(on $PVE02 'pvesh get /cluster/resources --type vm --output-format json' 2>/dev/null)
 if [ -z "$PLACEMENT" ]; then
   bad "placement readable" "could not read /cluster/resources"
@@ -103,7 +105,7 @@ PYEOF
 )
   eval "$_placement_eval"
   if [ -z "$WRONG" ]; then
-    ok "every guest on its intended node" "$NGUESTS guests; only 110+236 on pve02"
+    ok "every guest on its intended node" "$NGUESTS guests; 110+236+233 on pve02"
   else
     IFS=';' read -ra W <<< "$WRONG"
     for w in "${W[@]}"; do bad "misplaced guest" "$w"; done
@@ -255,14 +257,36 @@ UP=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select coun
 STALE=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select count(*) from monitor where active=1 and (name like \"%pve01%\" or url like \"%86.140%\" or url like \"%50.111%\")"')
 [ "${STALE:-0}" -eq 0 ] && ok "no monitors for dead hosts" || bad "stale monitors" "$STALE point at hosts that are gone"
 
+# ⚠ CHECK EVERY RUNNER, AND CHECK THE SPREAD.
+#
+# This loop read `runner-233 pete-pi-1` until 2026-09-04 and never mentioned
+# runner-232. So runner-232 sat as an EMPTY CONTAINER for seven weeks — created,
+# running, registered with the org, reporting offline, with no runner software in
+# /opt at all — while this suite reported the estate fully green (PET-335).
+#
+# An unchecked runner is not a spare. It is a machine everyone believes is a spare.
+#
+# The spread matters as much as the count: one runner per host. Both x64 runners
+# briefly shared pve03, which would have made losing that node lose ALL x64 CI —
+# and pve03 also holds Vault and the Terraform state, so the repair path would have
+# gone down with the thing needing repair. `Placement matches intent` above pins
+# which node each guest is on; this pins that they are not the same one.
 sec "Runners"
-for r in runner-233 pete-pi-1; do
+for r in runner-232 runner-233 pete-pi-1; do
   s=$(gh api orgs/PeteDio-Labs/actions/runners 2>/dev/null | python3 -c "
 import sys,json
 for x in json.load(sys.stdin).get('runners',[]):
     if x['name']=='$r': print(x['status'])" 2>/dev/null)
   [ "$s" = "online" ] && ok "$r" "online" || bad "$r" "${s:-not registered}"
 done
+R232=$(node_for 232); R233=$(node_for 233)
+if [ -z "$R232" ] || [ -z "$R233" ]; then
+  bad "runners spread across nodes" "could not locate 232 (${R232:-?}) or 233 (${R233:-?})"
+elif [ "$R232" = "$R233" ]; then
+  bad "runners spread across nodes" "232 and 233 are BOTH on $R232 — one node outage kills all x64 CI"
+else
+  ok "runners spread across nodes" "232 on $R232, 233 on $R233, plus pete-pi-1"
+fi
 
 printf "\n\033[1m%d passed, %d failed, %d skipped\033[0m\n" "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1
