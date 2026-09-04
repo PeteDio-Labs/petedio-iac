@@ -1,0 +1,7 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Record Pete-Pi thermal state and latched throttle flags
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pi-health.sh

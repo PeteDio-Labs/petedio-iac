@@ -1,0 +1,107 @@
+---
+# A Pi has no DMI/SMBIOS, so ansible_facts system_vendor and product_name are
+# both empty on this hardware — asserting on them fails on the exact machine the
+# role is written for. The device tree is what ARM actually populates.
+- name: Read the board model from the device tree
+  ansible.builtin.slurp:
+    src: /proc/device-tree/model
+  register: pi_health_model
+
+- name: Assert this is a Raspberry Pi
+  ansible.builtin.assert:
+    that:
+      - (pi_health_model.content | b64decode) is search("Raspberry Pi")
+    fail_msg: >-
+      pi-health reads vcgencmd and the Pi's thermal zone; this board reports
+      "{{ pi_health_model.content | b64decode | trim }}".
+    success_msg: "{{ pi_health_model.content | b64decode | replace('\u0000','') | trim }}"
+
+- name: Check vcgencmd is present
+  ansible.builtin.command: vcgencmd get_throttled
+  register: pi_health_vcgencmd
+  changed_when: false
+
+- name: Install the health-check script
+  ansible.builtin.template:
+    src: pi-health.sh.j2
+    dest: /usr/local/sbin/pi-health.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the health-check units
+  ansible.builtin.template:
+    src: "pi-health.{{ item }}.j2"
+    dest: "/etc/systemd/system/pi-health.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - service
+    - timer
+
+- name: Enable the health-check timer
+  ansible.builtin.systemd:
+    name: pi-health.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Run it once so the play reports real state
+  ansible.builtin.command: /usr/local/sbin/pi-health.sh
+  register: pi_health_first
+  changed_when: false
+
+- name: Report thermal state
+  ansible.builtin.debug:
+    msg: >-
+      {{ pi_health_first.stdout | default('below warn threshold, no throttle flags') }}
+      (throttled={{ pi_health_vcgencmd.stdout | default('?') }})
+
+# Boot to console. Nothing plugs a screen into this Pi, and with the fan removed
+# the GUI is idle heat as well as idle memory.
+- name: Boot to console instead of a desktop
+  ansible.builtin.command: systemctl set-default multi-user.target
+  register: pi_health_default_target
+  changed_when: "'Created symlink' in pi_health_default_target.stderr
+                 or 'Removed' in pi_health_default_target.stderr"
+  when: pi_health_disable_desktop | bool
+
+# set-default only affects the NEXT boot, so stop the running display manager
+# too. Stopping it does not touch sshd — that is in multi-user.target, which
+# stays up — so this session survives.
+- name: Find a running display manager
+  ansible.builtin.shell: |
+    set -o pipefail
+    for s in lightdm gdm3 gdm sddm greetd; do
+      if systemctl is-active --quiet "$s"; then echo "$s"; exit 0; fi
+    done
+    echo ""
+  args:
+    executable: /bin/bash
+  register: pi_health_dm
+  changed_when: false
+  when: pi_health_disable_desktop | bool
+
+- name: Stop and disable the display manager
+  ansible.builtin.systemd:
+    name: "{{ pi_health_dm.stdout | trim }}"
+    state: stopped
+    enabled: false
+  when:
+    - pi_health_disable_desktop | bool
+    - pi_health_dm.stdout | default('') | trim | length > 0
+
+- name: Confirm the default target
+  ansible.builtin.command: systemctl get-default
+  register: pi_health_target_now
+  changed_when: false
+
+- name: Assert the desktop is off
+  ansible.builtin.assert:
+    that:
+      - "'multi-user.target' in pi_health_target_now.stdout"
+    success_msg: "boots to console ({{ pi_health_target_now.stdout | trim }})"
+    fail_msg: >-
+      default target is still {{ pi_health_target_now.stdout | trim }}.
+  when: pi_health_disable_desktop | bool
