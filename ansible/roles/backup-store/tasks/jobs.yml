@@ -1,0 +1,105 @@
+---
+# The scheduled vzdump jobs themselves. Before this existed the two jobs were
+# created by hand through the web UI and lived only in /etc/pve/jobs.cfg, so a
+# rebuilt node came back with no backups and nothing said so.
+#
+# ⚠ MODE IS PER NODE, AND IT IS NOT A PREFERENCE. vzdump can only take a block
+# snapshot when the guest sits on storage that snapshots — LVM thin, ZFS, Ceph.
+# On plain directory storage there is nothing to snapshot, so `mode: snapshot`
+# silently degrades to a file-by-file rsync of the running container.
+#
+# Measured on prowlarr (109), 1.4 GiB, same host, same NFS target, same night:
+#
+#   pve02  local-lvm   snapshot   15 s     113 MiB/s   (block stream, tarred)
+#   pve03  local dir   snapshot   hours      1 MB/min  (rsync, never finished)
+#   pve03  local dir   stop       17 s     307 MiB/s   (block-free tar)
+#
+# The rsync is slow because of small-file round-trips, not throughput: raw dd to
+# the same mount reaches 48.6 MB/s while 400 4 KB files take over 90 seconds.
+# `mode: suspend` does NOT help — it runs the same first-pass rsync and only
+# changes when the guest pauses.
+#
+# So pve03 uses `stop`: roughly 17 seconds of downtime per guest, about 70
+# seconds total at 02:45. That is the correct trade for a node whose guests are
+# the arr stack. The real fix is snapshot-capable storage, and pve03 has none —
+# its 937 GB nvme0n1p2 is one ext4 partition mounted at /, with no volume group
+# at all. Giving it a thin pool means repartitioning root. Revisit at the mini
+# rack, not before.
+# ⚠ MATCH ON THE NODE, NOT THE STORAGE. /etc/pve is a shared cluster filesystem,
+# so every node sees every node's job. A job carries --node, and one written for
+# pve02 backs up none of pve03's guests. Guarding on the storage name alone left
+# a node silently unprotected once already.
+- name: Read the cluster's backup jobs
+  ansible.builtin.command:
+    cmd: pvesh get /cluster/backup --output-format json
+  register: backup_store_jobs_raw
+  changed_when: false
+  check_mode: false
+
+- name: Decide what this node's job should look like
+  ansible.builtin.set_fact:
+    backup_store_job_wanted: >-
+      {{ backup_store_jobs | selectattr('node', 'equalto', inventory_hostname)
+         | list | first | default({}) }}
+    backup_store_job_live: >-
+      {{ backup_store_jobs_raw.stdout | from_json
+         | selectattr('node', 'defined')
+         | selectattr('node', 'equalto', inventory_hostname)
+         | list | first | default({}) }}
+
+- name: Create the nightly job when the node has none
+  ansible.builtin.command:
+    cmd: >-
+      pvesh create /cluster/backup
+      --node {{ inventory_hostname }}
+      --schedule {{ backup_store_job_wanted.schedule }}
+      --mode {{ backup_store_job_wanted.mode }}
+      --storage {{ backup_store_pve_storage_id }}
+      --compress zstd
+      --all 1
+      --enabled 1
+      --notes-template '{{ '{{guestname}}' }}'
+      --comment 'backup-store nightly ({{ inventory_hostname }}) — managed by ansible'
+  when:
+    - backup_store_job_wanted | length > 0
+    - backup_store_job_live | length == 0
+  changed_when: true
+
+# Correcting an existing job matters as much as creating one. pve03's job ran in
+# snapshot mode for its first nights and produced nothing but a wedged rsync and
+# a locked container each morning.
+- name: Correct a job whose mode or schedule has drifted
+  ansible.builtin.command:
+    cmd: >-
+      pvesh set /cluster/backup/{{ backup_store_job_live.id }}
+      --mode {{ backup_store_job_wanted.mode }}
+      --schedule {{ backup_store_job_wanted.schedule }}
+      --storage {{ backup_store_pve_storage_id }}
+  when:
+    - backup_store_job_wanted | length > 0
+    - backup_store_job_live | length > 0
+    - backup_store_job_live.mode != backup_store_job_wanted.mode
+      or backup_store_job_live.schedule != backup_store_job_wanted.schedule
+      or backup_store_job_live.storage != backup_store_pve_storage_id
+  changed_when: true
+
+- name: Report the job as it now stands
+  ansible.builtin.command:
+    cmd: pvesh get /cluster/backup --output-format json
+  register: backup_store_jobs_after
+  changed_when: false
+  check_mode: false
+
+- name: Show it
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ backup_store_jobs_after.stdout | from_json
+         | selectattr('node', 'defined')
+         | selectattr('node', 'equalto', inventory_hostname)
+         | map(attribute='mode') | list | join(',') | default('NO JOB', true) }}
+      at
+      {{ backup_store_jobs_after.stdout | from_json
+         | selectattr('node', 'defined')
+         | selectattr('node', 'equalto', inventory_hostname)
+         | map(attribute='schedule') | list | join(',') | default('-', true) }}
