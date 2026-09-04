@@ -26,7 +26,9 @@ variable "gateway" {
 variable "target_node" {
   description = "Proxmox node where the container lives."
   type        = string
-  default     = "pve01"
+  # pve01 was removed from the cluster after its RAID controller failed. A module
+  # default naming a node that does not resolve fails at refresh, not at plan.
+  default = "pve02"
 }
 
 variable "cores" {
@@ -56,13 +58,22 @@ variable "disk_size" {
 variable "datastore_id" {
   description = "Proxmox datastore for the root disk."
   type        = string
-  default     = "sdb3-storage"
+  # ⚠ Was sdb3-storage until 2026-09-04. That was an LVM group on pve01's sdb,
+  # pinned `nodes pve01` in storage.cfg and unreachable since the node was
+  # removed. Seven live containers inherited it -- and because `disk` is not in
+  # the module's ignore_changes, a datastore change is a REPLACEMENT, not an
+  # in-place update. The next successful apply would have proposed destroying
+  # Vault, Postgres and Authentik.
+  default     = "local-lvm"
 }
 
 variable "bridge" {
   description = "Network bridge. vmbr1 = LAN/uplink on pve01 (vmbr0 has no gateway)."
   type        = string
-  default     = "vmbr1"
+  # ⚠ Was vmbr1 until 2026-09-04. pve01 used vmbr1 for the LAN; pve02 and pve03
+  # both use vmbr0. On pve02, vmbr1 is the VXLAN bridge -- a different thing
+  # entirely, and one whose remote end died with pve01.
+  default     = "vmbr0"
 }
 
 variable "network_interface_name" {

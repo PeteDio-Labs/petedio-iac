@@ -1,0 +1,127 @@
+---
+# The bridge conversion, kept in its own file because it is the one step that can
+# lock you out. Run it deliberately:
+#
+#   ansible-playbook playbooks/configure-pve-node.yml --tags bridge
+#
+# It moves the address off the physical NIC onto {{ pve_node_bridge }}, which
+# tears down every connection on that interface. On pve03 the LAN is a USB
+# dongle and the only other way in is WiFi — confirm that works first.
+
+- name: Refuse to bridge without a second route to this host
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["interfaces"] | reject("equalto", "lo")
+        | reject("equalto", pve_node_lan_interface) | list | length > 0
+    fail_msg: >-
+      {{ pve_node_lan_interface }} is the only interface on this host. Applying
+      the bridge would drop the session with no way back except a keyboard.
+      Bring up WiFi or a second NIC first.
+
+- name: Back up the current interfaces file
+  ansible.builtin.copy:
+    src: /etc/network/interfaces
+    dest: /etc/network/interfaces.pre-pve-{{ ansible_date_time.epoch }}
+    remote_src: true
+    mode: "0644"
+
+# ORDER IS LOAD-BEARING. Write the replacement config BEFORE releasing the
+# interface from NetworkManager. Reloading NM drops the address on the LAN
+# interface immediately; if the bridge config is not on disk yet, the play loses
+# its own connection and every task after this point never runs — leaving the
+# host with a down NIC and no bridge, reachable only on its second interface.
+# That is exactly what happened on pve03 the first time this ran.
+- name: Write the bridge configuration
+  ansible.builtin.template:
+    src: interfaces.j2
+    dest: /etc/network/interfaces
+    mode: "0644"
+    # `validate` runs the command directly, with NO shell -- redirections and
+    # `|| true` are passed to ifup as literal interface names and it fails with
+    # "cannot find interfaces: >/dev/null". Keep this a single bare command.
+    # ifup --no-act is a real syntax check: 0 on a good file, 1 on a bad one.
+    validate: "ifup --no-act --interfaces %s {{ pve_node_bridge }}"
+
+- name: Stop NetworkManager managing the LAN interface
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/conf.d/10-unmanaged-pve-bridge.conf
+    mode: "0644"
+    content: |
+      # Managed by ansible role pve-node — local edits are overwritten.
+      # NetworkManager and ifupdown both claiming the bridge port is a reliable
+      # way to end up with no network at all.
+      [keyfile]
+      unmanaged-devices=interface-name:{{ pve_node_lan_interface }};interface-name:{{ pve_node_bridge }}
+  register: nm_unmanaged
+
+# Both of these drop the current session on the LAN interface, so they are fired
+# and forgotten; wait_for_connection below is what actually confirms the result.
+- name: Reload NetworkManager
+  ansible.builtin.systemd:
+    name: NetworkManager
+    state: reloaded
+  when: nm_unmanaged.changed
+  failed_when: false
+  async: 30
+  poll: 0
+
+# THE BRIDGE MUST SURVIVE A REBOOT. Telling NetworkManager to leave the NIC and
+# the bridge alone means ifupdown2 is the only thing that can bring them up. If
+# networking.service is not enabled, nothing does: the interface is owned by
+# neither, and the host boots to a login prompt with no network at all. pve03
+# came back from its first reboot exactly this way, reachable on no address.
+- name: Ensure ifupdown2 brings the bridge up at boot
+  ansible.builtin.systemd:
+    name: networking
+    enabled: true
+    masked: false
+
+# The WiFi escape hatch has to be a SYSTEM connection, not a user one. A
+# per-user connection only comes up after someone logs in, so a headless boot
+# leaves you with neither the bridge nor the fallback.
+- name: Find connections that only come up after a login
+  ansible.builtin.command:
+    cmd: nmcli -t -f NAME,UUID,TYPE connection show
+  register: pve_node_nm_conns
+  changed_when: false
+  failed_when: false
+
+- name: Make wireless connections available to all users
+  ansible.builtin.command:
+    cmd: nmcli connection modify {{ item.split(':')[1] }} connection.permissions ''
+  loop: "{{ pve_node_nm_conns.stdout_lines | default([]) | select('search', 'wireless') | list }}"
+  loop_control:
+    label: "{{ item.split(':')[0] }}"
+  changed_when: true
+  failed_when: false
+
+- name: Autoconnect the wireless fallback
+  ansible.builtin.command:
+    cmd: nmcli connection modify {{ item.split(':')[1] }} connection.autoconnect yes
+  loop: "{{ pve_node_nm_conns.stdout_lines | default([]) | select('search', 'wireless') | list }}"
+  loop_control:
+    label: "{{ item.split(':')[0] }}"
+  changed_when: true
+  failed_when: false
+
+# ifreload applies it without a full ifdown/ifup cycle, which is the difference
+# between a blip and a lockout.
+- name: Apply with ifreload
+  ansible.builtin.command: ifreload -a
+  changed_when: true
+  async: 30
+  poll: 0
+
+- name: Wait for the host to answer on the bridge address
+  ansible.builtin.wait_for_connection:
+    delay: 10
+    timeout: 180
+
+- name: Confirm the bridge holds the address
+  ansible.builtin.command: ip -br addr show {{ pve_node_bridge }}
+  register: bridge_state
+  changed_when: false
+
+- name: Report
+  ansible.builtin.debug:
+    msg: "{{ bridge_state.stdout }}"

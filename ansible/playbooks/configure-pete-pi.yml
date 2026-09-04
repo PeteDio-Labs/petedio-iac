@@ -27,3 +27,21 @@
   become: true
   roles:
     - uptime-kuma
+    # The digest reads Kuma's database directly and narrates it with a model on
+    # ollama-host. Both this Pi and ollama-host are outside the cluster, so the
+    # digest keeps reporting when the cluster is the thing that is broken.
+    # The Pi holds the cluster's deciding vote. Without it, either Proxmox node
+    # failing takes the other read-only -- and pve02 carries every guest.
+    - role: cluster-qdevice
+      tags: [qdevice]
+
+    # The TVs are on the mesh and Plex is not. pve01 used to bridge the two;
+    # this proxies the port instead.
+    - role: plex-bridge
+      tags: [plex-bridge]
+
+    - role: lab-digest
+      # Tagged so the digest can be deployed without touching the Kuma
+      # container, which is the fault-study instrument and should not be
+      # restarted for an unrelated change.
+      tags: [lab-digest]

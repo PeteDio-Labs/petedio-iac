@@ -1,0 +1,38 @@
+---
+# Reach Plex from the home network when Plex lives on the isolated LAN.
+#
+# THE PROBLEM. The TVs are on 192.168.86.0/24 (the mesh). Plex is on
+# 192.168.50.0/24, and the router does not route between them — verified by
+# curling .50 from pi1's wlan0 leg specifically, which times out.
+#
+# WHAT USED TO SOLVE IT. A VXLAN carried mesh Ethernet frames from pve02 to
+# pve01, which unwrapped them into its real mesh cable. That gave plex a genuine
+# layer-2 presence on .86, so client discovery worked natively. pve01 is gone,
+# and it was the only host cabled to both networks — so the tunnel has no other
+# end and plex's .86.236 address is a dead letter.
+#
+# WHY NOT REBUILD THE TUNNEL. The remaining dual-homed hosts reach .86 over
+# WiFi, and a WiFi *client* cannot bridge other MACs: 802.11 uses three-address
+# frames, so the AP drops anything sourced from an address it has not
+# associated. pi1 and pve03 are both clients. 4addr/WDS would be needed on the
+# AP as well, and the AP is a Google mesh.
+#
+# WHAT THIS DOES INSTEAD. pete-pi is on both networks, so it proxies the Plex
+# port from its .86 address to Plex on .50. Layer 4, not layer 2 — so this
+# restores ACCESS, not discovery. Clients need the address below as a custom
+# server URL; they will not find it by broadcast.
+# WHY NOT JUST ROUTE. Checked 2026-09-04: Google Nest Wifi does not support
+# static routes. The Google Home app offers a custom LAN range, DHCP
+# reservations and WAN settings, and no routing table at all. So there is no
+# router-side fix available, and this proxy is the answer rather than a stopgap.
+# https://support.google.com/googlenest/answer/7571856
+#
+# ⚠ SINGLE POINT OF FAILURE. The TVs now depend on pete-pi being up. That is a
+# Raspberry Pi carrying the cluster's deciding vote, a CI runner, Uptime Kuma
+# and this proxy. If it goes down the TVs lose Plex — which is a worse blast
+# radius than it looks. Worth revisiting if a second wired drop to the mesh ever
+# becomes possible.
+plex_bridge_listen_ip: "192.168.86.46"
+plex_bridge_listen_port: 32400
+plex_bridge_target: "192.168.50.236"
+plex_bridge_target_port: 32400

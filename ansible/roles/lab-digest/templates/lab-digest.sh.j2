@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+#
+# A daily readable summary of the homelab, assembled from facts and narrated by
+# a local model on ollama-host.
+#
+# THE MODEL NEVER SUPPLIES A FACT. Every figure below is read from a live
+# system; the model is handed that text and asked only to write prose about it.
+# This is deliberate -- qwen3.5:4b was measured answering "2" and "0" to how many
+# disks RAIDZ1 tolerates (it is 1), so a model that invents infrastructure state
+# is a liability. If ollama does not answer the digest still prints; it just
+# prints the facts without the prose.
+#
+# EVERYTHING HERE WORKS WITHOUT CREDENTIALS. Kuma's database is local, and
+# qBittorrent's API needs no auth from the LAN. Nothing is read over SSH, so this
+# Pi holds no key to the cluster -- which is the point of running the digest
+# somewhere the cluster cannot take down with it.
+set -uo pipefail
+
+OLLAMA={{ lab_digest_ollama_url }}
+MODEL={{ lab_digest_model }}
+KUMA_DB={{ lab_digest_kuma_db }}
+QBIT={{ lab_digest_qbit_url }}
+OUT={{ lab_digest_output }}
+
+kuma() { sudo sqlite3 "$KUMA_DB" "$1" 2>/dev/null; }
+
+facts() {
+  echo "## Service health"
+  if sudo -n test -r "$KUMA_DB" 2>/dev/null; then
+    kuma "select
+        (case h.status when 1 then 'up  ' when 0 then 'DOWN' else 'pend' end)
+        || '  ' || m.name || ifnull('  ' || round(h.ping) || 'ms','')
+      from monitor m
+      left join heartbeat h on h.id = (select max(id) from heartbeat where monitor_id = m.id)
+      where m.active = 1 order by h.status asc, m.name;"
+
+    echo
+    echo "## Availability over the last 24h"
+    kuma "select m.name || ': ' ||
+        round(100.0 * sum(case when h.status = 1 then 1 else 0 end) / count(*), 1) || '% of '
+        || count(*) || ' checks'
+      from heartbeat h join monitor m on m.id = h.monitor_id
+      where m.active = 1 and h.time > datetime('now','-24 hours')
+      group by m.name
+      having round(100.0 * sum(case when h.status = 1 then 1 else 0 end) / count(*), 1) < 100
+      order by 1;"
+    echo "(monitors not listed were up for every check)"
+
+    echo
+    echo "## Outages in the last 24h"
+    kuma "select h.time || '  ' || m.name || '  ' || substr(ifnull(h.msg,''),1,58)
+      from heartbeat h join monitor m on m.id = h.monitor_id
+      where h.status = 0 and h.important = 1 and h.time > datetime('now','-24 hours')
+      order by h.time desc limit 8;"
+  else
+    echo "kuma database not readable at $KUMA_DB"
+  fi
+
+  echo
+  echo "## Downloads"
+  curl -s -m 10 "$QBIT/api/v2/torrents/info" 2>/dev/null | python3 -c "
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception:
+    print('qbittorrent did not answer'); raise SystemExit
+if not d:
+    print('no active torrents'); raise SystemExit
+for t in d:
+    eta = t.get('eta', 0)
+    eta_s = ('%.1fh' % (eta/3600)) if 0 < eta < 8640000 else 'unknown'
+    print('%-46s %5.1f%%  %5.2f MB/s  %s  eta %s'
+          % (t['name'][:46], t['progress']*100, t['dlspeed']/1e6, t['state'], eta_s))
+" 2>/dev/null || echo "qbittorrent unreachable"
+
+  echo
+  echo "## This Pi"
+  echo "uptime: $(uptime -p 2>/dev/null)"
+  echo "load: $(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
+  echo "memory free: $(free -m 2>/dev/null | awk '/^Mem:/{print $7" MB of "$2" MB"}')"
+  echo "disk free: $(df -h / 2>/dev/null | awk 'NR==2{print $4" of "$2}')"
+  t=$(vcgencmd measure_temp 2>/dev/null | tr -d 'temp=')
+  [ -n "$t" ] && echo "temperature: $t"
+  echo "actions runner: $(systemctl is-active 'actions.runner.*' 2>/dev/null | head -1)"
+}
+
+FACTS="$(facts)"
+
+PROSE=""
+if PAYLOAD=$(python3 - <<PY 2>/dev/null
+import json
+facts = """$FACTS"""
+prompt = (
+  "Write a short status note about a home server, for its owner.\n"
+  "Use ONLY the facts below. Do not add numbers, hostnames, causes or advice\n"
+  "that are not present in them. Lead with anything that is down or degraded;\n"
+  "if everything is healthy, say so in one sentence. Three sentences at most.\n"
+  "No preamble, no bullet points, no heading.\n\n" + facts
+)
+print(json.dumps({"model": "$MODEL", "prompt": prompt, "stream": False,
+                  "think": False, "options": {"num_predict": 220, "temperature": 0.2}}))
+PY
+); then
+  PROSE=$(curl -s -m 120 "$OLLAMA/api/generate" -d "$PAYLOAD" 2>/dev/null \
+    | python3 -c "import sys,json;print((json.load(sys.stdin).get('response') or '').strip())" 2>/dev/null)
+fi
+
+{
+  echo "# Lab digest — $(date '+%Y-%m-%d %H:%M %Z')"
+  echo
+  if [ -n "$PROSE" ]; then
+    echo "$PROSE"
+    echo
+    echo "_Narrated by ${MODEL} from the facts below. Every figure is measured; the model added none._"
+  else
+    echo "_No narration: ollama at ${OLLAMA} did not answer. Facts follow._"
+  fi
+  echo
+  echo '```'
+  echo "$FACTS"
+  echo '```'
+} > "$OUT"
+
+cat "$OUT"

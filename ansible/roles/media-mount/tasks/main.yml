@@ -1,0 +1,50 @@
+---
+- name: Install the NFS client
+  ansible.builtin.apt:
+    name: nfs-common
+    state: present
+
+- name: Create the mount points
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ media_mount_paths }}"
+
+- name: Mount the exported pools
+  ansible.posix.mount:
+    src: "{{ media_mount_server_ip }}:{{ item }}"
+    path: "{{ item }}"
+    fstype: nfs
+    opts: "{{ media_mount_options }}"
+    state: mounted
+  loop: "{{ media_mount_paths }}"
+
+# A mount that succeeds but shows nothing is the failure this guards against:
+# exporting an unmounted path gives the client an empty directory and every
+# symptom then points at the client.
+- name: Assert each mount actually has content
+  ansible.builtin.command: "ls -A {{ item }}"
+  loop: "{{ media_mount_paths }}"
+  loop_control:
+    label: "{{ item }}"
+  register: mount_content
+  changed_when: false
+  failed_when: mount_content.stdout | trim | length == 0
+
+# NFS ID mapping can squash the owners to nobody, and the arr apps then read
+# nothing. That must fail here rather than surface later as an empty library.
+- name: Assert the ownership survived the mount
+  ansible.builtin.command: "stat -c %u:%g {{ item }}"
+  loop: "{{ media_mount_paths }}"
+  loop_control:
+    label: "{{ item }}"
+  register: mount_owner
+  changed_when: false
+  failed_when: "'65534' in mount_owner.stdout"
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ media_mount_paths | join(', ') }} mounted from {{ media_mount_server_ip }}
+      with owners intact.

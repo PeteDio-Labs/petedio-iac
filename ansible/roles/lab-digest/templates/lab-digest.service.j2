@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Assemble the daily lab digest
+# The digest is worth nothing if the network is not up yet.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ lab_digest_user }}
+# Reading the kuma database and writing the output both need root; the ssh keys
+# that reach pve02 belong to the user, so the script runs as the user and calls
+# sudo only for sqlite.
+ExecStart=/usr/local/bin/lab-digest
+# A model that will not answer must not hold the timer open.
+TimeoutStartSec=300

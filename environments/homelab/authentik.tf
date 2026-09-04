@@ -37,8 +37,16 @@ module "authentik" {
   memory_dedicated = 2048
   memory_swap      = 512
   disk_size        = 20
-  datastore_id     = "sdb3-storage"
-  bridge           = "vmbr1"
+  # ⚠ Was sdb3-storage. That LVM group lived on pve01's sdb and is pinned
+  # `nodes pve01` in storage.cfg, so it resolves to a node that no longer
+  # exists. This container actually runs on local-lvm. Because `disk` is not in
+  # the module's ignore_changes, leaving the dead value here reads as a
+  # REPLACEMENT of a live container.
+  datastore_id = "local-lvm"
+  # pve01 used vmbr1 for the LAN; pve02 uses vmbr0. On pve02 vmbr1 is the VXLAN
+  # bridge, so this value did not merely point at the wrong name -- it pointed
+  # at a tunnel whose far end died with pve01.
+  bridge = "vmbr0"
 
   # Brownfield divergences from the greenfield defaults (captured from live config):
   os_type                    = "ubuntu"

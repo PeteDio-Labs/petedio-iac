@@ -77,8 +77,13 @@ module "registry" {
   memory_dedicated = 1024
   memory_swap      = 512
   disk_size        = 40
-  datastore_id     = "sdb3-storage"
-  bridge           = "vmbr1"
+  # ⚠ THIS CONTAINER DOES NOT EXIST. 106 died with pve01 and has not been
+  # restored -- its config maps uid/gid 200 through for zot and `pct restore`
+  # fails on the idmap. The values below still describe pve01, deliberately
+  # untouched: correcting them would make terraform plan to CREATE the
+  # container, and the idmap has to be solved first. See the CLAUDE.md banner.
+  datastore_id = "sdb3-storage"
+  bridge       = "vmbr1"
 
   # Brownfield divergences from the greenfield defaults (captured from live config):
   network_interface_name = "eth1"

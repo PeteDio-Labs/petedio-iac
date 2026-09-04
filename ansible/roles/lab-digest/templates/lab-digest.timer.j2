@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Daily lab digest
+
+[Timer]
+OnCalendar={{ lab_digest_on_calendar }}
+# The Pi may be off overnight; run on the next boot rather than skipping a day.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

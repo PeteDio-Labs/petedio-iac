@@ -53,8 +53,13 @@ module "plane" {
   memory_dedicated = 8192
   memory_swap      = 2048
   disk_size        = 40
-  datastore_id     = "sdb3-storage"
-  description      = "Plane CE — the issue tracker (replaces Linear). Tailnet-only, no public route. Managed by Terraform."
+  # ⚠ Was sdb3-storage. That LVM group lived on pve01's sdb and is pinned
+  # `nodes pve01` in storage.cfg, so it resolves to a node that no longer
+  # exists. This container actually runs on local-lvm. Because `disk` is not in
+  # the module's ignore_changes, leaving the dead value here reads as a
+  # REPLACEMENT of a live container.
+  datastore_id = "local-lvm"
+  description  = "Plane CE — the issue tracker (replaces Linear). Tailnet-only, no public route. Managed by Terraform."
 }
 
 output "plane_id" {

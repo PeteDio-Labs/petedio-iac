@@ -1,0 +1,48 @@
+---
+- name: Install socat
+  ansible.builtin.apt:
+    name: socat
+    state: present
+
+- name: Install the bridge service
+  ansible.builtin.template:
+    src: plex-bridge.service.j2
+    dest: /etc/systemd/system/plex-bridge.service
+    mode: "0644"
+  register: bridge_unit
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: bridge_unit.changed
+
+- name: Enable and start the bridge
+  ansible.builtin.systemd:
+    name: plex-bridge
+    enabled: true
+    state: restarted
+
+- name: Wait for it to accept connections
+  ansible.builtin.wait_for:
+    host: "{{ plex_bridge_listen_ip }}"
+    port: "{{ plex_bridge_listen_port }}"
+    timeout: 20
+
+# Listening is not serving. Prove a real request reaches Plex and comes back.
+- name: Confirm Plex answers through the bridge
+  ansible.builtin.uri:
+    url: "http://{{ plex_bridge_listen_ip }}:{{ plex_bridge_listen_port }}/identity"
+    status_code: [200]
+    timeout: 15
+  register: bridge_check
+  retries: 3
+  delay: 3
+  until: bridge_check is succeeded
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      Plex reachable from the mesh at
+      http://{{ plex_bridge_listen_ip }}:{{ plex_bridge_listen_port }} —
+      add that as a custom server URL in Plex; discovery by broadcast will not
+      find it, because this is a layer-4 proxy and not a bridge.

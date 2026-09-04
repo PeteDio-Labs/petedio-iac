@@ -1,0 +1,44 @@
+---
+# The pools as built on 2026-09-04, replacing the NFS export that died with
+# pve01. Disks are named by /dev/disk/by-id/ because USB device names shuffle
+# across reboots and a pool built on /dev/sdX fails to import.
+media_storage_pools:
+  - name: media
+    # RAIDZ1 over four SSDs: one disk of parity on the library, which is the
+    # thing that is expensive to re-acquire.
+    raid: raidz1
+    mount: /mnt/media
+    # Sonarr and Radarr write as root inside their unprivileged containers
+    # (host uid 100000); Plex and Prowlarr read as uid 999 (host 100999).
+    owner: "100000"
+    group: "100999"
+    devices:
+      - ata-SATA_SSD_BF330743164401430637
+      - ata-SATA_SSD_BB2A07340AF101344771
+      - ata-SATA_SSD_2E8D07431A9700001353
+      - ata-SATA_SSD_BF330743164401430632
+    dirs: [tv-shows, anime, movies]
+
+  - name: downloads
+    # No redundancy on purpose. This holds in-flight torrents, which are
+    # re-downloadable; a disk of parity here would buy nothing.
+    raid: ""
+    mount: /mnt/downloads
+    # qbittorrent writes as uid 1000 (host 101000); the arr apps read as 100000.
+    owner: "101000"
+    group: "100000"
+    devices:
+      - ata-SATA_SSD_122207360F4900002963
+    # BOTH are required. qBittorrent's save path is /downloads/completed and its
+    # temp path /downloads/incomplete; a missing save path is reported in the web
+    # UI as "no available space", which sends you to the disk instead of the
+    # config. That cost real time on 2026-09-04.
+    dirs: [completed, incomplete]
+
+# A USB hiccup should stall I/O, not suspend the pool and take the stack down.
+media_storage_failmode: continue
+
+# setgid on every directory: new files inherit the group, which is what lets one
+# app read what another wrote. Without it, imports fail on permissions days
+# later, far from the cause.
+media_storage_dir_mode: "2775"

@@ -1,0 +1,30 @@
+---
+# configure-media-split.yml — separate the media from the apps that write to it.
+#
+#   ansible-playbook playbooks/configure-media-split.yml
+#
+# WHY. The disks live on pve02. Running the arr stack there too means one host
+# holds the library, the apps, and every other guest — so pve02 needing a reboot
+# takes all of it. Moving the arr stack to pve03 splits that.
+#
+# WHICH WAY ROUND, AND WHY IT IS NOT THE OBVIOUS ONE. The tempting version moves
+# PLEX to pve03, because pve03 has Iris Xe and better Quick Sync. That puts
+# playback over NFS. Streaming is latency-sensitive and read-heavy; arr imports
+# are bulk copies on a schedule. So Plex stays with the disks and the arr stack
+# moves, which also keeps `inotify` working for Plex — it does not cross NFS,
+# and the local rebuild is what won that back.
+#
+# ⚠ This reintroduces a cross-node dependency, in one direction. A pve02 outage
+# now stops imports. It does not stop watching. That asymmetry is the design.
+
+- name: Export the media pools from the node holding the disks
+  hosts: media_storage
+  become: true
+  roles:
+    - media-export
+
+- name: Mount them on the node running the arr stack
+  hosts: pve_new
+  become: true
+  roles:
+    - media-mount

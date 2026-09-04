@@ -1,0 +1,5 @@
+---
+- name: Restart qnetd
+  ansible.builtin.systemd:
+    name: corosync-qnetd
+    state: restarted

@@ -45,18 +45,33 @@
 module "runner" {
   source = "../../modules/proxmox-lxc"
 
-  vm_id            = 232
-  hostname         = "runner-232"
-  ipv4_address     = "192.168.50.232/24"
-  ssh_public_key   = var.ssh_public_key
-  target_node      = var.target_node
+  vm_id          = 232
+  hostname       = "runner-232"
+  ipv4_address   = "192.168.50.232/24"
+  ssh_public_key = var.ssh_public_key
+
+  # Moved to pve03 on 2026-09-04. Its original host, pve01, is gone; putting it
+  # back on pve02 would leave both runners on the node carrying every guest, so
+  # a pve02 outage takes CI with it. One runner per node is the point.
+  target_node      = "pve03"
   cores            = 2
   memory_dedicated = 2048
   memory_swap      = 512
   disk_size        = 20
-  datastore_id     = "sdb3-storage"
-  bridge           = "vmbr1"
-  description      = "GitHub Actions self-hosted runner (petedio-iac). Managed by Terraform."
+
+  # pve03 was installed as plain Debian with no LVM, so it has a directory
+  # store rather than a thin pool. `local` holds rootdir on this node.
+  datastore_id = "local"
+
+  # pve01 used vmbr1 for the LAN; pve02 and pve03 both use vmbr0. On pve02
+  # vmbr1 is the VXLAN bridge, which is a different thing entirely.
+  bridge = "vmbr0"
+
+  # Templates live on each node's own `local` (a dir store is not shared), so
+  # this must name a template present on target_node.
+  template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
+
+  description = "GitHub Actions self-hosted runner on pve03 (petedio-iac). Managed by Terraform."
 }
 
 # State move: the runner used to be an inline
@@ -106,7 +121,10 @@ module "runner_2" {
   memory_dedicated = 2048
   memory_swap      = 512
   disk_size        = 20
-  datastore_id     = "pve02-shared"
+  # Rebuilt on local-lvm 2026-09-04: the original disk lived on pve02-shared and
+  # was lost with it. Declaring pve02-shared here reads as destroy-and-recreate
+  # of the runner that is executing the apply.
+  datastore_id     = "local-lvm"
   bridge           = "vmbr0"
   template_file_id = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   description      = "GitHub Actions self-hosted runner #2 on pve02 (petedio-iac). Managed by Terraform."

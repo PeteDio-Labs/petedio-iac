@@ -1,0 +1,11 @@
+# Its own inventory file, like pete-pi.yml and pve03.yml: an edit here must not
+# re-trigger the playbooks that watch hosts.yml.
+---
+all:
+  children:
+    media_storage:
+      hosts:
+        pve02:
+          ansible_host: 192.168.50.11
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible

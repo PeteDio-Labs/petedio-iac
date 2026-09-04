@@ -1,0 +1,39 @@
+---
+# pve-node — turn a plain Debian host into a Proxmox VE node.
+#
+# Proxmox VE 9 IS Debian 13, so this installs onto Debian rather than converting
+# some other distro. Ubuntu and Pop!_OS cannot be converted: different base,
+# different systemd and kernel, and the apt resolution conflicts. Reinstall as
+# Debian first.
+#
+# Written for pve03 (PET-324), the ex-palworld-mc HP Spectre. It is a LAPTOP,
+# which drives several of the defaults below.
+
+# The interface carrying the LAN. On pve03 this is a USB Ethernet dongle, so the
+# name derives from its MAC — swap the dongle and this changes. Pin it with a
+# systemd .link file if that ever matters.
+pve_node_lan_interface: ""          # required, e.g. enx9c69d3140f0c
+pve_node_bridge: vmbr0
+pve_node_address: ""                # required, CIDR e.g. 192.168.50.241/24
+pve_node_gateway: 192.168.50.1
+
+# ⚠ pve02 uses vmbr0 and pve01 used vmbr1 for the SAME role. Guest configs moved
+# between nodes need their bridge rewritten or they come up with no network.
+# vault/Hosts/pve02.md records the discrepancy. New nodes use vmbr0.
+
+# A laptop suspends on lid close and takes every guest with it. palworld-mc hit
+# this first (PET-266) — its host_vars still carry palworld_baremetal for the
+# same reason. Any node in a laptop chassis needs this true.
+pve_node_is_laptop: true
+
+# Removing the Debian kernel leaves only the Proxmox one. Deliberately NOT
+# default: on a laptop the stock kernel is the fallback if the pve kernel is
+# missing a driver for the wireless or the dongle.
+pve_node_remove_debian_kernel: false
+
+pve_node_repo_component: pve-no-subscription
+
+# The bridge stanza inherits no resolver, so name it explicitly.
+pve_node_nameservers:
+  - 192.168.50.1
+  - 1.1.1.1

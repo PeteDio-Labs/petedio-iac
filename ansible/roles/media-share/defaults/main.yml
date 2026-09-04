@@ -1,4 +1,19 @@
 ---
+# ⛔ SUPERSEDED 2026-09-04 — DO NOT RUN. See roles/media-storage.
+#
+# This role exports /mnt/media and /mnt/downloads from pve01 to pve02 over NFS.
+# pve01 no longer exists: its RAID controller failed on 2026-09-03 and the node
+# was removed from the cluster. Running this play now targets a host that does
+# not resolve.
+#
+# It is kept rather than deleted because the cross-node coupling it describes is
+# the thing that made pve02 collateral damage. pve02 did not fail that day — it
+# lost the export this role created, and the whole media stack went down with a
+# node that was still running. The replacement keeps the pools LOCAL to the host
+# that serves them, which is the lesson.
+#
+# If media ever needs to cross nodes again, read the incident note first:
+# vault/Incidents/2026-09-03-rack-loss.md
 # media-share — export the media library from the node that physically holds it
 # (pve01) to the node that needs to read it (pve02).
 #

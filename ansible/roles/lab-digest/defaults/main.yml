@@ -1,0 +1,17 @@
+---
+# ollama-host is bare metal and survived the 2026-09-03 rack failure, so a digest
+# that depends on it keeps working when the cluster does not.
+lab_digest_ollama_url: "http://192.168.50.12:11434"
+
+# qwen3:8b is the only model measured correct both with and without its reasoning
+# block, and its reasoning terminates. qwen3.5 was removed for never closing it.
+# See vault Systems/ollama-local-inference.md.
+lab_digest_model: "qwen3:8b"
+
+# qBittorrent needs no auth from the LAN, so the digest reads it directly and
+# this Pi holds no credential for the cluster.
+lab_digest_qbit_url: "http://192.168.50.21:8080"
+lab_digest_kuma_db: "/opt/uptime-kuma/data/kuma.db"
+lab_digest_output: "/var/lib/lab-digest/digest.md"
+lab_digest_user: "pedro"
+lab_digest_on_calendar: "*-*-* 07:30:00"
