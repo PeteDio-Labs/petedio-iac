@@ -2,10 +2,15 @@ variable "proxmox_endpoint" {
   description = <<-EOT
     Proxmox API endpoint (https://<node>:8006/). bpg/proxmox reads the PVE
     version from this endpoint and conditionally sends version-gated fields, so
-    target the node where the resources actually live (pve01 9.1.x here).
+    target the node where the resources actually live — pve02 9.2.x, which
+    carries every guest since pve01 died.
+
+    ⚠ This was https://192.168.50.10:8006/ until 2026-09-04. That address was
+    pve01's and now belongs to pve03, so the old default aimed the provider at
+    a different machine than the one holding the state.
   EOT
   type        = string
-  default     = "https://192.168.50.10:8006/"
+  default     = "https://192.168.50.11:8006/"
 }
 
 variable "proxmox_api_token" {
@@ -17,7 +22,10 @@ variable "proxmox_api_token" {
 variable "target_node" {
   description = "Proxmox node where these resources live."
   type        = string
-  default     = "pve01"
+  # pve01 was removed from the cluster with `pvecm delnode` after its RAID
+  # controller failed. Ten resources take this default, so leaving it pointed at
+  # a node that no longer exists asks terraform to reconcile them onto nothing.
+  default = "pve02"
 }
 
 variable "manage_resource_pool" {

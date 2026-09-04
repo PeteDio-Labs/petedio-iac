@@ -26,7 +26,9 @@ variable "gateway" {
 variable "target_node" {
   description = "Proxmox node where the container lives."
   type        = string
-  default     = "pve01"
+  # pve01 was removed from the cluster after its RAID controller failed. A module
+  # default naming a node that does not resolve fails at refresh, not at plan.
+  default = "pve02"
 }
 
 variable "cores" {

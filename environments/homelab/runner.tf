@@ -106,7 +106,10 @@ module "runner_2" {
   memory_dedicated = 2048
   memory_swap      = 512
   disk_size        = 20
-  datastore_id     = "pve02-shared"
+  # Rebuilt on local-lvm 2026-09-04: the original disk lived on pve02-shared and
+  # was lost with it. Declaring pve02-shared here reads as destroy-and-recreate
+  # of the runner that is executing the apply.
+  datastore_id     = "local-lvm"
   bridge           = "vmbr0"
   template_file_id = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   description      = "GitHub Actions self-hosted runner #2 on pve02 (petedio-iac). Managed by Terraform."
