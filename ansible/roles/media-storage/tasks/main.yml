@@ -1,0 +1,99 @@
+---
+# Local ZFS for the media library and the torrent staging area.
+#
+# ⚠ THIS ROLE NEVER DESTROYS A POOL. It creates one only when absent and
+# otherwise asserts the shape it finds. Import is not create: a pool that exists
+# is left exactly alone, because the alternative is a role that can delete 2.7 TB
+# by being run with a typo in a device id.
+#
+# Replaces media-share, which exported these paths over NFS from pve01. That
+# node is gone, and the coupling is what made pve02 collateral damage when it
+# died -- see the vault incident note.
+
+- name: Install ZFS
+  ansible.builtin.apt:
+    name: zfsutils-linux
+    state: present
+  register: zfs_pkg
+
+- name: Find which pools already exist
+  ansible.builtin.command: zpool list -H -o name
+  register: existing_pools
+  changed_when: false
+  failed_when: false
+
+- name: Import any pool that exists but is not mounted
+  ansible.builtin.command: "zpool import -d /dev/disk/by-id {{ item.name }}"
+  loop: "{{ media_storage_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in (existing_pools.stdout_lines | default([]))
+  register: pool_import
+  changed_when: pool_import.rc == 0
+  failed_when: false
+
+- name: Re-check after import
+  ansible.builtin.command: zpool list -H -o name
+  register: pools_now
+  changed_when: false
+
+# Creation is deliberately separate from import, and runs only for a pool that
+# is absent from BOTH. Every device is named by id.
+- name: Create a pool that does not exist anywhere
+  ansible.builtin.command: >-
+    zpool create -o failmode={{ media_storage_failmode }}
+    -m {{ item.mount }} {{ item.name }} {{ item.raid }}
+    {{ item.devices | map('regex_replace', '^', '/dev/disk/by-id/') | join(' ') }}
+  loop: "{{ media_storage_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in (pools_now.stdout_lines | default([]))
+
+- name: Assert every pool is healthy before anything is written to it
+  ansible.builtin.command: "zpool list -H -o health {{ item.name }}"
+  loop: "{{ media_storage_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: pool_health
+  changed_when: false
+  failed_when: pool_health.stdout | trim != "ONLINE"
+
+- name: Set failmode so a USB hiccup stalls rather than suspends
+  ansible.builtin.command: "zfs set failmode={{ media_storage_failmode }} {{ item.name }}"
+  loop: "{{ media_storage_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: fm
+  changed_when: false
+  failed_when: false
+
+- name: Create the library directories
+  ansible.builtin.file:
+    path: "{{ item.0.mount }}/{{ item.1 }}"
+    state: directory
+    owner: "{{ item.0.owner }}"
+    group: "{{ item.0.group }}"
+    mode: "{{ media_storage_dir_mode }}"
+  loop: "{{ media_storage_pools | subelements('dirs') }}"
+  loop_control:
+    label: "{{ item.0.mount }}/{{ item.1 }}"
+
+# chown -R can miss the mountpoint itself when the pool mounts over it, and then
+# setgid hands new files the wrong group. Set it explicitly.
+- name: Own the mount points themselves
+  ansible.builtin.file:
+    path: "{{ item.mount }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ media_storage_dir_mode }}"
+  loop: "{{ media_storage_pools }}"
+  loop_control:
+    label: "{{ item.mount }}"
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ media_storage_pools | map(attribute='name') | join(', ') }} online.
+      Verify setgid inheritance with:
+      touch {{ media_storage_pools[1].mount }}/.gidtest && ls -lan {{ media_storage_pools[1].mount }}/.gidtest

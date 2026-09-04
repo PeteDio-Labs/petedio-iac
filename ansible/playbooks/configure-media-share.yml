@@ -1,4 +1,7 @@
 ---
+# ⛔ SUPERSEDED 2026-09-04 — DO NOT RUN.
+# pve01 is gone; use configure-media-storage.yml instead. Kept as the record of
+# the NFS coupling that made pve02 collateral damage when pve01 died.
 # configure-media-share.yml — export /mnt/media + /mnt/downloads from pve01 and
 # mount them on pve02, so Plex can run on pve02 and use its Quick Sync iGPU
 # (PET-311).

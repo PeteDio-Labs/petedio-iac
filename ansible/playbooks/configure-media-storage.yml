@@ -1,0 +1,20 @@
+---
+# configure-media-storage.yml — local ZFS for the media library and staging area.
+#
+#   ansible-playbook playbooks/configure-media-storage.yml
+#   ansible-playbook playbooks/configure-media-storage.yml --check   # safe preview
+#
+# Replaces configure-media-share.yml, which exported these paths from pve01 over
+# NFS. pve01 is gone, and that coupling is precisely what made pve02 collateral
+# damage when it died: pve02 never faulted, it lost the export. The library is
+# local now, which also means inotify works for the first time — it never
+# crossed the NFS mount, so Plex had to scan on a timer.
+#
+# ⚠ The role never destroys a pool. It imports or creates only when one is
+# absent, and asserts ONLINE before writing anything.
+
+- name: Local ZFS storage for media and downloads
+  hosts: media_storage
+  become: true
+  roles:
+    - media-storage
