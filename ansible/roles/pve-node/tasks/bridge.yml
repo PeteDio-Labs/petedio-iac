@@ -65,6 +65,45 @@
   async: 30
   poll: 0
 
+# THE BRIDGE MUST SURVIVE A REBOOT. Telling NetworkManager to leave the NIC and
+# the bridge alone means ifupdown2 is the only thing that can bring them up. If
+# networking.service is not enabled, nothing does: the interface is owned by
+# neither, and the host boots to a login prompt with no network at all. pve03
+# came back from its first reboot exactly this way, reachable on no address.
+- name: Ensure ifupdown2 brings the bridge up at boot
+  ansible.builtin.systemd:
+    name: networking
+    enabled: true
+    masked: false
+
+# The WiFi escape hatch has to be a SYSTEM connection, not a user one. A
+# per-user connection only comes up after someone logs in, so a headless boot
+# leaves you with neither the bridge nor the fallback.
+- name: Find connections that only come up after a login
+  ansible.builtin.command:
+    cmd: nmcli -t -f NAME,UUID,TYPE connection show
+  register: pve_node_nm_conns
+  changed_when: false
+  failed_when: false
+
+- name: Make wireless connections available to all users
+  ansible.builtin.command:
+    cmd: nmcli connection modify {{ item.split(':')[1] }} connection.permissions ''
+  loop: "{{ pve_node_nm_conns.stdout_lines | default([]) | select('search', 'wireless') | list }}"
+  loop_control:
+    label: "{{ item.split(':')[0] }}"
+  changed_when: true
+  failed_when: false
+
+- name: Autoconnect the wireless fallback
+  ansible.builtin.command:
+    cmd: nmcli connection modify {{ item.split(':')[1] }} connection.autoconnect yes
+  loop: "{{ pve_node_nm_conns.stdout_lines | default([]) | select('search', 'wireless') | list }}"
+  loop_control:
+    label: "{{ item.split(':')[0] }}"
+  changed_when: true
+  failed_when: false
+
 # ifreload applies it without a full ifdown/ifup cycle, which is the difference
 # between a blip and a lockout.
 - name: Apply with ifreload
