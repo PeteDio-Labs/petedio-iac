@@ -23,6 +23,26 @@ skip() { SKIP=$((SKIP+1)); [ $QUIET -eq 1 ] || printf "  \033[33m-\033[0m %-42s 
 sec()  { [ $QUIET -eq 1 ] || printf "\n\033[1m%s\033[0m\n" "$1"; }
 on()   { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$1" "$2" 2>/dev/null; }
 
+# Find whichever node actually holds a guest, and exec inside it there.
+#
+# ⚠ NEVER hardcode the node in a check. Guests move: the platform tier left pve02
+# for pve03 on 2026-09-04 (PET-334), and the arr stack moved the day before. A
+# check pinned to a node does not report "moved" -- it reports the SERVICE as
+# broken, because `pct exec` on the wrong host simply fails. That is how a healthy
+# Postgres was reported as "not accepting" minutes after it migrated.
+#
+# pve03 is reached as an unprivileged user, so pct needs sudo there and does not
+# on pve02. That asymmetry is the other reason to funnel every exec through here.
+node_for() {
+  on $PVE02 "pct config $1 >/dev/null 2>&1" && { echo "$PVE02"; return; }
+  on $PVE03 "sudo /usr/sbin/pct config $1 >/dev/null 2>&1" && { echo "$PVE03"; return; }
+  echo ""
+}
+pct_on() {  # node, vmid, command
+  if [ "$1" = "$PVE03" ]; then on "$1" "sudo /usr/sbin/pct exec $2 -- $3"
+  else on "$1" "pct exec $2 -- $3"; fi
+}
+
 sec "Nodes and quorum"
 for n in $PVE02 $PVE03; do
   h=$(on $n 'hostname')
@@ -124,8 +144,12 @@ plane|http://192.168.50.235:8080/
 minio|http://192.168.50.221:9001/
 flaresolverr|http://192.168.50.150:8191/
 EOF
-PG=$(on $PVE02 'pct exec 231 -- pg_isready 2>/dev/null | grep -c accepting')
-[ "${PG:-0}" -ge 1 ] && ok "postgres" "accepting connections" || bad "postgres" "not accepting"
+PGNODE=$(node_for 231)
+if [ -z "$PGNODE" ]; then bad "postgres" "guest 231 not found on any node"; else
+  PG=$(pct_on "$PGNODE" 231 "pg_isready" | grep -c accepting)
+  [ "${PG:-0}" -ge 1 ] && ok "postgres" "accepting connections on $PGNODE" \
+    || bad "postgres" "not accepting on $PGNODE"
+fi
 # Vault speaks HTTPS. The same path over http returns a bare 400 that reads as a
 # broken server and is not.
 SEAL=$(on $PVE02 "curl -sk -m 8 https://192.168.50.223:8200/v1/sys/seal-status | grep -o '\"sealed\":[a-z]*'")
@@ -138,15 +162,6 @@ sec "The media pipeline, end to end"
 # The arr apps live on pve03 since 2026-09-04, so look for each guest on whichever
 # node actually holds it. Hard-coding the node makes this SKIP after a migration,
 # and a check that skips silently is worse than one that fails.
-node_for() {
-  on $PVE02 "pct config $1 >/dev/null 2>&1" && { echo "$PVE02"; return; }
-  on $PVE03 "sudo /usr/sbin/pct config $1 >/dev/null 2>&1" && { echo "$PVE03"; return; }
-  echo ""
-}
-pct_on() {  # node, vmid, command
-  if [ "$1" = "$PVE03" ]; then on "$1" "sudo /usr/sbin/pct exec $2 -- $3"
-  else on "$1" "pct exec $2 -- $3"; fi
-}
 for e in "104|sonarr|192.168.50.15:8989|/var/lib/sonarr/config.xml" "105|radarr|192.168.50.16:7878|/var/lib/radarr/config.xml"; do
   IFS='|' read -r id nm addr cfg <<< "$e"
   hostnode=$(node_for "$id")
@@ -224,9 +239,10 @@ for e in "104|sonarr" "105|radarr" "109|prowlarr" "110|qbittorrent" "236|plex-gp
 done
 
 # The kill switch is only real if qbit has no network of its own.
-NS=$(on $PVE02 "pct exec 110 -- docker inspect qbittorrent --format '{{.HostConfig.NetworkMode}}' 2>/dev/null")
+QBNODE=$(node_for 110)
+NS=$(pct_on "${QBNODE:-$PVE02}" 110 "docker inspect qbittorrent --format '{{.HostConfig.NetworkMode}}'" 2>/dev/null)
 case "$NS" in container:*) ok "qbit inside gluetun netns" "no path out if the tunnel drops";; *) bad "qbit netns" "got '${NS:-unknown}' — traffic may bypass the VPN";; esac
-VPN=$(on $PVE02 "pct exec 110 -- docker exec gluetun wget -qO- -T 10 https://api.ipify.org 2>/dev/null")
+VPN=$(pct_on "${QBNODE:-$PVE02}" 110 "docker exec gluetun wget -qO- -T 10 https://api.ipify.org" 2>/dev/null)
 WAN=$(curl -s -m 10 https://api.ipify.org 2>/dev/null)
 if [ -n "$VPN" ] && [ -n "$WAN" ]; then
   [ "$VPN" != "$WAN" ] && ok "vpn exit differs from wan" "$VPN" || bad "VPN LEAK" "torrent traffic leaves on your own address"

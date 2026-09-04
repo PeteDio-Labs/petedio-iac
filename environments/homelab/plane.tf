@@ -58,7 +58,7 @@ module "plane" {
   # exists. This container actually runs on local-lvm. Because `disk` is not in
   # the module's ignore_changes, leaving the dead value here reads as a
   # REPLACEMENT of a live container.
-  datastore_id = "local-lvm"
+  datastore_id = "local"
   description  = "Plane CE — the issue tracker (replaces Linear). Tailnet-only, no public route. Managed by Terraform."
 }
 

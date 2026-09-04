@@ -42,7 +42,7 @@ module "authentik" {
   # exists. This container actually runs on local-lvm. Because `disk` is not in
   # the module's ignore_changes, leaving the dead value here reads as a
   # REPLACEMENT of a live container.
-  datastore_id = "local-lvm"
+  datastore_id = "local"
   # pve01 used vmbr1 for the LAN; pve02 uses vmbr0. On pve02 vmbr1 is the VXLAN
   # bridge, so this value did not merely point at the wrong name -- it pointed
   # at a tunnel whose far end died with pve01.

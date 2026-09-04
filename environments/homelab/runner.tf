@@ -116,7 +116,7 @@ module "runner_2" {
   hostname         = "runner-233"
   ipv4_address     = "192.168.50.233/24"
   ssh_public_key   = var.ssh_public_key
-  target_node      = "pve02"
+  target_node      = "pve03" # PET-334: pve02 is the media node now
   cores            = 2
   memory_dedicated = 2048
   memory_swap      = 512
@@ -124,7 +124,7 @@ module "runner_2" {
   # Rebuilt on local-lvm 2026-09-04: the original disk lived on pve02-shared and
   # was lost with it. Declaring pve02-shared here reads as destroy-and-recreate
   # of the runner that is executing the apply.
-  datastore_id     = "local-lvm"
+  datastore_id     = "local"
   bridge           = "vmbr0"
   template_file_id = "local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst"
   description      = "GitHub Actions self-hosted runner #2 on pve02 (petedio-iac). Managed by Terraform."
