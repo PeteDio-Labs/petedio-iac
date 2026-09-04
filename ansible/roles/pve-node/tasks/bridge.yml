@@ -25,31 +25,45 @@
     remote_src: true
     mode: "0644"
 
+# ORDER IS LOAD-BEARING. Write the replacement config BEFORE releasing the
+# interface from NetworkManager. Reloading NM drops the address on the LAN
+# interface immediately; if the bridge config is not on disk yet, the play loses
+# its own connection and every task after this point never runs — leaving the
+# host with a down NIC and no bridge, reachable only on its second interface.
+# That is exactly what happened on pve03 the first time this ran.
+- name: Write the bridge configuration
+  ansible.builtin.template:
+    src: interfaces.j2
+    dest: /etc/network/interfaces
+    mode: "0644"
+    # `validate` runs the command directly, with NO shell -- redirections and
+    # `|| true` are passed to ifup as literal interface names and it fails with
+    # "cannot find interfaces: >/dev/null". Keep this a single bare command.
+    # ifup --no-act is a real syntax check: 0 on a good file, 1 on a bad one.
+    validate: "ifup --no-act --interfaces %s {{ pve_node_bridge }}"
+
 - name: Stop NetworkManager managing the LAN interface
   ansible.builtin.copy:
     dest: /etc/NetworkManager/conf.d/10-unmanaged-pve-bridge.conf
     mode: "0644"
     content: |
-      # {{ ansible_managed }}
+      # Managed by ansible role pve-node — local edits are overwritten.
       # NetworkManager and ifupdown both claiming the bridge port is a reliable
       # way to end up with no network at all.
       [keyfile]
       unmanaged-devices=interface-name:{{ pve_node_lan_interface }};interface-name:{{ pve_node_bridge }}
   register: nm_unmanaged
 
+# Both of these drop the current session on the LAN interface, so they are fired
+# and forgotten; wait_for_connection below is what actually confirms the result.
 - name: Reload NetworkManager
   ansible.builtin.systemd:
     name: NetworkManager
     state: reloaded
   when: nm_unmanaged.changed
   failed_when: false
-
-- name: Write the bridge configuration
-  ansible.builtin.template:
-    src: interfaces.j2
-    dest: /etc/network/interfaces
-    mode: "0644"
-    validate: "ifup --no-act --interfaces %s {{ pve_node_bridge }} >/dev/null 2>&1 || true"
+  async: 30
+  poll: 0
 
 # ifreload applies it without a full ifdown/ifup cycle, which is the difference
 # between a blip and a lockout.

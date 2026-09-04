@@ -51,7 +51,7 @@
         dest: /etc/systemd/logind.conf.d/10-pve-node-no-suspend.conf
         mode: "0644"
         content: |
-          # {{ ansible_managed }}
+          # Managed by ansible role pve-node — local edits are overwritten.
           # A closed lid must not suspend a hypervisor.
           [Login]
           HandleLidSwitch=ignore
@@ -112,7 +112,7 @@
     dest: /etc/apt/sources.list.d/pve-install-repo.sources
     mode: "0644"
     content: |
-      # {{ ansible_managed }}
+      # Managed by ansible role pve-node — local edits are overwritten.
       Types: deb
       URIs: http://download.proxmox.com/debian/pve
       Suites: {{ ansible_facts["distribution_release"] }}
@@ -139,6 +139,14 @@
     msg: "proxmox-ve install changed={{ pve_install.changed }}"
 
 # The bridge is the lockout risk, so it only runs when asked for by tag.
+#
+# `apply` is load-bearing: tags on an include_tasks apply to the include
+# STATEMENT, not to the tasks it pulls in. Without it, `--tags bridge` runs the
+# include, finds every task inside untagged, filters them all out, and reports
+# a green `changed=0` that looks like the bridge was already correct.
 - name: Configure the LAN bridge
-  ansible.builtin.include_tasks: bridge.yml
+  ansible.builtin.include_tasks:
+    file: bridge.yml
+    apply:
+      tags: [bridge]
   tags: [bridge, never]
