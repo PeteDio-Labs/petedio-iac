@@ -6,3 +6,7 @@
 - name: Consume it from the Proxmox nodes
   ansible.builtin.include_tasks: client.yml
   when: inventory_hostname != backup_store_server
+
+- name: Schedule the nightly job on each Proxmox node
+  ansible.builtin.include_tasks: jobs.yml
+  when: inventory_hostname != backup_store_server

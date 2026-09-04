@@ -137,53 +137,16 @@
   register: backup_storage_added
   changed_when: backup_storage_added.rc == 0
 
-- name: Read existing backup jobs
-  ansible.builtin.command: pvesh get /cluster/backup --output-format json
-  register: backup_jobs
-  changed_when: false
-  failed_when: false
-
-# Must match on THIS NODE, not just on the storage name. /etc/pve is a shared
-# cluster filesystem, so pve02 can see the job pve01 created — and that job
-# carries --node pve01, so it backs up none of pve02's guests. Guarding on the
-# storage name alone therefore left pve02 silently unprotected, which is exactly
-# the failure this whole ticket exists to fix.
-- name: Decide whether this node already has its own job
-  ansible.builtin.set_fact:
-    backup_job_exists: >-
-      {{ (backup_jobs.stdout | default('[]') | from_json
-          | selectattr('storage', 'defined')
-          | selectattr('storage', 'equalto', backup_store_pve_storage_id)
-          | selectattr('node', 'defined')
-          | selectattr('node', 'equalto', inventory_hostname)
-          | list | length) > 0 }}
-
-- name: Schedule a nightly backup of this node's guests
-  ansible.builtin.command: >-
-    pvesh create /cluster/backup
-    --schedule "{{ backup_store_schedule }}"
-    --storage {{ backup_store_pve_storage_id }}
-    --mode snapshot
-    --compress zstd
-    --node {{ inventory_hostname }}
-    --all 1
-    --notes-template "{% raw %}{{guestname}}{% endraw %}"
-    --comment "backup-store nightly ({{ inventory_hostname }})"
-  when: not backup_job_exists
-  register: backup_job_added
-  changed_when: backup_job_added.rc == 0
-
 - name: Report
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }}:
       {% if backup_pvesm.skipped | default(false) -%}
-      not checked (dry run) — would register the storage and a nightly job if absent.
+      not checked (dry run) — would register the storage if absent.
       {%- elif backup_store_pve_storage_id in (backup_pvesm.stdout | default('')) -%}
       storage {{ backup_store_pve_storage_id }} present.
       {%- else -%}
       storage {{ backup_store_pve_storage_id }} registered.
       {%- endif %}
-      Nightly job for this node {{ 'already present' if backup_job_exists | default(false) else 'created' }}.
-      Schedule {{ backup_store_schedule }}, keeping {{ backup_store_keep_daily }} daily
-      + {{ backup_store_keep_weekly }} weekly.
+      Keeping {{ backup_store_keep_daily }} daily + {{ backup_store_keep_weekly }} weekly.
+      The nightly job itself is owned by tasks/jobs.yml.

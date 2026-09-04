@@ -58,7 +58,9 @@ backup_store_pve_storage_id: ollama-backups
 # Retention. vzdump writes a full archive every run, so these multiply.
 backup_store_keep_daily: 7
 backup_store_keep_weekly: 3
-backup_store_schedule: "02:30"
+# ⚠ Superseded by backup_store_jobs below, which sets schedule AND mode per
+# node. A single global schedule cannot express that pve03 needs a different
+# mode from pve02, and pretending otherwise is what wedged pve03 nightly.
 
 # ---------------------------------------------------------------- tmpdir ----
 # vzdump rsyncs a container into a temporary directory and THEN compresses it.
@@ -84,3 +86,15 @@ backup_store_tmpdir_need_gb: 30
 backup_store_tmpdir_lv: vzdump-tmp
 backup_store_tmpdir_lv_size: 40G
 backup_store_tmpdir_vg: pve
+
+# ------------------------------------------------------------- the jobs ----
+# One nightly job per node, staggered so they do not contend for the single NFS
+# target. `mode` is dictated by the node's storage, not by taste — see the long
+# note in tasks/jobs.yml for the measurements behind each value.
+backup_store_jobs:
+  - node: pve02
+    schedule: "02:30"
+    mode: snapshot   # guests on local-lvm; block snapshot, no downtime
+  - node: pve03
+    schedule: "02:45"
+    mode: stop       # guests on a directory store; snapshot would rsync forever
