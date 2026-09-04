@@ -76,17 +76,24 @@ uptime_kuma_monitors:
   # /v2/_catalog is used rather than /v2/ on purpose — it reads the storage
   # layer, so the NFS fault actually surfaces here. /v2/ answers from memory and
   # would stay green through the outage.
+  # ⚠ BOTH DISABLED 2026-09-04. The pair studied a cross-node dependency that no
+  # longer exists: registry-106 died with pve01 and is not restored, and pve02
+  # serves no media export now that the pools are local ZFS. Left here as the
+  # record of the design; re-enable together, never one alone, if the registry
+  # comes back on a different node than its blob store.
   - name: zot-registry
     type: http
     url: "https://192.168.50.111/v2/_catalog"
     ignore_tls: true          # LE cert is for docker.pdlab.dev; we dial by IP
-    description: "OCI registry, LXC 106 on pve01. Blob store is NFS from pve02."
+    active: false
+    description: "OCI registry. Was LXC 106 on pve01; blob store was NFS from pve02."
 
   - name: nfs-pve02
     type: port
     hostname: "192.168.50.11"
     port: 2049
-    description: "The NFS export zot depends on. The CAUSE side of the pair."
+    active: false
+    description: "The NFS export zot depended on. The CAUSE side of the pair."
 
   # -- Vault: sealed must read as DOWN, not as an error ------------------------
   # /v1/sys/health answers 200 unsealed-active and 503 sealed. Accepting only
@@ -101,16 +108,19 @@ uptime_kuma_monitors:
     description: "Sealed returns 503 and is recorded as DOWN by design."
 
   # -- the cluster nodes themselves -------------------------------------------
-  - name: pve01
+  # ⚠ .10 was pve01's address and now belongs to pve03. Named pve01, this monitor
+  # turns green the moment pve03 boots and reports a machine that burned as
+  # recovered. Renamed 2026-09-04.
+  - name: pve03
     type: port
     hostname: "192.168.50.10"
     port: 8006
-    description: "Proxmox node 1."
+    description: "Proxmox node, the ex-palworld Spectre. Took pve01's address."
   - name: pve02
     type: port
     hostname: "192.168.50.11"
     port: 8006
-    description: "Proxmox node 2. Also serves the NFS export above."
+    description: "Proxmox node carrying every guest."
 
   # ⚠ THE PROVISIONER ADDS AND EDITS, IT DOES NOT PRUNE. Deleting a monitor from
   # this list stops it being managed; it does NOT remove it from Uptime Kuma, so a
@@ -137,11 +147,45 @@ uptime_kuma_monitors:
     # lands on the 200; verified end state is 200 after one hop.
     type: http
     url: "http://192.168.50.33:5055/"
-  - name: plex
-    # The one .86 target. /identity is the unauthenticated liveness endpoint —
-    # the web root needs a token and would answer 401.
+  # ⚠ Was http://192.168.86.140:32400 until 2026-09-04. That was plex-103's .86
+  # leg, and 103 died with pve01. plex-gpu (236) is the live server; it is
+  # dual-homed, and the .50 address is the one that does not depend on the VXLAN
+  # bridge being up, so monitor that rather than the .86 leg.
+  - name: plex-gpu
+    # /identity is the unauthenticated liveness endpoint — the web root needs a
+    # token and would answer 401.
     type: http
-    url: "http://192.168.86.140:32400/identity"
+    url: "http://192.168.50.236:32400/identity"
+
+  # -- added 2026-09-04: live services that were running unwatched -------------
+  # The rebuild left six services with no monitor at all, which is how a stale
+  # dashboard becomes a dashboard nobody trusts.
+  - name: authentik
+    type: http
+    url: "http://192.168.50.119:9000/"
+    accepted_statuscodes: ["200-299", "300-399"]   # 302 to the flow is healthy
+  - name: plane
+    type: http
+    url: "http://192.168.50.235:8080/"
+  - name: minio
+    type: http
+    url: "http://192.168.50.221:9001/"
+    accepted_statuscodes: ["200-299", "300-399"]
+  - name: minio-data
+    type: http
+    url: "http://192.168.50.245:9001/"
+    accepted_statuscodes: ["200-299", "300-399"]
+  - name: postgres
+    # Speaks its own protocol, so watch the port rather than HTTP.
+    type: port
+    hostname: "192.168.50.231"
+    port: 5432
+  - name: flaresolverr
+    # ⚠ Holds a DHCP lease, and prowlarr references it BY ADDRESS. If this moves,
+    # prowlarr breaks silently on the indexers that need Cloudflare solving —
+    # which is exactly why it is worth a monitor.
+    type: http
+    url: "http://192.168.50.150:8191/"
 
   # -- inference host ----------------------------------------------------------
   - name: ollama
