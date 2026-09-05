@@ -240,6 +240,47 @@ for e in "104|sonarr" "105|radarr" "109|prowlarr" "110|qbittorrent" "236|plex-gp
   done <<< "$cfg"
 done
 
+# CAN THE APPS ACTUALLY IMPORT? Read access is not enough.
+#
+# An import is a MOVE, and a move needs write permission on the CONTAINING
+# DIRECTORY, not on the file. qBittorrent creates each release directory; if it
+# does so without group-write, Radarr and Sonarr can read the file, write the
+# destination, and still fail to unlink the source:
+#
+#   System.UnauthorizedAccessException: Access to the path '...mkv' is denied
+#   ---> System.IO.IOException: Permission denied
+#        at DiskTransferService.TryMoveFileVerified(...)
+#
+# That is not hypothetical — it silently broke every automatic import until
+# 2026-09-05 (PET-336). The cause was a missing UMASK on the qbittorrent
+# container, so it built directories `drwxr-sr-x`. Nothing here noticed, because
+# the mount was present, non-empty and writable AT ITS ROOT — which is what the
+# checks above test. The failure lives one level down.
+#
+# So probe a real release directory, and probe it with the thing that has to do
+# the unlinking.
+sec "Imports can actually land"
+for e in "104|sonarr" "105|radarr"; do
+  IFS='|' read -r id nm <<< "$e"
+  hostnode=$(node_for "$id")
+  [ -z "$hostnode" ] && { bad "$nm import perms" "guest not found on any node"; continue; }
+  dlroot=$(pct_config "$hostnode" "$id" | grep -E '^mp[0-9]+:' | grep -i downloads \
+           | sed -n 's/.*,mp=\([^,]*\).*/\1/p' | head -1)
+  [ -z "$dlroot" ] && { skip "$nm import perms" "declares no downloads mount"; continue; }
+  rel=$(pct_on "$hostnode" "$id" "sh -c 'find $dlroot/completed -mindepth 1 -maxdepth 1 -type d | head -1'")
+  if [ -z "$rel" ]; then
+    skip "$nm import perms" "no completed releases to probe"; continue
+  fi
+  out=$(pct_on "$hostnode" "$id" \
+    "sh -c 'T=\"$rel/.lab-verify.\$\$\"; touch \"\$T\" 2>/dev/null || { echo NOCREATE; exit 0; }; rm -f \"\$T\" 2>/dev/null && echo OK || echo NOUNLINK'")
+  case "$out" in
+    OK)       ok "$nm can import" "create+unlink inside a release dir on $hostnode";;
+    NOCREATE) bad "$nm CANNOT import" "no write in $(basename "$rel") — qbit UMASK missing? every move will fail";;
+    NOUNLINK) bad "$nm CANNOT import" "can create but not unlink in $(basename "$rel") — moves will fail";;
+    *)        bad "$nm import perms" "probe returned '${out:-nothing}'";;
+  esac
+done
+
 # The kill switch is only real if qbit has no network of its own.
 QBNODE=$(node_for 110)
 NS=$(pct_on "${QBNODE:-$PVE02}" 110 "docker inspect qbittorrent --format '{{.HostConfig.NetworkMode}}'" 2>/dev/null)
