@@ -77,7 +77,7 @@ variable "datastore_id" {
   # `local-lvm:vm-<id>-disk-0` to `local:<id>/vm-<id>-disk-0.raw`.
   #
   # The REPLACEMENT warning above applies here too, in both directions.
-  default     = "local"
+  default = "local"
 }
 
 variable "bridge" {
@@ -86,7 +86,7 @@ variable "bridge" {
   # ⚠ Was vmbr1 until 2026-09-04. pve01 used vmbr1 for the LAN; pve02 and pve03
   # both use vmbr0. On pve02, vmbr1 is the VXLAN bridge -- a different thing
   # entirely, and one whose remote end died with pve01.
-  default     = "vmbr0"
+  default = "vmbr0"
 }
 
 variable "network_interface_name" {

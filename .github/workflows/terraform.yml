@@ -59,7 +59,17 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - name: Format check
+      # Runs from the repo ROOT, overriding the job's environments/homelab default, so the
+      # check reaches modules/ too. It read as a whole-repo check and was a subtree check:
+      # modules/proxmox-lxc/variables.tf sat unformatted on main from df22b72 (PET-334)
+      # until PET-361 and every run stayed green. Only this step moves -- init and validate
+      # below still need a Terraform root, and the repo root is not one.
+      #
+      # A step-level working-directory resolves from GITHUB_WORKSPACE, not from the job
+      # default, which is why the vault-config steps below spell out their full path.
+      # NB: `terraform fmt -recursive` skips dot-directories, so .claude/ is never scanned.
+      - name: Format check (whole repo)
+        working-directory: .
         run: terraform fmt -check -recursive
 
       - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
