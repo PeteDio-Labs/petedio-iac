@@ -93,6 +93,12 @@ variable "resume_builder_repo" {
   default     = "PeteDio-Labs/petedio-resume-builder"
 }
 
+variable "media_control_repo" {
+  description = "owner/name of the petedio-media-control repo bound to the media-dash-cd JWT role."
+  type        = string
+  default     = "PeteDio-Labs/petedio-media-control"
+}
+
 variable "water_fast_repo" {
   description = "owner/name of the petedio-water-fast repo bound to the water-fast-cd JWT role."
   type        = string

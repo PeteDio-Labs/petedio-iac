@@ -1,0 +1,32 @@
+# mtrace — read-only media stack control surface (PET-355). MANAGED BY ANSIBLE.
+#
+# Hardened well past what a read-only service strictly needs, because the thing it holds
+# is an SSH key that opens seven containers. ProtectSystem/PrivateTmp/NoNewPrivileges cost
+# nothing here and mean a compromise of the HTTP surface does not become a foothold.
+[Unit]
+Description=mtrace — media stack control surface
+Documentation=https://github.com/PeteDio-Labs/petedio-media-control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ mtrace_user }}
+Group={{ mtrace_group }}
+EnvironmentFile=/etc/mtrace.env
+ExecStart={{ mtrace_bin }} serve
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ mtrace_dir }}
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -498,19 +498,37 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
 ## Terraform — a local plan/apply is NOT the same plan CI runs
 
 - **`terraform apply` from a laptop, with no extra env, plans to DESTROY the resource pool and
-  all 7 of its memberships.** `var.manage_resource_pool` defaults to **false** (PET-160, after
-  the PET-159 poison-pill incident), while CI sets `TF_VAR_manage_resource_pool` from the repo
-  variable `MANAGE_RESOURCE_POOL`, which is **true**. So the pool exists in state, and any local
-  run without the variable sees `count = 0` and proposes removing it. Nothing warns you; it just
-  appears in the plan as 8 destroys alongside whatever you were actually changing.
+  every one of its memberships.** `var.manage_resource_pool` defaults to **false** (PET-160,
+  after the PET-159 poison-pill incident), while CI sets `TF_VAR_manage_resource_pool` from the
+  repo variable `MANAGE_RESOURCE_POOL`, which is **true**. So the pool exists in state, and any
+  local run without the variable sees `count = 0` and proposes removing it. Nothing warns you;
+  it just appears in the plan as destroys alongside whatever you were actually changing.
 
-  Before any local plan/apply, export the variables CI sets — today that is
-  `TF_VAR_manage_resource_pool=true`. Treat **any** destroy in a plan whose change was additive
-  as a STOP: check whether it belongs to a gate you didn't set rather than to your edit.
+  **The count grows with the lab** — it was 7 memberships (8 destroys) when this was written and
+  is 11 (12 destroys) as of PET-355. Do not pattern-match on the number; match on the resource
+  type, `proxmox_pool_membership.lxc[*]` plus `proxmox_virtual_environment_pool.homelab[0]`.
 
-  This surfaced during the databases.tf consolidation, where the real change was
-  `2 to import, 1 to add, 1 to change, 0 to destroy` and the 8 destroys were entirely
-  pre-existing drift between the local and CI variable sets.
+  **There is a second variable, and it is easy to miss** because it produces a quiet
+  `1 to change` rather than a destroy: `TF_VAR_postgres_db_password_versions`, from the repo
+  variable `POSTGRES_DB_PASSWORD_VERSIONS` (today `{"plane":2}`). Without it the plan proposes
+  `password_wo_version = "2" -> "1"` on `module.postgres_db["plane"].postgresql_role.owner`,
+  which is an unrequested password rotation on the tracker's database.
+
+  Export both before any local plan. Read them off the repo rather than trusting this file,
+  since both are repo variables and can change without a commit here:
+
+  ```bash
+  gh variable list --repo PeteDio-Labs/petedio-iac
+  ```
+
+  Treat **any** destroy in a plan whose change was additive as a STOP: check whether it belongs
+  to a gate you didn't set rather than to your edit.
+
+  This surfaced twice. First during the databases.tf consolidation, where the real change was
+  `2 to import, 1 to add, 1 to change, 0 to destroy`. Then again in PET-355, where adding one
+  container planned as `1 to add, 1 to change, 12 to destroy` locally and `1 to add, 0 to
+  change, 0 to destroy` once both variables were set. Both times every extra line was
+  pre-existing drift between the local and CI variable sets, and nothing to do with the edit.
 
 - **Adding a Postgres database now touches one file** (`environments/homelab/databases.tf` —
   one entry in `local.postgres_databases`), but its secret must be readable by **ci-read**
