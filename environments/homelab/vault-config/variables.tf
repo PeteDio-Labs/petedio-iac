@@ -31,20 +31,39 @@ variable "github_oidc_audience" {
 # Every repo whose CI moves Plane work-item state (plane-sync.yml). Bound to the
 # plane-ci JWT role, whose policy reads exactly ONE secret — see policies.tf. Adding a
 # repo here is what lets its PRs mint that token; it grants nothing else.
+# ⚠ A MAP, NOT A LIST, AND THE ID IS THE POINT (PET-360).
+#
+# This was a list of "owner/name" strings, and plane-ci built one subject per entry
+# from the name. GitHub is migrating repos to IMMUTABLE, ID-BASED OIDC subjects, so a
+# migrated repo stops sending the name form entirely and its mint is refused — while
+# plane-sync, which is advisory by design, reports GREEN and moves nothing.
+#
+# petedio-vault had been in that state since at least 2026-09-01: every plane-sync run
+# failed the mint, every run was green, and no work item in that repo ever advanced.
+#
+# So the id is carried here and BOTH subject forms are always emitted. That is
+# migration-direction-agnostic: it keeps working whether a repo has migrated, has not
+# yet, or migrates tomorrow, with no wildcards. A glob would loosen the one control
+# that stops an unrelated repo minting this token.
+#
+# To add a repo: `gh api repos/PeteDio-Labs/<name> --jq .id`. IDs are immutable, which
+# is the whole reason GitHub is moving to them, so they do not rot.
 variable "plane_repos" {
-  description = "owner/name of each repo bound to the plane-ci JWT role."
-  type        = list(string)
-  default = [
-    "PeteDio-Labs/petedio-iac",
-    "PeteDio-Labs/petedio-media-iac",
-    "PeteDio-Labs/co-latro-backend",
-    "PeteDio-Labs/co-latro-frontend",
-    "PeteDio-Labs/co-latro-admin",
-    "PeteDio-Labs/petedio-resume-builder",
-    "PeteDio-Labs/petedio-palworld-panel",
-    "PeteDio-Labs/petedio-water-fast",
-    "PeteDio-Labs/petedio-vault",
-  ]
+  description = "Repo name → numeric GitHub id, for every repo bound to the plane-ci JWT role. Both OIDC subject forms are emitted for each."
+  type        = map(string)
+  default = {
+    "petedio-iac"            = "1257211720"
+    "petedio-media-iac"      = "1259824681"
+    "co-latro-backend"       = "1257111349"
+    "co-latro-frontend"      = "1257111463"
+    "co-latro-admin"         = "1263295666"
+    "petedio-resume-builder" = "1308151391" # migrated to the id form
+    "petedio-palworld-panel" = "1296187459"
+    "petedio-water-fast"     = "1313093957" # migrated to the id form
+    "petedio-vault"          = "1312503638" # migrated to the id form
+    "petedio-workspace"      = "1257293543" # added in PET-360; had no binding at all (PET-290)
+    "petedio-media-control"  = "1358823831" # migrated to the id form; new in PET-355
+  }
 }
 
 variable "colatro_repos" {
@@ -94,8 +113,9 @@ variable "colatro_admin_repo" {
 # migrating repositories from name-based to ID-based subjects, and a migrated repo
 # stops sending the name form entirely. Read the current prefix for any repo with:
 #   gh api /repos/PeteDio-Labs/<repo>/actions/oidc/customization/sub
-# As of 2026-09-01, three have migrated: petedio-vault, petedio-resume-builder and
-# petedio-water-fast. The rest still send the name form.
+# Surveyed 2026-09-06: FOUR have migrated — petedio-vault, petedio-resume-builder,
+# petedio-water-fast and petedio-media-control. The rest still send the name form.
+# Do not maintain that list as a condition anywhere; emit both forms and stop caring.
 variable "github_org_id" {
   description = "Numeric GitHub org ID for PeteDio-Labs, used in immutable OIDC subjects."
   type        = string

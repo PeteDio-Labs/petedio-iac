@@ -251,11 +251,17 @@ resource "vault_jwt_auth_backend_role" "plane_ci" {
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
+  # BOTH SUBJECT FORMS PER REPO — see the variable's comment and infra_reconcile's.
+  # GitHub is migrating repos to immutable, id-based subjects; a role bound only to
+  # the name form silently stops matching the moment a repo migrates, and plane-sync
+  # reports green while moving nothing. Emitting both is direction-agnostic.
   bound_claims = {
     sub = join(",", flatten([
-      for r in var.plane_repos : [
-        "repo:${r}:ref:refs/heads/main",
-        "repo:${r}:pull_request",
+      for name, id in var.plane_repos : [
+        "repo:PeteDio-Labs/${name}:ref:refs/heads/main",
+        "repo:PeteDio-Labs/${name}:pull_request",
+        "repo:PeteDio-Labs@${var.github_org_id}/${name}@${id}:ref:refs/heads/main",
+        "repo:PeteDio-Labs@${var.github_org_id}/${name}@${id}:pull_request",
       ]
     ]))
   }
