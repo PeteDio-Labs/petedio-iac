@@ -7,9 +7,20 @@
 # a `services: postgres` container for tests + `docker build/push` for the image. The
 # runner landed jobs with `docker: command not found` until this ran.
 #
-# LXC 232 already has nesting=1,keyctl=1 (verified), so Docker runs in the unprivileged
-# container. The `runner` user is added to the docker group so workflow steps (which run
-# as that user) can talk to the daemon without sudo.
+# ⚠ THIS PLAY USED TO ASSERT nesting=1,keyctl=1 IN THIS COMMENT, AND THE COMMENT WENT
+# STALE. It read "LXC 232 already has nesting=1,keyctl=1 (verified)". The container was
+# rebuilt in PET-335, the flags did not come back, and the sentence kept saying they had.
+# Docker installed fine and every image pull failed with
+# `mount source: "overlay" ... permission denied` (PET-364).
+#
+# Terraform cannot own those flags — Proxmox enforces a hardcoded root@pam check on the
+# features{} mutation, so bpg/proxmox creates the container without them and keeps them
+# in ignore_changes. That is deliberate and permanent, which means NOTHING declarative
+# will ever notice they are missing. The play therefore CHECKS, and fails loudly with
+# the fix, rather than restating an assumption in prose. A comment is not a check.
+#
+# The `runner` user is added to the docker group so workflow steps (which run as that
+# user) can talk to the daemon without sudo.
 #
 # Inventory: the `runner` group → 192.168.50.232, root over the TF-installed key.
 
@@ -70,6 +81,43 @@
         groups: docker
         append: true
       notify: Restart the actions runner
+
+  post_tasks:
+    # ⚠ THE CHECK THIS PLAY WAS MISSING, AND WHY IT IS A RUN AND NOT A GREP.
+    #
+    # Installing Docker proves nothing. On an unprivileged LXC without
+    # `features: nesting=1,keyctl=1` the daemon installs cleanly, starts cleanly, reports
+    # healthy — and cannot mount overlayfs, so every image pull dies with
+    # `mount source: "overlay" ... permission denied`. runner-232 sat exactly like that
+    # after its PET-335 rebuild, while Terraform planned clean, the org runner API said
+    # "online", and this file asserted the flags in a comment (PET-364).
+    #
+    # Running a container exercises the real path — the extract on pull and the rootfs
+    # mount on start — which is the only thing that distinguishes "Docker is installed"
+    # from "Docker works". hello-world is a few kilobytes.
+    - name: Prove Docker can actually run a container, not just that it installed
+      ansible.builtin.command:
+        cmd: docker run --rm hello-world
+      register: runner_docker_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with the remedy when the container could not run
+      ansible.builtin.fail:
+        msg: >-
+          Docker is installed on {{ inventory_hostname }} but cannot run a container.
+          Almost always this LXC is missing 'features: nesting=1,keyctl=1' — an
+          unprivileged container cannot mount overlayfs without them, and Terraform
+          cannot set them because Proxmox rejects the features{} mutation for API
+          tokens (it is kept in ignore_changes on purpose, so no plan will ever show
+          this). Fix: run scripts/lxc-features-232.sh from the repo root, which sets
+          the flags on the node as root@pam and reboots the container. See PET-364.
+          Docker said: {{ (runner_docker_probe.stderr | default(''))[:400] }}
+      when: runner_docker_probe.rc != 0
+
+    - name: Report that the runner can build
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: docker can pull and run containers."
 
   handlers:
     # The runner service caches the process group set at start; restart so jobs pick up

@@ -329,5 +329,42 @@ else
   ok "runners spread across nodes" "232 on $R232, 233 on $R233, plus pete-pi-1"
 fi
 
+# ⚠ AN ONLINE RUNNER IS NOT A WORKING RUNNER, AND THIS SUITE HAS NOW LEARNED THAT TWICE.
+#
+# PET-335: runner-232 was registered with the org and reporting for seven weeks with no
+# runner software in /opt at all. PET-364: it was registered, online, accepting jobs, with
+# Docker installed and running — and could not pull a single image, because its rebuild
+# dropped `features: nesting=1,keyctl=1` and an unprivileged LXC cannot mount overlayfs
+# without them. Every containerised job that landed on it failed with
+# `mount source: "overlay" ... permission denied`.
+#
+# ⚠ NOTHING ELSE CATCHES THIS. Terraform keeps `features` in ignore_changes on purpose
+# (Proxmox rejects the mutation for API tokens), so the plan is clean either way and
+# always will be. configure-runner-docker.yml asserted the flags in a COMMENT. The org
+# runner API says "online". Four green signals over a runner that could not build.
+#
+# So the check is `run a container`, not `grep the config for nesting`. Configuration is
+# what someone intended; this is what the machine can do. The image is tiny and the run
+# exercises the exact overlayfs path that broke — the extract on pull, and the rootfs
+# mount on start.
+#
+# Both runners, not just the one that broke: they carry the same runs-on label, so a job
+# lands on either at random and a single bad runner makes CI a coin flip rather than an
+# outage. That is harder to notice, not easier.
+for v in 232 233; do
+  n=$(node_for "$v")
+  if [ -z "$n" ]; then
+    bad "runner-$v can run containers" "guest not found on either node"
+    continue
+  fi
+  H=$(pct_on "$n" "$v" "docker run --rm hello-world" | grep -c "Hello from Docker" 2>/dev/null)
+  if [ "${H:-0}" -ge 1 ]; then
+    ok "runner-$v can run containers" "docker ok on $n"
+  else
+    F=$(pct_on "$n" "$v" "cat /proc/self/status" | awk "/^CapEff/{print \$2}")
+    bad "runner-$v can run containers" "docker cannot mount overlayfs on $n — check 'features: nesting=1,keyctl=1' (pct config $v); fix with scripts/lxc-features-$v.sh [CapEff ${F:-?}]"
+  fi
+done
+
 printf "\n\033[1m%d passed, %d failed, %d skipped\033[0m\n" "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1
