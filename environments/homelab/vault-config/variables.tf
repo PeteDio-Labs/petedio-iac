@@ -24,10 +24,6 @@ variable "github_oidc_audience" {
   default     = "https://github.com/PeteDio-Labs"
 }
 
-# Co-latro app repos allowed to exchange an Actions OIDC token via the colatro-ci
-# JWT role (auth.tf). The app CI (publish-on-merge) + the manual deploy workflow run
-# from these repos; each needs registry push + MinIO-write (publish) and the LXC SSH key
-# (deploy). Kept separate from petedio-iac so app CI never gets the iac creds.
 # Every repo whose CI moves Plane work-item state (plane-sync.yml). Bound to the
 # plane-ci JWT role, whose policy reads exactly ONE secret — see policies.tf. Adding a
 # repo here is what lets its PRs mint that token; it grants nothing else.
@@ -66,15 +62,6 @@ variable "plane_repos" {
   }
 }
 
-variable "colatro_repos" {
-  description = "owner/name of each Co-latro repo bound to the colatro-ci JWT role."
-  type        = list(string)
-  default = [
-    "PeteDio-Labs/co-latro-backend",
-    "PeteDio-Labs/co-latro-frontend",
-  ]
-}
-
 # GitHub repo for the Palworld control panel (petedio-palworld-panel). Bound to its own
 # palworld-panel-cd JWT role (auth.tf) so the panel's deploy-on-merge gets ONLY the ansible
 # SSH key + its own service secret, never the broader iac/ansible scope. (PET-266)
@@ -97,16 +84,6 @@ variable "water_fast_repo" {
   description = "owner/name of the petedio-water-fast repo bound to the water-fast-cd JWT role."
   type        = string
   default     = "PeteDio-Labs/petedio-water-fast"
-}
-
-# co-latro-admin repo, bound to its own colatro-admin-ci JWT role (auth.tf, PET-99). The
-# admin deploy workflow (Workflow B) runs from this repo and needs the admin-deploy creds
-# (admin DB URL + seam token + faasd gateway password + Nexus push + LXC SSH). Kept separate
-# from colatro_repos so the app repos never get the admin DB / gateway creds and vice-versa.
-variable "colatro_admin_repo" {
-  description = "owner/name of the co-latro-admin repo bound to the colatro-admin-ci JWT role."
-  type        = string
-  default     = "PeteDio-Labs/co-latro-admin"
 }
 
 # GitHub's numeric IDs, used to build the IMMUTABLE OIDC subject form. GitHub is

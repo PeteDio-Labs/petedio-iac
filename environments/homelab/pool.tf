@@ -50,7 +50,6 @@ locals {
   pool_lxc_members = var.manage_resource_pool ? {
     # registry and tailscale are no longer declared — see their .tf files.
     vault      = module.vault.vm_id
-    poker_api  = module.poker_api.vm_id
     postgres   = module.postgres_host.vm_id
     runner     = module.runner.vm_id
     runner_2   = module.runner_2.vm_id
