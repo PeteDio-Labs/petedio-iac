@@ -1,4 +1,5 @@
-# postgres-rds (LXC 231) — the RDS-equivalent Postgres host for Co-latro.
+# postgres-rds (LXC 231) — the RDS-equivalent Postgres host. Built for Co-latro,
+# which is gone (PET-366); it now serves waterfast and plane.
 # VMID 231 = apps block (.231), VMID = last IP octet. Second consumer of the
 # reusable modules/proxmox-lxc module.
 #
@@ -11,16 +12,16 @@
 #   --- between phases ---
 #     Run ansible/playbooks/configure-postgres.yml against 231: install
 #     Postgres, set listen_addresses='*' + pg_hba for 192.168.50.0/24, create
-#     the admin role the provider uses. Add TF_VAR_postgres_admin_password (and
-#     TF_VAR_poker_db_password) to CI from Vault (PET-6).
+#     the admin role the provider uses. Add TF_VAR_postgres_admin_password to CI
+#     from Vault (PET-6). (TF_VAR_poker_db_password went with PET-366.)
 #   PHASE 2  (postgres_ready = true — CURRENT default, PET-32):
-#     Postgres is LIVE on 231; the `poker` db/owner role/ALL-grant were created
-#     MANUALLY (verified). count flips to 1 so TF now manages those objects.
-#     CRITICAL: they are NOT in state yet — `terraform import` them BEFORE any
-#     apply (else cyrilgdn errors "already exists" / proposes recreating the live
-#     db). See docs/runbooks/postgres-import.md.
+#     Postgres is LIVE on 231. The `poker` db/owner role/ALL-grant that this phase
+#     was written to import were DESTROYED in PET-366 with the rest of Co-latro;
+#     the databases TF manages here now are `waterfast` and `plane`, both created
+#     by TF rather than imported. Kept for the import procedure itself, which still
+#     applies to any brownfield database: see docs/runbooks/postgres-import.md.
 #
-# As with poker-api (230), TF owns existence + hardware + network only; Docker
+# TF owns existence + hardware + network only here; Docker
 # is not needed here, but the nesting/keyctl container features still come from
 # Ansible (Proxmox's root@pam check rejects API tokens — see docs/GOTCHAS.md).
 
@@ -35,19 +36,29 @@ module "postgres_host" {
   cores            = 2
   memory_dedicated = 2048
   disk_size        = 20
-  description      = "Co-latro Postgres RDS-equivalent host. Managed by Terraform."
+  description      = "Postgres RDS-equivalent host. Managed by Terraform."
 }
 
 # The postgresql PROVIDER's admin credential. KV v2 entry at kv/data/poker/db holds
 # { DATABASE_URL, admin_password, poker_password } — the exact keys PET-27 seeds (see
 # docs/runbooks/vault-bootstrap.md).
 #
-# NB the path name is historical: this entry predates there being more than one database, so
-# the server-wide admin credential lives under `poker/`. It is read here for `admin_password`
-# ONLY — the per-database owner passwords (including poker's own) all resolve in databases.tf
-# now. The two reads are deliberately separate: this one is a property of the SERVER and must
-# resolve for the provider to connect at all, while those are properties of individual
-# databases.
+# ⚠⚠ DO NOT DELETE kv/poker/db BECAUSE "POKER IS GONE". The name is a trap and it now
+# names nothing that exists: the poker database, its owner role and the whole Co-latro
+# stack were removed in PET-366, and this path OUTLIVED them on purpose. It holds the
+# SERVER-WIDE admin credential the postgresql provider authenticates with, so deleting it
+# would leave Terraform unable to manage postgres-231 at all — taking `plane` and
+# `waterfast` with it. The `poker_password` field inside it is the part that is now dead.
+#
+# The path name is historical: this entry predates there being more than one database, so
+# the server-wide admin credential ended up under `poker/`. It is read here for
+# `admin_password` ONLY — the per-database owner passwords resolve in databases.tf. The two
+# reads are deliberately separate: this one is a property of the SERVER and must resolve for
+# the provider to connect at all, while those are properties of individual databases.
+#
+# Moving it to a sensibly-named path is worth doing and is not this change: it means
+# reseeding, updating every policy that grants kv/data/poker/*, and a window where the
+# provider cannot connect. Filed separately rather than smuggled into a teardown.
 #
 # SECRETS-IN-STATE FIX (PET-107 / PET-190): this is now an EPHEMERAL read (vault
 # provider v5). An ephemeral resource is never persisted to plan or state, so the
