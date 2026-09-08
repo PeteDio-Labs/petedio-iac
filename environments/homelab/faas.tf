@@ -1,11 +1,11 @@
-# openfaas (LXC 241) — homelab serverless (faasd) host for the Co-latro admin
+# openfaas (LXC 241) — homelab serverless (faasd) host. Built for the Co-latro admin
 # service functions (invite generation, announcements, feedback intake). PET-86.
 #
 # VMID 241 = compute/AI block (.24x), VMID = last IP octet. NB: .240 is recorded
 # as already-taken on the LAN in ollama.tf (that's why ollama-host took .12), so
 # OpenFaaS takes .241.
 #
-# Same split as poker-api: TF owns existence + hardware + network only. The
+# TF owns existence + hardware + network only. The
 # nesting/keyctl container features (needed for containerd/faasd) are applied
 # out-of-band by scripts/lxc-features-241.sh, and faasd itself is installed by
 # ansible/playbooks/configure-openfaas.yml — Proxmox's root@pam check rejects API

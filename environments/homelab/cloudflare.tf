@@ -23,7 +23,7 @@
 #     ephemeral value is NOT allowed.
 # Net: nothing from kv/iac/cloudflare lands in state anymore.
 #
-# The ephemeral read is NOT gated (unlike poker_db): Cloudflare is always "ready",
+# The ephemeral read is NOT gated (unlike postgres_admin): Cloudflare is always "ready",
 # so the provider always needs the token. kv/iac/cloudflare MUST be seeded and the
 # ci-read/terraform Vault policies MUST grant read on kv/data/iac/cloudflare before a
 # plan/apply is clean. `terraform validate` never opens ephemeral resources, so

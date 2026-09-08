@@ -36,34 +36,11 @@ module "cloudflare_ingress" {
     # below. registry.pdlab.dev is retired outright: it fronted Nexus's web UI,
     # which zot replaces with its own, LAN-only.
 
-    # Co-latro — the game, prealpha (PET-58). nginx on VM-230 (poker-api) serves the frontend
-    # dist/ and reverse-proxies /api to the backend on :3020 (same origin, relative API calls).
-    # PET-206: edge CF Access DROPPED. The app now has real auth — invite-gated signup (PET-59) +
-    # argon2id password login — so the app IS the gate; the CF Access email-allowlist only blocked
-    # testers (no OTP unless allow-listed). Public URL, useless without an admin-issued invite +
-    # account. (Removing access=true destroys this hostname's Access application/policy on apply.)
-    "co-latro.pdlab.dev" = {
-      service = "http://192.168.50.230:80"
-    }
-
-    # Co-latro Admin portal (PET-87). Served from the poker-api VM-230 as a NAME-BASED nginx
-    # vhost (server_name admin.pdlab.dev), alongside the default co-latro site: static admin UI
-    # + /function/* reverse-proxied to the faasd gateway on LXC 241 (230 is the only origin the
-    # gateway firewall allows — PET-204/F1). The tunnel forwards Host: admin.pdlab.dev to the
-    # origin (module sets origin_request.http_host_header), so the name-based vhost matches.
-    #
-    # Gated by Cloudflare Access, login via the ADMIN's Authentik user (NOT One-Time PIN):
-    # allowed_idps points at the Authentik OIDC IdP (cloudflare-oidc.tf), so the module sets
-    # auto_redirect_to_identity = true and the browser goes straight to the auth.pdlab.dev
-    # login page. access_emails still does the AUTHORIZATION (only this email passes) as
-    # defense-in-depth after Authentik authenticates — so the Authentik user MUST present this
-    # email address. Prereq: the manual Authentik app + kv/iac/authentik seed (cloudflare-oidc.tf).
-    "admin.pdlab.dev" = {
-      service       = "http://192.168.50.230:80"
-      access        = true
-      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
-      access_emails = ["pedelgadillo@gmail.com"]
-    }
+    # Co-latro and its admin portal are GONE (PET-366). Both were served from VM-230,
+    # which is destroyed; leaving either hostname here would point the tunnel at nothing.
+    # Removing admin.pdlab.dev also destroys its Access application and policy, and with
+    # it the last consumer of the Authentik IdP for a browser-gated route — the IdP stays
+    # (cloudflare-oidc.tf) because it is the login path for anything gated later.
 
     # NOTE: palworld.pdlab.dev MOVED off this tunnel — see module.cloudflare_ingress_palworld
     # at the bottom of this file. Its connector now runs on the game host itself so the panel
