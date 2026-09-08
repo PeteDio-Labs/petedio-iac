@@ -28,14 +28,6 @@ locals {
   # below (kv/db/<name>, field `password`), which is the convention to converge on; the
   # three legacy entries can be migrated later as their own, separately-reviewable change.
   postgres_databases = {
-    poker = {
-      vault_path     = "poker/db"
-      password_field = "poker_password"
-    }
-    admin = {
-      vault_path     = "admin/db"
-      password_field = "owner_password"
-    }
     waterfast = {
       vault_path     = "services/water-fast"
       password_field = "db_password"
@@ -50,7 +42,7 @@ locals {
     # role. That is sufficient: every extension it plausibly needs (pg_trgm, btree_gin,
     # uuid-ossp, citext, pgcrypto) is `trusted` on 231, and since PG13 a non-superuser
     # DATABASE OWNER may CREATE EXTENSION a trusted one. No superuser grant — that would
-    # be superuser over poker/admin/waterfast too.
+    # be superuser over waterfast too.
     plane = {}
   }
 
@@ -99,26 +91,21 @@ module "postgres_db" {
 
 # ---- state moves --------------------------------------------------------------------------
 #
-# poker and admin are LIVE and already in state at their old addresses. Without these,
-# Terraform would plan to destroy the old module instances and create new ones — against
-# `postgresql_database`, whose identity IS the database name, that reads as dropping and
-# recreating a database with real data in it.
+# The two `moved` blocks that lived here are GONE with their databases (PET-366). They
+# renamed the live poker and admin modules into this for_each map, that rename applied long
+# ago, and both databases are now destroyed — so the blocks described a move whose source
+# had left state and whose target had left configuration. A `moved` pointing at neither is
+# not a safety net, it is a thing to misread later.
 #
-# The gate on this refactor is a plan showing **0 destroyed**. Anything else is a
-# STOP-and-reassess (docs/runbooks/postgres-import.md).
-moved {
-  from = module.poker_db[0]
-  to   = module.postgres_db["poker"]
-}
-
-moved {
-  from = module.admin_db[0]
-  to   = module.postgres_db["admin"]
-}
+# Keep the rule they existed to enforce: renaming a database module is a plan showing
+# **0 destroyed**, because `postgresql_database`'s identity IS the database name, so a
+# rename Terraform does not understand reads as dropping and recreating a live database.
+# Anything else is a STOP-and-reassess (docs/runbooks/postgres-import.md).
 
 # ---- adopting the live `waterfast` objects ------------------------------------------------
 #
-# waterfast was created by hand alongside the first deploy (same as poker originally was),
+# waterfast was created by hand alongside the first deploy (as poker originally was, before
+# PET-366 removed it),
 # so it exists on the server but has never been in state. Import writes the live objects
 # into state so the following plan is a diff against reality rather than a create-from-
 # nothing, which against a live host errors "already exists" at best.
@@ -126,7 +113,8 @@ moved {
 # The GRANT is deliberately absent: postgresql_grant defines no Importer at provider v1.x,
 # so it cannot be imported. Its Create is idempotent on the database (the role already holds
 # ALL), so apply adds the state entry and does nothing to Postgres — the provider-supported
-# path, and the same one poker took. Expect exactly one resource to add for this reason.
+# path, and the same one poker took before it was removed. Expect exactly one resource to
+# add for this reason.
 import {
   to = module.postgres_db["waterfast"].postgresql_role.owner
   id = "waterfast"

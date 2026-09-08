@@ -50,10 +50,11 @@ resource "vault_jwt_auth_backend" "github" {
 # bound_claims_type = "string" → EXACT match (not glob): the sub is a fixed string
 # with no wildcard.
 #
-# NOTE (sibling exposure, separate issues): media-ci and colatro-ci below still bind
-# their `pull_request` subs, and the SAME org-scoped runner (PET-79) serves them — same
-# risk, same fix needed in petedio-media-iac / co-latro. Not changed here: dropping their
-# PR sub without updating those repos' PR workflows would break them (one repo per PR).
+# NOTE (sibling exposure, separate issue): media-ci below binds only its main-push sub
+# now (PET-163), so the exposure this note described is down to nothing here. colatro-ci
+# carried the same shape and is simply gone — removed with the rest of Co-latro in
+# PET-366. Kept as a marker: if a future role binds `pull_request` on this backend, the
+# SAME org-scoped runner (PET-79) serves it, and that is the risk to weigh.
 resource "vault_jwt_auth_backend_role" "github_actions" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "github-actions"
@@ -85,32 +86,6 @@ resource "vault_jwt_auth_backend_role" "media_ci" {
     sub = "repo:${var.media_repo}:ref:refs/heads/main"
   }
   token_policies = [vault_policy.media_ci.name]
-  token_ttl      = 900
-}
-
-# colatro-ci role → colatro-ci policy. Same JWT backend, separate role so the Co-latro
-# app repos get ONLY the colatro-ci policy (registry + MinIO-write + LXC SSH), never the
-# iac ci-read creds. Binds main + pull_request subs for BOTH app repos — built from
-# var.colatro_repos and comma-joined into one string (bound_claims_type=string, OR
-# semantics), matching the github-actions role's two-sub pattern. Bind main + PR so a
-# future PR-time job (e.g. a build check) can also mint a token; publish/deploy gate
-# on the workflow's own `if: push to main` / workflow_dispatch.
-resource "vault_jwt_auth_backend_role" "colatro_ci" {
-  backend           = vault_jwt_auth_backend.github.path
-  role_name         = "colatro-ci"
-  role_type         = "jwt"
-  user_claim        = "actor"
-  bound_audiences   = [var.github_oidc_audience]
-  bound_claims_type = "string"
-  bound_claims = {
-    sub = join(",", flatten([
-      for r in var.colatro_repos : [
-        "repo:${r}:ref:refs/heads/main",
-        "repo:${r}:pull_request",
-      ]
-    ]))
-  }
-  token_policies = [vault_policy.colatro_ci.name]
   token_ttl      = 900
 }
 
@@ -220,18 +195,6 @@ resource "vault_approle_auth_backend_role" "vault_snapshot" {
   token_max_ttl  = 600
 }
 
-# poker-api role → poker-api policy (PET-57). The Vault Agent on LXC 230 auto-auths with
-# this AppRole and renews a token used to render the backend env-file (DATABASE_URL) to a
-# tmpfs path — replacing the old 0600 plaintext at rest. Like agent-loop, the token is
-# continuously renewed by the Agent and the secret_id is seeded out-of-band on the host.
-resource "vault_approle_auth_backend_role" "poker_api" {
-  backend        = vault_auth_backend.approle.path
-  role_name      = "poker-api"
-  token_policies = [vault_policy.poker_api.name]
-  token_ttl      = 3600
-  token_max_ttl  = 14400
-}
-
 # plane-ci role → plane-ci policy. Replaces the GitHub↔Linear auto-advance that was
 # uninstalled 2026-08-13; Plane's own GitHub integration is a paid feature and is not
 # in the self-hosted Community Edition, so CI moves work-item state itself.
@@ -309,27 +272,5 @@ resource "vault_jwt_auth_backend_role" "infra_reconcile" {
   }
   token_policies = [vault_policy.infra_reconcile.name]
   token_ttl      = 300
-}
-
-# colatro-admin-ci role → colatro-admin-ci policy (PET-99). The co-latro-admin repo's deploy
-# workflow (Workflow B) builds the 4 OpenFaaS functions, pushes them to Nexus, and
-# `faas-cli deploy`s them to the faasd gateway on LXC 241 — on push to main (deploy-on-merge).
-# Separate role/policy so the admin repo gets ONLY the admin-deploy creds (admin DB URL, the
-# seam token, the faasd gateway password, Nexus push, LXC SSH to tunnel to :8080) and never the
-# colatro-ci / iac scope. MAIN-PUSH ONLY: bound to exactly the main-push sub (NOT pull_request —
-# the co-latro-admin PR job is a no-secrets typecheck), so no PR/fork run can mint this token.
-# Matches the openfaas-ci / github-actions main-only pattern above.
-resource "vault_jwt_auth_backend_role" "colatro_admin_ci" {
-  backend           = vault_jwt_auth_backend.github.path
-  role_name         = "colatro-admin-ci"
-  role_type         = "jwt"
-  user_claim        = "actor"
-  bound_audiences   = [var.github_oidc_audience]
-  bound_claims_type = "string"
-  bound_claims = {
-    sub = "repo:${var.colatro_admin_repo}:ref:refs/heads/main"
-  }
-  token_policies = [vault_policy.colatro_admin_ci.name]
-  token_ttl      = 900
 }
 

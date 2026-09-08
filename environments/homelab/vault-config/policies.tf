@@ -11,7 +11,12 @@
 # `vault kv list kv/` (= LIST kv/metadata/) is no longer permitted.
 
 # ci-read: the policy GitHub Actions gets via the JWT/OIDC role. Narrow read scope
-# limited to the secrets CI actually needs (Proxmox/MinIO/LXC-SSH creds + poker app).
+# limited to the secrets CI actually needs (Proxmox/MinIO/LXC-SSH creds + kv/poker/db).
+#
+# ⚠ THE kv/poker/* GRANTS BELOW STAY, THOUGH CO-LATRO IS GONE (PET-366). They do not
+# serve the poker app any more — they serve the postgresql PROVIDER, whose server-wide
+# admin credential still lives at kv/poker/db under that historical name. Revoking them
+# as teardown tidying would leave CI unable to plan against postgres-231 at all.
 resource "vault_policy" "ci_read" {
   name = "ci-read"
 
@@ -105,99 +110,6 @@ resource "vault_policy" "terraform" {
     }
 
     path "kv/metadata/admin/*" {
-      capabilities = ["list"]
-    }
-  EOT
-}
-
-# colatro-ci: the policy the Co-latro app repos get via the colatro-ci JWT role
-# (auth.tf). Least-privilege for publish-on-merge + the manual deploy workflow:
-#   - kv/services/registry         push the backend image to the registry (zot)
-#   - kv/services/minio-frontend-ci  WRITE the frontend dist to the MinIO bucket
-#     (distinct from the read-only kv/services/minio-frontend the on-box rollout uses)
-#   - kv/iac/lxc-ssh               SSH key to reach LXC 230 from the deploy workflow
-# Deliberately NOT kv/poker/* (the DB env-file is rendered on the box by the one-time
-# Ansible rollout — publish/deploy CI never needs DATABASE_URL) and NOT kv/iac/* beyond
-# the SSH key.
-resource "vault_policy" "colatro_ci" {
-  name = "colatro-ci"
-
-  policy = <<-EOT
-    path "kv/data/services/registry" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/minio-frontend-ci" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-  EOT
-}
-
-# colatro-admin-ci: the policy the co-latro-admin repo gets via the colatro-admin-ci JWT role
-# (auth.tf, PET-99). Least-privilege for the deploy-on-merge workflow (Workflow B) that builds
-# the 4 OpenFaaS functions, pushes them to Nexus, and `faas-cli deploy`s them to faasd (LXC 241):
-#   - kv/admin/db            DATABASE_URL wired into every function's env (stack.yml)
-#   - kv/services/admin      the co-latro <-> admin seam token (users fn: COLATRO_SERVICE_TOKEN)
-#   - kv/services/openfaas   the faasd gateway password (`faas-cli login`)
-#   - kv/services/registry   push the 4 function images to Nexus (docker login). The path is
-#                            `registry`, NOT `nexus` — see ansible-stack.yml and colatro_ci.
-#   - kv/iac/lxc-ssh         SSH key to open the runner->241:8080 tunnel for the deploy
-#   - kv/poker/db            INVITES_TOKEN (the invites-fn Bearer secret; optional at rollout)
-# READ + per-prefix LIST only — a leaked token reads exactly these deploy inputs and mutates
-# nothing. Scoped tighter than the `ansible` policy (all services/*); no iac/* beyond the SSH key.
-resource "vault_policy" "colatro_admin_ci" {
-  name = "colatro-admin-ci"
-
-  policy = <<-EOT
-    path "kv/data/admin/db" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/admin" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/openfaas" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/registry" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/poker/db" {
-      capabilities = ["read"]
-    }
-
-    path "kv/metadata/admin/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/poker/*" {
       capabilities = ["list"]
     }
   EOT
@@ -411,20 +323,6 @@ resource "vault_policy" "vault_snapshot" {
     # Read the scoped MinIO svcacct creds used to upload the snapshot to the
     # vault-snapshots bucket (seeded out-of-band by the operator — see the runbook).
     path "kv/data/services/vault-snapshots" {
-      capabilities = ["read"]
-    }
-  EOT
-}
-
-# poker-api: the policy the Vault Agent on the poker-api host (LXC 230) gets (PET-57). It
-# reads ONLY kv/poker/db — the app's own DATABASE_URL — so the Agent can render the backend
-# env-file to tmpfs at runtime. Strictly narrower than terraform/ci-read (all poker/*); a
-# leaked 230 token reads its own DB URL and nothing else.
-resource "vault_policy" "poker_api" {
-  name = "poker-api"
-
-  policy = <<-EOT
-    path "kv/data/poker/db" {
       capabilities = ["read"]
     }
   EOT

@@ -27,7 +27,7 @@
 # cleanest resource in the workspace). VMID 232 = apps block (.232).
 #
 # This is the LXC that modules/proxmox-lxc was generalized FROM; it now consumes
-# that module like poker-api (230) and postgres-rds (231). The switch from the
+# that module like postgres-rds (231). The switch from the
 # old inline resource is a pure STATE MOVE (see the moved{} block below) — the
 # in-production runner is re-addressed in state, never destroyed/recreated (a
 # rebuild would break all CI). `description`/`target_node` are passed explicitly
