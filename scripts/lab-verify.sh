@@ -329,5 +329,75 @@ else
   ok "runners spread across nodes" "232 on $R232, 233 on $R233, plus pete-pi-1"
 fi
 
+# ⚠ A LIVE INFERENCE HOST IS NOT A HOST SERVING THE MODELS IT DECLARES.
+#
+# Both ollama instances on .12 answer, and both report nine models, so every
+# liveness check passes. Neither model host_vars declares for the quality and fast
+# lanes has been pulled (PET-369): `ollama_resident_models` pins qwen3.5:9b and
+# qwen3.5:4b with keep_alive=-1, and the host has neither. The layout the host_vars
+# header describes is not the layout .12 serves, so anything written against those
+# names fails or falls back to whatever else is resident.
+#
+# Read the model names from host_vars, never from a list in this file. The
+# 2026-07-21 retune replaced every model name on this host, and a copy here would
+# have gone on reporting green against the retired set — the way the runner loop
+# above reported green while never mentioning runner-232.
+#
+# This check needs no SSH. The Ollama API answers over the LAN, so drift on .12
+# stays visible even from a workstation with no key for that host.
+sec "Inference host serves what it declares"
+if ! command -v ansible-inventory >/dev/null 2>&1; then
+  skip "ollama declared set" "ansible-inventory not on PATH"
+else
+  OLLAMA_OUT=$(cd "$(dirname "$0")/../ansible" && python3 - <<'PY'
+import json, re, subprocess, sys, urllib.request
+
+try:
+    hv = json.loads(subprocess.run(["ansible-inventory", "--host", "ollama-host"],
+                                   capture_output=True, text=True, timeout=60).stdout)
+except Exception as e:
+    print(f"BAD\tollama declared set readable\t{type(e).__name__}")
+    sys.exit(0)
+
+def resolve(v, depth=0):
+    """host_vars states models as {{ ollama_coder_model }}; expand against the same vars."""
+    m = re.fullmatch(r"\s*\{\{\s*(\w+)\s*\}\}\s*", v) if isinstance(v, str) and depth < 5 else None
+    return resolve(hv.get(m.group(1), v), depth + 1) if m else v
+
+host = hv.get("ansible_host")
+primary = hv.get("ollama_port") or 11434   # role default; host_vars does not restate it
+declared = [resolve(m) for m in hv.get("ollama_base_models", [])]
+resident = [(resolve(e.get("model")), e.get("port", primary))
+            for e in hv.get("ollama_resident_models", [])]
+ports = {primary} | {i.get("port") for i in hv.get("ollama_extra_instances", [])}
+
+served = {}
+for p in sorted(ports):
+    try:
+        d = json.loads(urllib.request.urlopen(f"http://{host}:{p}/api/tags", timeout=10).read())
+        served[p] = {m["name"] for m in d.get("models", [])}
+        print(f"OK\tollama :{p} answers\t{len(served[p])} models")
+    except Exception as e:
+        served[p] = set()
+        print(f"BAD\tollama :{p} answers\t{type(e).__name__}")
+
+if served.get(primary):
+    missing = [m for m in declared if m not in served[primary]]
+    print(f"BAD\tdeclared models pulled\tMISSING {', '.join(missing)}" if missing
+          else f"OK\tdeclared models pulled\tall {len(declared)} present")
+
+for model, port in resident:
+    if served.get(port):
+        here = model in served[port]
+        print(f"{'OK' if here else 'BAD'}\tresident {model} on :{port}\t"
+              f"{'' if here else 'declared keep_alive=-1, never pulled'}")
+PY
+)
+  while IFS=$'\t' read -r verdict name detail; do
+    [ -z "$verdict" ] && continue
+    [ "$verdict" = "OK" ] && ok "$name" "$detail" || bad "$name" "$detail"
+  done <<< "$OLLAMA_OUT"
+fi
+
 printf "\n\033[1m%d passed, %d failed, %d skipped\033[0m\n" "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1
