@@ -235,6 +235,7 @@
       status_page_title: "{{ uptime_kuma_status_page_title }}"
       api_key_name: "{{ uptime_kuma_api_key_name }}"
       monitors: "{{ uptime_kuma_monitors }}"
+      notifications: "{{ uptime_kuma_notifications }}"
   no_log: true
 
 - name: Reconcile monitors, retention, status page and API key
