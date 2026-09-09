@@ -73,8 +73,20 @@ jobs:
         id: vault_ca
         run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
 
-      # Same reasoning as plane-sync.yml: a nightly job that goes red because Vault was
-      # sealed is noise, not signal — the next night's run reconciles anyway.
+      # ⚠ A FAILED MINT FAILS THIS JOB. `continue-on-error` is still here, but it now
+      # buys a better error rather than silence: the run reaches the next step, which
+      # names the repo and the reason before exiting non-zero.
+      #
+      # It used to swallow the failure, on the reasoning that a nightly job going red
+      # over a sealed Vault was noise and the next night would reconcile anyway. That
+      # holds only while the next night works. On 2026-09-09 Vault sat sealed from
+      # 02:48 to 12:22 and all eleven repos reported success having reconciled nothing
+      # (PET-372). A safety net that cannot say it failed is worse than none, because
+      # it stops you looking. `infra-reconcile` learned this as PET-317.
+      #
+      # Do NOT copy this to plane-sync.yml. That job runs on PR events and must never
+      # block a merge when Plane is down, so it warns and exits 0 on purpose. Nothing
+      # waits on this job, which is what lets it be loud.
       - name: Vault — mint the Plane token via OIDC
         continue-on-error: true
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
@@ -97,9 +109,14 @@ jobs:
           set -uo pipefail
           echo "reconciling: $GITHUB_REPOSITORY"
           if [ -z "${PLANE_API_KEY:-}" ]; then
-            echo "::warning title=plane-reconcile::No Plane API key — nothing reconciled for $GITHUB_REPOSITORY."
-            echo "- **$GITHUB_REPOSITORY** — skipped, no Plane API key" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "::error title=plane-reconcile::No Plane API key for $GITHUB_REPOSITORY — the Vault mint failed, so nothing was reconciled. Check that Vault is unsealed."
+            {
+              echo "### plane-reconcile — $GITHUB_REPOSITORY"
+              echo ""
+              echo "**Failed before scanning.** The Vault mint returned no Plane API key, so no"
+              echo "work item was checked. This is a real failure, not a quiet night."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           export SINCE
           SINCE=$(date -u -d "-${LOOKBACK} days" +%Y-%m-%d 2>/dev/null || date -u -v-"${LOOKBACK}"d +%Y-%m-%d)
