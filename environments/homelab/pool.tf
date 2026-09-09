@@ -56,6 +56,8 @@ locals {
     openfaas   = module.openfaas.vm_id
     authentik  = module.authentik.vm_id
     minio_data = module.minio_data.vm_id
+    plane      = module.plane.vm_id
+    media_dash = module.media_dash.vm_id
   } : {}
 
   # LXCs that exist on the cluster but have NO Terraform module here, so there is
