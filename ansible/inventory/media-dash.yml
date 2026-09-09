@@ -1,0 +1,49 @@
+---
+# media-dash — mtrace, the media stack's read-only control surface (PET-355).
+#
+# ⚠ SPLIT OUT OF hosts.yml ON PURPOSE, like palworld.yml, openfaas.yml and pete-pi.yml.
+# This host is deployed by an apply-on-merge workflow — deploy.yml in
+# PeteDio-Labs/petedio-media-control — so an unrelated edit to hosts.yml must not be able
+# to redeploy it, and an edit here must not redeploy anything else (PET-302).
+#
+# ansible.cfg loads the whole inventory/ DIRECTORY rather than a list of files, so this
+# file needs no registration anywhere. That is deliberate: a list is a thing you can
+# forget, and `ansible-playbook` exits 0 when a play matches zero hosts, so a forgotten
+# file reads as a successful deploy.
+all:
+  children:
+    # The host itself. LXC 237 on pve03, declared in environments/homelab/media-dash.tf.
+    media_dash:
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
+      hosts:
+        media-dash-237:
+          ansible_host: 192.168.50.237
+
+    # ⚠ THE SEVEN SERVICES mtrace READS, AND THE ONLY REASON THIS GROUP EXISTS: to answer
+    # "who may mtrace log into". petedio-media-iac OWNS these containers — their creation,
+    # their storage, their placement, everything about them. Nothing here configures them;
+    # configure-media-dash.yml only installs ONE public key for root on each.
+    #
+    # Duplicating six addresses across two repos is a real cost, accepted because the
+    # alternative is a distribution script, and a script is a thing that runs at the wrong
+    # moment or not at all (workflow rule 6). If a media host is renumbered, media-iac is
+    # the source of truth and this file follows it.
+    #
+    # Six hosts, seven services: qBittorrent and gluetun share one network namespace on
+    # 110, so they share an address.
+    media_read:
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
+      hosts:
+        seerr: { ansible_host: 192.168.50.33 }        # 101, pve03
+        sonarr: { ansible_host: 192.168.50.15 }       # 104, pve03
+        radarr: { ansible_host: 192.168.50.16 }       # 105, pve03
+        prowlarr: { ansible_host: 192.168.50.20 }     # 109, pve03
+        qbittorrent-vpn: { ansible_host: 192.168.50.21 } # 110, pve02 — qBittorrent + gluetun
+        # ⚠ plex-gpu (236), NOT the dead plex 103 at .140. 103 died with pve01 on
+        # 2026-09-03 and was never rebuilt; a probe pointed at .140 for three days and
+        # scored a hard NO on every Plex check.
+        plex-gpu: { ansible_host: 192.168.50.236 }    # 236, pve02

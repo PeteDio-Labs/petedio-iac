@@ -1,0 +1,233 @@
+---
+# configure-media-dash.yml — deploy mtrace on media-dash-237 as a systemd service.
+#
+# mtrace is the media stack's read-only control surface (PET-355, repo
+# PeteDio-Labs/petedio-media-control). It answers "where is this stuck" by joining seerr
+# requests to Sonarr/Radarr rows, qBittorrent infohashes and Plex rating keys.
+#
+# WHY A COMPILED BINARY (not Bun-from-source like water-fast/resume-builder): PET-355 chose
+# Bun on the strength of `bun build --compile`, which produces one standalone file with no
+# runtime to drift. This play COPIES that file; it never builds. roles/seerr in
+# petedio-media-iac calls a build-from-source Node app "the single riskiest operation in
+# this stack", and this deliberately does not repeat it.
+#
+# ⚠ HOW IT REACHES THE MEDIA STACK, AND THE COST OF THAT. mtrace does not hold the *arr API
+# keys. It SSHes to each host and curls that host's own loopback, so a key is read from the
+# host's config, used there, and only the RESPONSE crosses the LAN. That is a real security
+# property — an *arr API key is equivalent to full control of that app — and it is also the
+# only way to reach qBittorrent at all, whose WebUI is unreachable from off-box because
+# Docker SNATs host-origin traffic outside its subnet allowlist.
+#
+# The cost is that 237 needs SSH to seven hosts. It is given a DEDICATED keypair for this,
+# NOT the lab-wide `kv/iac/lxc-ssh` key: a read-only diagnostic must not carry root access
+# to every container in the lab. The public half is installed below on exactly the seven
+# hosts it reads, and nothing else.
+#
+# SECRETS (resolved by scripts/deploy-media-dash.sh, passed as no_log extra-vars):
+#   media_dash_ssh_private_key  (Vault kv/services/media/dashboard, field ssh_private_key)
+#   media_dash_ssh_public_key   (kv/services/media/dashboard, field ssh_public_key)
+#   mtrace_api_token            (kv/services/media/dashboard, field api_token)
+# Run via:  ./scripts/deploy-media-dash.sh
+
+- name: Authorise mtrace's dedicated key on the media hosts it reads
+  hosts: media_read
+  become: true
+  gather_facts: false
+
+  # ⚠ Scoped to ONE key on SEVEN hosts, and that is the whole play. petedio-media-iac owns
+  # these containers; this group exists only to answer "who may mtrace log into", which is
+  # a fact about mtrace rather than about the media stack. Keeping it declarative here beats
+  # a distribution script nobody re-runs — workflow rule 6.
+  tasks:
+    - name: Assert the public key was provided (use scripts/deploy-media-dash.sh)
+      ansible.builtin.assert:
+        that:
+          - media_dash_ssh_public_key is defined
+          - media_dash_ssh_public_key | length > 0
+        fail_msg: >-
+          Missing media_dash_ssh_public_key. Run scripts/deploy-media-dash.sh, which
+          resolves it from Vault (kv/services/media/dashboard).
+
+    - name: Install mtrace's public key for root
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ media_dash_ssh_public_key }}"
+        state: present
+        # Never exclusive: these hosts are also reached by the ansible key and by the
+        # operator, and pruning those would lock the lab out of its own media stack.
+        exclusive: false
+
+- name: Deploy mtrace on media-dash-237
+  hosts: media_dash
+  become: true
+
+  vars:
+    mtrace_dir: /opt/mtrace
+    mtrace_bin: /opt/mtrace/mtrace
+    mtrace_user: mtrace
+    mtrace_group: mtrace
+    mtrace_port: 8237
+    # Controller path to the compiled binary. CI overrides this with the artifact it just
+    # built on the runner; the operator's script points it at the local checkout.
+    media_dash_binary_src: "{{ lookup('env', 'HOME') }}/petedio/media-control/dist/mtrace"
+
+  pre_tasks:
+    - name: Assert required secret extra-vars were provided (use scripts/deploy-media-dash.sh)
+      ansible.builtin.assert:
+        that:
+          - media_dash_ssh_private_key is defined and media_dash_ssh_private_key | length > 0
+          - mtrace_api_token is defined and mtrace_api_token | length > 0
+        fail_msg: >-
+          Missing secret extra-vars. Run scripts/deploy-media-dash.sh, which resolves them
+          from Vault (kv/services/media/dashboard) and passes them in.
+      no_log: true
+
+    # Without this the play would install a stale binary, or none, and the service would
+    # keep answering with yesterday's code — which looks like a deploy that worked.
+    - name: Assert the binary was compiled on the controller (bun run build)
+      ansible.builtin.stat:
+        path: "{{ media_dash_binary_src }}"
+      delegate_to: localhost
+      become: false
+      register: mtrace_binary_stat
+
+    - name: Fail when the binary is missing
+      ansible.builtin.fail:
+        msg: >-
+          No binary at {{ media_dash_binary_src }}. Run `bun run build` in
+          petedio-media-control first, or pass -e media_dash_binary_src=<path>.
+      when: not mtrace_binary_stat.stat.exists
+
+  tasks:
+    - name: Create the service account
+      ansible.builtin.user:
+        name: "{{ mtrace_user }}"
+        system: true
+        create_home: false
+        home: "{{ mtrace_dir }}"
+        shell: /usr/sbin/nologin
+        state: present
+
+    - name: Create the application directory
+      ansible.builtin.file:
+        path: "{{ mtrace_dir }}"
+        state: directory
+        owner: "{{ mtrace_user }}"
+        group: "{{ mtrace_group }}"
+        mode: "0750"
+
+    - name: Create the ssh directory for the service account
+      ansible.builtin.file:
+        path: "{{ mtrace_dir }}/.ssh"
+        state: directory
+        owner: "{{ mtrace_user }}"
+        group: "{{ mtrace_group }}"
+        mode: "0700"
+
+    # The dedicated key, not kv/iac/lxc-ssh. See the header.
+    - name: Install mtrace's private key
+      ansible.builtin.copy:
+        content: "{{ media_dash_ssh_private_key }}\n"
+        dest: "{{ mtrace_dir }}/.ssh/id_ed25519_mtrace"
+        owner: "{{ mtrace_user }}"
+        group: "{{ mtrace_group }}"
+        mode: "0600"
+      no_log: true
+      notify: Restart mtrace
+
+    # ⚠ Pre-seeding the host keys matters: the transport runs with BatchMode=yes, so an
+    # unknown host is a hard failure, and StrictHostKeyChecking=accept-new only helps the
+    # first time if something is there to write to. Doing it here means the first real
+    # question does not fail on seven unknown hosts.
+    - name: Pre-seed the media hosts' ssh host keys
+      ansible.builtin.shell:
+        cmd: >-
+          ssh-keyscan -T 5 -H
+          192.168.50.33 192.168.50.15 192.168.50.16 192.168.50.20
+          192.168.50.21 192.168.50.236
+          > {{ mtrace_dir }}/.ssh/known_hosts.new
+          && mv {{ mtrace_dir }}/.ssh/known_hosts.new {{ mtrace_dir }}/.ssh/known_hosts
+      changed_when: true
+
+    - name: Own the known_hosts file
+      ansible.builtin.file:
+        path: "{{ mtrace_dir }}/.ssh/known_hosts"
+        owner: "{{ mtrace_user }}"
+        group: "{{ mtrace_group }}"
+        mode: "0600"
+
+    - name: Install the mtrace binary
+      ansible.builtin.copy:
+        src: "{{ media_dash_binary_src }}"
+        dest: "{{ mtrace_bin }}"
+        owner: root
+        group: "{{ mtrace_group }}"
+        mode: "0750"
+      notify: Restart mtrace
+
+    - name: Install the service environment
+      ansible.builtin.template:
+        src: mtrace.env.j2
+        dest: /etc/mtrace.env
+        owner: root
+        group: "{{ mtrace_group }}"
+        mode: "0640"
+      no_log: true
+      notify: Restart mtrace
+
+    - name: Install the systemd unit
+      ansible.builtin.template:
+        src: mtrace.service.j2
+        dest: /etc/systemd/system/mtrace.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart mtrace
+
+    - name: Enable and start mtrace
+      ansible.builtin.systemd:
+        name: mtrace
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  post_tasks:
+    # ⚠ /health only proves the process is up. The second check proves it can still REACH
+    # the stack, which is what a fresh key, a missing known_hosts entry or a moved container
+    # all break — and all of which leave /health perfectly green.
+    - name: Wait for the service to answer
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ mtrace_port }}/health"
+        return_content: true
+      register: mtrace_health
+      retries: 10
+      delay: 2
+      until: mtrace_health.status is defined and mtrace_health.status == 200
+
+    - name: Prove it can actually read the media stack, not just start
+      ansible.builtin.command:
+        cmd: "{{ mtrace_bin }} --tool stale_versions"
+      become_user: "{{ mtrace_user }}"
+      environment:
+        MEDIA_CONTROL_SSH_KEY: "{{ mtrace_dir }}/.ssh/id_ed25519_mtrace"
+        HOME: "{{ mtrace_dir }}"
+      register: mtrace_reach
+      changed_when: false
+      failed_when: >-
+        mtrace_reach.rc != 0 or 'not answering' in mtrace_reach.stdout
+
+    - name: Report what it can see
+      ansible.builtin.debug:
+        msg: "{{ mtrace_reach.stdout_lines }}"
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart mtrace
+      ansible.builtin.systemd:
+        name: mtrace
+        state: restarted

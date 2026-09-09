@@ -190,6 +190,19 @@ resource "vault_policy" "media_ci" {
       capabilities = ["read"]
     }
 
+    # ⚠ EXCEPT the dashboard's own secret, which is NOT a media-stack credential.
+    # kv/services/media/dashboard holds mtrace's dedicated SSH private key (PET-355), and
+    # that key is root on six media containers. The glob above was written before anything
+    # existed under this prefix, so seeding the dashboard there silently widened media-ci
+    # from "read the media stack's secrets" to "hold root on the media stack".
+    #
+    # Vault resolves the MOST SPECIFIC path first — an exact match beats a glob — so this
+    # deny wins over the rule above it regardless of ordering. Verified against a live
+    # token carrying this policy, not assumed.
+    path "kv/data/services/media/dashboard" {
+      capabilities = ["deny"]
+    }
+
     path "kv/metadata/iac/*" {
       capabilities = ["list"]
     }
@@ -267,6 +280,48 @@ resource "vault_policy" "water_fast_cd" {
     }
 
     path "kv/data/services/water-fast" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
+# media-dash-cd: the petedio-media-control repo's CD role (PET-355) — deploy.yml compiles
+# the mtrace binary and installs it plus its systemd unit on media-dash-237 on merge (the
+# runner SSHes in). Least-privilege: ONLY the ansible SSH key (to reach 237) and the app's
+# own service secret. Mirrors water-fast-cd. Apply BEFORE the CD workflow lands or the
+# first run 403s.
+#
+# ⚠ IT IS DELIBERATELY NOT GIVEN THE *arr API KEYS, and that is the whole security story
+# of PET-355. The ticket budgeted for holding seven credentials centrally; the transport
+# that shipped does not need them, because the curl runs ON each host — a key is read from
+# that host's own config, used on its own loopback, and only the RESPONSE crosses the LAN.
+# Centralising them would have been a REGRESSION bought with this ticket's own budget.
+#
+# ⚠ And it could never have been complete anyway: qBittorrent's WebUI is unreachable from
+# off-box no matter what credential you hold. Docker SNATs host-origin traffic to the
+# bridge gateway, which falls outside `WebUI\AuthSubnetWhitelistEnabled`, so the only way
+# in is `docker exec` inside the netns — over SSH. A design that put the *arr keys in Vault
+# would still have needed the SSH key for the download client.
+#
+# So the one credential held centrally is the one that genuinely exists: the SSH key, plus
+# the dashboard's own API token.
+resource "vault_policy" "media_dash_cd" {
+  name = "media-dash-cd"
+
+  policy = <<-EOT
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/media/dashboard" {
       capabilities = ["read"]
     }
 

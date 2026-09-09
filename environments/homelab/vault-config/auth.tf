@@ -168,6 +168,29 @@ resource "vault_jwt_auth_backend_role" "resume_builder_cd" {
 # (`repo:PeteDio-Labs@<org-id>/petedio-water-fast@<repo-id>:ref:...`), which no literal sub
 # binding can match. repository + ref is exactly as tight: this repo, pushes to main only
 # (a PR run carries ref=refs/pull/N/merge and is excluded).
+# media-dash-cd → the petedio-media-control repo's deploy.yml (PET-355).
+#
+# ⚠ Bound on `repository` + `ref`, NOT on `sub`. petedio-media-control was created in
+# 2026-09 and so emits the ID-QUALIFIED subject
+# (`repo:PeteDio-Labs@<org-id>/petedio-media-control@<repo-id>:ref:...`), which no literal
+# sub binding can match — the failure mode PET-360 spent a day on, where every mint failed
+# and the workflow still reported green. repository + ref is exactly as tight: this repo,
+# pushes to main only (a PR run carries ref=refs/pull/N/merge and is excluded).
+resource "vault_jwt_auth_backend_role" "media_dash_cd" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "media-dash-cd"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository = var.media_control_repo
+    ref        = "refs/heads/main"
+  }
+  token_policies = [vault_policy.media_dash_cd.name]
+  token_ttl      = 900
+}
+
 resource "vault_jwt_auth_backend_role" "water_fast_cd" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "water-fast-cd"
