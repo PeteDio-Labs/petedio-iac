@@ -35,6 +35,20 @@ FIELD_MAP = {
 }
 
 
+def notif_ids(monitor):
+    """Ids attached to a monitor, whatever shape this Kuma reports them in.
+
+    ⚠ notificationIDList is a LIST of ids here ([1]), and a dict keyed by id in other
+    versions and in uptime-kuma-api's own docs. Assuming either one crashes on the
+    other, and assuming the dict shape is what made a first attempt report all 19
+    monitors unattached when they were already bound.
+    """
+    raw = monitor.get("notificationIDList") or []
+    if isinstance(raw, dict):
+        return {int(k) for k, v in raw.items() if v}
+    return {int(i) for i in raw}
+
+
 def build_kwargs(spec, cfg):
     """Turn one declared monitor into add_monitor/edit_monitor kwargs."""
     kw = {
@@ -78,6 +92,7 @@ def main():
         "created": [], "updated": [], "unchanged": [],
         "failed": [], "warnings": [],
         "notifications_created": [], "notifications_updated": [],
+        "notifications_attached": [],
     }
     api = UptimeKumaApi(cfg["url"], timeout=60)
     try:
@@ -216,6 +231,26 @@ def main():
         except Exception as exc:  # noqa: BLE001
             result["warnings"].append(f"api key failed: {exc}")
 
+        # ⚠ ATTACH EXPLICITLY. applyExisting=True on add_notification does NOT attach to
+        # monitors that already exist — verified 2026-09-09, when it created the channel
+        # and left all 19 monitors with notificationIDList empty. Setting it per monitor
+        # is the only thing that actually binds them, so do that and let the check below
+        # confirm it rather than trusting either mechanism.
+        if cfg.get("notifications"):
+            declared = {spec["name"] for spec in cfg["notifications"]}
+            wanted = {n["id"] for n in api.get_notifications() if n["name"] in declared}
+            for mon in api.get_monitors():
+                current = notif_ids(mon)
+                if wanted <= current:
+                    continue
+                try:
+                    api.edit_monitor(mon["id"], notificationIDList=sorted(current | wanted))
+                    result["notifications_attached"].append(mon["name"])
+                except (UptimeKumaException, Exception) as exc:  # noqa: BLE001
+                    result["failed"].append(
+                        {"name": f"attach:{mon['name']}", "error": str(exc)}
+                    )
+
         # ⚠ PROVE THE ATTACHMENT, DO NOT ASSUME applyExisting WORKED. The whole
         # point of PET-374 is that a monitor which notifies nobody looks exactly
         # like one that does. Count the silent ones and fail on them, so this
@@ -223,10 +258,7 @@ def main():
         finals = api.get_monitors()
         result["monitor_total"] = len(finals)
         if cfg.get("notifications"):
-            silent = [
-                m["name"] for m in finals
-                if not (m.get("notificationIDList") or {})
-            ]
+            silent = [m["name"] for m in finals if not notif_ids(m)]
             result["monitors_without_notification"] = silent
             if silent:
                 result["failed"].append({
