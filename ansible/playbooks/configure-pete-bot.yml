@@ -138,11 +138,18 @@
     # ⚠ /health only proves the process is up. This proves it reached DISCORD, which is
     # what a bad token, a revoked app or a network egress problem all break while /health
     # stays perfectly green.
+    # ⚠ RETRY. /health answers the moment Express binds, which is milliseconds; the
+    # Discord websocket handshake takes several seconds longer. Checking once right
+    # after the health probe fails a deploy that is about to succeed — it did, by four
+    # seconds, the first time this ran.
     - name: Prove it is logged in to Discord, not merely running
       ansible.builtin.command:
-        cmd: journalctl -u pete-bot --since -2min --no-pager -o cat
+        cmd: journalctl -u pete-bot --since -3min --no-pager -o cat
       register: pete_bot_journal
       changed_when: false
+      retries: 15
+      delay: 2
+      until: "'logged in as' in pete_bot_journal.stdout"
       failed_when: "'logged in as' not in pete_bot_journal.stdout"
 
     - name: Report what it logged in as
