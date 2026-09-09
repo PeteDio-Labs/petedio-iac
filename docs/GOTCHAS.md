@@ -540,10 +540,11 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   it just appears in the plan as destroys alongside whatever you were actually changing.
 
   **The count grows with the lab** — it was 7 memberships (8 destroys) when this was written and
-  is 11 (12 destroys) as of PET-355. Do not pattern-match on the number; match on the resource
-  type, `proxmox_pool_membership.lxc[*]` plus `proxmox_virtual_environment_pool.homelab[0]`.
+  is 13 (14 destroys) once PET-355 added media-dash-237 and backfilled plane-235. Do not
+  pattern-match on the number; match on the resource type, `proxmox_pool_membership.lxc[*]`
+  plus `proxmox_virtual_environment_pool.homelab[0]`.
 
-  **There is a second variable, and it is easy to miss** because it produces a quiet
+  **There is a second variable, and it hides** because it produces a quiet
   `1 to change` rather than a destroy: `TF_VAR_postgres_db_password_versions`, from the repo
   variable `POSTGRES_DB_PASSWORD_VERSIONS` (today `{"plane":2}`). Without it the plan proposes
   `password_wo_version = "2" -> "1"` on `module.postgres_db["plane"].postgresql_role.owner`,
