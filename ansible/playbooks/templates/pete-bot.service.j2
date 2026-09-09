@@ -9,6 +9,16 @@ Description=pete-bot — Discord surface for the homelab (PET-375)
 After=network-online.target mtrace.service
 Wants=network-online.target
 
+# ⚠ THESE BELONG IN [Unit], NOT [Service]. systemd parses them here; put them under
+# [Service] and it logs "Unknown key ... ignoring" and carries on with no limit at all —
+# a restart loop that looks bounded and is not.
+#
+# Without them, Restart=on-failure with a 5s delay respawns forever and the unit never
+# reaches the failed state, so systemctl is-failed and anything watching it stay green
+# while the process crashes every five seconds. mtrace shipped without this.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
 [Service]
 Type=simple
 User={{ pete_bot_user }}
@@ -17,12 +27,6 @@ EnvironmentFile={{ pete_bot_env_file }}
 ExecStart={{ pete_bot_bin }}
 Restart=on-failure
 RestartSec=5s
-# ⚠ BOUND THE RESTART LOOP. Without a start limit, Restart=on-failure with a 5s delay
-# respawns forever and the unit never reaches `failed`, so `systemctl is-failed` and
-# anything watching it stay green while the process crashes every five seconds. mtrace
-# shipped without this; do not copy that.
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 NoNewPrivileges=true
 PrivateTmp=true
