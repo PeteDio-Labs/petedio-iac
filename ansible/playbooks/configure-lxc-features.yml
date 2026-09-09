@@ -1,0 +1,75 @@
+---
+# configure-lxc-features.yml — make container `features` a declared thing.
+#
+# Terraform cannot set them. Proxmox hardcodes a `user == root@pam` check on the
+# LXC features mutation and an API token's username is `root@pam!tokenid`, so
+# both LXC modules create the container WITHOUT a features block and keep
+# `features` in `ignore_changes`. Both module headers then say nesting/keyctl are
+# "set out-of-band by Ansible" — and until PET-378 no such Ansible existed. The
+# real mechanism was three one-off scripts for three specific containers
+# (scripts/lxc-features-232.sh, -235.sh, -241.sh), so anything created another
+# way got nothing and nothing looked.
+#
+# ⚠ THIS PLAY DOES NOT RESTART CONTAINERS, AND IT FAILS WHEN ONE IS PENDING.
+# `features` applies only at start. A run that sets the flag and exits green
+# leaves you believing a container has nesting while it is still running without
+# it — the false green this board keeps meeting (PET-317, PET-372). So the play
+# converges the config, RE-READS the node, and then names every container still
+# running under its old features and exits non-zero. Restart them yourself, in a
+# window you picked: `pct reboot <vmid>` on the node.
+#
+#   cd ansible
+#   ansible-playbook -i inventory/ playbooks/configure-lxc-features.yml --check
+#   ansible-playbook -i inventory/ playbooks/configure-lxc-features.yml
+#
+# Safe to run at any time: it changes only `pct config`, never run state.
+#
+# ⚠ `proxmox:pve_new`, NOT a new inventory group. pve02 lives in the `proxmox`
+# group of inventory/hosts.yml and pve03 lives in `pve_new` in inventory/pve03.yml,
+# split apart on purpose — ansible-palworld.yml and ansible-openfaas.yml both list
+# hosts.yml under push.paths, so adding a group there would redeploy a live game
+# server and faasd on merge (PET-302). The union expression needs no inventory
+# edit at all. If a third node is ever added to its own file, add its group here.
+#
+# ⚠ NO `serial:` HERE, AND THAT IS DELIBERATE. `serial: 1` reads better — each
+# node prints a full table, uninterleaved — but this play is DESIGNED to end
+# non-zero while any container still needs a restart, and Ansible ends a serial
+# play as soon as every host in a batch has failed. With `serial: 1` that is one
+# host: pve02 failing meant pve03 NEVER RAN, and the recap listed only pve02
+# rather than saying a node had been skipped. `max_fail_percentage: 100` does not
+# rescue it — the all-hosts-in-batch-failed check is separate and unconditional.
+# Measured 2026-09-09. Both nodes run together instead; every line names its host.
+
+# ⚠ A HOST PATTERN THAT MATCHES NOTHING EXITS 0. `ansible-playbook` treats "no
+# hosts matched" as success, so renaming a group or moving a node into a third
+# inventory file would make this play stop covering that node and still report a
+# clean run. ansible.cfg carries the same warning about the inventory directory.
+# Naming the nodes turns that silence into a failure.
+- name: Assert the play will reach every Proxmox node
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  vars:
+    lxc_features_expected_nodes: [pve02, pve03]
+  tasks:
+    - name: Every expected node is in the pattern
+      ansible.builtin.assert:
+        that: lxc_features_expected_nodes | difference(_matched) | length == 0
+        fail_msg: >-
+          The pattern `proxmox:pve_new` misses
+          {{ lxc_features_expected_nodes | difference(_matched) | join(', ') }}.
+          It matched {{ _matched | join(', ') or 'nothing' }}. A node was renamed
+          or moved to another inventory file — fix the pattern in this playbook
+          rather than letting the run report success having skipped a node.
+        success_msg: "Will converge: {{ _matched | join(', ') }}"
+      vars:
+        _matched: "{{ (groups.get('proxmox', []) + groups.get('pve_new', [])) | unique | sort }}"
+
+- name: Converge LXC features on the Proxmox nodes
+  hosts: proxmox:pve_new
+  become: true
+  gather_facts: false
+
+  roles:
+    - lxc-features

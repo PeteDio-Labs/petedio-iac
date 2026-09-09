@@ -1,0 +1,64 @@
+---
+# Read the node, then work out what each container needs. Included TWICE by
+# main.yml — once before converging and once after — so the report that gets
+# printed and asserted on is re-read from the node rather than assumed from what
+# the `pct set` task believed it did.
+
+- name: Read declared and running features from the node
+  # ⚠ check_mode: false, deliberately. `script` skips under --check, which would
+  # leave lxc_features_raw undefined and fail the parse below — so a --check run
+  # would break on the read rather than on any change. The script only reads
+  # `pct config` / `pct status` and two files under /var/lib/lxc, so running it
+  # during a check changes nothing.
+  ansible.builtin.script: lxc-features-report.py
+  register: lxc_features_raw
+  changed_when: false
+  check_mode: false
+
+- name: Parse the report
+  ansible.builtin.set_fact:
+    lxc_features_report: "{{ lxc_features_raw.stdout | from_json }}"
+
+- name: Start a fresh plan
+  # Without this the accumulator below keeps the first pass's entries and the
+  # post-converge report would show every container twice, half of it stale.
+  ansible.builtin.set_fact:
+    lxc_features_plan: []
+
+- name: Work out what each container needs
+  ansible.builtin.set_fact:
+    lxc_features_plan: >-
+      {{ lxc_features_plan + [{
+           'vmid': item.vmid,
+           'hostname': item.hostname,
+           'status': item.status,
+           'declared': item.declared,
+           'running': item.running,
+           'want': _want,
+           'target': item.declared | combine(_want),
+           'undeclared': (_want | length == 0) | bool,
+           'needs_set': ((item.declared | combine(_want)) != item.declared) | bool,
+           'extra': (item.declared.keys() | list) | difference(_want.keys() | list),
+           'restart_pending': _restart_pending | bool,
+         }] }}
+  vars:
+    # Quoted keys in defaults, `| string` here: `pct list` yields a VMID that
+    # JSON carries as an integer, and a lookup of 109 against a map keyed "109"
+    # misses silently and reads as undeclared.
+    _want: "{{ lxc_features_declared[item.vmid | string] | default({}) }}"
+    # Only the flags the reporter can actually observe at runtime. Comparing the
+    # running state against a flag with no runtime marker would report a restart
+    # as pending forever, and a permanent failure is one you learn to ignore.
+    _want_observable: >-
+      {{ _want | dict2items
+         | selectattr('key', 'in', lxc_features_report.observable)
+         | items2dict }}
+    # A stopped container has no running state to be wrong — `running` is null.
+    # `combine` leaving the dict unchanged is the test: every wanted observable
+    # flag already holds that value.
+    _restart_pending: >-
+      {{ item.running is not none
+         and (item.running | combine(_want_observable)) != item.running }}
+  loop: "{{ lxc_features_report.containers }}"
+  loop_control:
+    label: "{{ item.vmid }} {{ item.hostname }}"

@@ -1,0 +1,143 @@
+---
+# Converge container `features` on one Proxmox node. See defaults/main.yml for
+# why this role exists and what missing `nesting=1` actually breaks.
+#
+# ⚠ IT DOES NOT RESTART ANYTHING. `features` takes effect only when a container
+# starts, so a container converged here keeps running under its old features
+# until someone restarts it — and a run that sets the flag and reports success
+# is precisely the false green PET-372 and PET-317 were about. So the play sets
+# the config, RE-READS the node, and then fails while any container is still
+# running without what it was given, naming each one and the command to fix it.
+#
+#   ansible-playbook -i inventory/ playbooks/configure-lxc-features.yml
+#   ansible-playbook -i inventory/ playbooks/configure-lxc-features.yml --check
+
+- name: Look for pct
+  # `pct` missing means the play is pointed at a container or the wrong machine.
+  # Without this the reporter exits 0 having found no containers, and a node that
+  # was never read reports the same clean result as a node with no drift.
+  #
+  # stat, not `command -v pct`: the command module runs no shell, so `command` is
+  # not on PATH as a binary and the task dies with ENOENT before it ever looks
+  # for pct — a missing-tool check that fails identically whether or not the tool
+  # is there.
+  ansible.builtin.stat:
+    path: /usr/sbin/pct
+  register: lxc_features_pct
+  check_mode: false
+
+- name: Assert this host is a Proxmox node
+  ansible.builtin.assert:
+    that: lxc_features_pct.stat.exists
+    fail_msg: >-
+      No /usr/sbin/pct on {{ inventory_hostname }}. This play converges LXC
+      features on a Proxmox NODE; point it at pve02 or pve03.
+
+- name: Read the node and work out what each container needs
+  ansible.builtin.include_tasks: gather.yml
+
+- name: Fail on a container nobody declared
+  # The gap this role closes. media-dash-237 was created on 2026-09-09 through
+  # the documented process and got no features, because the documented process
+  # does not set them. A new container has to be loud here or it repeats.
+  ansible.builtin.assert:
+    that: lxc_features_plan | selectattr('undeclared') | list | length == 0
+    fail_msg: >-
+      {{ lxc_features_report.node }} runs containers that lxc_features_declared
+      does not name:
+      {{ lxc_features_plan | selectattr('undeclared')
+         | map(attribute='vmid') | list | join(', ') }}.
+      Add each to roles/lxc-features/defaults/main.yml with the features it
+      should have and why, then re-run. To survey a node you are still building,
+      pass -e lxc_features_fail_on_undeclared=false.
+  when: lxc_features_fail_on_undeclared | bool
+
+- name: Warn about flags declared on the node that nothing asks for
+  # Reported, never removed. `pct set --features` replaces the whole string, and
+  # a flag this map does not know about (mount=nfs, fuse=1) may well be load
+  # bearing. The role merges rather than overwrites; stripping one is a decision
+  # for a person.
+  ansible.builtin.debug:
+    msg: >-
+      CT {{ item.vmid }} ({{ item.hostname }}) carries
+      {{ item.extra | join(', ') }}, which lxc_features_declared does not name.
+      Left in place and merged forward. Record it in defaults/main.yml if it is
+      deliberate.
+  loop: "{{ lxc_features_plan | selectattr('extra') | list }}"
+  loop_control:
+    label: "{{ item.vmid }}"
+
+- name: Set the missing features
+  # ⚠ `pct set --features` REPLACES the string, so this passes the MERGE of what
+  # the container already has with what it should have — never the wanted flags
+  # alone. Passing only the wanted flags would silently drop mount=/fuse=/mknod=
+  # from any container that carries one.
+  #
+  # root@pam over SSH, which is the whole reason this is Ansible and not
+  # Terraform: Proxmox hardcodes a `user == root@pam` check on this mutation and
+  # an API token's username is `root@pam!tokenid`. See docs/GOTCHAS.md.
+  ansible.builtin.command:
+    argv:
+      - pct
+      - set
+      - "{{ item.vmid | string }}"
+      - --features
+      - "{{ item.target | dictsort | map('join', '=') | join(',') }}"
+  loop: "{{ lxc_features_plan | selectattr('needs_set') | list }}"
+  loop_control:
+    label: "{{ item.vmid }} {{ item.hostname }} -> {{ item.target | dictsort | map('join', '=') | join(',') }}"
+  register: lxc_features_set
+  changed_when: lxc_features_set.rc == 0
+
+- name: Re-read the node so the report below is measured, not assumed
+  # The rule this repo keeps relearning: verify the change, do not announce it.
+  # Skipped under --check, where nothing was set and the first read still holds.
+  ansible.builtin.include_tasks: gather.yml
+  when: not ansible_check_mode
+
+- name: Report every container on this node
+  ansible.builtin.debug:
+    msg: >-
+      {{ '%-5s %-18s %-9s declared=%-22s running=%-22s %s' | format(
+           item.vmid, item.hostname, item.status,
+           _declared_str, _running_str,
+           item.restart_pending | ternary('RESTART PENDING', 'ok')) }}
+  vars:
+    _declared_str: "{{ (item.declared | dictsort | map('join', '=') | join(',')) or '<none>' }}"
+    # A null `running` means the container is stopped, which is not the same as
+    # running with nothing enabled — printing '<none>' for both would hide that.
+    _running_str: >-
+      {{ '(stopped)' if item.running is none
+         else ((item.running | dictsort | map('join', '=') | join(',')) or '<none>') }}
+  loop: "{{ lxc_features_plan }}"
+  loop_control:
+    label: "{{ item.vmid }}"
+
+- name: Refuse to call a config-only change a success
+  # ⚠ THIS FAILING IS THE ROLE WORKING. Every container it just fixed is still
+  # running without the fix, and will be until it restarts. Reporting green here
+  # would mean the next person believes prowlarr has nesting while its logind is
+  # still dead — which is how PET-377 stayed open.
+  #
+  # It clears by itself once the containers restart. Nothing here restarts them:
+  # `pct reboot` on a live container is a real outage, and choosing that window
+  # is an operator's call, not a play's.
+  ansible.builtin.assert:
+    that: lxc_features_plan | selectattr('restart_pending') | list | length == 0
+    success_msg: >-
+      {{ lxc_features_report.node }}: all
+      {{ lxc_features_plan | length }} containers are RUNNING with the features
+      they declare.
+    fail_msg: >-
+      {{ lxc_features_report.node }}: these containers are RUNNING without
+      features they should have, and only a restart applies them —
+      {% for c in lxc_features_plan | selectattr('restart_pending') -%}
+      CT {{ c.vmid }} ({{ c.hostname }}) wants
+      {{ c.want | dictsort | map('join', '=') | join(',') }}, is running
+      {{ (c.running | dictsort | map('join', '=') | join(',')) or '<none>' }};
+      {% endfor -%}
+      restart each with `pct reboot <vmid>` on {{ lxc_features_report.node }},
+      in a window you have chosen. Under --check the config was not written
+      either, so run without --check first. To stage the config ahead of a
+      planned window, re-run with -e lxc_features_allow_restart_pending=true.
+  when: not (lxc_features_allow_restart_pending | bool)
