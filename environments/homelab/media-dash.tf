@@ -42,12 +42,24 @@ module "media_dash" {
   hostname     = "media-dash-237"
   ipv4_address = "192.168.50.237/24"
 
-  # Small on purpose. mtrace holds no library, caches nothing and serves one operator:
-  # every answer is a live read joined in memory, and the whole triage table across 73
-  # seerr requests builds in 0.41 s. If this ever needs more than 512 MB, something has
-  # started caching and that is the bug.
+  # ⚠ 1 GB FOR TWO PROCESSES, AND THE ASSERTION BELOW STILL APPLIES TO EACH.
+  #
+  # mtrace holds no library, caches nothing and serves one operator: every answer is a
+  # live read joined in memory, and the whole triage table across 73 seerr requests
+  # builds in 0.41 s. That has not changed, and if mtrace alone ever needs more than
+  # 512 MB, something has started caching and that is the bug.
+  #
+  # The host was 512 MB until PET-375 put pete-bot here beside it — a Discord surface
+  # that answers /ask by asking mtrace over loopback, and DMs Uptime Kuma's alerts. It
+  # lives here rather than on its own container because a Discord bot needs only an
+  # OUTBOUND websocket, so co-locating exposes nothing, and it reaches mtrace on
+  # 127.0.0.1 without widening that bind or putting the SSH key that is root on six
+  # media hosts onto a second box.
+  #
+  # So this is a deliberate raise for a second tenant, not drift. Read it that way
+  # before treating a growing footprint as the caching bug above.
   cores            = 1
-  memory_dedicated = 512
+  memory_dedicated = 1024
   disk_size        = 4
 
   datastore_id = "local"

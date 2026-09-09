@@ -1,0 +1,157 @@
+---
+# configure-pete-bot.yml — install pete-bot on media-dash-237, beside mtrace (PET-375).
+#
+# WHAT IT IS. A Discord surface and nothing else. /ask forwards to mtrace on loopback
+# and renders the answer; POST /v1/alert takes an Uptime Kuma webhook and DMs the owner,
+# editing the original message when the service recovers. It holds no tools of its own.
+#
+# WHY IT LIVES HERE. A Discord bot needs only an OUTBOUND websocket, so co-locating it
+# exposes nothing new, and it reaches mtrace over 127.0.0.1 without widening that bind
+# or copying the SSH key that is root on six media hosts onto a second box. Keeping that
+# key on exactly one host is worth more than isolating two processes that already trust
+# each other.
+#
+# ⚠ THE BINARY IS BUILT ON THE CONTROLLER. `bun build --compile` produces a standalone
+# linux-x64 executable, so 237 needs neither node nor bun and no npm install runs on a
+# container with 512 MB. The play only ever COPIES it, and fails if it is missing rather
+# than leaving yesterday's binary in place. Same shape as configure-media-dash.yml.
+#
+# ⚠ OPERATOR-RUN OR CD, NEVER ON MERGE TO THIS REPO. No workflow here watches it: the
+# binary comes from the pete-bot repo, so that repo's deploy.yml drives it.
+#
+# Usage:
+#   scripts/deploy-pete-bot.sh
+#   scripts/deploy-pete-bot.sh --check
+
+- name: Install pete-bot on media-dash-237
+  hosts: media_dash
+  become: true
+  gather_facts: false
+
+  vars:
+    pete_bot_user: pete-bot
+    pete_bot_dir: /opt/pete-bot
+    pete_bot_bin: /opt/pete-bot/pete-bot
+    pete_bot_env_file: /etc/pete-bot.env
+    pete_bot_port: 3015
+    # Required, passed by scripts/deploy-pete-bot.sh. Never defaulted here.
+    #   pete_bot_binary_src, pete_bot_discord_token, pete_bot_discord_client_id,
+    #   pete_bot_owner_user_id, pete_bot_alert_bearer, pete_bot_mtrace_token
+
+  pre_tasks:
+    - name: Assert the secrets were provided
+      ansible.builtin.assert:
+        that:
+          - pete_bot_discord_token is defined and pete_bot_discord_token | length > 0
+          - pete_bot_discord_client_id is defined and pete_bot_discord_client_id | length > 0
+          - pete_bot_owner_user_id is defined and pete_bot_owner_user_id | length > 0
+          - pete_bot_alert_bearer is defined and pete_bot_alert_bearer | length > 0
+          - pete_bot_mtrace_token is defined and pete_bot_mtrace_token | length > 0
+        fail_msg: >-
+          Missing secret extra-vars. Run scripts/deploy-pete-bot.sh, which resolves them
+          from kv/services/pete-bot and kv/services/media/dashboard and passes them in.
+      # no_log deliberately absent: assert never echoes a value, and censoring the result
+      # would hide the fail_msg that names the script to run.
+
+    - name: Assert the binary was compiled on the controller
+      ansible.builtin.stat:
+        path: "{{ pete_bot_binary_src }}"
+      register: pete_bot_artifact
+      delegate_to: localhost
+      become: false
+
+    - name: Fail when the binary is missing
+      ansible.builtin.fail:
+        msg: >-
+          No binary at {{ pete_bot_binary_src }}. Run `bun run build:binary` in the
+          pete-bot repo first; deploy-pete-bot.sh does it for you.
+      when: not pete_bot_artifact.stat.exists
+
+  tasks:
+    - name: Create the service account
+      ansible.builtin.user:
+        name: "{{ pete_bot_user }}"
+        system: true
+        create_home: false
+        shell: /usr/sbin/nologin
+        state: present
+
+    - name: Create the application directory
+      ansible.builtin.file:
+        path: "{{ pete_bot_dir }}"
+        state: directory
+        owner: root
+        group: "{{ pete_bot_user }}"
+        mode: "0750"
+      # ⚠ owner root, not the service account. mtrace's directory is owned by its own
+      # service user, which lets that process replace the root-owned binary it runs.
+      # Nothing here needs to write, so nothing here can.
+
+    - name: Install the binary
+      ansible.builtin.copy:
+        src: "{{ pete_bot_binary_src }}"
+        dest: "{{ pete_bot_bin }}"
+        owner: root
+        group: "{{ pete_bot_user }}"
+        mode: "0750"
+      notify: Restart pete-bot
+
+    - name: Install the environment file
+      ansible.builtin.template:
+        src: pete-bot.env.j2
+        dest: "{{ pete_bot_env_file }}"
+        owner: root
+        group: "{{ pete_bot_user }}"
+        mode: "0640"
+      no_log: true
+      notify: Restart pete-bot
+
+    - name: Install the systemd unit
+      ansible.builtin.template:
+        src: pete-bot.service.j2
+        dest: /etc/systemd/system/pete-bot.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart pete-bot
+
+    - name: Enable and start pete-bot
+      ansible.builtin.systemd_service:
+        name: pete-bot
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  post_tasks:
+    - name: Flush handlers so the check below sees the new binary
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for the HTTP surface to answer
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ pete_bot_port }}/health"
+        return_content: true
+      register: pete_bot_health
+      retries: 10
+      delay: 2
+      until: pete_bot_health.status is defined and pete_bot_health.status == 200
+
+    # ⚠ /health only proves the process is up. This proves it reached DISCORD, which is
+    # what a bad token, a revoked app or a network egress problem all break while /health
+    # stays perfectly green.
+    - name: Prove it is logged in to Discord, not merely running
+      ansible.builtin.command:
+        cmd: journalctl -u pete-bot --since -2min --no-pager -o cat
+      register: pete_bot_journal
+      changed_when: false
+      failed_when: "'logged in as' not in pete_bot_journal.stdout"
+
+    - name: Report what it logged in as
+      ansible.builtin.debug:
+        msg: "{{ pete_bot_journal.stdout_lines | select('search', 'logged in as') | list }}"
+
+  handlers:
+    - name: Restart pete-bot
+      ansible.builtin.systemd_service:
+        name: pete-bot
+        state: restarted
+        daemon_reload: true
