@@ -47,6 +47,45 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   token. **Workaround:** TF creates the LXC *without* a `features{}` block; Ansible
   (or `pct set <id> --features nesting=1,keyctl=1` over ssh-as-root) sets them
   out-of-band. Keep `features` in `ignore_changes`.
+  - ⚠ **The Ansible that line names did not exist until PET-378.** For a year the real
+    mechanism was three one-off scripts for three named containers
+    (`scripts/lxc-features-{232,235,241}.sh`), so a container created any other way got
+    nothing — and because `features` is in `ignore_changes`, no plan ever said so.
+    A survey on 2026-09-09 found **four of eighteen containers with no features at all**
+    (109, 231, 237, 245) and one with half (236). CT 237 had been created that same day
+    through the documented process. **Declare it instead:**
+    `ansible/roles/lxc-features/defaults/main.yml` names every container's intended
+    features, and `playbooks/configure-lxc-features.yml` converges them.
+  - ⚠ **`pct set --features` REPLACES the whole string, it does not merge.** Setting
+    `nesting=1,keyctl=1` on a container carrying `mount=nfs` silently drops the mount
+    flag. Always pass the union of what is there and what you want.
+  - ⚠ **`pct config` is not proof.** `features` only takes effect at container start, so
+    a container can declare `nesting=1` and be running without it. The declared and the
+    running state are read from two different places:
+    - declared → the `features:` line of `pct config <vmid>`
+    - running  → `/var/lib/lxc/<vmid>/config` and `.../rules.seccomp`, both of which
+      Proxmox regenerates on every `pct start`. `nesting=1` writes
+      `lxc.apparmor.allow_nesting = 1` into the config; **`keyctl=1` is an ABSENCE** —
+      PVE implements it by deleting the `keyctl errno 38` line from `rules.seccomp`
+      (`PVE/LXC.pm`), so reading that marker the obvious way inverts every result.
+
+- **Missing `nesting=1` breaks systemd unit sandboxing, and the symptom depends on the
+  systemd version (PET-377 / PET-378).** Without it the generated AppArmor profile carries
+  `deny mount -> /proc/,` and `deny mount -> /sys/,`, so a unit that builds a mount
+  namespace cannot start. Measured across ten Debian 13 / systemd 257 containers on pve03,
+  same kernel and PVE build: `nesting=1` present → `tmp.mount`, `dev-mqueue.mount` and
+  `run-lock.mount` **active, 10 of 10**; no features → the same three **failed, 3 of 3**.
+  CT 236 isolates the flag — `nesting=1` with no keyctl, mount units healthy.
+  - On **systemd 252** (Debian 12) the same denial kills **`systemd-logind` itself** with
+    `226/NAMESPACE`, and every SSH login then waits 25 s for a logind that never answers.
+    CT 109 is the lab's only systemd-252 container with no features and the only one with a
+    dead logind; 104, 105 and 110 are the matched controls (same Debian, same systemd,
+    features present, logind healthy).
+  - ⚠ **The healthy featureless containers are not counterexamples**, and reading them as
+    such cost a day. 231/237/245 run systemd 257, which survives the denial and only fails
+    the mount units. Comparing 109 against 104 alone — both Debian 12 — hid the variable
+    that mattered. **When two hosts differ in the thing you suspect but agree on the
+    outcome, check what else differs before discarding the hypothesis.**
 
 - **The loop reads live LXC config read-only — never with the mutation token.** Brownfield
   captures need the running `pct config` so the import plans as a no-op; the loop is

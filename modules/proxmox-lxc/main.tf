@@ -4,8 +4,16 @@
 #
 # Deliberately NO `features {}` block: Proxmox rejects API tokens for the
 # features mutation (root@pam check), so nesting/keyctl are set out-of-band by
-# Ansible (`pct set --features nesting=1,keyctl=1`). `features` is in
-# ignore_changes so a later apply never strips them. See docs/GOTCHAS.md.
+# Ansible. `features` is in ignore_changes so a later apply never strips them.
+# See docs/GOTCHAS.md.
+#
+# ⚠ THAT ANSIBLE IS `playbooks/configure-lxc-features.yml` (PET-378) — RUN IT
+# AFTER CREATING A CONTAINER. Until then this comment named a mechanism that did
+# not exist: the only thing setting features was three one-off scripts for three
+# named containers, so anything created through this module got none. Four of
+# eighteen containers were found with no features on 2026-09-09, one of them
+# created that day. Nothing reports it, because `features` is in ignore_changes
+# and the plan is clean either way — see the systemd/nesting entry in GOTCHAS.
 
 resource "proxmox_virtual_environment_container" "this" {
   description   = var.description

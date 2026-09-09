@@ -1,0 +1,111 @@
+---
+# lxc-features — declare the container `features` that Terraform is not allowed to set.
+#
+# WHY THIS ROLE EXISTS. Both LXC modules say the same thing in their header:
+#
+#   "Deliberately NO `features {}` block: Proxmox rejects API tokens for the
+#    features mutation (root@pam check), so nesting/keyctl are set out-of-band by
+#    Ansible (`pct set --features nesting=1,keyctl=1`)."
+#
+# That Ansible did not exist. The only mechanism was three one-off scripts written
+# for three specific containers — scripts/lxc-features-232.sh, -235.sh, -241.sh —
+# so any container created another way got nothing, and nothing noticed. A survey
+# on 2026-09-09 found four containers with no features at all (109, 231, 237, 245)
+# and one with half (236), out of eighteen. One of the four was created that same
+# day through the documented process.
+#
+# ⚠ TERRAFORM WILL NEVER REPORT THIS. `features` is in `ignore_changes` by design,
+# so the plan is clean whether the flags are there or not. Nothing else looks.
+#
+# ------------------------------------------------------------------ what breaks --
+# Without `nesting=1` the generated AppArmor profile carries
+# `deny mount -> /proc/,` and `deny mount -> /sys/,`, so a systemd unit that builds
+# a mount namespace cannot start. Measured across ten Debian 13 / systemd 257
+# containers on pve03, same kernel, same PVE build:
+#
+#   nesting=1 present (101 102 221 223 232 235 241, and 233 236 on pve02)
+#       tmp.mount, dev-mqueue.mount, run-lock.mount  -> active   10 of 10
+#   no features (231 237 245)
+#       the same three units                          -> failed    3 of 3
+#
+# No exceptions in either direction. 236 is the control that isolates the flag:
+# it carries `nesting=1` and NO keyctl, and its mount units are healthy — so
+# nesting alone is what those units need.
+#
+# ⚠ THE FAILURE MODE DEPENDS ON THE SYSTEMD VERSION, WHICH IS WHY THIS LOOKED
+# UNRELATED FOR A DAY. On systemd 257 the mount units fail and systemd carries on.
+# On systemd 252 (Debian 12) systemd-logind ITSELF dies with 226/NAMESPACE, and
+# every SSH login then waits 25 seconds for a logind that will never answer —
+# PET-377. Container 109 is the lab's only systemd-252 container with no features,
+# and the only one with a dead logind; 104, 105 and 110 are the matched controls,
+# same Debian, same systemd, features present, logind healthy.
+#
+# The first pass at PET-378 read 231/237/245 as counterexamples — featureless with
+# a healthy logind — and concluded nesting could not be the cause. They are not
+# counterexamples; they are a newer systemd surviving the same denial. Comparing
+# 109 only against 104 (both Debian 12) hid the variable that mattered.
+#
+# --------------------------------------------------------------- what it is not --
+# This role does NOT restart containers. `features` takes effect only on start, so
+# a container converged here keeps running under its old features until someone
+# restarts it. The role reports exactly which ones and exits non-zero rather than
+# reporting success — see tasks/main.yml.
+
+# Set on any container with no entry of its own. Both flags, because that is what
+# every deliberately-configured container in the lab carries and what the module
+# headers name.
+lxc_features_default:
+  nesting: "1"
+  keyctl: "1"
+
+# ⚠ EVERY CONTAINER, INCLUDING THE ONES THAT MATCH THE DEFAULT. Listing only the
+# exceptions would mean a container that appears on a node is either declared or
+# forgotten, and no one could tell which. Written out so that a container the map
+# does not name is unambiguously NEW, and the play fails on it.
+#
+# Keys are quoted so they stay strings: `pct list` yields the VMID as text, and a
+# YAML bare 109 is an integer. A silently-missed lookup here reads as "undeclared".
+lxc_features_declared:
+  "101": { nesting: "1", keyctl: "1" }   # seerr — Docker LXC
+  "102": { nesting: "1", keyctl: "1" }   # flaresolverr — Docker LXC
+  "104": { nesting: "1", keyctl: "1" }   # sonarr
+  "105": { nesting: "1", keyctl: "1" }   # radarr
+  "109": { nesting: "1", keyctl: "1" }   # prowlarr — HAS NEITHER. PET-377's 25 s SSH stall.
+  "110": { nesting: "1", keyctl: "1" }   # qbittorrent-vpn — Docker LXC
+  # ⚠ Alpine, not Debian: no systemd, so none of the unit evidence above applies to
+  # it. Its flags are left as found rather than reasoned about from a systemd model
+  # that does not describe it.
+  "112": { nesting: "1", keyctl: "1" }   # cloud-flare-main — Alpine + cloudflared
+  "119": { nesting: "1", keyctl: "1" }   # authentik — Docker LXC
+  "221": { nesting: "1", keyctl: "1" }   # minio-221 — the Terraform state backend
+  "223": { nesting: "1", keyctl: "1" }   # vault-223
+  "231": { nesting: "1", keyctl: "1" }   # postgres-rds-231 — HAS NEITHER
+  "232": { nesting: "1", keyctl: "1" }   # runner-232 — Docker; PET-364 set these by script
+  "233": { nesting: "1", keyctl: "1" }   # runner-233 — Docker
+  "235": { nesting: "1", keyctl: "1" }   # plane-235 — Docker Compose; PET-86 set these by script
+  # ⚠ A DECISION, NOT AN OBSERVATION. 236 runs with `nesting=1` and no keyctl, and
+  # nothing anywhere records whether dropping keyctl was deliberate. Resolved
+  # towards the lab default: without it the container keeps a seccomp rule that
+  # answers keyctl() with ENOSYS, which is a latent trap for any service that
+  # touches a kernel keyring, and adding it only removes a denial. It costs a Plex
+  # restart to take effect, so the play will report it as pending until someone
+  # takes that window.
+  "236": { nesting: "1", keyctl: "1" }   # plex-gpu — was nesting-only
+  "237": { nesting: "1", keyctl: "1" }   # media-dash-237 — HAS NEITHER; created 2026-09-09
+  "241": { nesting: "1", keyctl: "1" }   # openfaas-241 — faasd; PET-86 set these by script
+  "245": { nesting: "1", keyctl: "1" }   # minio-data-245 — HAS NEITHER
+  # Declared but on neither node as of 2026-09-09. Kept so they are configured on
+  # the way back rather than remembered: 106's rootfs will not `pct restore`
+  # (lxc.idmap), and 244 is absent from both nodes' `pct list`.
+  "106": { nesting: "1", keyctl: "1" }   # registry (zot) — docker.pdlab.dev
+  "244": { nesting: "1", keyctl: "1" }   # tailscale subnet router
+
+# The play converges config and refuses to call that success while a container is
+# still RUNNING without the features. Set true only for a run whose whole point is
+# to stage the config ahead of a restart window you have already planned.
+lxc_features_allow_restart_pending: false
+
+# A container on the node that `lxc_features_declared` does not name is a container
+# nobody decided about — the exact gap this role closes. Fail on it. Set true only
+# to survey a node you are still building.
+lxc_features_fail_on_undeclared: true
