@@ -176,6 +176,24 @@ resource "vault_jwt_auth_backend_role" "resume_builder_cd" {
 # sub binding can match — the failure mode PET-360 spent a day on, where every mint failed
 # and the workflow still reported green. repository + ref is exactly as tight: this repo,
 # pushes to main only (a PR run carries ref=refs/pull/N/merge and is excluded).
+# pete-bot-cd role -> pete-bot-cd policy (PET-375). The pete-bot repo's deploy.yml
+# builds the standalone binary and runs configure-pete-bot.yml against media-dash-237.
+# Main-push only: a PR run carries ref=refs/pull/N/merge and is excluded.
+resource "vault_jwt_auth_backend_role" "pete_bot_cd" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "pete-bot-cd"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository = var.pete_bot_repo
+    ref        = "refs/heads/main"
+  }
+  token_policies = [vault_policy.pete_bot_cd.name]
+  token_ttl      = 900
+}
+
 resource "vault_jwt_auth_backend_role" "media_dash_cd" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "media-dash-cd"

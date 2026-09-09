@@ -313,6 +313,36 @@ resource "vault_policy" "water_fast_cd" {
 #
 # So the one credential held centrally is the one that genuinely exists: the SSH key, plus
 # the dashboard's own API token.
+# pete-bot-cd: the Discord surface's deploy (PET-375). Narrower than media-dash-cd on
+# purpose — pete-bot reads its own credentials and mtrace's API token, and nothing else.
+#
+# ⚠ It does NOT get kv/data/services/media/dashboard's whole secret in order to reach
+# mtrace... it does, because that is where api_token lives. Note what that means: this
+# role can also read mtrace's SSH private key, which is root on six media hosts. Splitting
+# api_token onto its own path would fix that and is worth doing before this role is given
+# to anything less trusted than the operator's own deploy.
+resource "vault_policy" "pete_bot_cd" {
+  name = "pete-bot-cd"
+
+  policy = <<-EOT
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/pete-bot" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/media/dashboard" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/services/pete-bot" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
 resource "vault_policy" "media_dash_cd" {
   name = "media-dash-cd"
 

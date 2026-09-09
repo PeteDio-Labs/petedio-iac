@@ -86,6 +86,12 @@ variable "media_control_repo" {
   default     = "PeteDio-Labs/petedio-media-control"
 }
 
+variable "pete_bot_repo" {
+  description = "owner/repo whose CD mints the pete-bot-cd role."
+  type        = string
+  default     = "PeteDio-Labs/pete-bot"
+}
+
 variable "water_fast_repo" {
   description = "owner/name of the petedio-water-fast repo bound to the water-fast-cd JWT role."
   type        = string
