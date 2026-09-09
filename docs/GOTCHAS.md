@@ -343,6 +343,57 @@ cron minutes buys nothing**: eleven repos spaced five minutes apart still arrive
 about forty minutes of each other. Spacing the crons is still right for the case where
 they do fire on time, but do not rely on it to keep jobs off a contended runner.
 
+## Uptime Kuma's `applyExisting` does not attach to existing monitors (PET-374)
+
+- **`add_notification(isDefault=True, applyExisting=True)` created the channel and left
+  all 19 monitors unattached.** The provisioner's own check caught it; without that check
+  it would have shipped as a working alerting system wired to nothing. Set
+  `notificationIDList` per monitor with `edit_monitor`, and keep a check that counts
+  monitors with nothing attached and fails on any it finds. A monitor that notifies
+  nobody looks exactly like one that does.
+
+- ⚠ **`notificationIDList` has two shapes.** It is a **list** of ids on this Kuma
+  (`[1]`), and a **dict** keyed by id in other versions and in `uptime-kuma-api`'s own
+  docstrings. Assuming either crashes on the other — assuming dict gives
+  `'list' object has no attribute 'get'`, and it is also what made the check report
+  monitors unattached when they were already bound. Normalise both.
+
+- **The provisioning config is deleted after each run**, so a later script cannot read
+  credentials from `/root/.kuma-provision.json`. Get them from
+  `kv/services/uptime-kuma` instead.
+
+- **The socket cache lags the database.** `get_monitors()` right after a delete still
+  returned the old count. `sqlite3 /opt/uptime-kuma/data/kuma.db` is authoritative:
+  `SELECT COUNT(*) FROM monitor; SELECT COUNT(*) FROM monitor_notification;`
+
+## Discord: an app can DM you with no shared server (PET-375)
+
+- **`users.fetch(id).createDM().send()` works from a bot in zero guilds**, unprompted,
+  with no DM opened first. Verified 2026-09-09 against `GET /users/@me/guilds` returning
+  a count of 0. The documentation does not promise this, which is not the same as
+  forbidding it — read it as describing what is guaranteed rather than what is permitted,
+  and test rather than infer.
+
+- **A user-installed app is `integration_types: [1]`** with `contexts: [0, 1, 2]`;
+  `PRIVATE_CHANNEL` is only available to commands that declare it. The user context
+  grants `applications.commands` and nothing else. Confirm the install actually happened
+  with `GET /applications/@me` → `approximate_user_install_count`, which is separate from
+  the command being registered.
+
+- ⚠ **`Partials.Channel` is required to receive DMs.** Without it discord.js drops
+  `messageCreate` for a DM channel it has not cached, so an app that lives only in DMs
+  silently receives nothing — a failure indistinguishable from the privileged intent
+  being off.
+
+- **`GATEWAY_MESSAGE_CONTENT_LIMITED` is sufficient.** Toggling Message Content on for an
+  app under 100 servers sets the *limited* flag, not the full one, and login succeeds.
+  A check that tests for the full flag reports a failure that will not happen.
+
+- **Defer before doing slow work.** Discord kills an interaction unacknowledged for three
+  seconds; `deferReply` buys fifteen minutes. mtrace crosses six hosts over SSH, so
+  without the defer the user sees "The application did not respond" while the work
+  succeeds unseen.
+
 ## Vault seals every night, and two watchers open it (PET-373)
 
 - **223 restarts nightly, so Vault seals nightly.** pve03's `vzdump` job runs at 02:45
