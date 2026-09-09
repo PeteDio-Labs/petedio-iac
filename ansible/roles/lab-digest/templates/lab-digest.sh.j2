@@ -82,6 +82,13 @@ for t in d:
   t=$(vcgencmd measure_temp 2>/dev/null | tr -d 'temp=')
   [ -n "$t" ] && echo "temperature: $t"
   echo "actions runner: $(systemctl is-active 'actions.runner.*' 2>/dev/null | head -1)"
+
+  # The Vault unseal watcher (PET-373). Uptime Kuma already records a sealed Vault
+  # as DOWN, so the OUTCOME is covered; this line reports the WATCHER, which is the
+  # part Kuma cannot see. A stopped timer looks identical to a healthy one until the
+  # night 223 restarts and nothing opens it.
+  echo "vault-unseal timer: $(systemctl is-active vault-unseal.timer 2>/dev/null)"
+  echo "vault-unseal last:  $(sudo tail -1 /var/log/vault-unseal.log 2>/dev/null || echo 'no unseal needed since install')"
 }
 
 FACTS="$(facts)"

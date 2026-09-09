@@ -18,6 +18,12 @@
 # The Mac's Keychain stays the record of truth and the operator's escape hatch; the
 # pi holds a copy for the timer, not custody of the only one.
 
+# ⚠ THE MAC AGENT STAYS. `dev.pdlab.vault-unseal` on the Mac is the fallback for when
+# the pi is down or being rebuilt, so both watchers run and race every five minutes.
+# The race is harmless: whichever arrives first opens Vault, and the other finds it
+# open and exits 0. Removing the Mac agent because "the pi covers it" removes the only
+# path that works when the pi does not. See docs/GOTCHAS.md.
+
 vault_unseal_addr: "https://192.168.50.223:8200"
 
 # The repo ships the CA that signed Vault's certificate, so the timer verifies TLS
