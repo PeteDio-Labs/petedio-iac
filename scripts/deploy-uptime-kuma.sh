@@ -67,17 +67,17 @@ KUMA_USER="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=admin_user "$KUMA_PATH"
 KUMA_PW="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=admin_password "$KUMA_PATH")" \
   || die "cannot read $KUMA_PATH field 'admin_password'."
 
-# The Discord webhook is OPTIONAL here and required by nothing else: absent, the run
+# The pete-bot bearer is OPTIONAL here and required by nothing else: absent, the run
 # provisions monitors and no channel, exactly as it did before PET-374. Present, every
 # monitor gets it and the provisioner fails on any monitor left unattached.
 #
-# Seed it with:
-#   vault kv patch kv/services/uptime-kuma discord_webhook_url='https://discord.com/api/webhooks/…'
-KUMA_DISCORD="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=discord_webhook_url "$KUMA_PATH" 2>/dev/null || true)"
-if [ -n "$KUMA_DISCORD" ]; then
-  echo "  discord webhook: found in Vault — monitors will be attached to it"
+# It lives at kv/services/pete-bot because pete-bot owns it — seed it with
+# scripts/seed-pete-bot-vault.sh, not by hand here.
+KUMA_BEARER="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=alert_bearer_token kv/services/pete-bot 2>/dev/null || true)"
+if [ -n "$KUMA_BEARER" ]; then
+  echo "  alert channel: pete-bot — monitors will DM Pedro"
 else
-  echo "  discord webhook: not seeded — monitors will alert NOBODY (PET-374)"
+  echo "  alert channel: no bearer at kv/services/pete-bot — monitors will alert NOBODY (PET-374)"
 fi
 
 # Keep the Keychain mirror in step with Vault if the password was rotated there.
@@ -88,7 +88,7 @@ cd "$ANSIBLE_DIR"
 ansible-playbook playbooks/configure-pete-pi.yml \
   -e "uptime_kuma_admin_user=$KUMA_USER" \
   -e "uptime_kuma_admin_password=$KUMA_PW" \
-  -e "uptime_kuma_discord_webhook=$KUMA_DISCORD" \
+  -e "uptime_kuma_pete_bot_bearer=$KUMA_BEARER" \
   "$@"
 
 step "Done"

@@ -72,16 +72,30 @@ uptime_kuma_admin_password: ""
 # monitor that notifies nobody looks exactly like one that does.
 #
 # ⚠ The secret arrives as an extra-var, never here. deploy-uptime-kuma.sh resolves it
-# from kv/services/uptime-kuma, field discord_webhook_url. Empty by default, so a run
+# from kv/services/pete-bot, field alert_bearer_token. Empty by default, so a run
 # without it is a no-op; declared WITH an empty value fails the run rather than being
 # skipped, since a silently skipped channel is the shape this item exists to end.
-uptime_kuma_discord_webhook: ""
+#
+# ⚠ WHY pete-bot AND NOT KUMA'S OWN DISCORD PROVIDER. Kuma's Discord notification posts
+# DOWN and UP as two unrelated messages. pete-bot keys on the monitor name and EDITS the
+# original, so an incident is one message that changes colour. Across 19 monitors that
+# decides whether the channel gets muted, which decides whether anyone reads it — and an
+# unread channel is how PET-374 happened in the first place.
+#
+# It also reaches Pedro as a DM rather than a channel post. Verified 2026-09-09: a bot in
+# zero guilds DM'd him unprompted, with no DM opened first (PET-375).
+uptime_kuma_pete_bot_url: "http://192.168.50.237:3015/v1/alert"
+uptime_kuma_pete_bot_bearer: ""
 
 uptime_kuma_notifications: >-
   {{
-    ([{"name": "discord", "type": "discord",
-       "discordWebhookUrl": uptime_kuma_discord_webhook}]
-     if uptime_kuma_discord_webhook | length > 0 else [])
+    ([{"name": "pete-bot",
+       "type": "webhook",
+       "webhookURL": uptime_kuma_pete_bot_url,
+       "webhookContentType": "json",
+       "webhookAdditionalHeaders":
+         ('{"Authorization": "Bearer ' ~ uptime_kuma_pete_bot_bearer ~ '"}')}]
+     if uptime_kuma_pete_bot_bearer | length > 0 else [])
   }}
 
 # ------------------------------------------------------------------ monitors --
