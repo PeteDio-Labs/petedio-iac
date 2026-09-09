@@ -50,10 +50,18 @@ module "media_dash" {
   memory_dedicated = 512
   disk_size        = 4
 
-  datastore_id   = "local"
-  target_node    = "pve03"
-  ssh_public_key = var.ssh_public_key
-  description    = "mtrace — read-only media stack control surface (PET-355). Managed by Terraform; app by configure-media-dash.yml."
+  datastore_id = "local"
+  target_node  = "pve03"
+
+  # ⚠ PIN THE TEMPLATE TO ONE pve03 ACTUALLY HAS. Templates live on each node's own
+  # `local`, which is a directory store and is not shared, so this must name a file
+  # present on target_node. The module default is 13.1-2 and pve03 carries only
+  # 13.6-1, so taking the default fails the create with "volume … does not exist" —
+  # on the apply-on-merge runner, after the merge. runner.tf pins the same value for
+  # the same reason; it is the only other greenfield container on this node.
+  template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
+  ssh_public_key   = var.ssh_public_key
+  description      = "mtrace — read-only media stack control surface (PET-355). Managed by Terraform; app by configure-media-dash.yml."
 }
 
 output "media_dash_id" {
