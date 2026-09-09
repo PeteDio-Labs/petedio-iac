@@ -21,6 +21,13 @@ TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API token
 ## Workflow (trunk-based GitOps)
 - Branch `pet-<n>-<slug>` off **fresh `main`** → PR → **squash-merge**. Mention `PET-<n>` in the PR.
 - CI: **`validate` on PR** (GitHub-hosted, no Vault/LAN/state) and **`plan` + `apply` on merge** (self-hosted runner, LXC 232). There is no plan-on-PR (PET-104/163) — the authoritative plan is your local one or the apply-on-merge log.
+- ⚠ **The recurring bug here is a green check over work that never happened.** PET-298,
+  PET-317, PET-360, PET-363, PET-372 and PET-374 are all one shape: a job that could not
+  authenticate, could not reach its target, or checked nothing, and reported success.
+  So when you touch anything that reports status: make the failure path exit non-zero,
+  and **say what was examined, not only what was found** — "0 stale after reading 40 PRs"
+  and "0 stale because the query returned nothing" must not look alike. If you relax a
+  gate, replace the signal you removed; a warning does not colour a check.
 - **Verify before done:** `terraform fmt`/`validate`/`plan` — and *read the actual plan* (a green check ≠ a good plan; an empty plan block is a failure). **Never `apply` by hand.**
 - **Declare it, don't run it — IaC over hand fixes.** When a repair can be expressed as config, express it as config; see workflow rule 6 in the workspace `CLAUDE.md`. `removed { … lifecycle { destroy = false } }` replaces `terraform state rm` and **skips the refresh** for that resource, which is what lets it forget a guest on a node that no longer resolves. `import { to = … id = … }` replaces `terraform import`; `moved` replaces a rename-shaped `state mv`. Write a script only for what the language genuinely cannot say, and record the refusal verbatim in it — `removed` addresses a *resource*, never one instance of a `for_each`, and it cannot be paired with `import` to repoint an address the config still declares. `scripts/tf-state-repoint-pve01.sh` predates this rule; it is a one-shot repair for the rack loss, not a pattern to copy.
   - ⚠ **That script is scoped to `environments/homelab` in this repo only.** It repaired this state on 2026-09-04 and left `petedio-media-iac`'s state naming the dead node, which is why every media apply reported `1 to change` for a day (PET-332). A repair script's blast radius is the directory it `cd`s into — check whether a sibling state has the same damage.

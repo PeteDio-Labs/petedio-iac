@@ -262,6 +262,87 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   (`terraform apply -target=...container.runner`) + Ansible-registering it, then let CI
   take over.
 
+## A Vault 403 says `permission denied` and means four different things (PET-355)
+
+Bringing one new CD workflow up cost three failed deploys, because every cause returns
+the identical body:
+
+```
+failed to retrieve vault token. code: ERR_NON_2XX_3XX_RESPONSE,
+message: Response code 403 (Forbidden), vaultResponse: {"errors":["permission denied"]}
+```
+
+- **Wrong mount path.** The GitHub JWT backend is mounted at `jwt-github`, and
+  `vault-action` posts to `auth/jwt/login` when `path:` is unset. Nothing is mounted
+  there, so Vault refuses.
+- **Wrong audience.** The roles bind `https://github.com/PeteDio-Labs`, and
+  `vault-action` sends its own default when `jwtGithubAudience:` is unset.
+- **Claim mismatch.** `bound_claims` does not match the token's `repository` or `ref`.
+- **Missing or misnamed policy.**
+
+**Read the audit log first, not the role.** `/opt/vault/logs/vault_audit.log` on 223
+records the path Vault actually received, which is the only place the mount mistake is
+visible. Filter for errors rather than for a path you assume:
+
+```bash
+pct exec 223 -- grep -a '2026-09-09T18:3' /opt/vault/logs/vault_audit.log \
+  | python3 -c 'import json,sys
+for l in sys.stdin:
+    d=json.loads(l)
+    if d.get("error"): print(d["time"][:19], d["request"]["path"], d["error"][:120])'
+```
+
+That printed `auth/jwt/login | permission denied` and ended the search. Auditing the
+role first found nothing, because the role was correct all three times.
+
+⚠ **Diff a new `vault-action` block against a working sibling line by line** before
+debugging it. `petedio-water-fast`'s deploy is the reference and carries the warning
+inline: `path: jwt-github # non-default mount — must be explicit or Vault 403s`. All
+three defects were visible in that one diff; auditing the block against the playbook's
+requirements instead found one at a time, over three merge-and-watch cycles.
+
+## `runs-on: [self-hosted, homelab]` also matches the arm64 pi (PET-355)
+
+Three runners carry `homelab`: runner-232 and runner-233 are x64, pete-pi-1 is arm64.
+A job that does not pin the architecture lands on whichever is free.
+
+The visible failure is `docker: permission denied` on the socket, and that is the lucky
+outcome. **A job that compiles a binary on the runner and copies it to an amd64
+container would build arm64, install it cleanly, and leave a service that cannot
+execute** — a green deploy and a dead process. Pin
+`runs-on: [self-hosted, linux, x64, homelab]`, as `petedio-water-fast` does.
+
+## `become_user` needs sudo, and the minimal LXC template has none (PET-355)
+
+`become_user` defaults to sudo. Containers built from the module's default Debian
+template have no sudo unless a play installs it, so the task dies with
+`/bin/sh: 1: sudo: not found` and `rc=127`.
+
+`su` is not the fallback: service accounts here are created with
+`shell: /usr/sbin/nologin` on purpose, and `su` refuses them.
+
+**Use `runuser -u <user> -- <cmd>`.** It is in util-linux, is already present, and drops
+to a nologin account without PAM. Verified on media-dash-237:
+
+```
+$ runuser -u mtrace -- id
+uid=999(mtrace) gid=991(mtrace) groups=991(mtrace)
+```
+
+Running the check as root instead is the tempting fix and proves nothing — the point of
+running as the service user is that it exercises the key's file mode.
+
+## Scheduled workflows do not fire near their cron (PET-363)
+
+`petedio-media-iac` declares `cron: "22 8 * * *"` and its run was created at `13:00:09`
+UTC — four hours and thirty-eight minutes late. `petedio-iac`'s last three scheduled
+runs landed at 12:57, 12:51 and 14:14, never near its declared 08:17.
+
+GitHub delays these heavily and then releases them together, so **a stagger expressed in
+cron minutes buys nothing**: eleven repos spaced five minutes apart still arrive inside
+about forty minutes of each other. Spacing the crons is still right for the case where
+they do fire on time, but do not rely on it to keep jobs off a contended runner.
+
 ## Vault seals every night, and two watchers open it (PET-373)
 
 - **223 restarts nightly, so Vault seals nightly.** pve03's `vzdump` job runs at 02:45
