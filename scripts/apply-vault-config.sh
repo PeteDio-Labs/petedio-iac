@@ -8,6 +8,32 @@
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM, else prompt
 set -euo pipefail
 
+# ⚠ DESTROYS ARE OPT-IN, PER INVOCATION. The guard below refuses any plan that removes
+# a live resource, because this root holds the policies and auth roles that gate every
+# credential in the lab, and a removal here is silent until something cannot mint.
+#
+# A decommission is a legitimate removal, though, and before PET-370 there was no way
+# to complete one: the script refused and offered no path, so a merged teardown sat
+# unapplied and `main` disagreed with live Vault. `--allow-destroy` is that path.
+#
+# It is a FLAG, not an environment or repo variable, and deliberately so. CI's
+# plan-gate takes ALLOW_DESTROY as a repo variable, which stays on until somebody
+# remembers to turn it off — PET-366 left that window open for two minutes and only
+# because it was being watched. A flag cannot be left on: it is spent when the command
+# ends.
+ALLOW_DESTROY=0
+for arg in "$@"; do
+  case "$arg" in
+    --allow-destroy) ALLOW_DESTROY=1 ;;
+    -h|--help)
+      printf 'usage: %s [--allow-destroy]\n\n' "${0##*/}"
+      printf '  --allow-destroy  apply a plan that removes resources. Off by default;\n'
+      printf '                   the plan is printed and confirmed before anything runs.\n'
+      exit 0 ;;
+    *) printf 'unknown argument: %s (try --help)\n' "$arg" >&2; exit 2 ;;
+  esac
+done
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOMELAB="$REPO_ROOT/environments/homelab"
@@ -46,8 +72,28 @@ PLAN_LINE="$(grep -E '^Plan: ' /tmp/vc-plan.txt | tail -1 || true)"
 [ -n "$PLAN_LINE" ] || die "no 'Plan:' summary — inspect /tmp/vc-plan.txt."
 DES="$(sed -E 's/.* ([0-9]+) to destroy.*/\1/' <<<"$PLAN_LINE")"
 echo "  $PLAN_LINE"
-[ "$DES" = "0" ] || die "plan would DESTROY $DES resource(s) — not applying. Inspect /tmp/vc-plan.txt."
+if [ "$DES" != "0" ]; then
+  if [ "$ALLOW_DESTROY" != "1" ]; then
+    printf '\n\033[1;31mThis plan REMOVES %s resource(s):\033[0m\n' "$DES"
+    grep -E '^  # .* will be destroyed' /tmp/vc-plan.txt | sed 's/^  # /  /; s/ will be destroyed//' || true
+    die "not applying. Review /tmp/vc-plan.txt, then re-run with --allow-destroy if every line above should go."
+  fi
 
-step "apply (guard passed: 0 to destroy)"
+  # ⚠ NAME WHAT GOES, AND MAKE SOMEONE READ IT. The count alone is the thing that
+  # lets a wrong plan through: "3 to destroy" looks the same whether it is three
+  # Co-latro roles or three that still gate a live service.
+  step "review the removals"
+  printf '\033[1;31mThis plan REMOVES %s resource(s):\033[0m\n' "$DES"
+  grep -E '^  # .* will be destroyed' /tmp/vc-plan.txt | sed 's/^  # /  /; s/ will be destroyed//' || true
+  printf '\nEvery line above will be deleted from live Vault. Type the number %s to proceed: ' "$DES"
+  read -r CONFIRM
+  [ "$CONFIRM" = "$DES" ] || die "not confirmed — nothing applied."
+fi
+
+if [ "$DES" = "0" ]; then
+  step "apply (guard passed: 0 to destroy)"
+else
+  step "apply ($DES to destroy, confirmed)"
+fi
 terraform apply -input=false tfplan
 echo "vault-config applied."
