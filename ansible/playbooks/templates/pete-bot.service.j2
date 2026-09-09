@@ -1,0 +1,39 @@
+# {{ ansible_managed }}
+# pete-bot (PET-375). Answers /ask by asking mtrace, and DMs Uptime Kuma's alerts.
+#
+# It holds a Discord bot token and mtrace's API token, so the sandbox is not decoration.
+# It needs no inbound LAN access: Discord is an OUTBOUND websocket, and Kuma reaches
+# /v1/alert over loopback from the same host.
+[Unit]
+Description=pete-bot — Discord surface for the homelab (PET-375)
+After=network-online.target mtrace.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ pete_bot_user }}
+Group={{ pete_bot_user }}
+EnvironmentFile={{ pete_bot_env_file }}
+ExecStart={{ pete_bot_bin }}
+Restart=on-failure
+RestartSec=5s
+# ⚠ BOUND THE RESTART LOOP. Without a start limit, Restart=on-failure with a 5s delay
+# respawns forever and the unit never reaches `failed`, so `systemctl is-failed` and
+# anything watching it stay green while the process crashes every five seconds. mtrace
+# shipped without this; do not copy that.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# ⚠ NOT ReadWritePaths over the whole app dir. mtrace's unit does that, and it lets the
+# service account replace the root-owned binary it executes. This process needs to write
+# nothing, so it gets nothing.
+
+[Install]
+WantedBy=multi-user.target
