@@ -1,7 +1,7 @@
 # Nightly Plane reconciler — the safety net that makes plane-sync advisory.
 #
 # plane-sync never fails a build: Plane is a homelab LXC and it being down must not
-# block merges across nine repos. The cost of that choice is that a transition can be
+# block merges across eleven repos. The cost of that choice is that a transition can be
 # silently missed. This job re-reads recently merged PRs and fixes any work item left
 # behind, so a missed webhook costs a day of staleness, not a permanent lie.
 #
@@ -9,14 +9,34 @@
 # gets MORE valuable after the cutover, not less — with the Linear GitHub App gone,
 # nothing else advances state at all.
 #
-# Runs from a schedule on the default branch, so its OIDC subject is
-# `repo:PeteDio-Labs/petedio-iac:ref:refs/heads/main` — NOT the pull_request subject
-# plane-sync uses. The plane-ci role binds both.
+# ⚠ REUSABLE, AND THAT IS THE WHOLE POINT (PET-363). Until 2026-09-06 this carried its
+# own `schedule:` and queried `repos/$GITHUB_REPOSITORY/pulls` — where GITHUB_REPOSITORY
+# was always petedio-iac, because that is where the schedule lived. So the safety net
+# this header describes as covering eleven repos covered ONE, ran green every night, and
+# stranded two items that had to be closed by hand: PET-331 (palworld-panel, 2 days) and
+# PET-289 (workspace, 19 days). Neither would ever have self-corrected.
+#
+# ⚠ THE FIX ADDS NO CREDENTIAL, WHICH IS WHY IT IS THIS FIX. Reaching ten other repos
+# from one job needs an org-wide PAT — `${{ github.token }}` is scoped to its own repo,
+# and `kv/iac/github-runner-pat` is not merely empty but ABSENT from Vault. Instead each
+# repo calls this with a scheduled caller, exactly as it already calls plane-sync. In a
+# workflow_call, `github.repository` and `github.token` are the CALLER's, so the query
+# below targets the calling repo with a token already scoped to it. Nothing to store,
+# nothing to rotate, nothing org-wide.
+#
+# A scheduled caller's OIDC subject is `repo:<repo>:ref:refs/heads/main`, which plane-ci
+# already binds for every repo in var.plane_repos, in both the name and id forms
+# (PET-360). So no vault-config change is needed to add a repo here — only the caller.
 name: plane-reconcile
 
 on:
-  schedule:
-    - cron: "17 8 * * *" # 08:17 UTC ≈ 03:17 America/Chicago — after the nightly quiet period
+  workflow_call:
+    inputs:
+      lookback_days:
+        description: "How many days of merged PRs to re-check"
+        required: false
+        type: string
+        default: "3"
   workflow_dispatch:
     inputs:
       lookback_days:
@@ -38,17 +58,35 @@ jobs:
       PLANE_WORKSPACE: ${{ vars.PLANE_WORKSPACE }}
       PLANE_PROJECT_ID: ${{ vars.PLANE_PROJECT_ID }}
       GH_TOKEN: ${{ github.token }}
-      LOOKBACK: ${{ github.event.inputs.lookback_days || '3' }}
+      LOOKBACK: ${{ inputs.lookback_days || github.event.inputs.lookback_days || '3' }}
 
     steps:
+      # ⚠ petedio-iac, NOT the calling repo. The scripts and the Vault CA live here, and
+      # a caller repo has neither. It is public, so this needs no token. `github.repository`
+      # stays the CALLER throughout — which is what makes the API query below correct.
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: PeteDio-Labs/petedio-iac
+          ref: main
 
       - name: Encode Vault CA
         id: vault_ca
         run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
 
-      # Same reasoning as plane-sync.yml: a nightly job that goes red because Vault was
-      # sealed is noise, not signal — the next night's run reconciles anyway.
+      # ⚠ A FAILED MINT FAILS THIS JOB. `continue-on-error` is still here, but it now
+      # buys a better error rather than silence: the run reaches the next step, which
+      # names the repo and the reason before exiting non-zero.
+      #
+      # It used to swallow the failure, on the reasoning that a nightly job going red
+      # over a sealed Vault was noise and the next night would reconcile anyway. That
+      # holds only while the next night works. On 2026-09-09 Vault sat sealed from
+      # 02:48 to 12:22 and all eleven repos reported success having reconciled nothing
+      # (PET-372). A safety net that cannot say it failed is worse than none, because
+      # it stops you looking. `infra-reconcile` learned this as PET-317.
+      #
+      # Do NOT copy this to plane-sync.yml. That job runs on PR events and must never
+      # block a merge when Plane is down, so it warns and exits 0 on purpose. Nothing
+      # waits on this job, which is what lets it be loud.
       - name: Vault — mint the Plane token via OIDC
         continue-on-error: true
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
@@ -69,9 +107,16 @@ jobs:
       - name: Reconcile merged PRs
         run: |
           set -uo pipefail
+          echo "reconciling: $GITHUB_REPOSITORY"
           if [ -z "${PLANE_API_KEY:-}" ]; then
-            echo "::warning title=plane-reconcile::No Plane API key — nothing reconciled this run."
-            exit 0
+            echo "::error title=plane-reconcile::No Plane API key for $GITHUB_REPOSITORY — the Vault mint failed, so nothing was reconciled. Check that Vault is unsealed."
+            {
+              echo "### plane-reconcile — $GITHUB_REPOSITORY"
+              echo ""
+              echo "**Failed before scanning.** The Vault mint returned no Plane API key, so no"
+              echo "work item was checked. This is a real failure, not a quiet night."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           export SINCE
           SINCE=$(date -u -d "-${LOOKBACK} days" +%Y-%m-%d 2>/dev/null || date -u -v-"${LOOKBACK}"d +%Y-%m-%d)
@@ -84,19 +129,40 @@ jobs:
           # image, so this removes an unmanaged binary rather than adding one.
           # REST has no "merged" state filter; closed-unmerged PRs come back with
           # merged_at=null and are dropped by plane-merged-since.py.
+          #
+          # ⚠ $GITHUB_REPOSITORY is the CALLING repo, and the token is scoped to it.
+          # That substitution is the entire PET-363 fix — do not hardcode a repo here.
           http=$(curl -sS -w '%{http_code}' -o /tmp/merged.json \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/pulls?state=closed&sort=updated&direction=desc&per_page=100")
           if [ "$http" != "200" ]; then
-            echo "::error title=plane-reconcile::GitHub API returned HTTP $http"
+            echo "::error title=plane-reconcile::GitHub API returned HTTP $http for $GITHUB_REPOSITORY"
             head -c 400 /tmp/merged.json
             exit 1
           fi
 
+          closed=$(python3 -c 'import json,sys;print(len(json.load(open("/tmp/merged.json"))))')
           python3 scripts/plane-merged-since.py /tmp/merged.json "$SINCE" > /tmp/todo.tsv
-          echo "in window: $(wc -l < /tmp/todo.tsv) PR(s)"
+          inwindow=$(wc -l < /tmp/todo.tsv | tr -d ' ')
+
+          # ⚠ SAY WHAT WAS SCANNED, NOT JUST WHAT WAS FOUND. "0 stale" after reading 40
+          # PRs and "0 stale" because the query returned nothing look identical in a green
+          # check, and the second is the bug this job existed to have. PET-317 and PET-298
+          # are the same shape: a reconciler that reported success while checking nothing.
+          echo "closed PRs returned: $closed · merged in window: $inwindow"
+          {
+            echo "### plane-reconcile — $GITHUB_REPOSITORY"
+            echo ""
+            echo "| scanned | since | merged in window |"
+            echo "|---|---|---|"
+            echo "| $closed closed PRs | $SINCE | $inwindow |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$closed" -eq 0 ]; then
+            echo "::warning title=plane-reconcile::$GITHUB_REPOSITORY returned zero closed PRs — check the token scope before trusting this result."
+          fi
 
           while IFS=$'\t' read -r ref url; do
             [ -z "$ref" ] && continue

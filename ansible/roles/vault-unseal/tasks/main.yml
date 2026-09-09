@@ -1,0 +1,108 @@
+---
+# vault-unseal — install the timer that keeps Vault open (PET-373).
+
+- name: Require the unseal key
+  ansible.builtin.assert:
+    that:
+      - vault_unseal_key is defined
+      - vault_unseal_key | length > 0
+    fail_msg: >-
+      vault_unseal_key was not provided. Run scripts/deploy-vault-unseal.sh, which
+      reads the key from the Mac Keychain item vault-unseal-key and passes it in.
+  # no_log is deliberately absent: assert never echoes the value, and censoring the
+  # result would hide the fail_msg that tells you which script to run.
+
+- name: Create the credential directory
+  ansible.builtin.file:
+    path: "{{ vault_unseal_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the CA that signed Vault's certificate
+  ansible.builtin.copy:
+    src: "{{ vault_unseal_cacert_src }}"
+    dest: "{{ vault_unseal_cacert }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the unseal key
+  ansible.builtin.copy:
+    content: "{{ vault_unseal_key }}"
+    dest: "{{ vault_unseal_key_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Create the log file
+  ansible.builtin.file:
+    path: "{{ vault_unseal_log }}"
+    state: touch
+    owner: root
+    group: root
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve
+
+- name: Install the unseal script
+  ansible.builtin.template:
+    src: vault-unseal.sh.j2
+    dest: "{{ vault_unseal_script_path }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: vault-unseal.service.j2
+    dest: /etc/systemd/system/vault-unseal.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install the systemd timer
+  ansible.builtin.template:
+    src: vault-unseal.timer.j2
+    dest: /etc/systemd/system/vault-unseal.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable and start the timer
+  ansible.builtin.systemd_service:
+    name: vault-unseal.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ⚠ PROVE IT, DO NOT ASSUME IT. Running the unit once here means a broken key or an
+# unreachable Vault fails the play, rather than waiting for the next 02:45 window to
+# find out. The script exits 0 when Vault is already open, so this is safe to repeat.
+- name: Run the unseal check once and require it to pass
+  ansible.builtin.command:
+    cmd: systemctl start --wait vault-unseal.service
+  changed_when: false
+
+- name: Read back the seal state from Vault itself
+  ansible.builtin.uri:
+    url: "{{ vault_unseal_addr }}/v1/sys/seal-status"
+    validate_certs: true
+    ca_path: "{{ vault_unseal_cacert }}"
+    return_content: true
+  register: vault_unseal_status
+  changed_when: false
+
+- name: Fail when Vault is still sealed
+  ansible.builtin.assert:
+    that:
+      - not (vault_unseal_status.json.sealed | bool)
+    fail_msg: >-
+      Vault is still sealed after the unseal service ran. Check
+      {{ vault_unseal_log }} on {{ inventory_hostname }}, and confirm the key and
+      the unseal threshold.
+    success_msg: "Vault reports sealed=false."

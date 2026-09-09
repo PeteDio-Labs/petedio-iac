@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+# One-shot unseal check for Vault on 223 (PET-373). Triggered by vault-unseal.timer.
+[Unit]
+Description=Unseal Vault on 223 if it is sealed (PET-373)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ vault_unseal_script_path }}
+# Runs as root to read the 0600 key file; keep the surface small.
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ vault_unseal_log }}
+NoNewPrivileges=true
+PrivateTmp=true

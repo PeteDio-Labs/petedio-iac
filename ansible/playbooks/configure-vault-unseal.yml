@@ -1,0 +1,25 @@
+---
+# configure-vault-unseal.yml — put the Vault unseal watcher on pete-pi-1 (PET-373).
+#
+# Vault seals every time LXC 223 restarts, and 223 restarts nightly: pve03's vzdump
+# job runs in `mode: stop` because its guests sit on a directory store. That is the
+# right trade and is not changing until pve03 gets snapshot-capable storage, so the
+# unsealing has to be reliable instead.
+#
+# The watcher used to be a launchd agent on the Mac. macOS does not fire interval
+# jobs while asleep, so on 2026-09-09 Vault stayed sealed from 02:48 to 12:22 and the
+# nightly infra-reconcile failed. The pi is always on.
+#
+# ⚠ OPERATOR-RUN, AND THAT IS DELIBERATE. No apply-on-merge workflow calls this play,
+# because the unseal key lives in the Mac Keychain and must not reach a CI runner.
+# `ansible-stack.yml` could run it, and giving it the key is the reason not to.
+#
+# Usage:
+#   scripts/deploy-vault-unseal.sh            # reads the Keychain, then runs this
+#   scripts/deploy-vault-unseal.sh --check    # dry run
+
+- name: Install the Vault unseal watcher (pete-pi-1)
+  hosts: pete_pi
+  become: true
+  roles:
+    - vault-unseal

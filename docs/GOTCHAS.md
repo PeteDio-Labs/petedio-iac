@@ -262,6 +262,41 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   (`terraform apply -target=...container.runner`) + Ansible-registering it, then let CI
   take over.
 
+## Vault seals every night, and two watchers open it (PET-373)
+
+- **223 restarts nightly, so Vault seals nightly.** pve03's `vzdump` job runs at 02:45
+  in `mode: stop`, so every guest on the node stops and starts. Vault comes back sealed
+  and 223 boots around 02:48. That mode is correct and is not a bug to fix: pve03's
+  guests sit on a plain directory store, where `mode: snapshot` degrades to a
+  file-by-file rsync that never finishes, and `suspend` runs the same first pass. The
+  measurements are in `ansible/roles/backup-store/tasks/jobs.yml`. Treat the nightly
+  seal as permanent until pve03 gets snapshot-capable storage.
+
+- **Two things unseal it, and that redundancy is deliberate.** `vault-unseal.timer` on
+  pete-pi-1 is the primary, because the pi is always on. The launchd agent
+  `dev.pdlab.vault-unseal` on the Mac stays installed as the fallback for when the pi
+  is down or being rebuilt. They race every five minutes; the race is harmless, because
+  whichever arrives first opens Vault and the other takes its early exit. **Do not
+  remove the Mac agent** on the grounds that the pi covers it — that removes the only
+  path that works when the pi does not.
+
+- **The Mac alone was never enough.** launchd does not fire `StartInterval` jobs while
+  the machine sleeps; it coalesces them into one run on wake. On 2026-09-09 the Mac
+  slept on battery and Vault stayed sealed from 02:48 to 12:22, failing the nightly
+  `infra-reconcile`. The two nights before, the same agent unsealed within two minutes.
+  A watcher that depends on a laptop being awake works until the night it does not.
+
+- **Unseal over the HTTP API, never `vault operator unseal`.** That command takes a
+  positional `[KEY]` and has no stdin convention, so piping to it passes the literal
+  `-` and Vault rejects it with a message about a bad hex or base64 string — which
+  reads like a corrupt key and sends you off measuring byte lengths. `PUT /v1/sys/unseal`
+  with the key in the request body also keeps it out of `ps` and out of shell history.
+
+- **A sealed Vault already reads as DOWN in Uptime Kuma**, because the `vault` monitor
+  accepts only 2xx and `/v1/sys/health` answers 503 when sealed. What Kuma cannot see is
+  the *watcher* failing while Vault happens to be open, so the daily digest reports the
+  timer's state and its last log line.
+
 ## Vault — TLS + GitHub-OIDC (PET-29)
 
 - **Self-signed CA, so verify — don't skip.** Vault on .223 serves an HTTPS listener
