@@ -52,6 +52,18 @@
       ansible.posix.authorized_key:
         user: root
         key: "{{ media_dash_ssh_public_key }}"
+        # ⚠ SCOPE THE KEY. Without options this grants unrestricted interactive root on
+        # six containers to a tool the header calls read-only. `restrict` disables port
+        # and agent forwarding, pty allocation, X11 and user-rc, so the key cannot be
+        # used to pivot or open a shell; `from=` means it works only when presented from
+        # 237, so lifting it off that host buys nothing.
+        #
+        # It still permits command execution, because mtrace works by running
+        # `ssh <host> curl 127.0.0.1:<port>` — that is deliberate, and it keeps each
+        # *arr API key on its own host instead of centralising them. Narrowing further
+        # needs a forced command wrapping that call, deployed to all six hosts, which is
+        # its own change rather than a line here.
+        key_options: 'restrict,from="192.168.50.237"'
         state: present
         # Never exclusive: these hosts are also reached by the ansible key and by the
         # operator, and pruning those would lock the lab out of its own media stack.
