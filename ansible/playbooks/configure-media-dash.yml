@@ -218,17 +218,37 @@
       delay: 2
       until: mtrace_health.status is defined and mtrace_health.status == 200
 
+    # ⚠ runuser, not become_user. become_user defaults to sudo, which this container
+    # does not have — it is built from the minimal Debian template and the play installs
+    # no packages. `su` is no help either: mtrace's shell is /usr/sbin/nologin by design.
+    # runuser is in util-linux, is already present, and drops to a nologin account
+    # without PAM, so the check still runs as the service user rather than as root.
+    # Running it as root would prove nothing about the key's file mode.
     - name: Prove it can actually read the media stack, not just start
       ansible.builtin.command:
-        cmd: "{{ mtrace_bin }} --tool stale_versions"
-      become_user: "{{ mtrace_user }}"
+        cmd: "runuser -u {{ mtrace_user }} -- {{ mtrace_bin }} --tool stale_versions"
       environment:
         MEDIA_CONTROL_SSH_KEY: "{{ mtrace_dir }}/.ssh/id_ed25519_mtrace"
         HOME: "{{ mtrace_dir }}"
       register: mtrace_reach
       changed_when: false
-      failed_when: >-
-        mtrace_reach.rc != 0 or 'not answering' in mtrace_reach.stdout
+      # ⚠ A SERVICE BEING DOWN IS NOT A FAILED DEPLOY. This previously also failed on
+      # 'not answering' in stdout, but mtrace emits that string per service on any error
+      # and the app documents it as an expected finding: planned downtime is normal in
+      # this stack. Sonarr restarting for an update during a deploy turned a converged
+      # run red, so the operator re-ran a deploy with nothing left to do.
+      #
+      # rc != 0 still fails, which is what a broken key, a missing known_hosts entry or
+      # a moved container produce.
+      failed_when: mtrace_reach.rc != 0
+
+    - name: Warn when a service did not answer during the check
+      ansible.builtin.debug:
+        msg: >-
+          At least one service did not answer during the reachability check. That is a
+          finding rather than a deploy failure, but confirm it is planned downtime and
+          not a key or known_hosts problem on that host.
+      when: "'not answering' in mtrace_reach.stdout"
 
     - name: Report what it can see
       ansible.builtin.debug:
