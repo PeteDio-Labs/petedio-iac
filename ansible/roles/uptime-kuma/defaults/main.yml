@@ -59,6 +59,31 @@ uptime_kuma_api_key_name: fault-study
 uptime_kuma_admin_user: ""
 uptime_kuma_admin_password: ""
 
+# -------------------------------------------------------------- notifications --
+# ⚠ 19 MONITORS AND ZERO CHANNELS IS WHAT THIS FIXES (PET-374). On 2026-09-09 Kuma
+# logged 1724 consecutive DOWN heartbeats across a nine-and-a-half-hour Vault outage
+# and reached nobody. Detection was never the weak part; delivery was absent.
+#
+# The provisioner sets isDefault and applyExisting on every entry, so a channel
+# attaches to all current monitors AND to every monitor added later. A new monitor
+# cannot be born silent, which is how the gap opened.
+#
+# It then counts monitors with nothing attached and FAILS on any it finds, because a
+# monitor that notifies nobody looks exactly like one that does.
+#
+# ⚠ The secret arrives as an extra-var, never here. deploy-uptime-kuma.sh resolves it
+# from kv/services/uptime-kuma, field discord_webhook_url. Empty by default, so a run
+# without it is a no-op; declared WITH an empty value fails the run rather than being
+# skipped, since a silently skipped channel is the shape this item exists to end.
+uptime_kuma_discord_webhook: ""
+
+uptime_kuma_notifications: >-
+  {{
+    ([{"name": "discord", "type": "discord",
+       "discordWebhookUrl": uptime_kuma_discord_webhook}]
+     if uptime_kuma_discord_webhook | length > 0 else [])
+  }}
+
 # ------------------------------------------------------------------ monitors --
 # EVERY target is a raw IP. A monitor that resolved a name would go DOWN during
 # an injected DNS fault and report a service outage that never happened — the

@@ -17,7 +17,7 @@ import json
 import sys
 import time
 
-from uptime_kuma_api import UptimeKumaApi, MonitorType, UptimeKumaException
+from uptime_kuma_api import UptimeKumaApi, MonitorType, NotificationType, UptimeKumaException
 
 TYPES = {"http": MonitorType.HTTP, "port": MonitorType.PORT, "dns": MonitorType.DNS}
 
@@ -77,6 +77,7 @@ def main():
     result = {
         "created": [], "updated": [], "unchanged": [],
         "failed": [], "warnings": [],
+        "notifications_created": [], "notifications_updated": [],
     }
     api = UptimeKumaApi(cfg["url"], timeout=60)
     try:
@@ -102,6 +103,59 @@ def main():
             result["retention_days"] = cfg["retention_days"]
         except Exception as exc:  # noqa: BLE001
             result["warnings"].append(f"set_settings failed: {exc}")
+
+        # --- notifications -------------------------------------------------
+        # ⚠ A MONITOR WITH NO NOTIFICATION IS A LOG, NOT AN ALERT. Kuma recorded
+        # 1724 consecutive DOWN heartbeats across a nine-hour Vault outage on
+        # 2026-09-09 and reached nobody, because 19 monitors had zero channels
+        # attached (PET-374). Detection was never the weak part.
+        #
+        # isDefault + applyExisting is the whole point: it attaches to every
+        # monitor that exists now AND every one added later, so a new monitor
+        # cannot be born silent. Per-monitor wiring is what rots.
+        by_notif = {n["name"]: n for n in api.get_notifications()}
+        for spec in cfg.get("notifications", []):
+            name = spec["name"]
+            ntype = spec["type"]
+            if not hasattr(NotificationType, ntype.upper()):
+                result["failed"].append(
+                    {"name": name, "error": f"unknown notification type {ntype!r}"}
+                )
+                continue
+            # Provider fields (discordWebhookUrl, ntfyserverurl, …) come through
+            # verbatim. Kuma names them inconsistently and the declaration is the
+            # place that knows which; this only strips its own control keys.
+            fields = {k: v for k, v in spec.items() if k not in ("name", "type")}
+            missing = [k for k, v in fields.items() if v in (None, "")]
+            if missing:
+                # Fail rather than warn. A channel declared without its secret is
+                # exactly the silent-success shape this whole item exists to end.
+                result["failed"].append(
+                    {"name": name, "error": f"declared but empty: {', '.join(missing)}"}
+                )
+                continue
+            try:
+                if name not in by_notif:
+                    api.add_notification(
+                        name=name,
+                        type=getattr(NotificationType, ntype.upper()),
+                        isDefault=True,
+                        applyExisting=True,
+                        **fields,
+                    )
+                    result["notifications_created"].append(name)
+                else:
+                    api.edit_notification(
+                        by_notif[name]["id"],
+                        name=name,
+                        type=getattr(NotificationType, ntype.upper()),
+                        isDefault=True,
+                        applyExisting=True,
+                        **fields,
+                    )
+                    result["notifications_updated"].append(name)
+            except (UptimeKumaException, Exception) as exc:  # noqa: BLE001
+                result["failed"].append({"name": name, "error": str(exc)})
 
         # --- monitors ------------------------------------------------------
         by_name = {m["name"]: m for m in api.get_monitors()}
@@ -162,7 +216,26 @@ def main():
         except Exception as exc:  # noqa: BLE001
             result["warnings"].append(f"api key failed: {exc}")
 
-        result["monitor_total"] = len(api.get_monitors())
+        # ⚠ PROVE THE ATTACHMENT, DO NOT ASSUME applyExisting WORKED. The whole
+        # point of PET-374 is that a monitor which notifies nobody looks exactly
+        # like one that does. Count the silent ones and fail on them, so this
+        # cannot regress quietly the way it arrived.
+        finals = api.get_monitors()
+        result["monitor_total"] = len(finals)
+        if cfg.get("notifications"):
+            silent = [
+                m["name"] for m in finals
+                if not (m.get("notificationIDList") or {})
+            ]
+            result["monitors_without_notification"] = silent
+            if silent:
+                result["failed"].append({
+                    "name": "notification-attachment",
+                    "error": (
+                        f"{len(silent)} of {len(finals)} monitors have no notification "
+                        f"attached: {', '.join(sorted(silent))}"
+                    ),
+                })
     finally:
         try:
             api.disconnect()

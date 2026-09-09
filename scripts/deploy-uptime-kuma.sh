@@ -67,6 +67,19 @@ KUMA_USER="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=admin_user "$KUMA_PATH"
 KUMA_PW="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=admin_password "$KUMA_PATH")" \
   || die "cannot read $KUMA_PATH field 'admin_password'."
 
+# The Discord webhook is OPTIONAL here and required by nothing else: absent, the run
+# provisions monitors and no channel, exactly as it did before PET-374. Present, every
+# monitor gets it and the provisioner fails on any monitor left unattached.
+#
+# Seed it with:
+#   vault kv patch kv/services/uptime-kuma discord_webhook_url='https://discord.com/api/webhooks/…'
+KUMA_DISCORD="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=discord_webhook_url "$KUMA_PATH" 2>/dev/null || true)"
+if [ -n "$KUMA_DISCORD" ]; then
+  echo "  discord webhook: found in Vault — monitors will be attached to it"
+else
+  echo "  discord webhook: not seeded — monitors will alert NOBODY (PET-374)"
+fi
+
 # Keep the Keychain mirror in step with Vault if the password was rotated there.
 security add-generic-password -U -s "$KC_SERVICE" -a "$KC_ACCOUNT" -w "$KUMA_PW" 2>/dev/null || true
 
@@ -75,6 +88,7 @@ cd "$ANSIBLE_DIR"
 ansible-playbook playbooks/configure-pete-pi.yml \
   -e "uptime_kuma_admin_user=$KUMA_USER" \
   -e "uptime_kuma_admin_password=$KUMA_PW" \
+  -e "uptime_kuma_discord_webhook=$KUMA_DISCORD" \
   "$@"
 
 step "Done"
