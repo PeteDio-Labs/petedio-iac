@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# vault-unseal — unseal Vault if it is sealed, and say so honestly (PET-373).
+#
+# ⚠ VERIFY THE UNSEAL, DO NOT ANNOUNCE IT. This script re-reads seal-status after
+# submitting the key and exits non-zero if Vault is still sealed. A watcher that
+# logs "unsealed" without checking is the failure this lab keeps meeting: PET-317
+# and PET-372 were both jobs that reported success while doing nothing.
+set -uo pipefail
+
+ADDR="{{ vault_unseal_addr }}"
+KEY_FILE="{{ vault_unseal_key_file }}"
+CACERT="{{ vault_unseal_cacert }}"
+LOG="{{ vault_unseal_log }}"
+
+log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$*" >> "$LOG"; }
+
+# 0 = sealed, 1 = unsealed, 2 = unreachable or unparseable.
+seal_state() {
+  local body
+  body="$(curl -sS --cacert "$CACERT" --max-time 6 "$ADDR/v1/sys/seal-status" 2>/dev/null)" || return 2
+  case "$body" in
+    *'"sealed":true'*)  return 0 ;;
+    *'"sealed":false'*) return 1 ;;
+    *)                  return 2 ;;
+  esac
+}
+
+seal_state
+case $? in
+  1) exit 0 ;;                                        # already open, nothing to say
+  2) log "UNREACHABLE — $ADDR did not answer; is 223 up?"; exit 1 ;;
+esac
+
+log "sealed — unsealing"
+
+# The key rides in the request BODY, never in argv. Two reasons, both learned the
+# hard way and both recorded in scripts/pet-secrets:
+#   1. `vault operator unseal` takes a positional [KEY] and has no stdin convention.
+#      Piping to `vault operator unseal -` sends the literal dash, and Vault rejects
+#      it with a message about a bad hex or base64 string — which reads like a
+#      corrupt key and sends you off measuring byte lengths.
+#   2. A body keeps the key out of `ps`, out of shell history, and out of any
+#      remote shell's record.
+if ! printf '{"key":"%s"}' "$(tr -d '\r\n' < "$KEY_FILE")" \
+     | curl -sS --cacert "$CACERT" --max-time 10 --request PUT --data @- \
+       "$ADDR/v1/sys/unseal" >/dev/null 2>&1; then
+  log "FAILED — the unseal request did not complete"
+  exit 1
+fi
+
+# Submitting a key is not the same as opening the vault. A wrong key, or a
+# threshold above one, leaves it sealed and the request still returns cleanly.
+if seal_state; then
+  log "FAILED — still sealed after submitting the key; check the key and the unseal threshold"
+  exit 1
+fi
+
+log "unsealed"

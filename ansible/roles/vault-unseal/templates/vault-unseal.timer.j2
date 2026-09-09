@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# Five-minute schedule for vault-unseal.service (PET-373).
+#
+# Persistent=true matters: if the pi is itself restarted during the 02:45 backup
+# window, the missed run fires on boot rather than waiting for the next slot.
+[Unit]
+Description=Check every five minutes whether Vault is sealed (PET-373)
+
+[Timer]
+OnCalendar={{ vault_unseal_oncalendar }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

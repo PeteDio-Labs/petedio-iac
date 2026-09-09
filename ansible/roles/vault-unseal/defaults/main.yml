@@ -1,0 +1,39 @@
+---
+# vault-unseal — keep Vault open without a laptop in the loop (PET-373).
+#
+# WHY THIS EXISTS. Vault seals on every restart of LXC 223, and 223 restarts every
+# night: pve03's vzdump job runs in `mode: stop`, because pve03's guests sit on a
+# directory store where `mode: snapshot` degrades to an rsync that never finishes.
+# See ansible/roles/backup-store/tasks/jobs.yml for the measurements. The nightly
+# seal is therefore permanent until pve03 gets snapshot-capable storage.
+#
+# Unsealing used to depend on a launchd agent on the Mac. macOS does not fire
+# StartInterval jobs while asleep, so on 2026-09-09 Vault stayed sealed from 02:48
+# to 12:22 and the nightly infra-reconcile failed. The pi is always on, so it holds
+# the watcher instead.
+#
+# ⚠ THE KEY MUST NOT LIVE ON 223. That is the property this whole arrangement
+# protects: 223's disk never holds its own unseal key, so taking the container does
+# not also hand over the means to open it. The pi is not 223, so it preserves that.
+# The Mac's Keychain stays the record of truth and the operator's escape hatch; the
+# pi holds a copy for the timer, not custody of the only one.
+
+vault_unseal_addr: "https://192.168.50.223:8200"
+
+# The repo ships the CA that signed Vault's certificate, so the timer verifies TLS
+# rather than skipping it. `pet-secrets` uses `curl -k` because it runs interactively
+# on a trusted LAN; a daemon that runs unattended every five minutes should not.
+vault_unseal_cacert_src: "{{ playbook_dir }}/../../environments/homelab/vault-ca.crt"
+vault_unseal_cacert: /etc/vault-unseal/vault-ca.crt
+
+vault_unseal_dir: /etc/vault-unseal
+vault_unseal_key_file: "{{ vault_unseal_dir }}/unseal-key"
+vault_unseal_script_path: /usr/local/bin/vault-unseal
+vault_unseal_log: /var/log/vault-unseal.log
+
+# Five minutes matches what the launchd agent did, and the seal window it has to
+# cover is about three minutes of container restart.
+vault_unseal_oncalendar: "*:0/5"
+
+# Required, passed at run time by scripts/deploy-vault-unseal.sh. Never set here.
+# vault_unseal_key: "<from the Mac Keychain item vault-unseal-key>"
