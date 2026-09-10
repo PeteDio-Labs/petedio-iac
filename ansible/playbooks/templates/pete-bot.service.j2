@@ -35,9 +35,17 @@ ProtectHome=true
 ProtectKernelTunables=true
 RestrictSUIDSGID=true
 LockPersonality=true
-# ⚠ NOT ReadWritePaths over the whole app dir. mtrace's unit does that, and it lets the
-# service account replace the root-owned binary it executes. This process needs to write
-# nothing, so it gets nothing.
+
+# The one writable path, and it is one file (PET-384). Open incidents live here so a
+# restart between a DOWN and its recovery still edits the original DM instead of
+# orphaning it and posting the UP separately.
+#
+# ⚠ StateDirectory, NOT ReadWritePaths over the app dir. mtrace's unit does the latter,
+# which lets the service account replace the root-owned binary it executes. systemd
+# creates /var/lib/pete-bot, chowns it to User= and makes it writable under
+# ProtectSystem=strict — nothing else on the filesystem becomes writable.
+StateDirectory=pete-bot
+StateDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target
