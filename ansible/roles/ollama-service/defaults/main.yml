@@ -1,14 +1,14 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
 # Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
 #
-# WORKER INFERENCE LAYOUT (PET-132): the two-agent pivot repurposes this host as the
-# worker's inference tier and needs each model pinned ENTIRELY to its own GPU (the coder
-# must never spill onto the Turing 1660S → slow fallback kernels). That can only be
-# guaranteed per-process via CUDA_VISIBLE_DEVICES, so the layout is now TWO single-GPU
-# services: the primary `ollama` (:11434, pinned to the 3060 Ti, serves the coder) plus
-# extra pinned instances (see ollama_extra_instances; gemma4:e4b on the 1660S at :11435).
-# This deliberately supersedes the older "one service across both GPUs" design — the pin
-# is required for the worker. The pins/env live in host_vars/ollama-host.yml.
+# TWO PINNED INSTANCES (layout from PET-132, kept after the fleet it served retired). Each
+# model is pinned ENTIRELY to its own GPU: a model that spills onto the Turing 1660S falls
+# back to slow kernels, and that can only be guaranteed per-process via CUDA_VISIBLE_DEVICES.
+# So the layout is TWO single-GPU services: the primary `ollama` (:11434, pinned to the
+# 3060 Ti — today it serves mtrace's router model and the lab digest) plus extra pinned
+# instances (see ollama_extra_instances; the embedding model on the 1660S at :11435).
+# This deliberately supersedes the older "one service across both GPUs" design. The
+# pins/env and the models live in host_vars/ollama-host.yml.
 ---
 ollama_service_name: ollama
 ollama_install_script_url: https://ollama.com/install.sh

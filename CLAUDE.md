@@ -2,7 +2,7 @@
 
 Greenfield **Terraform + Ansible** for the PeteDio homelab — an **AWS-shape** platform on Proxmox (LXC≈EC2, MinIO≈S3, Postgres≈RDS, Vault≈Secrets-Manager), built to graduate to real AWS by swapping provider / endpoint / variables, not a rewrite. One environment: `environments/homelab/`.
 
-> Host inventory + IP/VMID scheme → the Linear doc **Homelab Inventory & IP/VMID Scheme** (don't re-derive it here). **`docs/GOTCHAS.md` is the single most useful read before touching anything.**
+> Host inventory + IP/VMID scheme → `vault/Hosts/hosts-inventory.md`, reconciled to `pvesh` on 2026-09-10 (the Linear document it replaced is retired and drifted; don't re-derive it here). **`docs/GOTCHAS.md` is the single most useful read before touching anything.**
 
 ## Tooling
 - **Terraform** for all infra — providers: `bpg/proxmox`, `hashicorp/vault`, `postgresql`, `cloudflare`. **Ansible** for host-level OS/service config (roles + playbooks).
@@ -33,8 +33,8 @@ TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API token
   - ⚠ **That script is scoped to `environments/homelab` in this repo only.** It repaired this state on 2026-09-04 and left `petedio-media-iac`'s state naming the dead node, which is why every media apply reported `1 to change` for a day (PET-332). A repair script's blast radius is the directory it `cd`s into — check whether a sibling state has the same damage.
 - Minimal impact, root-cause, no temp hacks. Plan first for non-trivial (3+ step / architectural) work; if something goes sideways, STOP and re-plan.
 
-## If you are the autonomous loop
-Work **only** `agent-ok` **Platform** issues in this repo; **never merge** (the loop's token is scoped to push + open PRs). Follow the Linear doc **Agent Loop Operations** for the full per-iteration protocol.
+## There is no autonomous loop
+The agent fleet on LXC 242 was retired on 2026-07-21 (PET-265) and the host destroyed on 2026-08-24 (PET-307); see `vault/Systems/agent-fleet-retired.md`. Every clone is interactive, every PR is reviewed by a person, and Pedro is the only merger. `roles/agent-loop` and the `agent-loop` section of `GOTCHAS.md` are history.
 
 ## Writing style
 

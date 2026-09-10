@@ -1,5 +1,7 @@
 # Runbook — rebuild the MinIO Terraform state backend (LXC 221 / .221)
 
+> **Facts corrected 2026-09-10 (PET-385) — read these before the steps.** 221 lives on **pve03** (`.10`, reached as the unprivileged user with `sudo pct`), on the **`local`** directory store (pve03 has no `local-lvm`), on bridge **`vmbr0`** (pve03 has no `vmbr1` — the `vmbr1` warning below was pve01's). The inventory is `vault/Hosts/hosts-inventory.md`, not a Linear document. The backup store that survived the outage is `ollama-backups` on ollama-host (PET-288), not `.115` or a pve02 export.
+
 This runbook is the **disaster-recovery path** for **minio-221** (`192.168.50.221:9000`,
 bucket `tfstate`), the host that backs **all** Terraform state (`environments/homelab/backend.tf`).
 It covers a from-scratch rebuild: **bare LXC create → Ansible → restore the state bucket

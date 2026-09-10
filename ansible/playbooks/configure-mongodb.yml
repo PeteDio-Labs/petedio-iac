@@ -1,4 +1,8 @@
 ---
+# ⛔ NO HOST — resume-242 was destroyed on 2026-08-24 (PET-307). This targets a guest that does
+# not exist; the deploy workflow that calls it matches zero hosts and goes green (PET-387
+# decides rebuild vs retire). Do not run until a host is declared again.
+#
 # configure-mongodb.yml — provision native MongoDB 8.0 on resume-242 (Resume Builder P1).
 #
 # Localhost-only (127.0.0.1) — the SvelteKit app runs on this same host, no LAN exposure

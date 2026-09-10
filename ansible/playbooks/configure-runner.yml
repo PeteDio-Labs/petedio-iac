@@ -9,8 +9,12 @@
 # "graduate to AWS by variable-swap" North Star forbids. This play makes the runner's
 # identity/labels/scope live in git.
 #
-# SECRET (REQUIRED, no committed default): `github_runner_pat` — a fine-grained PAT (or
-# GitHub App token) with permission to manage the PeteDio-Labs org's self-hosted runners
+# SECRET (one of two, no committed default). EITHER `github_runner_pat` — a fine-grained PAT (or
+# GitHub App token) with permission to manage the PeteDio-Labs org's self-hosted runners —
+# OR a pre-minted `github_runner_reg_token` (`gh api -X POST
+# /orgs/PeteDio-Labs/actions/runners/registration-token --jq .token`, valid ~1h). The PAT path
+# at kv/iac/github-runner-pat has been EMPTY since the rack loss (PET-335); the reg-token path
+# is how runner-232 was rebuilt. Seeding the PAT is still the fix. With a PAT: it is used ONLY
 # ("Organization self-hosted runners: Read and write" / classic `admin:org`). Resolve it
 # from Vault and pass it as a no_log extra-var via a 0600 JSON @file — the repo convention
 # (mirrors configure-minio.yml / configure-postgres.yml). The PAT is used ONLY to mint a
@@ -30,7 +34,7 @@
 # box is not already configured (the `.runner` marker is absent) — so a converged runner
 # is a no-op. To force a re-register (new labels/scope), pass `-e runner_force_reconfigure=true`.
 #
-# SCOPE: the `runner` inventory group is BOTH runner-232 (pve01) and runner-233 (pve02);
+# SCOPE: the `runner` inventory group is BOTH runner-232 (pve03) and runner-233 (pve02);
 # each registers under its own `inventory_hostname` with the same org + labels (runner.tf:
 # both are org-scoped, labels self-hosted,linux,x64,homelab). Limit with `--limit runner-233`
 # for a single box. Authoring only — the operator runs it; the loop never runs Ansible

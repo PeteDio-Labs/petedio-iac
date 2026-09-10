@@ -1,5 +1,7 @@
 # Runbook — moving guests between nodes
 
+> **Status: completed 2026-09-04 (PET-334).** runner-233 returned to pve02 under PET-335 the same day, so pve02 holds three guests (110, 233, 236), not two, and the arr stack on pve03 carries bind mounts with `shared=1`. The procedure itself — `pct migrate … --target-storage local`, `tf-state-repoint-node.sh` — is still the one to use.
+
 How the platform tier moved from `pve02` to `pve03` on 2026-09-04 (PET-334), and how
 to move anything else. Twelve containers, 36 minutes, no data loss and no rebuild.
 

@@ -16,7 +16,7 @@
 # Container features (nesting/keyctl) are NOT set here. The bpg/proxmox provider
 # can't set LXC `features{}` over an API token — Proxmox enforces a hardcoded
 # user == root@pam check that an API token (root@pam!tokenid) fails (root@pam
-# gotcha — see docs/GOTCHAS.md). They are applied out-of-band on the Proxmox
+# gotcha — see docs/GOTCHAS.md). They are declared by roles/lxc-features (PET-378) and applied on the Proxmox
 # node: `pct set 223 --features nesting=1,keyctl=1`. The pre_task below just
 # surfaces whether keyctl is present; it never fails the run.
 #
@@ -28,7 +28,7 @@
   become: true
 
   pre_tasks:
-    # keyctl/nesting are set out-of-band on the Proxmox node
+    # keyctl/nesting are declared by roles/lxc-features (PET-378), applied on the Proxmox node
     # (`pct set 223 --features nesting=1,keyctl=1`) because the API token can't
     # mutate LXC features (root@pam gotcha — docs/GOTCHAS.md). This is a
     # non-failing visibility probe only; Vault runs fine without keyctl since we

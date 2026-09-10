@@ -1,4 +1,8 @@
 ---
+# ⛔ HISTORICAL — pve01 is gone (2026-09-03). `hosts: pve01` matches nothing in the inventory,
+# so this play exits 0 having done nothing (PET-354's shape). Kept for the fan-curve
+# measurements, for the next R620.
+#
 # Quiet the R620's fans without giving up thermal protection.
 #
 # The BMC's automatic curve holds ~2760 RPM on an idle pve01 (108 W drawn against

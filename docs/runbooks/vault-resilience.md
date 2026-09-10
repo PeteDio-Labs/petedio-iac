@@ -1,5 +1,7 @@
 # Runbook — Vault resilience: audit device + raft snapshot backups (PET-109)
 
+> **Corrected 2026-09-10 (PET-385).** The manual-unseal passages are history: the pete-pi-1 `vault-unseal.timer` and the Mac launchd agent reopen Vault over the HTTP API after the nightly seal (PET-373).
+
 Vault (.223) is the platform root of trust (CI creds, DB passwords, Cloudflare tokens, SSH
 keys). This runbook covers the three resilience gaps closed in PET-109 and the **operator
 steps** to bring them up safely. The autonomous loop authored the code; **applying any of

@@ -1,5 +1,7 @@
 # Runbook — powering the lab down for a physical move
 
+> **Status: superseded by the 2026-09-03 rack loss.** The shutdown order, the boot-order tables and the iDRAC section describe pve01, which no longer exists. Three steps are now wrong to follow: `ssh … root@192.168.50.10 'shutdown -h now'` under "Shut down pve01" — `.10` is pve03, the platform node; `ssh … root@192.168.86.234 'shutdown -h now'` — that laptop *is* pve03; and `pvecm expected 1` on a lone node — with the QDevice a lone node is quorate, and forcing it while the other node lives is how you split-brain. The NFS coupling now runs pve02 → pve03: pve03 down first, pve02 up first. Kept for the hardware lessons (H710 reseat, chassis intrusion, LOM/NC-SI).
+
 Covers a full cold shutdown of both Proxmox nodes and the bare-metal hosts, transport,
 and a bring-up that ends with every service verified. Written for the case where the
 `192.168.50.1` router travels with the gear, so every static address survives.

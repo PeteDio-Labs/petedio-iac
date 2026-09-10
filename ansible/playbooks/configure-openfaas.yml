@@ -9,9 +9,9 @@
 # wrapper scripts/deploy-openfaas.sh CAPTURES faasd's generated password into Vault
 # (kv/services/openfaas) after this runs, so Vault stays the source of truth for clients.
 #
-# PREREQS (run FIRST): scripts/lxc-features-241.sh (nesting/keyctl for containerd/faasd) and
+# PREREQS (run FIRST): playbooks/configure-lxc-features.yml (PET-378) (nesting/keyctl for containerd/faasd) and
 # /dev/net/tun on the node for faasd's CNI:  pct set 241 -dev0 /dev/net/tun,mode=0666
-# (see scripts/lxc-features-241.sh — without tun, functions deploy but won't network).
+# (see playbooks/configure-lxc-features.yml (PET-378) — without tun, functions deploy but won't network).
 #
 # REGISTRY (PET-88): also writes /var/lib/faasd/.docker/config.json so faasd/containerd can
 # pull our function images from the private registry (docker.pdlab.dev — publicly-trusted,
@@ -60,7 +60,7 @@
         msg: >-
           keyctl probe rc={{ faasd_keyctl_probe.rc }}
           (non-zero is OK if keyctl isn't installed — the real test is faasd/containerd
-          starting below; if THAT fails, run scripts/lxc-features-241.sh).
+          starting below; if THAT fails, run playbooks/configure-lxc-features.yml (PET-378)).
 
     - name: Assert the registry pull creds were provided (use scripts/deploy-openfaas.sh)
       ansible.builtin.assert:

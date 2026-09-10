@@ -1,5 +1,7 @@
 # Runbook — adopt the live Authentik SSO (LXC 119 / .119) under Terraform (import-before-apply)
 
+> **Status: completed 2026-06-24 (PET-123).** 119 was restored onto pve02 after the rack loss and migrated to pve03 (PET-334), so the node (`pve01`), the import id (`pve01/119`, now `pve03/119`) and the datastore (`sdb3-storage`, now `local`) below are history. The backend has S3-native locking since PET-105, and the legacy state it tells you to clean was retired in PET-50.
+
 This runbook covers the **manual, one-time operator steps** to bring the **already-live**
 Authentik container — `authentik`, LXC **119** on **pve01**, `192.168.50.119`, serving
 **SSO/LDAP behind `auth.pdlab.dev`** — under `petedio-iac` management **without recreating

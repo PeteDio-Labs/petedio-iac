@@ -1,5 +1,7 @@
 # Runbook — (re)provision a self-hosted GitHub Actions runner (runner-232 / runner-233)
 
+> **Facts corrected 2026-09-10 (PET-385).** runner-232 is on **pve03** (rebuilt there in PET-335); the tracker is Plane. `kv/iac/github-runner-pat` is still empty, so provision with a pre-minted registration token — `gh api -X POST /orgs/PeteDio-Labs/actions/runners/registration-token --jq .token`, passed as `github_runner_reg_token`; `configure-runner.yml` accepts either. Terraform applies on merge, not by hand. Declare the container's features first with `playbooks/configure-lxc-features.yml` (PET-378), or every Docker pull fails (PET-364).
+
 This runbook brings a runner LXC from a bare container to a **registered, Docker-capable,
 green** self-hosted runner — entirely from IaC. Linear: **PET-80** (the registration half;
 `runner.tf` already owns the LXC, `configure-runner-docker.yml` the Docker half, both now

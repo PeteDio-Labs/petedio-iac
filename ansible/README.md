@@ -1,16 +1,25 @@
 <!-- Ported from homelab-infra for the greenfield petedio-iac. Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12. -->
-# Ansible — ollama-host
+# Ansible — host-level config for every guest, and ollama-host
 
-Manages **ollama-host**: an Ubuntu Server 24.04 box (MSI X570-A PRO) running
-**native Ollama** (not Docker) across **two GPUs — GTX 1660 SUPER + RTX 3060 Ti**
-via a single Ollama service (no GPU pin; Ollama uses both), serving the Ollama
-API to the homelab LAN at **`192.168.50.12:11434`**. Brought under IaC the
-bare-metal way — Terraform declares the host; Ansible does the OS/service config.
+`ansible/` holds the inventory, playbooks and roles for the whole lab — 30 roles and 40
+playbooks, one per concern. The runbook for a given host is the header comment of its
+`playbooks/configure-<name>.yml`; `docs/GOTCHAS.md` holds the traps. This file keeps its
+original job of describing the one bare-metal host, ollama-host, below.
+
+## ollama-host
+
+An Ubuntu Server 24.04 box (MSI X570-A PRO) running **native Ollama** (not Docker) on
+**two GPUs — GTX 1660 SUPER + RTX 3060 Ti** — as **two pinned services**: `ollama` on
+`:11434` pinned to the 3060 Ti, and `ollama-1660s` on `:11435` pinned to the 1660 SUPER
+(`roles/ollama-service/defaults`). Brought under IaC the bare-metal way — Terraform
+declares the host; Ansible does the OS/service config. It also holds `/srv/backups`, the
+`ollama-backups` store the cluster's vzdump jobs write to, which is why the 2026-09-03 rack
+loss was survivable.
 
 - **NIC:** `eth0`, MAC `2c:f0:5d:a2:7f:4f`, Wake-on-LAN (magic packet) enabled.
-- **GPUs:** both cards exposed through one service (no `CUDA_VISIBLE_DEVICES` pin); set `OLLAMA_SCHED_SPREAD=1` in host_vars to force every model across both.
+- **GPUs:** each instance is pinned with `CUDA_VISIBLE_DEVICES` to one card's stable UUID (`host_vars/ollama-host.yml`).
 - **Connection:** `ansible_user: ansible`, key `~/.ssh/id_ed25519_pedro`, `become: true`. **No secrets** (no vault/SOPS).
-- **Control node:** Mac-local on the LAN. `ansible.cfg` uses **no ProxyJump** by default; pve01 (`.10`) is an optional recovery jump only.
+- **Control node:** Mac-local on the LAN. `ansible.cfg` uses **no ProxyJump** by default; pve03 (`.10`, unprivileged user + `sudo`) is an optional recovery jump only.
 
 ## Layout
 
@@ -19,7 +28,7 @@ ansible.cfg
 inventory/hosts.yml                 # ollama group -> ollama-host @ .12
 inventory/host_vars/ollama-host.yml # NIC/WoL/IP/DNS, base models, GPU env
 roles/ollama-service/              # NVIDIA 550, Ollama install, systemd drop-in, UFW, WoL, no-sleep
-roles/ollama-models/               # pulls base models (gemma4:e4b)
+roles/ollama-models/               # pulls base models and keeps the resident ones loaded
 playbooks/ollama-service.yml
 playbooks/ollama-models.yml
 playbooks/set-ollama-static-ip.yml      # renumber w/ auto-revert safety

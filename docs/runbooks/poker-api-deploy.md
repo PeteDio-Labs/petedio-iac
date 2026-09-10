@@ -1,5 +1,7 @@
 # Runbook — Deploy Co-latro to the poker-api LXC 230 (PET-12 / PET-43 / PET-44)
 
+> **Status: paused with Co-latro (PET-366, 2026-09-08 — taken down on purpose, for now).** LXC 230, both routes and the databases were destroyed; `deploy-poker-api.sh`, `reseed-minio-frontend-vault.sh` and `lxc-features-230.sh` were deleted; `docker.pdlab.dev` is down (PET-389). Nothing on this page can run. If Co-latro returns it is re-declared, not replayed from here.
+
 Operator steps to roll out the Co-latro app onto **LXC 230** (`poker-api-230`,
 `192.168.50.230`): the backend image (Nexus → systemd Docker container on `:3020`) and
 the static frontend (MinIO `co-latro-frontend` bucket → nginx on `:80`, proxying `/api`).

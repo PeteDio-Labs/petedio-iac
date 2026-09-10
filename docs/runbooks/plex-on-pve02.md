@@ -1,5 +1,7 @@
 # Plex on pve02 with Quick Sync (PET-311)
 
+> **Status: historical (2026-08-31).** 103 and the VXLAN died with pve01 on 2026-09-03; 112 moved to pve03 (PET-334). Do not run `pct migrate 112 pve01`, or `pct set 112 -net0 …bridge=vmbr1` on `.10` — that is pve03, where `vmbr1` does not exist, and it strands the Cloudflare tunnel. `-e plex_primary=plex` cannot work. The live mesh path is `roles/plex-bridge` and `vault/Systems/plex-on-the-mesh.md`.
+
 **`plex-gpu` (236) on pve02 is the Plex server the house uses. `plex` (103) on
 pve01 is the cold spare — installed and current, but stopped and disabled.**
 

@@ -16,7 +16,7 @@
 #
 # ORDER MATTERS — this will fail loudly, and correctly, if you skip a step:
 #   1. plane.tf applied (LXC 235 exists)
-#   2. scripts/lxc-features-235.sh run (nesting=1,keyctl=1 — Docker won't start without)
+#   2. playbooks/configure-lxc-features.yml (PET-378) run (nesting=1,keyctl=1 — Docker won't start without)
 #   3. `plane` database exists on 231 (databases.tf) and kv/db/plane is seeded
 #   4. `plane` bucket exists on 245 (group_vars/minio_data.yml + deploy-minio-data.sh)
 set -euo pipefail

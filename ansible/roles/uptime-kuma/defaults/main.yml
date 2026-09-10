@@ -5,8 +5,9 @@
 # measuring is down, so it cannot live on an LXC guest or on either Proxmox
 # node. Pete-Pi is outside the cluster and dual-homed: eth0 on the .50 homelab
 # LAN (default route, metric 100) and wlan0 on the .86 home LAN (metric 600).
-# That second leg is not incidental — plex answers on 192.168.86.140 and is
-# reachable no other way from here.
+# That second leg is not incidental: it is where the TVs live, and since PET-334 the
+# `plex-bridge` role serves them from it (socat 192.168.86.46:32400 -> 192.168.50.236).
+# plex 103 at 192.168.86.140 died with pve01 on 2026-09-03; plex-gpu 236 is probed on .50.
 #
 # WHY v1 AND NOT v2. The study reads raw heartbeats out of SQLite to compute a
 # per-monitor response-time baseline. v1 keeps every beat in one `heartbeat`
@@ -41,7 +42,7 @@ uptime_kuma_max_retries: 1
 uptime_kuma_retry_interval: 20
 
 # Raw beats are pruned on this schedule. 45 > the 30 days the study needs, and
-# 14 monitors x 4320 beats/day x 45 days is ~2.7M rows — a few hundred MB of
+# 17 active monitors x 4320 beats/day x 45 days is ~3.3M rows — a few hundred MB of
 # SQLite, comfortable on 49G free.
 uptime_kuma_retention_days: 45
 
@@ -246,7 +247,7 @@ uptime_kuma_monitors:
 
 # ------------------------------------------------------- backup to the HDD --
 # The database lives on an SD card (mmcblk0p2) and this box has no local disk —
-# no USB device is attached. At 14 monitors x 20s that is ~60k row writes a day,
+# no USB device is attached. At 17 monitors x 20s that is ~73k row writes a day,
 # and an SD card that fails mid-study takes the baseline with it.
 #
 # pve02 exports /mnt/backups (295G, 1% used) to the whole 192.168.50.0/24
@@ -263,6 +264,12 @@ uptime_kuma_monitors:
 # this NFS share would stop the instrument recording during exactly the NFS and
 # pve02 faults it exists to measure. Backups go to the HDD; the working database
 # does not.
+# ⚠ THIS EXPORT NO LONGER EXISTS (PET-386). pve02 was rebuilt after the 2026-09-03 rack loss
+# and exports only /mnt/media and /mnt/downloads, to 192.168.50.10. The guard below refuses
+# to write to the SD card when the mount is absent — correctly — and then exits 0, so every
+# run since the loss has logged "Skipping." under a green timer. Verified 2026-09-10. The
+# fix is a store that exists (ollama-backups, or a new pve02 ZFS export) and a non-zero exit
+# on skip; it is PET-386's to make, not a hand edit here.
 uptime_kuma_backup_enabled: true
 uptime_kuma_backup_nfs_export: "192.168.50.11:/mnt/backups"
 uptime_kuma_backup_mount: /mnt/pve02-backups

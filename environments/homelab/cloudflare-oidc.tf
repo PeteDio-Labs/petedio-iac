@@ -6,7 +6,7 @@
 # sends the user straight to the Authentik login page instead of Cloudflare's One-Time PIN.
 # admin.pdlab.dev (PET-87) is the first consumer; fleet/vault are one-line follow-ups.
 #
-# PLANE SPLIT (see docs/runbooks/fleet-activity-view.md §"Swap login to Authentik OIDC"):
+# PLANE SPLIT (the fleet runbook that described this went with the fleet; see docs/GOTCHAS.md "Cloudflare — tunnel ingress + Access"):
 # the Authentik-side OAuth2/OpenID *provider + application* is created BY HAND in the
 # Authentik dashboard (the automation never mutates the SSO box) with slug `cloudflare-access`
 # and redirect URI https://petedillo-labs.cloudflareaccess.com/cdn-cgi/access/callback. That

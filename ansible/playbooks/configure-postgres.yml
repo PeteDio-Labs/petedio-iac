@@ -8,7 +8,7 @@
 #
 # This playbook also owns the host-level container features that the bpg/proxmox
 # provider can't set via API token (root@pam gotcha — see docs/GOTCHAS.md):
-# nesting/keyctl are applied out-of-band on the Proxmox node, not here. (For a
+# nesting/keyctl are declared by roles/lxc-features (PET-378) and applied on the Proxmox node, not here. (For a
 # pure-Postgres LXC, nesting is usually unnecessary; included as the standard
 # pattern hook — drop the pre_task if not needed.)
 #

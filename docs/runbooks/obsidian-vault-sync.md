@@ -1,5 +1,7 @@
 # Runbook — Obsidian vault sync (FS MCS) over MinIO 245 + Tailscale
 
+> **Corrected 2026-09-10 (PET-385).** `tailscale-244` died with pve01 on 2026-09-03; pete-pi-1 advertises `192.168.50.0/24` in its place (verified with `tailscale status`). Tailnet clients therefore reach 245 SNAT'd to pete-pi-1's address, `192.168.50.4`, not `.244` — check the UFW rule below against that before trusting a sync from off the LAN.
+
 Sync the **FS MCS** Obsidian vault (Full Sail MSCS coursework, `~/FS MCS` on the Mac)
 across Mac / iPhone / iPad / Windows PC, through the `obsidian-fs-mcs` bucket on
 **minio-data-245**, reached over the tailnet. **No public URL, no Cloudflare route.**

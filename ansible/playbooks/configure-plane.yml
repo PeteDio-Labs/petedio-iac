@@ -14,7 +14,7 @@
 # header of plane.tf. Nothing here binds a public interface.
 #
 # PREREQUISITES (this play does not do them, and will fail loudly if they are missing):
-#   1. scripts/lxc-features-235.sh has set nesting=1,keyctl=1 on the node. Docker will
+#   1. playbooks/configure-lxc-features.yml (PET-378) has set nesting=1,keyctl=1 on the node. Docker will
 #      not start in an unprivileged LXC without them.
 #   2. kv/db/plane exists with field `password` (the database owner's).
 #   3. kv/services/plane exists with the MinIO access/secret pair and a generated

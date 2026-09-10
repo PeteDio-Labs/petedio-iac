@@ -3,7 +3,7 @@
 # SECURITY SPLIT (PET-104): this repo is PUBLIC and the apply runner is self-hosted INSIDE
 # the homelab. A `pull_request` runs the PR's OWN workflow + Terraform config, so running it
 # on the self-hosted runner = arbitrary code execution on a box that can reach Proxmox
-# (.10:8006), MinIO state (.221:9000), Vault (.223:8200), and the whole 192.168.50.0/24 —
+# (.11:8006 and .10:8006), MinIO state (.221:9000), Vault (.223:8200), and the whole 192.168.50.0/24 —
 # and the old flow even minted Vault creds on `pull_request` first. So the jobs are split by
 # trust:
 #   * validate  — PR + push. GitHub-HOSTED, ephemeral, NO Vault, NO LAN, NO state. fmt +
@@ -24,8 +24,9 @@ on:
   push:
     branches: [main]
 
-# Serialize ALL runs in one group: the MinIO state backend has no locking (backend.tf), so
-# concurrent applies racing the same state file is the repo's #1 footgun. cancel-in-progress:
+# Serialize ALL runs in one group: the state lock is the S3-native lockfile (`use_lockfile`,
+# PET-105), and this group still serializes applies because bucket versioning is the recovery
+# net, not a lock substitute — two applies racing one state is the repo's #1 footgun. cancel-in-progress:
 # false queues instead of killing a mid-flight apply. (PET-105/PET-143.)
 concurrency:
   group: tf-homelab

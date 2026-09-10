@@ -54,4 +54,4 @@ Closes **PET-____**.
 None.
 
 ---
-<sub>🤖 Loop PRs: authored by the agent loop on agent-loop-242 — **never merged by an agent** (hard rule 2). Pedro is the only merger.</sub>
+<sub>Pedro is the only merger. Squash-merge; the apply-on-merge log is the record.</sub>

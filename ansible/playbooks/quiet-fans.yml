@@ -1,4 +1,8 @@
 ---
+# ⛔ HISTORICAL — pve01 is gone (2026-09-03). `hosts: pve01` matches nothing in the inventory,
+# so this play exits 0 having done nothing (PET-354's shape). Kept for the fan-curve
+# measurements, for the next R620.
+#
 # quiet-fans.yml — hold pve01's chassis fans at a low duty cycle. (PET-321)
 #
 # pve01 is a 1U R620 with two 130 W E5-2690 v2s. Dell's automatic curve sizes the

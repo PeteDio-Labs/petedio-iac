@@ -12,7 +12,7 @@
 # passes them as no_log extra-vars so the play can write /var/lib/faasd/.docker/config.json
 # (faasd/containerd pulls our function images from docker.pdlab.dev).
 #
-# Run scripts/lxc-features-241.sh FIRST. Idempotent; no secrets printed.
+# Run playbooks/configure-lxc-features.yml (PET-378) FIRST. Idempotent; no secrets printed.
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM, else prompt.
 set -euo pipefail
 

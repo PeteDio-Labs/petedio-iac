@@ -7,7 +7,7 @@
 #
 # TF owns existence + hardware + network only. The
 # nesting/keyctl container features (needed for containerd/faasd) are applied
-# out-of-band by scripts/lxc-features-241.sh, and faasd itself is installed by
+# out-of-band by playbooks/configure-lxc-features.yml (PET-378), and faasd itself is installed by
 # ansible/playbooks/configure-openfaas.yml — Proxmox's root@pam check rejects API
 # tokens for the `features` mutation, so the module leaves `features` out and keeps
 # it in ignore_changes (see docs/GOTCHAS.md).

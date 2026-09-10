@@ -96,8 +96,9 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   stay operator-only. See `docs/runbooks/loop-proxmox-readonly.md`.
 
 - **Target the correct node endpoint.** bpg reads the PVE version from the endpoint
-  and version-gates fields. Cluster nodes can differ (pve01 9.1.x). Point
-  `proxmox_endpoint` at the node where the resources live.
+  and version-gates fields. Both survivors run 9.2.11 today, and `proxmox_endpoint`
+  defaults to pve02 (`.11`); `.10` is pve03. Either answers for the cluster, but point
+  at the node where the resources live when a version-gated field misbehaves.
 
 - **Scoped API tokens use `--privsep 1` + an explicit ACL** (PET-55). A privsep token
   has its OWN permissions, independent of the user — and NONE until you grant them:
@@ -107,7 +108,9 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   seeding it to Vault (the old token is the only fallback), and revoke the old one only
   after a CI apply is green.
 
-- **On pve01 the LAN/uplink bridge is `vmbr1`, NOT `vmbr0`.** `vmbr0` = `eno1`, a
+- **History (pve01, dead 2026-09-03) — on pve01 the LAN/uplink bridge was `vmbr1`, NOT
+  `vmbr0`.** On both survivors the LAN is `vmbr0`; this bites only when replaying a config
+  recovered from pve01. `vmbr0` = `eno1`, a
   separate segment with no gateway — a container on it has an IP but cannot ARP the
   gateway (outbound 100% loss, DNS fails). `vmbr1` = `eno2`/`eno3`, where the
   working containers live. **Do NOT copy net config from a pve02 container** — on
@@ -115,7 +118,13 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   opposite of pve01. So `bridge` is per-node: `vmbr1` for pve01 resources, `vmbr0`
   for pve02. Discovered 2026-06-02 standing up the fresh MinIO (.221).
 
-## pve01 / pve02 cluster + storage (PET-127)
+## Cluster + storage — pve02 + pve03 + QDevice (post 2026-09-03)
+
+> **The next four bullets are pve01's R620.** That machine died on 2026-09-03 — its PERC H710
+> failed electrically (`vault/Incidents/2026-09-03-rack-loss.md`) — so nothing below applies
+> to a node you can reach. They stay because the next R620 will do the same things, and each
+> one cost hours the first time.
+
 
 - **Seven drives faulting in lockstep is the controller, not the drives — and a controller
   missing from inventory is not necessarily dead.** On 2026-08-28 pve01's SEL showed all seven
@@ -153,9 +162,10 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   works; `.86` → `.50` does not. Verified 2026-08-28 from pve02 (no `.86` leg, reached
   `.86.140:32400`) and from mission-control (`.86`-only, reached nothing on `.50`). This
   corrects `vault/Hosts/004-pete-pi.md`, which claims the `.86` leg is the only path to plex —
-  it is not. It also makes **Pete-Pi the jump host** into `.50` when `tailscale-244` is down,
-  since that subnet router is a guest on pve01 and dies with it: `ssh -A -i
-  ~/.ssh/id_ed25519_pete_pi_2 pedro@192.168.86.46`.
+  it is not. **Pete-Pi is the jump host** from `.86` into `.50`: `ssh -A -i
+  ~/.ssh/id_ed25519_pete_pi_2 pedro@192.168.86.46`. It also advertises both subnets on the
+  tailnet — `tailscale-244` died with pve01 and pete-pi-1 took its routes
+  (`environments/homelab/tailscale.tf`; verified `tailscale status` 2026-09-10).
 
 - **`startup` is not declared in TF, so an apply strips it — keep it in `ignore_changes`.**
   Boot order and up/down delays are set on the node with
@@ -163,29 +173,33 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   block, so without the `ignore_changes` entry the next apply-on-merge silently removes the
   ordering. Same class as `features` / `mount_point` / `idmap`: set out-of-band, ignored in
   state. The order is load-bearing on a cold start — postgres-231 must precede the apps
-  holding connections to it, and registry 106 must not start before its NFS blob store is
-  mounted. Current order: `docs/runbooks/lab-move.md`.
+  holding connections to it. The boot-order tables in `docs/runbooks/lab-move.md` are pve01's;
+  read the live order with `pct config <id> | grep startup` on each node before trusting one.
 
-- **A cold boot of one node alone starts nothing.** The cluster is `Expected votes: 2,
-  Quorum: 2` with no `two_node: 1` in the `quorum {}` block, so a single surviving node is
-  inquorate, `/etc/pve` mounts read-only, and `pct start` refuses for every guest. You cannot
-  fix it by editing a file, because the file system you would edit is the read-only one.
-  Recover with `pvecm expected 1` on the survivor — never while the other node is alive but
-  unreachable, which is how you split-brain.
+- **The cluster is two nodes plus a QDevice on pete-pi-1: 3 votes, quorum 2.** One node
+  and the QDevice are quorate, so either node can be down without the other going read-only.
+  `pvecm status` must show `A,V` on the QDevice line — `A,NV` means it is registered and
+  votes for nobody (see `proxmox-ops`). Before the QDevice existed the cluster was
+  `Expected votes: 2, Quorum: 2`, so a lone survivor was inquorate: `/etc/pve` mounted
+  read-only and `pct start` refused every guest, and the only way out was `pvecm expected 1`
+  on the survivor. Keep that command for the case where the QDevice is ALSO unreachable —
+  never while the other node may be alive, which is how you split-brain.
 
-- **pve01's NFS mounts from pve02 dictate power order in both directions.** They are
-  `vers=4.2,hard`, and a hard mount against a dead server never times out. Shut pve02 down
-  first and pve01 hangs on unmount indefinitely. So: **pve01 down first, pve02 down last;
-  pve02 up first, pve01 up second.** The mounts carry `nofail,x-systemd.mount-timeout=60`
-  so a late pve02 cannot wedge pve01's boot — the tradeoff is that a missing mount is now
-  silent, and CT106 needs `mount -a && pct exec 106 -- docker restart zot` once pve02 is
-  back. **Restarting the LXC is not enough** — verified 2026-08-29: `pct restart 106` left
-  the zot container running with the empty view it started with, bind mount correct and
-  catalog still empty. Restart the container, not the guest.
+- **pve03's NFS mounts from pve02 dictate power order.** pve02 exports `/mnt/media` and
+  `/mnt/downloads` (ZFS) to pve03 only, and the arr stack there binds them with `shared=1`.
+  A hard mount against a dead server never times out, so: **pve03 down first, pve02 down
+  last; pve02 up first, pve03 second.** While pve02 is down the arr apps answer 200 and
+  import nothing — `sonarr answered 200 for hours after the outage while holding 171 file
+  records for files that no longer existed` is why `lab-verify.sh` probes the mounts, not
+  the HTTP status. The lesson that survives from the old direction: a service that reads a
+  mount it lost keeps serving its last view — verified 2026-08-29 on the registry, where
+  `pct restart 106` left zot running with the empty catalog it started with. Restart the
+  process that holds the file handles, not the guest.
 
-- **pve01 + pve02 are a quorate 2-node cluster** ("Homelab"), so `/etc/pve/storage.cfg`
-  is **cluster-shared** — a storage entry without an explicit `nodes <name>` line is
-  offered on BOTH nodes. Always scope node-local storage with `nodes pve01` / `nodes pve02`.
+- **pve02 + pve03 share `/etc/pve/storage.cfg`** — a storage entry without an explicit
+  `nodes <name>` line is offered on BOTH nodes. Always scope node-local storage with
+  `nodes pve02` / `nodes pve03`. pve02 has `local-lvm` (thin); pve03 has only the `local`
+  directory store, so a `datastore_id` that works on one node fails on the other.
 
 - **Stale node-name pin = silently "disabled" storage.** pve02 was once named `pete`;
   a `network-storage` entry pinned to `nodes pete` showed `disabled` in `pvesm status`
@@ -198,24 +212,28 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   VM disks into a filesystem. Filesystem-mount LVs → register as a `dir` storage on
   the mountpoint, not as `lvm`.
 
-- **pve02 is the homelab NFS file server — it is load-bearing, not idle.** It exports
-  `/mnt/{nexus-data,backups,shared}` over NFS; pve01 host-mounts all three as
-  `/mnt/pete/*`. The cluster `pete-backups` storage IS pve02's HDD over NFS, and
-  **Nexus's blob store (CT106) is an NFS mount of pve02's `/mnt/nexus-data`** — never
-  touch that export or `nfs-server` on pve02 or you break `docker.pdlab.dev`.
+- **pve02 is the homelab NFS file server — it is load-bearing, not idle.** Since the
+  2026-09-04 rebuild it exports exactly two things, `/mnt/media` and `/mnt/downloads`, to
+  `192.168.50.10` (`exportfs -v`). The three exports it used to carry —
+  `/mnt/{nexus-data,backups,shared}` — did **not** survive: the `nexus-data` LV is gone,
+  which is the second reason registry-106 cannot come back as it was (PET-389), and the
+  Uptime Kuma backup that targeted `/mnt/backups` has skipped every run since (PET-386).
+  Grep the estate for consumers before touching `nfs-server` on pve02.
 
 - **The bridge numbers are INVERTED between the two nodes.** This is the single easiest way to
   strand a container:
 
   | | `vmbr0` | `vmbr1` |
   |---|---|---|
-  | **pve01** | `.86` Google mesh (no host IP) | `.50` LAN — `192.168.50.10` |
-  | **pve02** | `.50` LAN — `192.168.50.11` | *(does not exist)* |
+  | **pve01** (dead 2026-09-03) | `.86` Google mesh (no host IP) | `.50` LAN — `192.168.50.10` |
+  | **pve02** | `.50` LAN — `192.168.50.11` | the dead VXLAN leg (`vxlan86`); nothing behind it |
+  | **pve03** | `.50` LAN — `192.168.50.10` | *(does not exist)* — the `.86` presence is `wlo1`, `192.168.86.244` |
 
-  So `bridge = "vmbr1"` means the LAN on pve01 and **nothing** on pve02, while `vmbr0` means the
-  mesh on pve01 and **the LAN** on pve02. `pct migrate` moves a container without rewriting its
-  bridge, so a guest migrated between nodes lands on the wrong network and cannot reach its
-  gateway. Set the bridge as part of the move, before starting it on the target:
+  Between the two survivors the LAN is `vmbr0` on both, so a plain `pct migrate` lands on the
+  right network. The trap now bites when you **replay a config recovered from pve01**
+  (`.agent/pve01-recovery/`): its `bridge=vmbr1` means the LAN there and nothing here.
+  `pct migrate` moves a container without rewriting its bridge, so set it as part of the
+  move, before starting it on the target:
 
       pct stop <id>; pct migrate <id> <target>
       pct set <id> -net0 name=eth0,bridge=<right one>,hwaddr=<KEEP IT>,...
@@ -237,9 +255,10 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   The reply's MAC gives it away — it is the `.50` interface's. Always arping the **gateway**,
   which exists on one segment only.
 
-  Consequence: pve02 has one physical NIC, on `.50`, so nothing there can serve the mesh clients.
-  A `.86` presence on pve02 needs a second NIC bridged as its own `vmbr`, cabled either to a Nest
-  LAN port or to pve01's free `eno4` after adding `eno4` to pve01's `vmbr0`.
+  Consequence: pve02 has one physical NIC, on `.50`, so nothing there can serve the mesh clients
+  directly. The live answer is not a second NIC: `roles/plex-bridge` runs a socat proxy on
+  pete-pi-1 (`192.168.86.46:32400` → `.50.236`), the tailnet reaches 236 at `100.97.96.88`,
+  and pve03's own `wlo1` carries the Palworld NAT. See `vault/Systems/plex-on-the-mesh.md`.
 
 - **`pct migrate` refuses a container that has a snapshot**, with
   `can't migrate local volume '...': non-migratable snapshot exists`. It aborts in about two
@@ -249,8 +268,11 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   six-month-old snapshot named `asdf`; the tunnel is every public hostname, so the cost of
   finding out the slow way is an outage of everything.
 
-- **A node with one NIC can still hold an address on a network it has no cable to.** pve02 has a
-  single port, on `.50`, and the TVs live on the `.86` mesh — which `.50` cannot be reached from,
+- **History — the VXLAN anchored on pve01 and died with it (2026-09-03).**
+  `configure-mesh-vxlan.yml` and `roles/mesh-vxlan` are superseded by `roles/plex-bridge`; the
+  mesh leg was removed from 236 in PET-332. The mechanism is kept because it worked and the MTU
+  and gateway traps are general. **A node with one NIC can still hold an address on a network
+  it has no cable to.** pve02 has a single port, on `.50`, and the TVs live on the `.86` mesh — which `.50` cannot be reached from,
   since `.50` is NATed behind `.86`. The fix needed no hardware: a **VXLAN** wraps mesh Ethernet
   frames in ordinary UDP addressed pve02 → pve01, and pve01 — which *is* cabled to the mesh —
   unwraps them into its own mesh bridge (`vmbr0`, port `eno1`). pve02 gets `vmbr1` backed only by
@@ -278,6 +300,8 @@ Carry-forward lessons. Every story that hits a new one appends here (Definition 
   `configure-media` run would have done the same thing sooner. Which server serves is now a
   variable (`plex_primary`) enforced by `plex-primary.yml`, and it sets **both** state and enabled.
   Any "temporarily turn this off" that is not also `disable`d is a pause, not a decision.
+  103 died with pve01 on 2026-09-03, so `-e plex_primary=plex` cannot work any more;
+  `plex-primary.yml` only asserts that 236 is running (PET-354).
 
 ## MinIO S3 state backend
 
@@ -561,7 +585,7 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   in every root whose lock changed (registry-only, no LAN/Vault). Verify ≥1 `h1:` per provider
   per platform before committing.
 
-## App rollout — Co-latro / poker-api 230 (PET-12/43/44)
+## App rollout — Co-latro / poker-api 230 (PET-12/43/44) — history: torn down 2026-09-08 (PET-366)
 
 - **The `ansible` Vault policy can't read `kv/poker/*` — by design.** Least-privilege:
   Ansible host-config reads `kv/iac/*` + `kv/services/*`; the app DB creds (`kv/poker/db`)
@@ -571,7 +595,7 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   the `ansible` policy to "fix" a permission-denied here — use the right token.
 
 - **The poker-api rollout's secrets span TWO policies → log in TWICE.** `kv/poker/db` is
-  readable only by `terraform`/`ci-read`; `kv/services/{nexus,minio-frontend}` only by
+  readable only by `terraform`/`ci-read`; `kv/services/{registry,minio-frontend}` (there is no `kv/services/nexus` — that guess shipped a broken deploy in PET-99) only by
   `ansible`. **No single token reads both.** `deploy-poker-api.sh` logs in with each AppRole
   for its own domain. When the rollout moves to the runner (OIDC CD-on-merge), the **`ci-read`**
   policy reads `kv/poker/*` but **not `kv/services/*`** — grant it `kv/data/services/nexus` +
@@ -607,7 +631,7 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
 - **faasd in an unprivileged LXC needs `/dev/net/tun`** for its CNI bridge. Without it the
   gateway/functions deploy but get no network (invokes hang / "no route to host"). Pass it
   through on the node: `pct set <id> -dev0 /dev/net/tun,mode=0666` + reboot (the line is in
-  `scripts/lxc-features-241.sh`). nesting+keyctl are necessary but NOT sufficient for faasd.
+  `playbooks/configure-lxc-features.yml`, PET-378). nesting+keyctl are necessary but NOT sufficient for faasd.
 
 - **faasd basic-auth secret files must be `0644`, not `0600`.** The gateway runs as a NON-root
   user and bind-mounts `/var/lib/faasd/secrets/basic-auth-{user,password}` → `/run/secrets`.
@@ -629,7 +653,7 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   "Top-level object must be a mapping" and crash-loops. Recover by restoring the compose from
   the clone: `cp /opt/faasd-src/docker-compose.yaml /var/lib/faasd/`.
 
-- **Private-registry (Nexus) pulls: creds go in `/var/lib/faasd/.docker/config.json`** (PET-88),
+- **Private-registry pulls (Zot on registry-106 — down since 2026-09-03 with no blob store left, PET-389): creds go in `/var/lib/faasd/.docker/config.json`** (PET-88),
   standard Docker format `{"auths":{"docker.pdlab.dev":{"auth":"<base64 user:pass>"}}}` — NOT
   `~/.docker/...` and NOT a faasd CLI flag. `docker.pdlab.dev` is publicly-trusted, so (like Docker
   on 230) **no CA install / insecure-registries** is needed — only the auth. Written `0600` by
@@ -637,7 +661,7 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   create it with `docker login` on macOS — the helper leaves an empty `auth` (templating it is why
   the play builds the base64 itself).
 
-## agent-loop host (242) — toolchain (PET-125/131/139/140)
+## agent-loop host (242) — toolchain (PET-125/131/139/140) — history: fleet retired 2026-07-21, host destroyed 2026-08-24 (PET-307)
 
 - **npm globals for the loop must live in a USER-writable prefix, not `/usr`.** The loop
   runs as non-root `agent` (no sudo). Installing Claude Code / Bun as root into the system
@@ -698,8 +722,9 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   silently breaks CF's machine redirect; (2) **endpoint path asymmetry** — `authorize`/`token`
   are GLOBAL (`https://auth.pdlab.dev/application/o/...`) but `jwks`/`.well-known` are
   **per-slug** (`.../application/o/<app-slug>/...`); wrong slug placement = login fails. CF's
-  callback is `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`. Full procedure:
-  `docs/runbooks/fleet-activity-view.md`.
+  callback is `https://<team>.cloudflareaccess.com/cdn-cgi/access/callback`. The runbook that
+  held the full procedure went with the fleet on 2026-07-21; `scripts/reseed-authentik-oidc-vault.sh`
+  re-seeds the app's OIDC secret.
 
 ## Terraform — a local plan/apply is NOT the same plan CI runs
 

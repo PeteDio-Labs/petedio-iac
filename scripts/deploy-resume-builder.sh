@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# ⛔ NO HOST — resume-242 was destroyed on 2026-08-24 (PET-307). This targets a guest that does
+# not exist; the deploy workflow that calls it matches zero hosts and goes green (PET-387
+# decides rebuild vs retire). Do not run until a host is declared again.
+#
 # deploy-resume-builder.sh — build the app locally, resolve its secrets from Vault, and run
 # configure-resume-builder.yml, which deploys it natively on resume-242. (Resume Builder P1)
 #
