@@ -147,14 +147,39 @@
         mode: "0755"
 
     # ---- App source (backend + frontend) from the controller checkout ----
+    # ⚠ NAMED PATHS, NOT `backend/`, AND THE WHOLE-DIRECTORY VERSION WAS ACTIVELY HARMFUL.
+    # `copy:` has no exclude, so `src: backend/` ships everything a workstation checkout has
+    # accumulated — and both of the worst things are GITIGNORED, so they exist only there:
+    #
+    #   backend/node_modules      ~30 MB of small files, sent one at a time over SSH. Measured
+    #                             2026-09-10: ~41 KB in 20 s, i.e. hours. It is also POINTLESS —
+    #                             the backend has ZERO runtime dependencies (package.json
+    #                             `dependencies` is empty; @types/bun and typescript are dev
+    #                             only) because Bun runs the TypeScript directly.
+    #   backend/panel-sessions.db The DEV database. panel_db_path deliberately lives under the
+    #                             app dir so it survives redeploys — and a whole-directory copy
+    #                             would overwrite production session history with whatever a
+    #                             laptop had lying about. The comment on panel_db_path claims
+    #                             "the source copy only replaces backend/ and frontend/", which
+    #                             was exactly the assumption that made this invisible.
+    #
+    # CI never hit either, because a clean checkout has neither — but palworld_panel_src
+    # DEFAULTS to a workstation path, so the workstation is the documented case.
+    #
+    # Listing what the service needs also means adding a runtime file is a deliberate edit
+    # here rather than something that rides along from someone's laptop.
     - name: Copy the backend source
       ansible.builtin.copy:
-        src: "{{ palworld_panel_src }}/backend/"
-        dest: "{{ panel_app_dir }}/backend/"
+        src: "{{ palworld_panel_src }}/backend/{{ item }}"
+        dest: "{{ panel_app_dir }}/backend/{{ item | regex_replace('/$', '') }}{{ '/' if item.endswith('/') else '' }}"
         owner: "{{ panel_user }}"
         group: "{{ panel_group }}"
         mode: "0644"
         directory_mode: "0755"
+      loop:
+        - src/
+        - package.json
+        - tsconfig.json
       notify: Restart palworld-panel
 
     # shared/ is the backend<->frontend contract directory, and the backend imports it at
