@@ -32,6 +32,23 @@
 # The binaries guard matters on a prep-only converge (palworld_install_binaries=false):
 # there is no unit to restart there, and an unguarded handler would fail the run.
 - name: Restart palworld (only if it is already running)
+  # ⚠ `listen`, BECAUSE THE NAME AND THE NOTIFY DRIFTED APART AND NOTHING CAUGHT IT.
+  # PET-303 (#224) renamed this handler from plain "Restart palworld" to add the guard to
+  # its title, and left `notify: Restart palworld` in tasks/main.yml pointing at a name
+  # that no longer existed. Ansible treats an unmatched notify as a hard ERROR, so the
+  # play dies with "The requested handler 'Restart palworld' was not found".
+  #
+  # It hid for weeks because the notify only fires when PalWorldSettings.ini actually
+  # CHANGES. Converges against the live host rendered byte-identical files, so nothing
+  # notified and nothing failed. The first run against a fresh host — where the template
+  # is new by definition — hit it immediately (PET-381).
+  #
+  # So the irony is exact: PET-303 existed to stop Ansible reviving a stopped server, and
+  # the rename made this handler unreachable, which is a different way of not running.
+  #
+  # `listen` decouples the two: the descriptive name stays, and the notify keeps working
+  # even if someone rewords the title again.
+  listen: Restart palworld
   ansible.builtin.shell: |
     set -e
     if systemctl is-active --quiet {{ palworld_service_name }}; then
