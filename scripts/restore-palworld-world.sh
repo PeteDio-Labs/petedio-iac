@@ -56,10 +56,19 @@ fi
 if [ -z "$MINIO_PASS" ]; then
   SECRETS_FILE="${SECRETS_FILE:-$(dirname "$0")/../../.secrets/minio-221.txt}"
   [ -f "$SECRETS_FILE" ] || die "No credentials: Vault unavailable and $SECRETS_FILE missing."
-  MINIO_USER="$(awk -F': *' '/root user/{print $2; exit}' "$SECRETS_FILE" | tr -d '[:space:]')"
-  MINIO_PASS="$(awk -F': *' '/root pw/{print $2; exit}' "$SECRETS_FILE" | tr -d '[:space:]')"
-  [ -n "$MINIO_USER" ] || MINIO_USER="$(awk 'NR==2{print $1}' "$SECRETS_FILE" | tr -d '[:space:]')"
+  # ⚠ PARSE THE KEY=VALUE LINES, NOT THE PROSE. The file opens with a human line
+  # ("minio-221 root pw: ...") and then carries the real values as env-style assignments:
+  # MINIO_ROOT_USER / MINIO_ROOT_PASSWORD, plus a CI_MINIO_* pair scoped to the tfstate
+  # bucket only. A first pass here read the prose line and the line after it, which
+  # produced a plausible-looking credential that MinIO rejected with "The Access Key Id
+  # you provided does not exist in our records" — a wrong-value error, not a wrong-syntax
+  # one, so nothing pointed at the parser.
+  #
+  # The CI pair is deliberately NOT used: it can read tfstate and not palworld-backups.
+  MINIO_USER="$(sed -nE 's/^MINIO_ROOT_USER=//p' "$SECRETS_FILE" | head -1 | tr -d '[:space:]')"
+  MINIO_PASS="$(sed -nE 's/^MINIO_ROOT_PASSWORD=//p' "$SECRETS_FILE" | head -1 | tr -d '[:space:]')"
 fi
+[ -n "$MINIO_USER" ] || die "Could not resolve the minio-221 root user."
 [ -n "$MINIO_PASS" ] || die "Could not resolve the minio-221 root password."
 
 # MC_HOST_<alias> configures mc from the environment, so this writes no ~/.mc/config.json
@@ -109,16 +118,37 @@ WORLD_IN_ARCHIVE="$(tar tzf "$WORK/$ARCHIVE" | sed -nE 's#.*SaveGames/0/([0-9A-F
 echo "  world folder in archive: ${WORLD_IN_ARCHIVE:-<none found>}"
 [ -n "$WORLD_IN_ARCHIVE" ] || die "No SaveGames/0/<worldguid>/ inside the archive — this is not a world backup."
 
+# ⚠ THE ARCHIVE IS NOT ROOTED AT Saved/. It carries a dated top directory and a Saved/
+# beneath it, plus sibling `meta` and `host` files:
+#     palworld-final-<ts>/Saved/SaveGames/0/<guid>/Level.sav
+# Extracting it flat into Pal/Saved/ therefore produced Pal/Saved/palworld-final-<ts>/Saved/...
+# — a complete, valid, entirely ignored copy of the world. The server would have generated
+# a fresh one and come up green on it, which is precisely the failure the machine note
+# warns about, arrived at from a new direction.
+#
+# Derive the prefix instead of hardcoding a depth, so a differently-named archive still works.
+ARCHIVE_TOP="$(tar tzf "$WORK/$ARCHIVE" | head -1 | cut -d/ -f1)"
+[ -n "$ARCHIVE_TOP" ] || die "Could not determine the archive's top-level directory."
+tar tzf "$WORK/$ARCHIVE" | grep -q "^${ARCHIVE_TOP}/Saved/" \
+  || die "Expected ${ARCHIVE_TOP}/Saved/ inside the archive and did not find it."
+echo "  archive prefix: ${ARCHIVE_TOP}/Saved/ (stripped on extract)"
+
 step "Restoring onto $TARGET"
 "${SSH[@]}" "mkdir -p $SAVED_DIR" || die "cannot create $SAVED_DIR"
 # Stream it rather than staging a second copy on the target's disk.
-gzip -dc "$WORK/$ARCHIVE" | "${SSH[@]}" "tar xf - -C $SAVED_DIR --strip-components=0" \
+gzip -dc "$WORK/$ARCHIVE" | "${SSH[@]}" "tar xf - -C $SAVED_DIR --strip-components=2 '${ARCHIVE_TOP}/Saved'" \
   || die "extract failed"
 "${SSH[@]}" "chown -R steam:steam /home/steam/palworld/Pal/Saved" || die "chown failed"
 echo "  extracted and owned by steam"
 
 step "Confirming what landed"
-"${SSH[@]}" "ls -la $SAVED_DIR/SaveGames/0/ | head; echo; grep -o 'DedicatedServerName=[A-Za-z0-9]*' $SAVED_DIR/Config/LinuxServer/GameUserSettings.ini 2>/dev/null || echo '(no DedicatedServerName in the restored GameUserSettings.ini — the Ansible role pins it)'"
+# ⚠ THIS SECTION USED TO BE A `ls` WHOSE FAILURE WAS IGNORED, and the script printed
+# "Restored." over the top of it. That is the false green this repo keeps meeting: the
+# world had gone to the wrong path and every line said success. Assert the exact directory
+# the server will look in, and fail if it is not there.
+"${SSH[@]}" "test -f $SAVED_DIR/SaveGames/0/$WORLD_IN_ARCHIVE/Level.sav" \
+  || die "No Level.sav at $SAVED_DIR/SaveGames/0/$WORLD_IN_ARCHIVE/ — the world did not land where the server reads it. Nothing was started; inspect $SAVED_DIR before retrying."
+"${SSH[@]}" "ls -la $SAVED_DIR/SaveGames/0/$WORLD_IN_ARCHIVE/Level.sav; stat -c 'owner: %U:%G' $SAVED_DIR/SaveGames/0/$WORLD_IN_ARCHIVE/Level.sav"
 
 cat <<EOF
 
