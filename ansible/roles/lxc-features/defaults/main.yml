@@ -83,6 +83,10 @@ lxc_features_declared:
   "232": { nesting: "1", keyctl: "1" }   # runner-232 — Docker; PET-364 set these by script
   "233": { nesting: "1", keyctl: "1" }   # runner-233 — Docker
   "235": { nesting: "1", keyctl: "1" }   # plane-235 — Docker Compose; PET-86 set these by script
+  # Proxmox itself warns on start: "Systemd 257 detected. You may need to enable nesting."
+  # Created 2026-09-09 with no features and the usual three failed mount units — the same
+  # gap PET-378 describes, reproducing on a brand-new container.
+  "234": { nesting: "1", keyctl: "1" }   # palworld-234 — the game server (PET-381)
   # ⚠ A DECISION, NOT AN OBSERVATION. 236 runs with `nesting=1` and no keyctl, and
   # nothing anywhere records whether dropping keyctl was deliberate. Resolved
   # towards the lab default: without it the container keeps a seccomp rule that
