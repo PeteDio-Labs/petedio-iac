@@ -24,3 +24,21 @@ palworld_lan_ingress_enabled: true
 # world of its own boots THAT one, ignores the restore, and comes up fully green on an
 # empty map. After any restore or restart the check that counts is worldguid from
 # /v1/api/info — days:0 / basecampnum:0 means a fresh world, so stop before it writes.
+
+# ⚠ CLOUDFLARE PUBLISHES NO `trixie` DIST, AND THIS CONTAINER IS DEBIAN 13.
+# roles/cloudflared defaults cloudflared_apt_release to ansible_distribution_release, which
+# is correct almost everywhere and wrong here: the old game host was Pop!_OS 24.04 and
+# resolved to `noble`, which exists. Debian 13 resolves to `trixie`, which does not, and
+# apt fails with "does not have a Release file" — an error that reads like a broken mirror
+# rather than an unpublished suite.
+#
+# Checked against the repo on 2026-09-10:
+#     trixie 404 · bookworm 200 · bullseye 200 · noble 200 · jammy 200
+#
+# bookworm is the newest published Debian suite. cloudflared ships as a static Go binary,
+# so the suite gates which repo index apt reads rather than what gets linked.
+#
+# The role's own comment asks for exactly this: "pin it here so a distro that reports
+# something Cloudflare doesn't publish is an obvious one-line override rather than a
+# confusing 404 from apt."
+cloudflared_apt_release: bookworm
