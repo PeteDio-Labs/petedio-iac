@@ -1,0 +1,30 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# Palworld mesh NAT (PET-381) — see roles/palworld-mesh-nat/defaults/main.yml.
+#
+# ⚠ ITS OWN TABLE, ON PURPOSE. Everything here lives in `table ip {{ palworld_nat_table }}`
+# and nothing else on this node is touched. pve-firewall is disabled and nftables.service is
+# disabled here, so a shared table would be a landmine for whoever enables either one.
+# `delete table` at the top makes the file idempotent: re-running it replaces this table
+# and leaves every other table alone.
+
+table ip {{ palworld_nat_table }}
+delete table ip {{ palworld_nat_table }}
+
+table ip {{ palworld_nat_table }} {
+  chain prerouting {
+    type nat hook prerouting priority dstnat; policy accept;
+    # Match on the INTERFACE, never on wlo1's address. That address is {{ palworld_nat_mesh_interface }}'s
+    # DHCP lease from the Google mesh: it is 192.168.86.244 today and becomes 192.168.86.234
+    # once the reservation lands. Hardcoding either one breaks the day the lease changes.
+    iifname "{{ palworld_nat_mesh_interface }}" udp dport {{ palworld_nat_game_port }} \
+      dnat to {{ palworld_nat_target_ip }}:{{ palworld_nat_game_port }}
+  }
+
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+    # Without this the container replies from .50.234 to a client that asked .86.x, and the
+    # client drops it. Scoped to the game flow so nothing else on this node is masqueraded.
+    ip daddr {{ palworld_nat_target_ip }} udp dport {{ palworld_nat_game_port }} masquerade
+  }
+}

@@ -1,0 +1,13 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+# ⚠ Same check-mode guard as the tasks that notify it. Under --check the unit was never
+# written, so restarting it fails on a service that does not exist — a dry run going red
+# over something it deliberately did not create.
+- name: Reload palworld mesh NAT
+  ansible.builtin.systemd:
+    name: "{{ palworld_nat_service_name }}"
+    state: restarted
+  when: not ansible_check_mode

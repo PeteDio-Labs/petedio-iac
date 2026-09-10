@@ -1,0 +1,48 @@
+---
+# palworld-mesh-nat — put the game on the .86 mesh from a container that cannot be there.
+#
+# THE PROBLEM, AND WHY THE OBVIOUS FIX IS IMPOSSIBLE. Players are on 192.168.86.0/24, the
+# Google Nest mesh. Palworld runs in LXC 234 on 192.168.50.234, the platform LAN. pve03 is
+# on both — vmbr0 for .50, and wlo1 (Intel AX210) for .86.
+#
+# You cannot give the container a real .86 address through wlo1. roles/plex-bridge already
+# worked this out and wrote it down: 802.11 uses THREE-address frames, so an AP drops any
+# frame sourced from a MAC it has not associated. A WiFi station cannot bridge other MACs.
+# 4addr/WDS would need the AP's cooperation and the AP is a Google mesh. That is settled —
+# it is why plex-bridge exists at all, and it applies identically here.
+#
+# ⚠ AND THE ROUTING IS ASYMMETRIC, WHICH TWO DOCS DISAGREED ABOUT. host_vars/palworld-mc.yml
+# claimed "the router carries .50 <-> .86". Measured from a mesh-only interface 2026-09-09:
+#
+#     ping -S 192.168.86.118 192.168.50.10     100% loss
+#     ping -S 192.168.86.118 192.168.86.244      0% loss
+#
+# .50 reaches .86; .86 does NOT reach .50. Players sit on the side that cannot get in, so
+# nothing short of NAT on pve03 makes the game reachable.
+#
+# ⚠ WHY NOT socat, THE WAY plex-bridge DOES IT. plex-bridge proxies Plex's TCP/HTTP port and
+# socat is a fine answer for that. This is UDP game traffic: socat's UDP mode forks a process
+# per source address with no connection tracking, which is the wrong shape for a latency-
+# sensitive server. Kernel NAT keeps conntrack, handles several clients natively, and copies
+# nothing through userspace.
+#
+# ⚠ SNAT IS REQUIRED, NOT AN OPTIMISATION. With DNAT alone the container answers a .86 client
+# from 192.168.50.234. The client asked 192.168.86.234 and drops a reply from anywhere else,
+# so the game would appear to accept connections and never respond. Masquerading makes the
+# container answer pve03, which un-NATs both directions.
+#
+# THE COST: the container sees every player as pve03, not as their own address. Palworld does
+# not care, but the GameData API's player-IP field will show the node. Worth knowing before
+# treating that as a bug.
+
+palworld_nat_mesh_interface: wlo1
+palworld_nat_target_ip: 192.168.50.234
+
+# 8211/udp is the game. Deliberately NOT forwarded:
+#   8212 REST API  — admin surface, holds the admin password; stays on .50 only.
+#   8080 panel     — served through its own Cloudflare tunnel, not the mesh.
+palworld_nat_game_port: 8211
+
+palworld_nat_table: palworld_mesh
+palworld_nat_rules_file: /etc/palworld-mesh-nat.nft
+palworld_nat_service_name: palworld-mesh-nat

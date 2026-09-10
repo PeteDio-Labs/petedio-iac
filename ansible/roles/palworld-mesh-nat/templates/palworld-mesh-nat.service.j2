@@ -1,0 +1,23 @@
+# {{ ansible_managed }}
+# Loads the Palworld mesh NAT table at boot (PET-381).
+#
+# ⚠ ITS OWN UNIT RATHER THAN nftables.service. That service is DISABLED on this node and
+# enabling it would have it load /etc/nftables.conf, whose default content flushes rulesets —
+# a node-wide change to a hypervisor, made as a side effect of a game deployment. This unit
+# loads one file, creates one table, and removes exactly that table on stop.
+[Unit]
+Description=Palworld mesh NAT ({{ palworld_nat_mesh_interface }} -> {{ palworld_nat_target_ip }})
+# The rule matches on iifname, so the interface must exist before the table is loaded.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ palworld_nat_rules_file }}
+# `|| true` so a stop never fails when the table is already gone — otherwise a second
+# `systemctl stop` leaves the unit in a failed state for no reason.
+ExecStop=/bin/sh -c '/usr/sbin/nft delete table ip {{ palworld_nat_table }} || true'
+
+[Install]
+WantedBy=multi-user.target

@@ -12,7 +12,11 @@ on:
       - ansible/roles/palworld/**
       - ansible/inventory/palworld.yml
       - ansible/inventory/group_vars/palworld.yml
-      - ansible/inventory/host_vars/palworld-mc.yml
+      - ansible/inventory/host_vars/palworld-234.yml
+      # pve03 carries the mesh NAT this playbook now installs, so a change to
+      # that role must re-apply. inventory/pve03.yml is deliberately NOT here:
+      # editing the node inventory should not redeploy a game server.
+      - ansible/roles/palworld-mesh-nat/**
       - .github/workflows/ansible-palworld.yml
       - .github/workflows/ansible-stack.yml
   # NB: ansible-stack.yml is deliberately in pull_request.paths ONLY — shared-logic edits
@@ -25,7 +29,11 @@ on:
       - ansible/roles/palworld/**
       - ansible/inventory/palworld.yml
       - ansible/inventory/group_vars/palworld.yml
-      - ansible/inventory/host_vars/palworld-mc.yml
+      - ansible/inventory/host_vars/palworld-234.yml
+      # pve03 carries the mesh NAT this playbook now installs, so a change to
+      # that role must re-apply. inventory/pve03.yml is deliberately NOT here:
+      # editing the node inventory should not redeploy a game server.
+      - ansible/roles/palworld-mesh-nat/**
       - .github/workflows/ansible-palworld.yml
 
 # Serialize runs of this workflow so two fast merges can't race two ansible applies
