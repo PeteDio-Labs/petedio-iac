@@ -1,5 +1,7 @@
 # Runbook — Seed bootstrap secrets into Vault KV (PET-27)
 
+> **Corrected 2026-09-10 (PET-385).** The tracker is Plane, and the CI OIDC cutover (PET-29) this page defers is done. `kv/services/qbittorrent` holds only a phantom credential — see petedio-media-iac's `docs/runbooks/qbittorrent-vault-secret.md` — so drop it from `vault-seed.sh` and `vault-verify.sh` when they are next touched.
+
 This runbook covers the **manual, one-time operator steps** to seed the initial
 secret **values** into the homelab Vault KV-v2 store at
 <https://192.168.50.223:8200> (LXC 223), and to provision the AppRole credentials

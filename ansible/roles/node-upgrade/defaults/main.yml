@@ -1,4 +1,10 @@
 ---
+# ⚠ Written for pve01 + pve02 (2026-08-31). pve01 died on 2026-09-03; the survivors are pve02
+# (the `proxmox` group) and pve03 (`pve_new`). This play still targets `proxmox` only — pve03
+# holds the platform tier and Vault, so putting it in an overnight reboot window is a decision,
+# not a find-and-replace (configure-lxc-features.yml shows the `proxmox:pve_new` pattern).
+# The pve01 sentences below are history.
+#
 # node-upgrade — install pending package upgrades on the Proxmox nodes overnight,
 # gated on a fresh backup, and never reboot.
 #

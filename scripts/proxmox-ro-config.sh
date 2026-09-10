@@ -6,12 +6,12 @@
 # READ-ONLY by construction: authenticates with the PVEAuditor token
 # (petedio@pam!loop-ro) and only ever issues a GET. It cannot create, modify, or
 # destroy anything. Mutation (terraform apply/import, state edits, SSH-to-configure)
-# stays forbidden for the loop — see docs/runbooks/loop-proxmox-readonly.md and the
-# Linear "Agent Loop Operations" doc.
+# stays forbidden for anything holding this token — see docs/runbooks/loop-proxmox-readonly.md.
+# (The loop it was written for is retired; the read-only token pattern is not.)
 #
 # Usage:
 #   scripts/proxmox-ro-config.sh <node> <vmid> [lxc|qemu]
-#     <node>   pve01 | pve02      (mapped to its endpoint; or set PROXMOX_RO_ENDPOINT)
+#     <node>   pve02 | pve03      (mapped to its endpoint; or set PROXMOX_RO_ENDPOINT)
 #     <vmid>   e.g. 106
 #     [kind]   lxc (default) | qemu
 #
@@ -35,8 +35,8 @@ esac
 
 for t in curl python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
 
-# --- endpoint (pve01 = .10, pve02 = .11; cluster nodes differ — see docs/GOTCHAS.md) ---
-declare -A NODE_IP=([pve01]=192.168.50.10 [pve02]=192.168.50.11)
+# --- endpoint (pve02 = .11, pve03 = .10; pve01 died 2026-09-03 — see docs/GOTCHAS.md) ---
+declare -A NODE_IP=([pve02]=192.168.50.11 [pve03]=192.168.50.10)
 if [ -n "${PROXMOX_RO_ENDPOINT:-}" ]; then
   ENDPOINT="${PROXMOX_RO_ENDPOINT%/}"
 else

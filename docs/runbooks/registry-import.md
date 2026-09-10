@@ -1,5 +1,7 @@
 # Runbook — adopt the live Nexus registry (LXC 106 / .111) under Terraform (import-before-apply)
 
+> **Status: completed 2026-08-18 (PET-122/301), then overtaken.** The container died on 2026-09-03; `pct restore` fails on its `lxc.idmap`, and its blob store is gone from pve02 (PET-389). It was running Zot v2.1.3, not Nexus, when it died. Kept for the brownfield-capture reasoning; the import ids and node below are pve01's.
+
 This runbook covers the **manual, one-time operator steps** to bring the **already-live**
 Nexus registry container — `nexus-registry`, LXC **106** on **pve01**, `192.168.50.111`,
 behind `registry.pdlab.dev` + `docker.pdlab.dev` — under `petedio-iac` management

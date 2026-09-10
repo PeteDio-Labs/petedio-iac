@@ -8,7 +8,7 @@
 #   syntax-check  pull_request — prove the play parses. No secrets, no host contact.
 #   apply         push to main — OIDC → Vault (openfaas-ci role: lxc-ssh + registry pull creds
 #                 only) → ansible-playbook against the live host, from the self-hosted
-#                 homelab runner (VM 232).
+#                 homelab x64 runner (LXC 232 on pve03, or 233 on pve02).
 #
 # Ansible runs in an official python:3.12-slim container: the runner ships a minimal Python
 # (no venv/pip), but it has Docker. openssh-client is added for the apply. (TODO: bake an

@@ -25,7 +25,7 @@
 # DOCKER HOST — needs the features dance. Plane ships as ~10 containers, so unlike
 # minio-data-245 (native systemd, deliberately) there is no non-Docker option. Proxmox's
 # hardcoded root@pam check rejects API tokens for the features{} mutation, so this module
-# creates the LXC WITHOUT features (kept in ignore_changes) and scripts/lxc-features-235.sh
+# creates the LXC WITHOUT features (kept in ignore_changes) and playbooks/configure-lxc-features.yml (PET-378)
 # applies nesting=1,keyctl=1 over SSH-as-root on the node. Same as openfaas-241.
 # See docs/GOTCHAS.md.
 #

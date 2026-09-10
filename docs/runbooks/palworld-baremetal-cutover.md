@@ -1,5 +1,7 @@
 # Runbook — Palworld cutover: LXC 234 → baremetal `palworld-mc` (PET-266)
 
+> **Status: historical (2026-07-22).** The laptop this cut over to (`mission-control`, later `palworld-mc`) was wiped and rebuilt as pve03 on 2026-09-04; Palworld returned to LXC 234 on pve03 with mesh NAT (PET-381) and the panel followed (PET-383). Players use `192.168.86.244:8211`. Four steps below would now destroy the live game: setting `start_on_boot = false`, the `rm -rf … SaveGames` plus rsync from `.50.234`, the `nmcli` re-address to `192.168.86.234` (that interface is pve03's, and a static address there took the node offline on 2026-09-04), and deleting `palworld.tf`. The restore path is `scripts/restore-palworld-world.sh`.
+
 Moves the live Palworld world from the Proxmox container to the ex-mission-control laptop
 (Pop!_OS 24.04) wired into the `.86` play segment. The laptop **takes over the LXC's mesh
 address `192.168.86.234`**, so no player has to re-enter a server IP — the move is invisible

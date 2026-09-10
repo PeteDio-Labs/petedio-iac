@@ -1,5 +1,7 @@
 # Runbook — Vault bootstrap & seed (one-time, manual)
 
+> **Corrected 2026-09-10 (PET-385).** The tracker is Plane. Container features are declared by `roles/lxc-features` (PET-378). Unsealing is automated: the pete-pi-1 `vault-unseal.timer` reopens Vault after the nightly 02:45 seal, with the Mac's launchd agent as fallback, both over the HTTP API (PET-373) — the passages where a human repeats the unseal are history. The CI OIDC cutover (PET-29) and the Proxmox token rotation (PET-55) listed as deferred are done. The share and threshold figures below are unverified against the live estate; the Keychain holds a single `vault-unseal-key`.
+
 This runbook covers the **manual, one-time operator steps** to bring the homelab
 Vault at <https://192.168.50.223:8200> (LXC 223) into service: initialize, unseal,
 log in, apply config-as-code, and seed secrets. Run it **once**, by hand, *after*

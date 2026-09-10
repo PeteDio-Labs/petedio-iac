@@ -15,7 +15,9 @@
 # apt repo release codename. Pop!_OS 24.04 is Ubuntu noble underneath, and Cloudflare
 # publishes per-codename lists; ansible_distribution_release reports the Ubuntu base, but
 # pin it here so a distro that reports something Cloudflare doesn't publish is an obvious
-# one-line override rather than a confusing 404 from apt.
+# one-line override rather than a confusing 404 from apt. Debian 13 reports `trixie`, which
+# Cloudflare does not publish (trixie 404s, bookworm 200s — checked 2026-09-09): the LXC 234
+# host_vars pin `cloudflared_apt_release: bookworm` (PET-383).
 cloudflared_apt_release: "{{ ansible_distribution_release | default('noble') }}"
 
 cloudflared_apt_key_url: https://pkg.cloudflare.com/cloudflare-main.gpg

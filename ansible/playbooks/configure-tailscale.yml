@@ -1,4 +1,9 @@
 ---
+# ⚠ LXC 244 is DOWN since 2026-09-03 (it died with pve01) and is not declared in Terraform.
+# pete-pi-1 advertises 192.168.50.0/24 and 192.168.86.0/24 in its place
+# (environments/homelab/tailscale.tf; verified with `tailscale status` on 2026-09-10).
+# PET-338 closed without deciding restore vs shrink; until that is decided this role has no host.
+#
 # configure-tailscale.yml — configure the Tailscale subnet router (LXC 244). (PET-188)
 #
 # TF creates the LXC (environments/homelab/tailscale.tf) and scripts/lxc-tun-244.sh

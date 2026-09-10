@@ -1,4 +1,8 @@
 ---
+# ⛔ NO HOST — resume-242 was destroyed on 2026-08-24 (PET-307). This targets a guest that does
+# not exist; the deploy workflow that calls it matches zero hosts and goes green (PET-387
+# decides rebuild vs retire). Do not run until a host is declared again.
+#
 # configure-resume-builder.yml — deploy the resume-builder SvelteKit app natively on
 # resume-242, as a Bun systemd service (Resume Builder P1). Mirrors
 # configure-palworld-panel.yml's native-Bun-service pattern.

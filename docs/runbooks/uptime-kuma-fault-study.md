@@ -1,5 +1,7 @@
 # Uptime Kuma on Pete-Pi — the fault-injection study instrument
 
+> **Corrected 2026-09-10 (PET-385).** The nodes are pve02 and pve03; pve01 died on 2026-09-03. Plex is probed at `192.168.50.236` (plex-gpu); 103 at `.86.140` is gone. The role declares 19 monitors, 17 active (`zot-registry` and `nfs-pve02` disabled 2026-09-04), and since PET-374 every one notifies through pete-bot. **The six-hourly backup has skipped every run since the rack loss** — the pve02 export it mounts no longer exists (PET-386); the sections below still describe it as working.
+
 Uptime Kuma on Pete-Pi is the measurement apparatus for a controlled
 fault-injection study (PET-300). It is not general monitoring. Machine-readable
 output — Prometheus metrics, status-page JSON, and the raw SQLite heartbeat

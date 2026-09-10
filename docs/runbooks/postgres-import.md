@@ -1,5 +1,7 @@
 # Runbook — adopt the live `poker` Postgres db/role under Terraform (import-before-apply)
 
+> **Status: completed 2026-06-03 (PET-32); the `poker` database, role and grant were destroyed in PET-366 (2026-09-08).** Databases are `module.postgres_db["<name>"]` in `databases.tf` today, the Vault provider is 5.x, and the backend locks. Kept for the import-before-apply pattern.
+
 This runbook covers the **manual, one-time operator steps** to bring the **already-live**
 `poker` database, its owning login role, and its `ALL`-privileges grant — on
 postgres-rds (LXC 231, `192.168.50.231:5432`, PG 17.10) — under management of the

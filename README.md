@@ -2,32 +2,32 @@
 
 Greenfield Terraform + Ansible for the PeteDio homelab→AWS migration. Built
 AWS-shaped so graduating to real AWS is a provider/endpoint/variable swap, not a
-rewrite. Linear project: **Platform** (`PET-<n>`).
+rewrite. Tracker: Plane (workspace `petedio`, project `PET`, key `PET-<n>`); Linear was retired on 2026-08-13.
 
 ## Layout
 
 ```
-environments/homelab/   # current target — Proxmox / MinIO state backend
-  backend.tf            # s3 backend -> fresh MinIO (.221, bucket tfstate, versioned)
-  providers.tf          # bpg/proxmox (token auth, ssh agent)
-  variables.tf
-  runner.tf             # self-hosted GitHub Actions runner (LXC 232)
-  canary.tf             # disposable proof container (LXC 250)
-modules/                # (to come) proxmox-vm, proxmox-lxc, s3-bucket, postgres-db, ...
-ansible/                # host config (runner registration, LXC features)
-docs/GOTCHAS.md         # hard-won bpg/MinIO/runner patterns — READ THIS
-.github/workflows/terraform.yml   # Workflow B: validate-on-PR, plan+apply-on-merge
+environments/homelab/   # the one environment — one .tf per guest, plus vault-config/ (own state)
+  backend.tf            # s3 backend on MinIO 221 (bucket tfstate, versioned, use_lockfile)
+  providers.tf          # bpg/proxmox (token auth), vault, postgresql, cloudflare
+  variables.tf          # proxmox_endpoint defaults to pve02 (.11); .10 is pve03
+modules/                # proxmox-lxc, baremetal-host, postgres-db, cloudflare-ingress
+ansible/                # inventory/, playbooks/, roles/ — host-level config for every guest
+docs/GOTCHAS.md         # hard-won bpg/MinIO/runner/cluster patterns — READ THIS
+docs/runbooks/          # procedures; the finished ones carry a status line at the top
+scripts/                # operational helpers, lab-verify.sh among them
+.github/workflows/terraform.yml   # validate-on-PR, plan+apply-on-merge
 ```
 
 ## Workflow B (CONVENTIONS §4)
 
-1. Branch `pedelgadillo/pet-<n>-<slug>` off `main` (Linear's branch name).
+1. File the `PET-<n>` work item in Plane, then branch `pet-<n>-<slug>` off fresh `main`.
 2. **On PR:** `init` · `fmt -check` · `validate`, on a **GitHub-hosted** runner with no
    Vault, no LAN and no state. **There is no plan on PR** — a real plan needs the LAN
    backend and provider creds that PR runs deliberately withhold (PET-104/163).
 3. **On merge to `main` (squash):** `terraform plan`, then `apply`, on the self-hosted
    runner. The apply log is the authoritative plan; the other one is your local run.
-4. Linear `PET-<n>` rides Todo → In Progress (PR) → Done (merge).
+4. `plane-sync` moves the Plane item on PR events — draft → In Progress, ready → In Review, merged → Done. It is advisory: open the item and look.
 
 State in MinIO S3 with S3-native locking (`use_lockfile`, PET-105) and a
 `tf-homelab` CI concurrency group serializing plans/applies; bucket versioning is

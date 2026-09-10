@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# ⚠ BLOCKED — this pushes to docker.pdlab.dev (registry-106), down since 2026-09-03 with no
+# blob store left (PET-389); and 241's gateway admits only the destroyed .230 (PET-390), so
+# nothing on the LAN could call the function once deployed.
+#
 # deploy-lab-graph.sh — build/push/deploy the lab-graph function to faasd on LXC 241.
 #
 # WHY THIS SHAPE (differs from deploy-admin.sh, deliberately):

@@ -1,7 +1,10 @@
 # Secrets in Terraform state — exposure, mitigations, decision (PET-107)
 
-**Status:** decision-gated (see "Recommendation"). This note is the in-repo record;
-the tracking issue is **PET-107** (Linear, Platform project).
+**Status: resolved by PET-190** — the `hashicorp/vault` provider is on 5.x, KV reads are
+ephemeral (`vault_kv_secret_v2` with ephemeral values), and the Postgres password is
+write-only (`password_wo`). The Co-latro data sources this note tabulates were destroyed
+with the app in PET-366. Kept for the reasoning; the mechanics live in `docs/GOTCHAS.md`
+under "Vault provider v5". PET-107 was the Linear-era tracking issue.
 
 ## The exposure
 

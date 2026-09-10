@@ -1,5 +1,7 @@
 # Runbook — read-only Proxmox access for the agent-loop host
 
+> **Status: the loop is retired (PET-265, 2026-07-21); the read-only token pattern survives** — `scripts/proxmox-ro-config.sh` with the PVEAuditor token. The `pve01` examples below name a dead node; use `pve02` or `pve03`. 106 is down and 119 is on pve03. The registry was Zot, not Nexus.
+
 **Why this exists.** The autonomous loop is assigned *brownfield captures* (porting a
 running LXC into `petedio-iac` via `terraform import`). For the import's first plan to be
 a **no-op**, the Terraform must match the container's live config — cores, memory, rootfs

@@ -110,7 +110,7 @@
           unprivileged container cannot mount overlayfs without them, and Terraform
           cannot set them because Proxmox rejects the features{} mutation for API
           tokens (it is kept in ignore_changes on purpose, so no plan will ever show
-          this). Fix: run scripts/lxc-features-232.sh from the repo root, which sets
+          this). Fix: run playbooks/configure-lxc-features.yml (PET-378), which sets
           the flags on the node as root@pam and reboots the container. See PET-364.
           Docker said: {{ (runner_docker_probe.stderr | default(''))[:400] }}
       when: runner_docker_probe.rc != 0

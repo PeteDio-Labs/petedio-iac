@@ -1,5 +1,10 @@
 # tailscale-router (LXC 244)
 
+> ⚠ LXC 244 is DOWN since 2026-09-03 (it died with pve01) and is not declared in Terraform.
+> pete-pi-1 advertises 192.168.50.0/24 and 192.168.86.0/24 in its place
+> (environments/homelab/tailscale.tf; verified with `tailscale status` on 2026-09-10).
+> PET-338 closed without deciding restore vs shrink; until that is decided this role has no host.
+
 Turns LXC 244 into a **Tailscale subnet router** that advertises the homelab LAN
 (`192.168.50.0/24`) into the tailnet. Once it's up and the route is approved, any
 Tailscale client (phone, laptop) can reach every homelab service by its `192.168.50.x`

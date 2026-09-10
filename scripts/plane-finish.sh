@@ -6,7 +6,7 @@
 #
 #   1. stores it in Vault with `kv patch` (never `put`) and PROVES the other fields survived
 #   2. runs plane-bootstrap.sh (creates the PET project, probes sequence_id, adds "In Review")
-#   3. sets the three PLANE_* variables on all nine repos bound to the plane-ci role
+#   3. sets the three PLANE_* variables on all eleven repos bound to the plane-ci role
 #   4. reads every variable back and reports what actually landed
 #
 #   ./scripts/plane-finish.sh
@@ -23,7 +23,7 @@ BASE="${PLANE_BASE_URL:-http://192.168.50.235:8080}"
 IAC="${IAC_DIR:-$HOME/petedio/iac}"
 VAULT_SECRET="kv/services/plane"
 
-# The nine repos bound to the plane-ci JWT role. Canonical source is
+# The eleven repos bound to the plane-ci JWT role. Canonical source is
 # environments/homelab/vault-config/variables.tf -> var.plane_repos.
 # NB: this list includes petedio-water-fast and excludes petedio-workspace, which is the
 # opposite of the table in .claude/CLAUDE.md. The Terraform list is the one that matters —
