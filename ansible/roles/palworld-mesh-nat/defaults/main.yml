@@ -43,6 +43,26 @@ palworld_nat_target_ip: 192.168.50.234
 #   8080 panel     — served through its own Cloudflare tunnel, not the mesh.
 palworld_nat_game_port: 8211
 
+# The address players type. It is wlo1's DHCP lease, not something this role sets — the
+# role matches on iifname precisely so it follows whatever the lease is.
+#
+# ⚠ .244, NOT .234, AND THAT IS A DECISION. The old server lived at 192.168.86.234 and
+# PET-266 went to real trouble to preserve it, because that was a LIVE migration: players
+# were mid-session and the whole point was that nobody re-entered a server IP.
+#
+# That reasoning expired. The server has been down since the rack loss, so everyone is
+# re-entering an address regardless, and there are two players. Chasing .234 would mean
+# either renumbering pve03's mesh leg or setting it static — and a static address on this
+# interface is exactly what took the node fully off the network on 2026-09-04, when PVE
+# claimed the WiFi interface as `manual` and both NICs came back down with no route in.
+# Not worth it to save two people one edit.
+#
+# RESERVE IT ANYWAY. A bare lease can move on renewal and break the players a second time,
+# for no reason. Pin .244 to this host's WiFi MAC (38:87:d5:da:a8:59) on the Google mesh —
+# pinning the address a device already holds is the simple case in the Home app and needs
+# no renumbering.
+palworld_nat_expected_mesh_address: 192.168.86.244
+
 palworld_nat_table: palworld_mesh
 palworld_nat_rules_file: /etc/palworld-mesh-nat.nft
 palworld_nat_service_name: palworld-mesh-nat

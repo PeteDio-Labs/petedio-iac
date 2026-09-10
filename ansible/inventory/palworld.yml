@@ -34,7 +34,7 @@ all:
         # reservation lands, that address IS pve03, so this play would have installed
         # SteamCMD and a game server onto the hypervisor running the whole platform.
         #
-        # The game is back in a container (PET-381). Players still reach 192.168.86.234;
-        # pve03 NATs it here. See roles/palworld-mesh-nat.
+        # The game is back in a container (PET-381). Players reach pve03's mesh address
+        # and pve03 NATs it here. See roles/palworld-mesh-nat.
         palworld-234:
           ansible_host: 192.168.50.234

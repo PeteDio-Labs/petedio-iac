@@ -14,9 +14,9 @@ delete table ip {{ palworld_nat_table }}
 table ip {{ palworld_nat_table }} {
   chain prerouting {
     type nat hook prerouting priority dstnat; policy accept;
-    # Match on the INTERFACE, never on wlo1's address. That address is {{ palworld_nat_mesh_interface }}'s
-    # DHCP lease from the Google mesh: it is 192.168.86.244 today and becomes 192.168.86.234
-    # once the reservation lands. Hardcoding either one breaks the day the lease changes.
+    # Match on the INTERFACE, never on wlo1's address. That address is a DHCP lease from
+    # the Google mesh, and hardcoding it breaks the day the lease moves — which is the
+    # whole failure the reservation exists to prevent, not one to bake in here.
     iifname "{{ palworld_nat_mesh_interface }}" udp dport {{ palworld_nat_game_port }} \
       dnat to {{ palworld_nat_target_ip }}:{{ palworld_nat_game_port }}
   }
