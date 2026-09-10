@@ -6,9 +6,9 @@
 # pve03 itself on 2026-09-04 after pve01 died. The game lost its machine to the rack
 # rebuild. Terraform owns this container (environments/homelab/palworld.tf).
 #
-# ⚠ PLAYERS DO NOT USE THIS ADDRESS. Clients connect to 192.168.86.234 on the mesh and
-# pve03 translates to 192.168.50.234 here. The matching last octet is deliberate so the
-# two read as one machine. roles/palworld-mesh-nat carries the whole explanation.
+# ⚠ PLAYERS DO NOT USE THIS ADDRESS. Clients connect to pve03's mesh address,
+# 192.168.86.244, and pve03 translates to 192.168.50.234 here. roles/palworld-mesh-nat
+# carries the whole explanation, including why the old .234 was not chased.
 
 # A container, not bare metal: no lid to close, so no sleep targets to mask and no logind
 # drop-in to write. (palworld-mc needed both — it was a laptop.)

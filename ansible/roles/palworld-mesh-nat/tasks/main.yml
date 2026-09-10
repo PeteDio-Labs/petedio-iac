@@ -114,10 +114,12 @@
   ansible.builtin.debug:
     msg: >-
       Players connect to {{ palworld_nat_mesh_address }}:{{ palworld_nat_game_port }}.
-      {% if palworld_nat_mesh_address != '192.168.86.234' %}
-      ⚠ That is NOT 192.168.86.234, so everyone must re-enter the server IP. Add a DHCP
-      reservation on the Google mesh for this host's {{ palworld_nat_mesh_interface }} MAC
-      so it takes .234 back, then reboot the interface or the node.
+      {% if palworld_nat_mesh_address != palworld_nat_expected_mesh_address %}
+      ⚠ The lease MOVED: this host was expected at {{ palworld_nat_expected_mesh_address }}
+      and now holds {{ palworld_nat_mesh_address }}, so every player's saved entry is stale.
+      That is what the DHCP reservation exists to prevent — check it is still pinned to
+      {{ palworld_nat_mesh_interface }}'s MAC on the Google mesh, then update
+      palworld_nat_expected_mesh_address here to whatever it should be.
       {% else %}
-      That is the address players already have saved — no client change needed.
+      That matches the reserved address, so no client change is needed.
       {% endif %}

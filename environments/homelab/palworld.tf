@@ -12,10 +12,10 @@
 # Handing 234 to media-dash would have collided two machines; handing it back to Palworld
 # is the same machine returning, and every ticket that says "234" still means this one.
 #
-# ⚠ THE PLAYERS' ADDRESS IS NOT THIS ONE. Clients connect to 192.168.86.234 on the mesh;
-# this container is 192.168.50.234 on the platform LAN, and pve03 NATs between them. The
-# matching .50/.86 last octet is deliberate, so the two addresses read as one machine.
-# See ansible/roles/palworld-mesh-nat for why a real .86 address is not possible here.
+# ⚠ THE PLAYERS' ADDRESS IS NOT THIS ONE. Clients connect to pve03's mesh address —
+# 192.168.86.244 — and pve03 NATs to this container on 192.168.50.234. See
+# ansible/roles/palworld-mesh-nat for why a real .86 address is not possible here, and
+# why .244 rather than the old server's .234.
 
 module "palworld" {
   source = "../../modules/proxmox-lxc"
@@ -78,7 +78,7 @@ module "palworld" {
   # while the game itself runs.
   start_on_boot = true
 
-  description = "Palworld dedicated server (PET-381). Managed by Terraform; game + world by configure-palworld.yml. Players reach it at 192.168.86.234 via the NAT on pve03."
+  description = "Palworld dedicated server (PET-381). Managed by Terraform; game + world by configure-palworld.yml. Players reach it at 192.168.86.244 via the NAT on pve03."
 }
 
 output "palworld_id" {
