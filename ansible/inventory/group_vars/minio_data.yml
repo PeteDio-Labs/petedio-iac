@@ -36,3 +36,23 @@ minio_buckets:
   # quota bounds a runaway upload well inside the host's 16 GiB root disk plus headroom.
   - name: plane
     quota_bytes: 21474836480 # 20 GiB
+
+  # usaa-statements — six years of bank statements (2020-06 to 2026-07) and the SQLite
+  # database built from them, for the pipeline in the usaa project (PET-392/393).
+  #
+  # ⚠ THIS BUCKET IS THE ONLY COPY BUT ONE. The source lives in a single directory, and
+  # git is deliberately not its safety net: usaa/.gitignore excludes *.pdf, *.db and
+  # data/ because petedio-iac is public and financial data never gets committed. That
+  # rule is right and stays, so the whole recovery story is this bucket plus the disk it
+  # was uploaded from. Versioning (enabled by the role for every bucket) is what makes a
+  # bad re-ingest or an accidental `mc rm` recoverable.
+  #
+  # NEVER publicly reachable, and no Cloudflare route — 245 is LAN and tailnet only.
+  # A statement carries an account number and an address; treat a public endpoint here
+  # as a data-loss event of a different kind.
+  #
+  # 2 GiB against ~50 MiB today: statements arrive about a dozen a year and are a few
+  # hundred KiB each, so this is decades of headroom while still bounding a runaway
+  # ingest well inside the host's root disk.
+  - name: usaa-statements
+    quota_bytes: 2147483648 # 2 GiB
