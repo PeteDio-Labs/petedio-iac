@@ -1,0 +1,123 @@
+---
+- name: Assert this host holds the mesh interface
+  # Without this the role happily converges a NAT on a machine with no .86 leg, writes a
+  # unit that fails at boot, and reports changed. The interface name is derived from the
+  # adapter, so this also catches the day wlo1 is renamed.
+  ansible.builtin.assert:
+    that: palworld_nat_mesh_interface in ansible_interfaces
+    fail_msg: >-
+      No interface {{ palworld_nat_mesh_interface }} on {{ inventory_hostname }}. This role
+      belongs on the node with a leg on the .86 mesh (pve03). Found:
+      {{ ansible_interfaces | join(', ') }}.
+
+- name: Install nftables
+  ansible.builtin.apt:
+    name: nftables
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# ⚠ THE PACKET IS FOR ANOTHER HOST, SO THE KERNEL MUST BE WILLING TO ROUTE IT. DNAT
+# rewrites the destination to 192.168.50.234 and the kernel then has to forward it out
+# vmbr0. With ip_forward=0 — which is how this node shipped, checked 2026-09-09 — it is
+# dropped after the rewrite, so the rule looks correct and nothing arrives.
+#
+# This does NOT open a route between the two segments. .86 still cannot reach .50: the
+# Google mesh has no route back, and only the DNAT'd flow is rewritten into something the
+# node will carry.
+- name: Enable IPv4 forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    sysctl_file: /etc/sysctl.d/99-palworld-mesh-nat.conf
+    sysctl_set: true
+    state: present
+    reload: true
+
+- name: Install the NAT ruleset
+  ansible.builtin.template:
+    src: palworld-mesh-nat.nft.j2
+    dest: "{{ palworld_nat_rules_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    # nft parses the file at install time, so a syntax error fails HERE rather than at the
+    # next boot on a node nobody is watching.
+    validate: /usr/sbin/nft -c -f %s
+  notify: Reload palworld mesh NAT
+
+- name: Install the NAT unit
+  ansible.builtin.template:
+    src: palworld-mesh-nat.service.j2
+    dest: /etc/systemd/system/{{ palworld_nat_service_name }}.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Reload palworld mesh NAT
+
+# ⚠ SKIPPED UNDER --check, AND THE REASON IS NOT SQUEAMISHNESS. In check mode the unit
+# file above is not actually written, so systemd cannot find the service and this task
+# dies with "Could not find the requested service" — a dry run failing on the ABSENCE of
+# a thing it just declined to create. That reads as a broken role to anyone who runs
+# --check first, which is exactly who should be running it.
+- name: Enable and start the NAT
+  ansible.builtin.systemd:
+    name: "{{ palworld_nat_service_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Flush handlers so the checks below read the rules just installed
+  ansible.builtin.meta: flush_handlers
+
+# ⚠ THE UNIT BEING ACTIVE IS NOT THE OUTCOME. It is Type=oneshot with RemainAfterExit, so
+# it reports active having run nft once — including if the table was later flushed by
+# something else. Read the live ruleset instead.
+# ⚠ NOT check_mode:false HERE, unlike the read-only probes elsewhere in this repo. Under
+# --check the table genuinely was not loaded, so forcing this to run would report a real
+# absence as a failure. A dry run reports what it WOULD do; asserting on live state it was
+# not allowed to create is not that.
+- name: Read the live ruleset
+  ansible.builtin.command:
+    cmd: nft list table ip {{ palworld_nat_table }}
+  register: palworld_nat_live
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Assert the forward is actually loaded
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - "'dnat to ' ~ palworld_nat_target_ip in palworld_nat_live.stdout"
+      - "'masquerade' in palworld_nat_live.stdout"
+    fail_msg: >-
+      Table {{ palworld_nat_table }} is loaded but does not carry both halves of the
+      translation. DNAT without masquerade is the failure that looks like a working
+      server nobody can join — the container answers from .50 and the client drops it.
+    success_msg: >-
+      {{ palworld_nat_mesh_interface }} udp/{{ palworld_nat_game_port }} ->
+      {{ palworld_nat_target_ip }}, with return masquerading.
+
+- name: Read the address players will actually use
+  # The address is wlo1's DHCP lease, not something this role sets. Reporting it is how the
+  # operator sees whether the .86.234 reservation has landed yet.
+  ansible.builtin.set_fact:
+    palworld_nat_mesh_address: >-
+      {{ ansible_facts[palworld_nat_mesh_interface | replace('-', '_')]['ipv4']['address']
+         | default('UNKNOWN') }}
+
+- name: Report the player-facing endpoint
+  when: not ansible_check_mode
+  ansible.builtin.debug:
+    msg: >-
+      Players connect to {{ palworld_nat_mesh_address }}:{{ palworld_nat_game_port }}.
+      {% if palworld_nat_mesh_address != '192.168.86.234' %}
+      ⚠ That is NOT 192.168.86.234, so everyone must re-enter the server IP. Add a DHCP
+      reservation on the Google mesh for this host's {{ palworld_nat_mesh_interface }} MAC
+      so it takes .234 back, then reboot the interface or the node.
+      {% else %}
+      That is the address players already have saved — no client change needed.
+      {% endif %}

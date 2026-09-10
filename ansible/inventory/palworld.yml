@@ -20,17 +20,21 @@ all:
       vars:
         ansible_user: root
         ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
-        # PET-168: dual-homed onto the .86 mesh — open 8211/udp from that segment too.
-        palworld_mesh_enabled: true
+        # ⚠ FALSE SINCE PET-381, AND THAT IS NOT A REGRESSION. PET-168 opened 8211/udp
+        # from 192.168.86.0/24 because the host had a real leg on that segment. The
+        # container does not and cannot — pve03 reaches the mesh over WiFi, and a WiFi
+        # station cannot bridge another MAC (roles/plex-bridge has the detail). Play
+        # traffic now arrives NATted, so it reaches the container FROM .50 and the
+        # .50 ingress rule is what admits it. A .86 rule here would be dead config.
+        palworld_mesh_enabled: false
       hosts:
-        # The live game host since the PET-266 cutover: the ex-mission-control laptop
-        # (Pop!_OS 24.04), wired straight into the .86 play segment in the same room as the
-        # clients. Not a container — no Terraform owns it; host_vars/palworld-mc.yml carries
-        # the physical-host flags. It TOOK OVER 192.168.86.234 from the retired LXC so no
-        # player had to re-enter a server IP.
+        # ⚠ palworld-mc WAS REMOVED HERE, AND LEAVING IT WOULD HAVE BEEN DANGEROUS.
+        # It pointed at 192.168.86.234 — the ex-mission-control laptop, which was WIPED
+        # AND REBUILT AS pve03 on 2026-09-04 after pve01 died. Once the .86 DHCP
+        # reservation lands, that address IS pve03, so this play would have installed
+        # SteamCMD and a game server onto the hypervisor running the whole platform.
         #
-        # palworld-234 (the LXC) is deliberately absent: it is stopped and held that way by
-        # `start_on_boot = false` in palworld.tf, kept only as a rollback until that file is
-        # deleted. Listing an unreachable host here would fail every apply for the group.
-        palworld-mc:
-          ansible_host: 192.168.86.234
+        # The game is back in a container (PET-381). Players still reach 192.168.86.234;
+        # pve03 NATs it here. See roles/palworld-mesh-nat.
+        palworld-234:
+          ansible_host: 192.168.50.234

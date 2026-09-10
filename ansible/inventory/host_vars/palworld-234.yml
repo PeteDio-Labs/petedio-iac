@@ -1,0 +1,26 @@
+---
+# palworld-234 — the Palworld game host, back in an LXC on pve03 (PET-381).
+#
+# It replaces palworld-mc, which was not decommissioned so much as CONSUMED: that host was
+# the ex-mission-control HP Spectre at 192.168.86.234, and it was wiped and rebuilt as
+# pve03 itself on 2026-09-04 after pve01 died. The game lost its machine to the rack
+# rebuild. Terraform owns this container (environments/homelab/palworld.tf).
+#
+# ⚠ PLAYERS DO NOT USE THIS ADDRESS. Clients connect to 192.168.86.234 on the mesh and
+# pve03 translates to 192.168.50.234 here. The matching last octet is deliberate so the
+# two read as one machine. roles/palworld-mesh-nat carries the whole explanation.
+
+# A container, not bare metal: no lid to close, so no sleep targets to mask and no logind
+# drop-in to write. (palworld-mc needed both — it was a laptop.)
+palworld_baremetal: false
+
+# Play traffic arrives NATted, so from the container's side every player is on .50. This
+# rule is what admits them; it is not merely the admin path.
+palworld_lan_ingress_enabled: true
+
+# ⚠ The world is restored from MinIO, not generated. DedicatedServerName is pinned in
+# group_vars/palworld.yml to 0BA20FE97DF7472AADFD2237B5B4EFFC, and that pin is the whole
+# defence against the failure the machine note calls out: a host that ever generated a
+# world of its own boots THAT one, ignores the restore, and comes up fully green on an
+# empty map. After any restore or restart the check that counts is worldguid from
+# /v1/api/info — days:0 / basecampnum:0 means a fresh world, so stop before it writes.

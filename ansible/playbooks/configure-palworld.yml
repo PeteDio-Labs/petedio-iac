@@ -19,6 +19,25 @@
 #
 # Inventory: the `palworld` group -> 192.168.50.234, root over the TF-installed key.
 
+# ⚠ THIS PLAY TARGETS THE NODE, NOT THE GAME HOST, AND IT RUNS FIRST ON PURPOSE.
+# Palworld is in a container on the platform LAN and every player is on the .86 mesh,
+# which cannot reach .50 (measured, both directions — see roles/palworld-mesh-nat).
+# pve03 translates between them, so without this the server converges perfectly and
+# nobody can join. Doing it here rather than in a separate playbook means it cannot be
+# the step someone forgets.
+#
+# It is scoped hard: one nftables table of its own, one systemd unit of its own, one
+# sysctl drop-in. It never touches pve-firewall, nftables.service or any other table.
+- name: Publish Palworld onto the .86 mesh from pve03
+  hosts: pve03
+  become: true
+  # Facts are needed: the role asserts the mesh interface exists and reports the address
+  # players will use, both of which come from gathered facts.
+  gather_facts: true
+
+  roles:
+    - palworld-mesh-nat
+
 - name: Prep the Palworld dedicated-server LXC (ready for binaries)
   hosts: palworld
   become: true
