@@ -57,18 +57,26 @@ module "palworld" {
   template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
   ssh_public_key   = var.ssh_public_key
 
-  # ⚠ FALSE, AND IT IS A PRODUCT DECISION, NOT A DEFAULT. The server starts when Pedro
-  # starts it from the panel (decided 2026-08-18) — it does not come back by itself after
-  # a power cut, and an unattended boot is how the node quietly loses 8 GiB overnight.
+  # ⚠ TRUE, AND THE CONTAINER IS NOT THE GAME. This was false on the first pass, reasoning
+  # that "the server starts when Pedro starts it" (decided 2026-08-18) meant the container
+  # should stay down. That conflates two things, and getting it wrong is dangerous here.
   #
-  # The module sets `started = var.start_on_boot`, so this ALSO keeps the container
-  # stopped in Terraform's eyes. That is what makes a hand-stop stick instead of reading
-  # as drift the next apply-on-merge reverses — the trap that ordered the PET-266 cutover,
-  # where a booted 234 would have re-grabbed the address the laptop was using.
+  # The module sets `started = var.start_on_boot` and `started` is NOT in ignore_changes,
+  # so Terraform ACTIVELY MANAGES RUN STATE. With false, a container started to play on
+  # is drift, and the next apply-on-merge — triggered by any unrelated change in this
+  # repo — STOPS IT MID-GAME. That is the PET-266 trap inverted: there, a hand-stopped
+  # 234 was drift and an apply booted it back up to collide with the laptop's address.
   #
-  # Enablement is separate and Ansible's: a DISABLED unit still starts on demand, which is
-  # how the panel's `systemctl start palworld` works.
-  start_on_boot = false
+  # What actually implements the 2026-08-18 decision is Ansible, not this flag:
+  # palworld_service_autostart=false leaves palworld.service DISABLED, so the game does
+  # not start with the container. A disabled unit still starts on demand, which is how
+  # the panel's `systemctl start palworld` works.
+  #
+  # The cost of leaving the container up is measured, not assumed: an idle palworld-234
+  # uses 16 MiB, and pve03 still reported 9.2 GiB available with it running (2026-09-09).
+  # memory_dedicated above is a cgroup CAP, not a reservation — the 8 GiB is only occupied
+  # while the game itself runs.
+  start_on_boot = true
 
   description = "Palworld dedicated server (PET-381). Managed by Terraform; game + world by configure-palworld.yml. Players reach it at 192.168.86.234 via the NAT on pve03."
 }
