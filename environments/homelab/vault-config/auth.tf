@@ -177,6 +177,31 @@ resource "vault_jwt_auth_backend_role" "pete_bot_cd" {
   token_ttl      = 900
 }
 
+# media-updates role → media-updates policy (PET-395). pete-bot's /update dispatches
+# petedio-media-iac's media-updates.yml, and this is the only role that workflow mints.
+#
+# ⚠ BOUND TO THE WORKFLOW AND THE EVENT, NOT ONLY THE REPO. repository + ref alone would
+# let any workflow on media-iac's main mint it, terraform.yml included. workflow_ref pins
+# the file and event_name pins workflow_dispatch, so a push or a schedule cannot mint it.
+# It binds claims rather than sub, as pete-bot-cd does, because the id-based subject
+# migration (PET-360) changes sub.
+resource "vault_jwt_auth_backend_role" "media_updates" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "media-updates"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository   = var.media_repo
+    ref          = "refs/heads/main"
+    event_name   = "workflow_dispatch"
+    workflow_ref = "${var.media_repo}/.github/workflows/media-updates.yml@refs/heads/main"
+  }
+  token_policies = [vault_policy.media_updates.name]
+  token_ttl      = 900
+}
+
 resource "vault_jwt_auth_backend_role" "media_dash_cd" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "media-dash-cd"
