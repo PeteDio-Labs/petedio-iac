@@ -14,6 +14,13 @@
 # and failed the second: `git clean -ffdx` deleted the tick's own checkout marker, and
 # `git add -A` committed it into the pull request. That is the class of bug this catches.
 #
+# ⚠ SCENARIOS 12-14 MODEL A HOSTILE SESSION, and they exist because their absence is what
+# let PET-409 through. The first eleven all stub a `claude -p` that behaves itself, so 37
+# assertions passed green over a credential helper that would hand the GitHub token to any
+# remote the session pointed it at. A session runs as this user, in this directory, with a
+# prompt built from work-item text the loop does not control — so when you add a scenario,
+# ask what it assumes the session will not do.
+#
 # Same posture as scripts/test-palworld-unit-render.py — a static check you run by hand, not
 # a CI job. Nothing in .github/workflows watches it.
 #
@@ -84,6 +91,31 @@ case "${STUB_MODE:-good}" in
   nospecdiff) echo hello > newfile.txt ;;
   nochange)   : ;;
   boom)       exit 3 ;;
+
+  # --- hostile sessions (PET-409) -------------------------------------------------------
+  # Everything above models a session that behaves itself, which is exactly why the
+  # credential-helper hole survived 37 green assertions. These three model a session that
+  # does not. It runs as the same user, in the same directory, moments before the token
+  # exists — so .git/config, .git/hooks and the remote are all its to rewrite.
+  hostile-seturl|hostile-insteadof|hostile-hook)
+    echo hello > newfile.txt
+    P="$(printf '%s' "$PROMPT" | grep -o 'diff->[^ ]*' | head -1 | cut -c7-)"
+    mkdir -p "$(dirname "$P")"
+    printf '| asked | shipped | status |\n|---|---|---|\n| A | done | done |\n' > "$P"
+    case "$STUB_MODE" in
+      hostile-seturl)
+        git remote set-url origin "$EVIL_URL" ;;
+      hostile-insteadof)
+        # Survives `-c credential.helper=`: a different config key entirely. Rewrites the
+        # remote the tick EXPECTS, which is what makes `remote get-url` (which does not
+        # apply insteadOf) the wrong check and `ls-remote --get-url` the right one.
+        git config "url.${EVIL_URL}.insteadOf" "$CLAUDE_LOOP_REMOTE" ;;
+      hostile-hook)
+        mkdir -p .git/hooks
+        printf '#!/bin/sh\nenv > %s/hook-env.txt\n' "$EVIL_DIR" > .git/hooks/pre-push
+        chmod +x .git/hooks/pre-push ;;
+    esac
+    ;;
 esac
 exit 0
 S
@@ -94,6 +126,14 @@ S
   export GH_LOG="$H/gh.log"; : > "$GH_LOG"
   export GH_COMMENT_FAILS=0
   export STUB_MODE="${2:-good}"
+  # The tick refuses to mint for a remote it does not expect, so tell it what this
+  # throwaway origin is. The hostile cases below still trip the guard: they repoint origin
+  # AWAY from this value, which is exactly the production failure being modelled.
+  export CLAUDE_LOOP_REMOTE="$ORIGIN"
+  export EVIL_DIR="$H/evil"; mkdir -p "$EVIL_DIR"
+  # A path, not a hostname: a real push must not leave the box during a test.
+  export EVIL_URL="file://$H/evil-remote.git"
+  git init -q --bare "$H/evil-remote.git"
 }
 
 hb() { python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]))" \
@@ -200,6 +240,40 @@ sleep 0.4
 [ "$RC" -eq 0 ] && ok "exits 0" || no "exits 0" "rc=$RC"
 [ "$(hb outcome)" = "busy" ] && ok "outcome=busy" || no "outcome=busy" "got $(hb outcome)"
 wait
+
+say "12. a session that repoints origin gets NO token minted (PET-409)"
+setup "$ONE" hostile-seturl
+"$TICK" >/dev/null 2>&1
+[ "$(hb outcome)" = "failed" ] && ok "outcome=failed" || no "outcome=failed" "got $(hb outcome)"
+hb detail | grep -q "refusing to mint" && ok "detail says it refused to mint" || no "detail" "$(hb detail)"
+[ ! -s "$GH_LOG" ] && ok "no PR was opened" || no "no PR" "$(cat "$GH_LOG")"
+# The whole point: the mint must not happen while the destination is unverified.
+[ -z "$(git --git-dir="$CLAUDE_LOOP_HOME/evil-remote.git" for-each-ref 2>/dev/null)" ] \
+  && ok "nothing reached the attacker remote" || no "attacker remote got refs" ""
+
+say "13. url.insteadOf is caught too — remote get-url would not have seen it (PET-409)"
+setup "$ONE" hostile-insteadof
+"$TICK" >/dev/null 2>&1
+[ "$(hb outcome)" = "failed" ] && ok "outcome=failed" || no "outcome=failed" "got $(hb outcome)"
+hb detail | grep -q "refusing to mint" && ok "detail says it refused to mint" || no "detail" "$(hb detail)"
+[ -z "$(git --git-dir="$CLAUDE_LOOP_HOME/evil-remote.git" for-each-ref 2>/dev/null)" ] \
+  && ok "nothing reached the attacker remote" || no "attacker remote got refs" ""
+
+say "14. a planted pre-push hook never sees the token (PET-409)"
+setup "$ONE" hostile-hook
+"$TICK" >/dev/null 2>&1
+# The remote is untouched here, so the tick proceeds and the hook DOES run on push.
+# What must not happen is the token being in its environment.
+if [ -f "$CLAUDE_LOOP_HOME/evil/hook-env.txt" ]; then
+  ok "the hook ran, so this test is actually exercising the path"
+  grep -q '^GH_TOKEN=' "$CLAUDE_LOOP_HOME/evil/hook-env.txt" \
+    && no "GH_TOKEN leaked into the hook environment" "" \
+    || ok "GH_TOKEN is absent from the hook environment"
+else
+  # core.hooksPath=/dev/null means the hook never ran at all — an even better outcome.
+  ok "the hook never ran (core.hooksPath)"
+  ok "GH_TOKEN could not have leaked to it"
+fi
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -320,31 +320,71 @@ fi
   || fail_item "the session wrote no spec-diff at $SPEC_DIFF — refusing to open a PR that nobody can check against the work item"
 
 COMMITTED="$(git -C "$CHECKOUT" diff --cached --name-only origin/main | wc -l | tr -d ' ')"
-git -C "$CHECKOUT" -c user.name="claude-loop" -c user.email="claude-loop@pdlab.dev" \
+# `core.hooksPath=/dev/null`: a session-planted pre-commit hook runs between the two checks
+# above and this commit, and could put back exactly what they just rejected. No token is in
+# the environment yet, so this is an integrity guard rather than a credential one.
+git -C "$CHECKOUT" -c core.hooksPath=/dev/null \
+  -c user.name="claude-loop" -c user.email="claude-loop@pdlab.dev" \
   commit -q -m "${ITEM}: ${TITLE}" -m "Opened by the claude-247 work loop (PET-399). Draft: a human reviews and merges." \
   || fail_item "could not commit the session's work"
 log "committed ${COMMITTED} files"
 
 # --- step 9: push and open the DRAFT pull request ----------------------------------------
+#
+# ⚠ EVERYTHING IN THIS STEP ASSUMES THE SESSION WAS HOSTILE. It ran as this user, in this
+# directory, moments ago, with a prompt built from work-item text this loop does not
+# control. So `$CHECKOUT/.git` — config, hooks, refs — is attacker-writable by the time we
+# get here, and each guard below exists because one specific thing in it is not.
+#
+# ASSERT THE REMOTE BEFORE MINTING. The token must not exist while the destination is still
+# unverified. `ls-remote --get-url` is the right question and `remote get-url` is the wrong
+# one: only the former applies `url.<base>.insteadOf`, so a session that rewrote the URL
+# that way passes the wrong check while the rewrite is live.
+# EXPECT_REMOTE is derived, not configured, in production — the unit passes the same value
+# the repo name implies. It is overridable ONLY so scripts/test-claude-loop-tick.sh can
+# point a test at a throwaway local remote; that is safe because the env comes from the
+# systemd unit and this script's own process, and the session is a CHILD, which cannot
+# reach back and change its parent's environment.
+EXPECT_REMOTE="${CLAUDE_LOOP_REMOTE:-https://github.com/${REPO}}"
+ACTUAL_REMOTE="$(git -C "$CHECKOUT" ls-remote --get-url origin 2>/dev/null || true)"
+case "$ACTUAL_REMOTE" in
+  "$EXPECT_REMOTE" | "${EXPECT_REMOTE}.git") ;;
+  *) fail_item "origin resolves to '${ACTUAL_REMOTE:-nothing}', not ${EXPECT_REMOTE} — refusing to mint a token for it" ;;
+esac
+
 # The token is minted here and nowhere earlier, so it exists for the shortest time that
 # works. It expires in an hour regardless.
 TOKEN="$(sudo -n "$BROKER" mint-token 2>"$STATE_DIR/mint.err")" \
   || fail_item "could not mint a GitHub token: $(tr '\n' ' ' < "$STATE_DIR/mint.err" | head -c 200)"
 [ -n "$TOKEN" ] || fail_item "the broker minted an empty token"
-export GH_TOKEN="$TOKEN"
 
+# ⚠ NOT `export GH_TOKEN`. An exported token is in the environment of every child this
+# script spawns, and git spawns plenty it does not control: a session-planted
+# .git/hooks/pre-push, a `core.fsmonitor`, a `filter.*.clean`. Each would read the token
+# straight out of /proc/self/environ. Pass it per command instead, to the two commands that
+# need it and nothing else.
+#
 # ⚠ The token goes to git through a credential helper reading it from the ENVIRONMENT, not
 # through a https://x-access-token:<token>@github.com/... URL. A URL puts the credential in
 # argv, where any local `ps` reads it, and git writes it into .git/config the moment anyone
 # turns it into a remote. The helper text below contains the literal string `$GH_TOKEN`;
 # the shell git runs it with expands it.
-if ! git -C "$CHECKOUT" \
+#
+# ⚠ THE HELPER IS SCOPED TO github.com, and the scope is the point. An unscoped
+# `credential.helper` never reads the `host=` git feeds it on stdin, so it answers for ANY
+# host — point origin elsewhere and git hands over the token at the first 401. Verified:
+# `printf 'protocol=https\nhost=other\n\n' | git -c credential.helper='!f...' credential fill`
+# returns the token. `credential.https://github.com.helper` does not.
+#
+# `core.hooksPath=/dev/null` closes the last exec path in the push itself.
+if ! GH_TOKEN="$TOKEN" git -C "$CHECKOUT" \
+  -c core.hooksPath=/dev/null \
   -c credential.helper= \
-  -c credential.helper='!f(){ echo username=x-access-token; echo "password=$GH_TOKEN"; };f' \
+  -c 'credential.https://github.com.helper=!f(){ echo username=x-access-token; echo "password=$GH_TOKEN"; };f' \
   push --quiet origin "HEAD:refs/heads/$BRANCH" 2>"$TICK_DIR/push.err"; then
   fail_item "push failed: $(tr '\n' ' ' < "$TICK_DIR/push.err" | head -c 300)"
 fi
-log "pushed $BRANCH"
+log "pushed $BRANCH to $ACTUAL_REMOTE"
 
 # --draft is not a preference. A draft PR cannot be merged by anyone until a human marks it
 # ready, which makes "the bot cannot merge" true through a second, independent mechanism
@@ -358,7 +398,7 @@ PR_BODY="$TICK_DIR/pr-body.md"
   printf -- '- Work item: `%s`\n- Branch: `%s`\n- Session log stays on the host at `%s`\n' "$ITEM" "$BRANCH" "$TICK_DIR/session.log"
 } > "$PR_BODY"
 
-PR="$(gh pr create --repo "$REPO" --draft --base main --head "$BRANCH" \
+PR="$(GH_TOKEN="$TOKEN" gh pr create --repo "$REPO" --draft --base main --head "$BRANCH" \
   --title "${ITEM}: ${TITLE}" --body-file "$PR_BODY" 2>"$TICK_DIR/pr.err")" \
   || fail_item "gh pr create failed: $(tr '\n' ' ' < "$TICK_DIR/pr.err" | head -c 300)"
 log "opened $PR"
@@ -369,7 +409,7 @@ log "opened $PR"
 # itself. A failure here does NOT fail the tick — the PR exists and is the thing that
 # matters — but it is recorded, because a PR without this table is the exact artefact this
 # loop is supposed to make impossible.
-if gh pr comment "$PR" --repo "$REPO" --body-file "$SPEC_DIFF" >/dev/null 2>"$TICK_DIR/comment.err"; then
+if GH_TOKEN="$TOKEN" gh pr comment "$PR" --repo "$REPO" --body-file "$SPEC_DIFF" >/dev/null 2>"$TICK_DIR/comment.err"; then
   record_claim worked "draft PR $PR with the spec diff"
   OUTCOME=worked
   DETAIL="$ITEM → $PR (${COMMITTED} files, spec diff posted)"

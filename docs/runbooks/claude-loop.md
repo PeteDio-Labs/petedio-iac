@@ -274,3 +274,11 @@ the ones that must *not* open a pull request — against a throwaway git remote 
 
 Run it before and after you touch `claude-loop-tick.sh`. It found two real defects while it
 was being written, both of which passed the first tick and failed the second.
+
+Scenarios 12-14 model a **hostile** session — one that repoints `origin`, that hides the
+rewrite in `url.<base>.insteadOf`, and that plants a `pre-push` hook. They exist because
+their absence is what let PET-409 through: the first eleven scenarios all stub a session
+that behaves itself, and 37 assertions passed green over a credential helper that would
+have handed the GitHub token to whatever remote the session chose. The session runs as this
+user, in this directory, driven by work-item text the loop does not control. Assume it is
+hostile, and when you add a scenario ask what it assumes the session will not do.

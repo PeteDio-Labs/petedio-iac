@@ -35,6 +35,10 @@ Environment=CLAUDE_LOOP_HOME={{ claude_loop_home }}
 Environment=CLAUDE_LOOP_CHECKOUT={{ claude_loop_home }}/{{ claude_loop_project_dir }}
 Environment=CLAUDE_LOOP_BROKER={{ claude_loop_broker }}
 Environment=CLAUDE_LOOP_REPO={{ claude_loop_repo }}
+# The remote the tick will accept before it mints a token. Stated rather than assumed: the
+# `claude -p` session owns the clone and can repoint origin, so the tick compares against
+# this and refuses to mint for anything else (PET-409).
+Environment=CLAUDE_LOOP_REMOTE=https://github.com/{{ claude_loop_repo }}
 Environment=CLAUDE_LOOP_MAX_ATTEMPTS={{ claude_loop_max_attempts }}
 Environment=CLAUDE_LOOP_TIMEOUT_SEC={{ claude_loop_timeout_sec }}
 Environment=CLAUDE_LOOP_MAX_AGE_SEC={{ claude_loop_max_age_sec }}
