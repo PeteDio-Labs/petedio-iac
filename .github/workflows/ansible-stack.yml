@@ -1,11 +1,10 @@
-# Reusable Ansible stack workflow (PET-250) — the ONE copy of the syntax-check/apply logic
+# Reusable Ansible stack workflow (PET-250) — the ONE copy of the apply logic
 # that ansible-openfaas.yml and ansible-palworld.yml used to duplicate (~109 lines each).
 # Per-stack workflows are now thin CALLERS: they own their `on.paths` triggers and their
 # per-host `concurrency` group (serialization semantics unchanged), and pass their playbook
 # + knobs here via `workflow_call` inputs. A new stack = a ~20-line caller, not a clone.
 #
 # Jobs (gated on the CALLER's event, which propagates to reusable workflows):
-#   syntax-check  pull_request — prove the play parses. No secrets, no host contact.
 #   apply         push to main — OIDC → Vault (openfaas-ci role: lxc-ssh + registry pull creds
 #                 only) → ansible-playbook against the live host, from the self-hosted
 #                 homelab x64 runner (LXC 232 on pve03, or 233 on pve02).
@@ -61,23 +60,23 @@ env:
   ANSIBLE_IMAGE: python:3.12-slim
 
 jobs:
-  # PR: prove the play parses. No secrets, no host contact, no ssh.
-  syntax-check:
-    if: github.event_name == 'pull_request'
-    runs-on: [self-hosted, linux, x64, homelab]
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - name: Syntax check (ansible in Docker)
-        env:
-          COLLECTIONS: ${{ inputs.collections }}
-          PLAYBOOK: ${{ inputs.playbook }}
-        run: |
-          docker run --rm -v "$GITHUB_WORKSPACE/ansible:/ansible" -w /ansible \
-            -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
-            "$ANSIBLE_IMAGE" sh -c \
-            "pip install -q ansible-core && \
-             { [ -z '$COLLECTIONS' ] || ansible-galaxy collection install $COLLECTIONS; } && \
-             ansible-playbook -i inventory/ --syntax-check '$PLAYBOOK'"
+  # ⚠ THERE IS DELIBERATELY NO pull_request JOB HERE ANY MORE (PET-407).
+  #
+  # There was one: a `syntax-check` job, `if: github.event_name == 'pull_request'`, on
+  # `runs-on: [self-hosted, linux, x64, homelab]`, with a bare `actions/checkout`. For a
+  # `pull_request` event that checks out the PR's OWN content and runs it on a runner sitting
+  # on the LAN with Vault, Proxmox and Postgres. petedio-iac is public, and the fork-PR policy
+  # was "require approval for first-time contributors" — i.e. the gate was ONE merged
+  # contribution, not membership. A stranger lands a typo fix and thereafter their PRs execute
+  # here without approval.
+  #
+  # It was deleted rather than moved to ubuntu-latest because it was also redundant:
+  # ansible-validate.yml syntax-checks EVERY playbook, hosted and credential-free, and is a
+  # required check on every PR (PET-397). This job checked exactly one — inputs.playbook.
+  # Removing it loses no coverage.
+  #
+  # If you ever add a PR-triggered job to this file: it does not go on the self-hosted runner.
+  # Use ubuntu-latest, or `pull_request_target` with an explicit `ref: main`, and know why.
 
   # merge to main: apply the play to the stack's live host.
   apply:
