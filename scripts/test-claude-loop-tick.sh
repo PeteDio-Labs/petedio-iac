@@ -89,6 +89,15 @@ case "${STUB_MODE:-good}" in
     printf '| asked | shipped | status |\n|---|---|---|\n| A | done | done |\n' > "$P"
     ;;
   nospecdiff) echo hello > newfile.txt ;;
+  workflowedit)
+    # The App has no `workflows` permission; GitHub rejects such a push AFTER the session
+    # has run. The tick must catch it before minting (PET-425).
+    mkdir -p .github/workflows
+    echo "# touched" >> .github/workflows/ansible-palworld.yml
+    P="$(printf '%s' "$PROMPT" | grep -o 'diff->[^ ]*' | head -1 | cut -c7-)"
+    mkdir -p "$(dirname "$P")"
+    printf '| asked | shipped | status |\n|---|---|---|\n| A | done | done |\n' > "$P"
+    ;;
   nochange)   : ;;
   boom)       exit 3 ;;
 
@@ -296,6 +305,16 @@ hb detail | grep -q "no readable body" && ok "detail says the body was unreadabl
 [ ! -s "$GH_LOG" ] && ok "no PR was opened" || no "no PR" "$(cat "$GH_LOG")"
 # The session must never have run: refusing after burning quota is the expensive version.
 [ ! -f "$CLAUDE_LOOP_HOME/run/PET-500/session.log" ] && ok "refused BEFORE running the session" || no "session ran anyway" ""
+
+say "16. a session that edits a workflow is stopped BEFORE the token is minted (PET-425)"
+setup "$ONE" workflowedit
+"$TICK" >/dev/null 2>&1
+[ "$(hb outcome)" = "failed" ] && ok "outcome=failed" || no "outcome=failed" "got $(hb outcome)"
+hb detail | grep -q "not permitted to push" && ok "detail names the permission" || no "detail" "$(hb detail)"
+hb detail | grep -q "ansible-palworld.yml" && ok "detail names the file" || no "names the file" "$(hb detail)"
+[ ! -s "$GH_LOG" ] && ok "no PR was opened" || no "no PR" "$(cat "$GH_LOG")"
+# The point of catching it here is that no credential is created for a push that cannot work.
+grep -q "mint" "$CLAUDE_LOOP_HOME/state/mint.err" 2>/dev/null && no "the broker was asked to mint" "" || ok "no token was minted"
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
