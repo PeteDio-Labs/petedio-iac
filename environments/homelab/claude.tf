@@ -44,6 +44,28 @@
 # is both the most remotely-accessible box in the lab and the one exposing the least.
 # SSH to it over the tailnet (pete-pi-1 advertises 192.168.50.0/24), as with plane-235.
 #
+# ⚠ THE "NO OUTBOUND CREDENTIAL" CLAIM ABOVE HOLDS ONLY WHILE THE WORK LOOP IS OFF
+# (PET-399). `claude_loop_enable` adds a timer that takes one labelled Plane work item and
+# opens a DRAFT pull request, and that needs two secrets on the box: the Plane PAT CI
+# already uses, and a GitHub App key with contents:write + pull_requests:write on this
+# repo. They land root-owned 0400 in /etc/claude-loop and are reachable only through a
+# root-owned broker, because sessions here run in bypassPermissions and would otherwise
+# read them straight out of a unit's /proc/<pid>/environ.
+#
+# So this host still opens no inbound port, and still holds no Vault credential — the
+# deploy wrapper does the Vault reading from the operator's machine. What it holds is a
+# path to a one-hour GitHub token. The only thing stopping that token merging its own pull
+# request is `required_approving_review_count: 1` on `main`, which a GitHub App cannot
+# satisfy for its own PR. Lowering that count to zero is what makes this host dangerous,
+# not the loop.
+#
+# ⚠ `enforce_admins` STAYS FALSE, and is not the missing half of that control. Turning it
+# on deadlocked the whole repo for an hour on 2026-09-12 (PET-399): in a one-person org,
+# an author cannot approve their own PR, so with the admin bypass gone there is nobody
+# left who can approve anything and NOTHING can merge. It only ever constrained Pedro, who
+# is not the identity this control exists for.
+# roles/claude-code/README.md and docs/runbooks/claude-loop.md.
+#
 # APPLYING THIS FILE DOES NOT GIVE YOU A WORKING HOST, and no play can finish the job
 # either. Remote Control requires an interactive claude.ai login — it refuses API keys and
 # `claude setup-token` tokens alike — so the rollout is deliberately two-phase: the play

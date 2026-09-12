@@ -335,3 +335,15 @@
   loop: "{{ claude_remote_sessions }}"
   loop_control:
     label: "{{ item.name }}"
+
+# --- The ticket-driven work loop (PET-399) --------------------------------------------
+# Split into its own file because it is a second, separable thing this host does: the
+# remote-control servers above answer a human, and the loop below answers a label. Kept in
+# THIS role rather than a sibling because it needs claude_user, claude_home,
+# claude_workspace and claude_npm_prefix — four variables a second role would duplicate and
+# drift the day one of them changes.
+#
+# Imported, not included, so ansible-lint and --syntax-check read it on every run whether
+# or not the loop is enabled.
+- name: Install the ticket-driven work loop
+  ansible.builtin.import_tasks: loop.yml

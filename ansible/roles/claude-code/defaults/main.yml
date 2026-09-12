@@ -87,3 +87,69 @@ claude_remote_sessions:
 # ⚠ Override it with `=true` / `=false` and NOTHING ELSE, and note that the task reading it
 # has to say `| bool`: `-e` hands Jinja a STRING, and the string "false" is truthy.
 claude_remote_enable: false
+
+# --- The ticket-driven work loop (PET-399) ---------------------------------------------
+# A systemd timer picks up ONE Plane work item carrying a label, runs `claude -p` against
+# it, and opens a DRAFT pull request. It revives the shape of the agent fleet retired in
+# PET-265, deliberately and with the two things that killed it fixed: the bot identity is
+# structurally unable to merge (branch protection, PET-399 step 0), and every PR closes
+# with a table diffing what the item asked for against what shipped.
+#
+# Read docs/runbooks/claude-loop.md before turning this on.
+
+# Whether the timer is enabled and running. DEFAULT FALSE, like claude_remote_enable, and
+# for a stronger reason: this one opens pull requests.
+#
+# ⚠ Override with `=true` / `=false` and NOTHING ELSE, and note that the task reading it
+# says `| bool` on BOTH lines. `-e claude_loop_enable=false` hands Jinja the STRING
+# "false", which is truthy — a bare `if claude_loop_enable` turns the loop ON by way of the
+# documented way to turn it off. That exact bug shipped in PET-396.
+claude_loop_enable: false
+
+# How often a tick fires. Most ticks find no work and cost one Plane query.
+#
+# ⚠ KEEP claude_loop_max_age_sec IN STEP WITH THIS. It is the staleness threshold
+# lab-verify.sh uses to tell "the timer is enabled but has not run" from "it ran and found
+# nothing", and it is written INTO the heartbeat so that check never has to parse an
+# OnCalendar expression. Two ticks plus the randomized delay is the rule: 30 min → 3900 s.
+claude_loop_oncalendar: "*:0/30"
+claude_loop_max_age_sec: 3900
+
+# The Plane label that means "a loop tick may take this". The project had no labels at all
+# when this was written, so creating it is a step, not a lookup — see the runbook.
+claude_loop_label: agent-ready
+
+# Where the loop keeps its sentinel, its lock, its prompt and its state. NOT in the
+# workspace: a session working in {{ claude_workspace }}/iac must not be one `rm -rf` away
+# from the loop's own claim records.
+claude_loop_home: "{{ claude_home }}/loop"
+
+# Root-owned 0400 secrets, and the root-owned broker that is the only path to them. See
+# templates/claude-loop-broker.j2 for why an EnvironmentFile is not enough here.
+claude_loop_conf_dir: /etc/claude-loop
+claude_loop_broker: /usr/local/sbin/claude-loop-broker
+
+# The repo the loop works in. `dir` is relative to claude_workspace and MUST be a trusted
+# project directory — Claude Code resolves MCP tools to zero from an untrusted path, and
+# the startup trust dialog never saves trust for a home directory (docs/GOTCHAS.md).
+claude_loop_repo: PeteDio-Labs/petedio-iac
+claude_loop_project_dir: iac
+
+# Give up on an item after this many failed ticks, so one broken work item cannot burn the
+# shared Max quota every half hour forever. Clearing the claim retries it — see the runbook.
+claude_loop_max_attempts: 3
+
+# Hard ceiling on one `claude -p` run. systemd kills the tick at this point and the tick
+# records the item as failed, rather than a session holding the single-instance lock
+# indefinitely and every later tick exiting "already running".
+claude_loop_timeout_sec: 3600
+
+# --- Loop identity (resolved from Vault by scripts/deploy-claude-loop.sh) ---------------
+# NEVER give the secret ones a default. A committed placeholder here would land on the host
+# as a 0400 file that looks provisioned and fails at the first mint, and the assert in
+# tasks/loop.yml exists precisely to refuse that.
+#
+# Vault kv/services/claude-loop — fields app_id, installation_id, app_pem.
+# Vault kv/services/plane       — field  api_key (the PAT CI already uses).
+claude_loop_plane_base_url: http://192.168.50.235:8080
+claude_loop_plane_workspace: petedio
