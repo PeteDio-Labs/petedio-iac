@@ -87,12 +87,22 @@ echo "  app_id=$APP_ID  installation_id=$INSTALLATION_ID"
 
 # ------------------------------------------------------------------- vault
 step "Authenticating to Vault"
+# ⚠ CHECK THE CA BUNDLE BEFORE BLAMING THE NETWORK. `vault` reports a missing VAULT_CACERT
+# as an unreachable server, which sends you to look at .223 when the real fault is a path.
+# It happens when this script is copied somewhere else and run from there: REPO_ROOT is
+# derived from the script's own location, so from /tmp it resolves to / and the cert is
+# sought at //environments/homelab/vault-ca.crt. Run it from the repo, or set VAULT_CACERT.
+[ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'.
+  This is almost always a path problem, not a Vault problem — run the script from inside the
+  repo (./scripts/seed-claude-loop-vault.sh), or export VAULT_CACERT explicitly."
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
 [ -n "${VAULT_TOKEN:-}" ] || { read -rsp "Vault token: " VAULT_TOKEN; echo; }
 export VAULT_TOKEN
-vault token lookup >/dev/null 2>&1 || die "Vault token invalid / Vault unreachable at $VAULT_ADDR."
+vault token lookup >/dev/null 2>&1 || die "Vault rejected the token, or $VAULT_ADDR is unreachable.
+  Check both before assuming either: ./scripts/pet-secrets doctor reports whether Vault is
+  sealed and whether the Keychain still holds the bootstrap chain."
 
 step "Writing $VAULT_PATH"
 command -v jq >/dev/null 2>&1 || die "jq is required (it is what preserves the newlines)."
