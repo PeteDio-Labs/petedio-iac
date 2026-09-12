@@ -381,6 +381,46 @@ done
 #
 # This check needs no SSH. The Ollama API answers over the LAN, so drift on .12
 # stays visible even from a workstation with no key for that host.
+sec "Claude Code host"
+# 247 runs `claude remote-control`, so a session on it is drivable from a phone. Placement
+# is already asserted above (everything not in INTENT_PVE02 must be on pve03); what this
+# section asks is whether the thing the host exists for actually works.
+CNODE=$(node_for 247)
+if [ -z "$CNODE" ]; then
+  bad "claude-247 exists" "on neither node — claude.tf declares it"
+else
+  # A file on disk is not a runnable toolchain. Run the binary, as the user that owns it.
+  # ABSOLUTE PATH ON PURPOSE: `su - claude -c ...` is non-interactive, Debian's .bashrc
+  # returns early for that, and the PATH line the role appends never runs — so a PATH-based
+  # check would report a broken host that is fine. The unit sets PATH explicitly for the
+  # same reason; this mirrors what the unit does.
+  CV=$(pct_on "$CNODE" 247 "su - claude -c '/home/claude/.npm-global/bin/claude --version'" | tr -d '\r' | head -1)
+  [ -n "$CV" ] && ok "claude code runs" "$CV" || bad "claude code runs" "no version from the claude user"
+
+  # The units land STOPPED and stay that way until an operator has signed in with /login --
+  # a step no play can do (Remote Control refuses API keys and setup-token tokens). So a
+  # missing unit is "bootstrap unfinished", not drift, and skips rather than fails. Once the
+  # unit exists it has to work.
+  if ! pct_on "$CNODE" 247 "test -f /etc/systemd/system/claude-remote-iac.service"; then
+    skip "remote-control server" "not bootstrapped — ansible/roles/claude-code/README.md"
+  else
+    ST=$(pct_on "$CNODE" 247 "systemctl is-active claude-remote-iac")
+    [ "$ST" = "active" ] && ok "remote-control unit active" || bad "remote-control unit active" "is-active: ${ST:-unknown}"
+
+    # ⚠ AN ACTIVE UNIT IS NOT A REGISTERED SERVER -- the same lesson the runners taught
+    # twice. The server registers with the Anthropic API over OUTBOUND HTTPS and then polls
+    # it; that connection is the feature working. A server whose login has expired exits or
+    # sits there holding nothing, and `is-active` cannot tell the difference. Nothing here
+    # listens on a port, so there is no inbound check to make instead.
+    ES=$(pct_on "$CNODE" 247 "sh -c 'ss -tnH state established dport = :443 | wc -l'" | tr -d '\r ')
+    if [ "${ES:-0}" -ge 1 ]; then
+      ok "remote-control registered" "$ES outbound HTTPS connection(s)"
+    else
+      bad "remote-control registered" "unit is up but holds no connection — expired login? journalctl -u claude-remote-iac"
+    fi
+  fi
+fi
+
 sec "Inference host serves what it declares"
 if ! command -v ansible-inventory >/dev/null 2>&1; then
   skip "ollama declared set" "ansible-inventory not on PATH"
