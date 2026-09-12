@@ -6,10 +6,20 @@
 # Node.js, Claude Code, gh, the mirrored workspace repos, the per-project units — is in
 # roles/claude-code.
 #
-# NO PRECONDITIONS. Unlike configure-plane.yml there is no scripts/lxc-features-247.sh to
-# run first and no Vault secret to pass in: nothing here runs Docker, and the one credential
-# this host needs (a claude.ai login) cannot be injected — the feature refuses API keys and
-# `claude setup-token` tokens alike. That login is an operator step over SSH.
+# NO NODE-SIDE PRECONDITION. Unlike configure-plane.yml there is no
+# scripts/lxc-features-247.sh to run first: nothing here runs Docker.
+#
+# THE LOGIN STILL CANNOT BE INJECTED. Remote Control refuses API keys and
+# `claude setup-token` tokens alike, so the claude.ai login is an operator step over SSH.
+#
+# ⚠ THERE IS NOW A VAULT SECRET TO PASS IN (PET-399), and this header used to say there was
+# not. The ticket-driven work loop needs a GitHub App key and the Plane PAT, so run the play
+# through its wrapper when you mean to land or rotate them:
+#
+#   ./scripts/deploy-claude-loop.sh
+#
+# Run bare, the play still converges everything else and leaves the loop's secrets alone —
+# see the "Decide whether this run carries the loop identity" task in roles/claude-code.
 #
 # TWO-PHASE BY DESIGN. The first run installs everything and leaves the units STOPPED,
 # because a server started before the login exists exits at once and crash-loops. After the

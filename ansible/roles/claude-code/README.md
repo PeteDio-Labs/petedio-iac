@@ -13,8 +13,8 @@ closes.
 | Host | `claude-247` — `192.168.50.247`, VMID 247, pve03 |
 | Terraform | `environments/homelab/claude.tf` |
 | Playbook | `ansible/playbooks/configure-claude-code.yml` |
-| Runs as | `claude`, a non-root user with no sudo |
-| Serves | one `claude remote-control` server per entry in `claude_remote_sessions` |
+| Runs as | `claude`, a non-root user with **no sudo at all** |
+| Serves | one `claude remote-control` server per entry in `claude_remote_sessions`, plus the work-loop timer when `claude_loop_enable` is set |
 
 ## What Ansible cannot do, and why
 
@@ -139,11 +139,14 @@ cannot see is a stall.
 
 Be clear about what that means. Claude Code's own guidance for the mode is "isolated
 containers and VMs only", and **this container is not isolated from the lab** — it sits on
-the LAN with Vault, Proxmox and Postgres. The role provisions no outbound credential: the
-only key it places is your *public* key, authorizing inbound SSH. So a session reaches what
-the LAN serves unauthenticated, plus whatever you add by hand afterwards — note that
-`gh auth login` leaves its OAuth token in `~/.config/gh/hosts.yml`, under the same user the
-sessions run as.
+the LAN with Vault, Proxmox and Postgres. Until the work loop, the role provisioned no
+outbound credential: the only key it placed was your *public* key, authorizing inbound SSH.
+So a session reached what the LAN serves unauthenticated, plus whatever you added by hand
+afterwards — note that `gh auth login` leaves its OAuth token in `~/.config/gh/hosts.yml`,
+under the same user the sessions run as.
+
+⚠ **The work loop changes that.** See "What the loop changes about the isolation story"
+below before you set `claude_loop_enable`.
 
 Deny rules still apply in this mode; allow rules do not. ⚠ But those deny rules live in
 `~/.claude/settings.json`, which is owned by `claude` — the user the sessions run as — so a
@@ -156,3 +159,66 @@ Walking it back is one variable and a play re-run: set `claude_permission_mode` 
 
 The mode is also why the session user is not root. Claude Code refuses `bypassPermissions`
 as root or under sudo on Linux, so a unit running as root would fail at startup.
+
+## What the loop changes about the isolation story (PET-399)
+
+`claude_loop_enable` puts a second thing on this host: a timer that takes one labelled
+Plane work item, runs `claude -p` against it, and opens a **draft** pull request. Enabling
+it gives the host an outbound credential for the first time, so the paragraph above is only
+true while the loop is off.
+
+**What lands, and where.** Two secrets go to `/etc/claude-loop/`, root-owned `0400`: the
+Plane PAT that CI already uses, and a GitHub App private key with `contents: write` and
+`pull_requests: write` on this repo. Neither is readable by `claude`.
+
+**Why a broker and not an `EnvironmentFile`.** The repo's usual landing pattern — a
+root-owned `0600` file handed to a unit through `EnvironmentFile=` — does not hold here.
+systemd reads that file as root, but the values then sit in the process environment of a
+process owned by `claude`, and a session in `bypassPermissions` can read
+`/proc/<pid>/environ` for its own uid while a tick runs. So the secrets are reachable only
+through `/usr/local/sbin/claude-loop-broker`, which is root-owned `0500` and exposes
+exactly two subcommands: `next-item` and `mint-token`.
+
+**There is no sudo on this host, and that is a correction (PET-408).** An earlier version
+of this role installed `sudo` and an `/etc/sudoers.d/claude-loop` grant so that a tick
+running as `claude` could call the broker. That was wrong, and it was wrong in a way worth
+remembering: **sudo binds a grant to the UID, not to a process.** The tick and the
+`claude -p` session it starts are the same user, so the session held the identical grant —
+and the session's instructions come from a Plane work item. Anyone who could write one
+could mint the token directly and skip every guard in the tick.
+
+**So the privilege runs the other way now.** `claude-loop.service` runs as **root**, reads
+`/etc/claude-loop/` directly, and calls `runuser -u claude` for the two things that must
+not be root: the session, and every command touching the working tree. The token exists
+only on the root side and is passed per-command, never exported.
+
+**State the exposure plainly.** A session on this host can read its own home and reach
+whatever the LAN serves unauthenticated. It **cannot** read the App key or the Plane PAT,
+cannot run the broker, and cannot obtain a GitHub token — `runuser` drops privilege and
+cannot raise it, and there is no sudoers entry to abuse. Verify that rather than trusting
+it: `runuser -u claude -- /usr/local/sbin/claude-loop-broker mint-token` must fail.
+
+**The push is the one root command that touches the repo**, and it pushes to an explicit
+URL rather than to `origin`, so git updates no remote-tracking ref. That keeps root from
+writing a root-owned object into a `claude`-owned `.git` and breaking the next session.
+
+⚠ **Branch protection is the only thing that stops that token merging.** `contents: write`
+and `pull_requests: write` are the permissions that merge; nothing about a GitHub App
+withholds that. What withholds it is `required_approving_review_count: 1` on `main`, which
+the App is expected to be unable to satisfy for its own pull request. If that count ever
+drops to zero, this identity can merge unreviewed work the same afternoon.
+
+⚠ **`enforce_admins` stays `false`.** It is not the missing half of that control, and
+turning it on deadlocked the repo for an hour on 2026-09-12: in a one-person org nobody can
+approve anything, because an author cannot approve their own pull request and the admin
+bypass is what was covering that. It only ever constrained Pedro.
+
+⚠ **"An App cannot approve its own pull request" is still untested.** It is the assumption
+the whole arrangement rests on, and the test meant to prove it ran as an admin and showed
+the opposite case instead. Treat the guarantee as designed rather than verified until the
+App has opened a pull request and the merge endpoint has refused it. Read
+`docs/runbooks/claude-loop.md` before enabling, and re-read it before relaxing anything on
+`main`.
+
+**Turning it off** is `claude_loop_enable=false` and a play re-run, which stops and disables
+the timer. Pausing without a play run is a sentinel file — see the runbook.
