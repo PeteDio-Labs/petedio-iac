@@ -323,3 +323,22 @@ resource "vault_jwt_auth_backend_role" "infra_reconcile" {
   token_ttl      = 300
 }
 
+
+# openfaas-ci role → openfaas-ci policy. ⚠ MISNAMED, NOT DEAD — see the policy's comment in
+# policies.tf. `.github/workflows/ansible-stack.yml` mints as this role (lines 102, 116) to
+# deploy the arr stack; openfaas-241 itself is gone. Bound to petedio-iac's main-push sub
+# only, so a PR cannot mint it. Values captured from live Vault on 2026-09-12, not
+# reconstructed, so this apply is a no-op against what is already there (PET-423).
+resource "vault_jwt_auth_backend_role" "openfaas_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "openfaas-ci"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = "repo:PeteDio-Labs/petedio-iac:ref:refs/heads/main"
+  }
+  token_policies = [vault_policy.openfaas_ci.name]
+  token_ttl      = 900
+}
