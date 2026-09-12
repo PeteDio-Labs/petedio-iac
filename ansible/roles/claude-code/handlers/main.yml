@@ -1,0 +1,8 @@
+---
+# Re-read unit files after this role writes or deletes one. Restarting a running server is
+# deliberately NOT done here: a restart drops whatever session is connected, and a changed
+# unit is rarely worth interrupting someone mid-task. Restart it yourself when you mean to:
+#   systemctl restart claude-remote-<name>
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true

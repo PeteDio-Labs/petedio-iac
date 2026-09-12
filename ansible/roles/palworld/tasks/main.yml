@@ -113,7 +113,7 @@
 
 - name: Preserve the live AdminPassword when none was supplied
   ansible.builtin.set_fact:
-    palworld_admin_password: "{{ (palworld_existing_ini.content | b64decode | regex_search('AdminPassword=\"([^\"]*)\"', '\\1') or [''])| first }}"
+    palworld_admin_password: "{{ (palworld_existing_ini.content | b64decode | regex_search('AdminPassword=\"([^\"]*)\"', '\\1') or ['']) | first }}"
   when:
     - palworld_admin_password | length == 0
     - palworld_existing_ini.content is defined
@@ -121,7 +121,7 @@
 
 - name: Preserve the live ServerPassword when none was supplied
   ansible.builtin.set_fact:
-    palworld_server_password: "{{ (palworld_existing_ini.content | b64decode | regex_search('ServerPassword=\"([^\"]*)\"', '\\1') or [''])| first }}"
+    palworld_server_password: "{{ (palworld_existing_ini.content | b64decode | regex_search('ServerPassword=\"([^\"]*)\"', '\\1') or ['']) | first }}"
   when:
     - palworld_server_password | length == 0
     - palworld_existing_ini.content is defined

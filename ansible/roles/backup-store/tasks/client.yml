@@ -137,7 +137,10 @@
   register: backup_storage_added
   changed_when: backup_storage_added.rc == 0
 
-- name: Report
+# noqa reason: the suggested rewrite joins the {%- %} tags onto the prose lines, which in
+# a >- folded block turns a readable conditional into one unbroken line. The `-` markers
+# already strip the whitespace at render time, so the output is identical either way.
+- name: Report  # noqa: jinja[spacing]
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }}:

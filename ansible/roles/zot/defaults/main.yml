@@ -59,8 +59,10 @@ zot_password: ""
 zot_cache_enabled: true
 zot_cache_prefix: docker-hub
 zot_cache_registries:
-  - { url: "https://registry-1.docker.io", prefix: "docker-hub" }
-  - { url: "https://lscr.io",              prefix: "lscr-io" }
+  - url: "https://registry-1.docker.io"
+    prefix: "docker-hub"
+  - url: "https://lscr.io"
+    prefix: "lscr-io"
 
 # Derived — keeps every health/verify URL in the role scheme-correct.
 zot_scheme: "{{ 'https' if zot_tls_enabled | bool else 'http' }}"

@@ -1,0 +1,55 @@
+---
+# configure-claude-code.yml — Claude Code on LXC 247 (claude.tf).
+#
+# The host runs `claude remote-control`, so a session lives on hardware that stays up and
+# is drivable from claude.ai/code or the Claude phone app. Everything the box needs —
+# Node.js, Claude Code, gh, the mirrored workspace repos, the per-project units — is in
+# roles/claude-code.
+#
+# NO NODE-SIDE PRECONDITION. Unlike configure-plane.yml there is no
+# scripts/lxc-features-247.sh to run first: nothing here runs Docker.
+#
+# THE LOGIN STILL CANNOT BE INJECTED. Remote Control refuses API keys and
+# `claude setup-token` tokens alike, so the claude.ai login is an operator step over SSH.
+#
+# ⚠ THERE IS NOW A VAULT SECRET TO PASS IN (PET-399), and this header used to say there was
+# not. The ticket-driven work loop needs a GitHub App key and the Plane PAT, so run the play
+# through its wrapper when you mean to land or rotate them:
+#
+#   ./scripts/deploy-claude-loop.sh
+#
+# Run bare, the play still converges everything else and leaves the loop's secrets alone —
+# see the "Decide whether this run carries the loop identity" task in roles/claude-code.
+#
+# TWO-PHASE BY DESIGN. The first run installs everything and leaves the units STOPPED,
+# because a server started before the login exists exits at once and crash-loops. After the
+# operator signs in, re-run with `-e claude_remote_enable=true` to hand it to systemd:
+#
+#   ansible-playbook playbooks/configure-claude-code.yml
+#   ansible-playbook playbooks/configure-claude-code.yml -e claude_remote_enable=true
+#
+# Full sequence, including what to click: ansible/roles/claude-code/README.md.
+#
+# Manual-validation-first (standing convention, PET-266): run this by hand and get it green
+# before any CD-on-merge workflow is wired to it. Nothing in .github/workflows watches this
+# play today, and the inventory group it uses is unwatched too.
+
+- name: Configure the Claude Code host (LXC 247)
+  hosts: claude
+  become: true
+
+  roles:
+    - claude-code
+
+  post_tasks:
+    # The play cannot finish the job, so it says so rather than reporting all-green and
+    # leaving you to discover the stopped units later.
+    - name: Report the operator steps that remain
+      ansible.builtin.debug:
+        msg:
+          - "Claude Code is installed, and the remote-control units are stopped."
+          - "1. ssh claude@{{ ansible_host | default('192.168.50.247') }}"
+          - "2. cd ~/work/petedio/iac && claude   # accept workspace trust, then /login"
+          - "3. claude remote-control             # answer y once, confirm a session URL, Ctrl+C"
+          - "4. re-run this play with -e claude_remote_enable=true"
+      when: not claude_remote_enable | bool

@@ -9,13 +9,13 @@
 # lego is a single static binary — no Python/certbot dependency chain on a host
 # whose whole point is being small.
 ---
-- name: zot/tls — require a Cloudflare DNS token
+- name: Zot/tls — require a Cloudflare DNS token
   ansible.builtin.assert:
     that: (zot_cf_dns_token | length) > 0
     fail_msg: "zot_cf_dns_token must be supplied from Vault (kv/iac/cloudflare)."
     quiet: true
 
-- name: zot/tls — directories
+- name: Zot/tls — directories
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -24,14 +24,14 @@
     - "{{ zot_lego_dir }}"
     - "{{ zot_tls_dir }}"
 
-- name: zot/tls — install lego
+- name: Zot/tls — install lego
   ansible.builtin.unarchive:
     src: "https://github.com/go-acme/lego/releases/download/v{{ zot_lego_version }}/lego_v{{ zot_lego_version }}_linux_amd64.tar.gz"
     dest: "{{ zot_lego_dir }}"
     remote_src: true
     creates: "{{ zot_lego_dir }}/lego"
 
-- name: zot/tls — obtain or renew the certificate
+- name: Zot/tls — obtain or renew the certificate
   ansible.builtin.command:
     # `run` fails if a cert already exists, `renew` fails if it does not — so
     # pick by what is on disk. --days 30 makes renew a cheap no-op until the
@@ -54,7 +54,7 @@
   changed_when: "'Server responded with a certificate' in (zot_lego.stdout | default(''))"
   no_log: true
 
-- name: zot/tls — publish cert and key where zot reads them
+- name: Zot/tls — publish cert and key where zot reads them
   ansible.builtin.copy:
     src: "{{ zot_lego_dir }}/certificates/{{ zot_hostname }}{{ item.src }}"
     dest: "{{ zot_tls_dir }}/{{ item.dest }}"
@@ -63,11 +63,11 @@
   loop:
     - { src: ".crt", dest: "server.crt", mode: "0644" }
     - { src: ".key", dest: "server.key", mode: "0640" }
-  notify: restart zot
+  notify: Restart zot
 
 # Renewal is a timer, not a cron one-liner, so a failure is visible in
 # `systemctl list-timers` / journalctl rather than silently emailing root.
-- name: zot/tls — renewal service
+- name: Zot/tls — renewal service
   ansible.builtin.copy:
     dest: /etc/systemd/system/zot-cert-renew.service
     mode: "0644"
@@ -86,7 +86,7 @@
       ExecStartPost=/usr/bin/docker restart {{ zot_container_name }}
   no_log: true
 
-- name: zot/tls — renewal timer
+- name: Zot/tls — renewal timer
   ansible.builtin.copy:
     dest: /etc/systemd/system/zot-cert-renew.timer
     mode: "0644"
@@ -102,7 +102,7 @@
       [Install]
       WantedBy=timers.target
 
-- name: zot/tls — enable the renewal timer
+- name: Zot/tls — enable the renewal timer
   ansible.builtin.systemd_service:
     name: zot-cert-renew.timer
     enabled: true

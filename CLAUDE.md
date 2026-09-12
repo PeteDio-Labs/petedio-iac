@@ -21,6 +21,7 @@ TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API token
 ## Workflow (trunk-based GitOps)
 - Branch `pet-<n>-<slug>` off **fresh `main`** → PR → **squash-merge**. Mention `PET-<n>` in the PR.
 - CI: **`validate` on PR** (GitHub-hosted, no Vault/LAN/state) and **`plan` + `apply` on merge** (self-hosted runner, LXC 232). There is no plan-on-PR (PET-104/163) — the authoritative plan is your local one or the apply-on-merge log.
+- **Ansible has its own PR check** since PET-397: `ansible-validate.yml` runs `--syntax-check` on every playbook and `ansible-lint` over `roles/`+`playbooks/`, GitHub-hosted and credential-free. The tree lints clean at the `production` profile with no ignore file: the eleven deliberate findings carry `# noqa: <rule>` at their own site with the reason above them. Before PET-397 nothing in CI read the Ansible tree at all.
 - ⚠ **The recurring bug here is a green check over work that never happened.** PET-298,
   PET-317, PET-360, PET-363, PET-372 and PET-374 are all one shape: a job that could not
   authenticate, could not reach its target, or checked nothing, and reported success.
@@ -33,8 +34,16 @@ TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API token
   - ⚠ **That script is scoped to `environments/homelab` in this repo only.** It repaired this state on 2026-09-04 and left `petedio-media-iac`'s state naming the dead node, which is why every media apply reported `1 to change` for a day (PET-332). A repair script's blast radius is the directory it `cd`s into — check whether a sibling state has the same damage.
 - Minimal impact, root-cause, no temp hacks. Plan first for non-trivial (3+ step / architectural) work; if something goes sideways, STOP and re-plan.
 
-## There is no autonomous loop
-The agent fleet on LXC 242 was retired on 2026-07-21 (PET-265) and the host destroyed on 2026-08-24 (PET-307); see `vault/Systems/agent-fleet-retired.md`. Every clone is interactive, every PR is reviewed by a person, and Pedro is the only merger. `roles/agent-loop` and the `agent-loop` section of `GOTCHAS.md` are history.
+## There is one autonomous loop, and it ships off
+The agent fleet on LXC 242 was retired on 2026-07-21 (PET-265) and the host destroyed on 2026-08-24 (PET-307); see `vault/Systems/agent-fleet-retired.md`. `roles/agent-loop` and the `agent-loop` section of `GOTCHAS.md` are history.
+
+**PET-399 revived the shape, deliberately and narrowly.** A timer on claude-247 takes one Plane work item carrying `agent-ready`, runs `claude -p` against it, and opens a **draft** PR closed by a table diffing what the item asked for against what shipped. It is `claude_loop_enable`, it defaults to false, and it stays false until an operator runs a tick by hand and reads the result. Read `docs/runbooks/claude-loop.md` before turning it on.
+
+So the old sentence "every clone is interactive" is no longer true, and two that matter still are: **every PR is reviewed by a person, and Pedro is the only merger.** The loop cannot merge, and that is a property of `main` requiring a review it cannot supply — not of the loop's good behaviour. Three things held it up, and each is worth knowing before you touch this:
+
+- **A sudo grant belongs to the UID, not to your process.** The loop's session runs as the same user as the tick, so any grant the tick holds, an injected work item holds too (PET-408). The tick runs as root and drops privilege instead; this host has no sudo.
+- **Branch protection caps merging, not pushing or PR-opening.** Opening a PR is itself a trigger, so "the bot cannot merge" was never the whole story (PET-407).
+- **A work item is untrusted input.** Its text reaches a shell and a session. Treat anything driven by a tracker as attacker-influenceable.
 
 ## Writing style
 

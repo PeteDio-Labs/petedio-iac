@@ -1,0 +1,48 @@
+{{ ansible_managed | comment }}
+# One `claude remote-control` server, serving {{ item.dir }}.
+#
+# FLAG ORDER IS LOAD-BEARING. Every flag goes AFTER the `remote-control` subcommand. A
+# global `claude` flag placed BEFORE it is not carried over to the sessions the server
+# creates, and Claude Code refuses to start rather than run them with less than you asked
+# for — naming the flag to move. So do not "tidy" this into `claude --permission-mode ...
+# remote-control`.
+#
+# NO TELEMETRY OPT-OUTS HERE. DISABLE_TELEMETRY, DO_NOT_TRACK,
+# CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC and DISABLE_GROWTHBOOK each disable the
+# feature-flag evaluation Remote Control availability depends on, so setting any of them
+# makes this unit start and then report the feature as unavailable.
+
+[Unit]
+Description=Claude Code Remote Control server ({{ item.name }})
+Documentation=https://code.claude.com/docs/en/remote-control
+After=network-online.target
+Wants=network-online.target
+# A server whose login has expired exits at once, and a BARE Restart=always would spin on it
+# forever. This unit uses Restart=always BOUNDED by the pair below: 5 starts in 5 minutes,
+# then systemd gives up and `systemctl status` shows a failed unit — a state you can see —
+# instead of a host that looks busy. Clearing that state needs `systemctl reset-failed`,
+# which the play runs before it starts anything.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User={{ claude_user }}
+Group={{ claude_user }}
+WorkingDirectory={{ claude_workspace }}/{{ item.dir }}
+Environment=HOME={{ claude_home }}
+Environment=PATH={{ claude_npm_prefix }}/bin:/usr/local/bin:/usr/bin:/bin
+# --spawn {{ item.spawn }}: how the server creates sessions.
+# --remote-control-session-name-prefix names them after this project, which is how you tell
+#   two servers apart in the session list on a phone.
+ExecStart={{ claude_npm_prefix }}/bin/claude remote-control \
+    --permission-mode {{ claude_permission_mode }} \
+    --spawn {{ item.spawn }} \
+    --remote-control-session-name-prefix {{ item.name }}
+Restart=always
+RestartSec=30
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

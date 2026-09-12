@@ -53,11 +53,11 @@ locals {
     postgres   = module.postgres_host.vm_id
     runner     = module.runner.vm_id
     runner_2   = module.runner_2.vm_id
-    openfaas   = module.openfaas.vm_id
     authentik  = module.authentik.vm_id
     minio_data = module.minio_data.vm_id
     plane      = module.plane.vm_id
     media_dash = module.media_dash.vm_id
+    claude     = module.claude_code.vm_id
   } : {}
 
   # LXCs that exist on the cluster but have NO Terraform module here, so there is

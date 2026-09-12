@@ -61,11 +61,11 @@
     mode: "0755"
   notify: Restart minio
 
-- name: Install the mc client binary ({{ mc_version }})
+- name: Install the mc client binary ({{ minio_mc_version }})
   ansible.builtin.get_url:
-    url: "{{ mc_url }}"
-    dest: "{{ mc_bin }}"
-    checksum: "sha256:{{ mc_sha256 }}"
+    url: "{{ minio_mc_url }}"
+    dest: "{{ minio_mc_bin }}"
+    checksum: "sha256:{{ minio_mc_sha256 }}"
     owner: root
     group: root
     mode: "0755"
@@ -165,9 +165,9 @@
 - name: Configure the local mc alias
   ansible.builtin.command:
     cmd: >-
-      {{ mc_bin }} alias set {{ minio_mc_alias }}
+      {{ minio_mc_bin }} alias set {{ minio_mc_alias }}
       {{ minio_local_endpoint }} {{ minio_root_user }} {{ minio_root_password }}
-  register: mc_alias
+  register: minio_mc_alias_set
   changed_when: false
   no_log: true
 
@@ -202,7 +202,7 @@
           # Mirrors the live tfstate objects (all versions, never pruning the target) to
           # the operator-configured off-host destination. Runs as root via the timer below.
           set -euo pipefail
-          {{ mc_bin }} mirror --overwrite --preserve \
+          {{ minio_mc_bin }} mirror --overwrite --preserve \
             "{{ minio_mc_alias }}/{{ minio_backup_bucket }}" "{{ minio_backup_dest }}"
 
     - name: Install the backup systemd service

@@ -1,4 +1,8 @@
 ---
+# Only ever runs when "Write the exports" notified it, i.e. /etc/exports really changed —
+# so `true` is the honest report. NOT `false`: that would show ok on a run that reloaded the
+# NFS exports, in a role whose whole failure mode is a client seeing an empty directory.
 - name: Reload exports
   ansible.builtin.command: exportfs -ra
+  changed_when: true
   listen: Reload exports

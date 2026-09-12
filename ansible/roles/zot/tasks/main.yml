@@ -4,7 +4,7 @@
 # replacement can be proven against the real images before anything cuts over.
 # Removing Nexus is a separate, explicit step (zot_remove_nexus).
 ---
-- name: zot — require credentials
+- name: Zot — require credentials
   ansible.builtin.assert:
     that:
       - (zot_username | length) > 0
@@ -14,43 +14,47 @@
       Vault at kv/services/registry). Never hardcode them in the role.
     quiet: true
 
-- name: zot — cap the systemd journal
+- name: Zot — cap the systemd journal
   ansible.builtin.lineinfile:
     path: /etc/systemd/journald.conf
     regexp: '^#?SystemMaxUse='
     line: "SystemMaxUse={{ zot_journal_max_use }}"
   register: zot_journald_conf
 
-- name: zot — apply the journal cap now (vacuum to the new size)
+# noqa reason on both of these: ORDERING. The vacuum reclaims the space that the image
+# pull further down needs, and "now" versus "going forward" is the pair. A handler runs at
+# the end of the play — after the pull it exists to make room for. The role's only handler
+# is Restart zot, and folding journald into it would bounce the registry on every converge.
+- name: Zot — apply the journal cap now (vacuum to the new size)  # noqa: no-handler
   ansible.builtin.command: "journalctl --vacuum-size={{ zot_journal_max_use }}"
   when: zot_journald_conf is changed
   changed_when: true
 
-- name: zot — restart journald so the cap holds going forward
+- name: Zot — restart journald so the cap holds going forward  # noqa: no-handler
   ansible.builtin.systemd_service:
     name: systemd-journald
     state: restarted
   when: zot_journald_conf is changed
 
-- name: zot — config directory
+- name: Zot — config directory
   ansible.builtin.file:
     path: "{{ zot_config_dir }}"
     state: directory
     mode: "0750"
 
-- name: zot — blob store directory
+- name: Zot — blob store directory
   ansible.builtin.file:
     path: "{{ zot_data_dir }}"
     state: directory
     mode: "0755"
 
-- name: zot — is there already a certificate?
+- name: Zot — is there already a certificate?
   ansible.builtin.stat:
     path: "{{ zot_lego_dir }}/certificates/{{ zot_hostname }}.crt"
   register: zot_cert_stat
   when: zot_tls_enabled | bool
 
-- name: zot — obtain TLS certificate
+- name: Zot — obtain TLS certificate
   ansible.builtin.include_tasks: tls.yml
   when: zot_tls_enabled | bool
 
@@ -65,7 +69,7 @@
 # keeps it per-credential (bcrypt's actual requirement) while making the output
 # stable: same password in, same hash out, no restart unless it really changed.
 # sha256 hex is [0-9a-f], all of which are valid in bcrypt's salt alphabet.
-- name: zot — render htpasswd (bcrypt)
+- name: Zot — render htpasswd (bcrypt)
   ansible.builtin.copy:
     content: >-
       {{ zot_username }}:{{ zot_password | password_hash('bcrypt',
@@ -73,30 +77,30 @@
     dest: "{{ zot_config_dir }}/htpasswd"
     mode: "0640"
   no_log: true
-  notify: restart zot
+  notify: Restart zot
 
-- name: zot — render config
+- name: Zot — render config
   ansible.builtin.template:
     src: config.json.j2
     dest: "{{ zot_config_dir }}/config.json"
     mode: "0640"
     validate: "python3 -c \"import json,sys; json.load(open('%s'))\""
-  notify: restart zot
+  notify: Restart zot
 
-- name: zot — render compose file
+- name: Zot — render compose file
   ansible.builtin.template:
     src: docker-compose.yml.j2
     dest: "{{ zot_config_dir }}/docker-compose.yml"
     mode: "0640"
-  notify: restart zot
+  notify: Restart zot
 
-- name: zot — bring the stack up
+- name: Zot — bring the stack up
   community.docker.docker_compose_v2:
     project_src: "{{ zot_config_dir }}"
     state: present
     pull: missing
 
-- name: zot — wait for the registry API
+- name: Zot — wait for the registry API
   ansible.builtin.uri:
     url: "{{ zot_scheme }}://127.0.0.1:{{ zot_port }}/v2/"
     # Loopback + no cert validation on purpose: this is a LIVENESS probe, not a
@@ -114,7 +118,7 @@
   delay: 5
   changed_when: false
 
-- name: zot — verify an authenticated catalog read
+- name: Zot — verify an authenticated catalog read
   ansible.builtin.uri:
     url: "{{ zot_scheme }}://127.0.0.1:{{ zot_port }}/v2/_catalog"
     validate_certs: false
@@ -126,6 +130,6 @@
   changed_when: false
   no_log: true
 
-- name: zot — report catalog
+- name: Zot — report catalog
   ansible.builtin.debug:
     msg: "zot up on {{ zot_scheme }}://{{ zot_hostname }}:{{ zot_port }} — repositories: {{ zot_catalog.json.repositories | default([]) }}"

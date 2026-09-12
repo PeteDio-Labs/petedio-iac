@@ -768,3 +768,261 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   operator-applied via `scripts/apply-vault-config.sh` and **never runs in CI** — so it does not
   land with a normal merge, and apply-on-merge fails on a permission denied it cannot diagnose
   for itself.
+
+## Claude Code as a service — the Claude host (247) (PET-396)
+
+- **Remote Control and the Chrome integration both refuse API keys and long-lived
+  `claude setup-token` tokens.** Each needs an interactive claude.ai login on a Pro, Max,
+  Team or Enterprise plan. That removes the unattended provisioning path entirely: a play
+  can install Claude Code, render its units and set every variable, and the host still
+  cannot serve until a human runs `/login` over SSH. Plan the rollout as two phases and
+  leave the units **stopped** in phase one — a server started without an eligible login
+  exits immediately, and an unbounded `Restart=always` turns a missing step into a crash
+  loop that reads like a broken host. Bound it with `StartLimitIntervalSec` +
+  `StartLimitBurst` in `[Unit]` so it lands in `failed` instead, and remember that clearing
+  `failed` needs `systemctl reset-failed` before the next start will be accepted.
+
+- **`-e var=false` is a truthy STRING, so an enable gate needs `| bool` on every read.**
+  Ansible's `-e key=value` never yields a bool. `{{ 'started' if enable else 'stopped' }}`
+  evaluates to `started` under `-e enable=false`, while a sibling `enabled: "{{ enable }}"`
+  goes through Ansible's own coercion and says false — leaving a **running, disabled** unit.
+  Worse, a `when: not enable | bool` elsewhere in the play *does* coerce, so the closing
+  message cheerfully reports the units as stopped. Found in review of PET-396; it is the
+  green-check-over-work-that-never-happened shape in miniature, inside one play.
+
+- **`bypassPermissions` is refused as root and under `sudo` on Linux.** A unit that runs
+  the server as root fails at startup, so the dedicated non-root user is a requirement of
+  the mode, not hygiene. The check is skipped inside a recognized sandbox, which an LXC is
+  not.
+
+- **Flags go AFTER the `remote-control` subcommand.** A global `claude` flag placed before
+  it is not carried over to the sessions the server creates, and Claude Code refuses to
+  start rather than run them with less than you asked for, naming the flag to move. So
+  `claude remote-control --permission-mode X` works and `claude --permission-mode X
+  remote-control` does not — which looks like the same command to anyone tidying a unit file.
+
+- **Four telemetry opt-outs disable Remote Control, and it does not present as a setting.**
+  `DISABLE_TELEMETRY`, `DO_NOT_TRACK`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and
+  `DISABLE_GROWTHBOOK` each disable the feature-flag evaluation the feature's availability
+  depends on, wherever they are set — shell, unit, or a `settings.json` `env` block. The
+  symptom is "unavailable", which reads like an outage rather than something you chose.
+
+- **The startup trust dialog never saves trust for a home directory.** Start the first
+  session from a project directory, or Remote Control refuses to run later for a reason
+  that points nowhere near the trust prompt you clicked past weeks ago.
+
+- **`claude -p` skips the trust dialog entirely, so trust is not a constraint on an
+  unattended job** (`claude --help`, under `-p`: the dialog is skipped whenever Claude runs
+  non-interactively, which includes any run whose stdout is not a TTY). Read that both
+  ways. It means the PET-399 work loop can run in a directory nobody ever trusted by hand,
+  which is what lets it keep its own clone instead of sharing the one a human drives. It
+  also means a piped `claude` in a directory you did not mean to trust does not stop to
+  ask. Trust the directory anyway if you want MCP tools resolving in that session.
+
+- **There is no `--max-turns` in Claude Code 2.1.x.** An unattended `claude -p` has no
+  turn ceiling, so wall-clock is the only bound available: `timeout` around the process,
+  and a `TimeoutStartSec` above it in the unit so the inner one reports first and says why.
+  Checked against `claude --help` on 247 while writing the loop — a `--max-turns` copied
+  out of an older runbook fails the whole invocation rather than being ignored.
+
+- **Nothing about this host needs `features{}`** — no Docker, so no nesting, no keyctl, and
+  no `scripts/lxc-features-<id>.sh` step on the node. Worth stating because the reflex on
+  this cluster is that every app LXC needs the root@pam dance. It is also worth *keeping*
+  true: the day something here wants Docker is the day this host gains an out-of-band step
+  that every rebuild has to remember.
+
+- **Remote Control opens no inbound port.** The session registers with the Anthropic API
+  over outbound HTTPS and polls it, so the most remotely-reachable box in the lab needs no
+  Cloudflare route, no UFW rule and no port forward. The corollary is that liveness cannot
+  be checked by connecting to it: `lab-verify` asserts an established outbound :443
+  connection instead, because an `active` unit with an expired login looks identical to a
+  working one.
+
+- **Debian's `.bashrc` returns early for non-interactive shells, so a PATH line appended
+  there is invisible to `su - user -c ...` and to systemd.** Not Claude-specific, but it is
+  exactly the trap that makes a health check report a working host as broken: set `PATH`
+  explicitly in the unit, and use absolute paths in checks.
+
+- **Chrome integration cannot be satisfied by a browser on the node.** It pairs over native
+  messaging — a local pipe keyed to a file in the session user's own home — so Claude Code
+  and the browser must be the same user on the same machine, and headless is unsupported
+  (browser actions run in a visible window). A browser on the hypervisor next to a Claude
+  Code LXC pairs with nothing. Evaluated and dropped for 247; if it is ever wanted, it costs
+  a desktop and a remote-desktop transport **inside** the container.
+
+## `ansible-lint <dir>` can examine nothing and call it a pass (PET-397)
+
+- **`ansible-lint .` run inside `ansible/` reports `Passed: 0 failure(s), 0 warning(s) in 0
+  files processed of 1 encountered` and exits 0.** It is not linting the tree; it is linting
+  nothing and saying so in a line nobody reads. Pass explicit targets — `ansible-lint roles/
+  playbooks/` processes 186 files here — and assert the processed count in CI.
+
+- **Zero is the wrong threshold for that assertion.** Once a `.ansible-lint` config exists in
+  the directory, the same collapsed invocation reports `1 files processed`, still green. A
+  guard written as `-eq 0` passes it. Floor the count against something that grows with the
+  repo instead: `.github/workflows/ansible-validate.yml` uses roles + playbooks, counted in
+  an earlier step that itself refuses to continue on zero.
+
+- **`syntax-check[unknown-module]` usually means a missing collection, not a typo.** Nine of
+  them appear across this repo until `ansible-galaxy collection install -r
+  ansible/requirements.yml` has run. They are deliberately NOT suppressed with `# noqa`, so a
+  silently failed collection install turns the check red rather than skipping those files.
+
+- **There is no ignore file — suppress at the site, with the reason.** The tree lints clean
+  at the `production` profile. Eleven findings were deliberate and carry `# noqa: <rule>`
+  where the code is, with the why above them. Three of those are worth knowing before you
+  "tidy" one: `apt-get -s upgrade` in `apt-hygiene` is a SIMULATION whose stdout is parsed —
+  the `ansible.builtin.apt` form would actually upgrade ~190 packages on pve03;
+  `systemctl start --wait` in `vault-unseal` propagates the oneshot's exit code, which
+  `systemd_service: state=started` discards; and the reboot in `ollama-service` must precede
+  the `nvidia-smi` assert in the same play, so it cannot become a handler.
+
+- **`set -o pipefail` needs `executable: /bin/bash`.** `/bin/sh` is dash on Debian and
+  answers `Illegal option -o pipefail` with rc=2. Fixed once on runner-233 (`6cb5bfb`), and
+  again in `configure-openfaas.yml` when the lint backlog was cleared. If you add a pipeline
+  to a `shell:` task, add the `args: executable:` in the same edit.
+
+- **Renaming a handler breaks every `notify:` that names it.** PET-303 did exactly that and
+  left a dangling notify. When `name[casing]` makes you capitalise a handler, grep the repo
+  for the old string and move the notifies in the same commit — `Restart zot` alone has four.
+
+## A sudoers grant belongs to the UID, not to the process you wrote it for (PET-408)
+
+- **If a program runs a `claude -p` session as its own user, that session inherits every
+  sudo grant the program has.** The PET-399 loop shipped with `/etc/sudoers.d/claude-loop`
+  granting `claude` two exact broker commands, no wildcards, `visudo`-validated — a
+  textbook-narrow grant. It was still wrong, because the tick ran as `claude` and started a
+  session as `claude`, and the session's instructions come from a Plane work item. Anyone
+  who could write one could run the granted command directly and skip every guard in the
+  tick. Narrowing *which* commands a grant covers does nothing about *who* can call them.
+
+- **Invert the privilege instead of reaching up through it.** The unit now runs as root,
+  reads `/etc/claude-loop/` directly and calls `runuser -u claude` for the session and for
+  every command that touches the working tree. `runuser` drops privilege and cannot raise
+  it, so there is no grant to inherit and no sudo on the host at all.
+
+- **`runuser` lives in `/usr/sbin`, which is not on a non-root `PATH`.** A tool check that
+  demands it unconditionally fails a hand-run as the unprivileged user for a reason that has
+  nothing to do with the problem. Require it only when `id -u` is 0, and set the unit's
+  `PATH` explicitly — Debian's `.bashrc` returns early for non-interactive shells, so the
+  role's `PATH` line never runs under systemd.
+
+- **`HOME` does not follow `runuser -u`.** A root unit whose `Environment=HOME` points at
+  `/root` makes `claude -p` look for the claude.ai login in the wrong place and report
+  itself as not logged in. Set `HOME` to the session user's home in the unit.
+
+- **A root process pushing from a user-owned clone must push to a URL, not to `origin`.**
+  Pushing to a named remote updates that remote's tracking ref, which writes a root-owned
+  file into a `claude`-owned `.git` and breaks the next session with objects it cannot
+  touch. Pushing to an explicit URL updates no tracking ref, so root only reads the
+  repository — and a session that repointed `origin` cannot redirect the push at all. Git
+  also refuses a repository owned by another user, so the push needs
+  `-c safe.directory=<path>`, scoped to that path and never `*`.
+
+- **Removing a grant means removing the file, not deleting the template.** A host converged
+  before the fix keeps `/etc/sudoers.d/claude-loop` forever if the role simply stops
+  rendering it. Reconcile what you removed with `state: absent`, the same way the role
+  already reaps undeclared `claude-remote-*` units.
+
+## `git checkout <ref> -- .` restores files you deleted, through the index (PET-408)
+
+- **It is a restore, not a merge.** It writes that ref's tree into the index *and* the
+  working tree for every matching path. A file that exists at `<ref>` and was **deleted on
+  your branch comes back already staged**, with no conflict and nothing in the output to say
+  so. `git checkout HEAD -- .` afterwards does not undo it: that restores tracked files, it
+  never removes an extra one. The next `git add -A` then sweeps it into a commit whose
+  message describes something else entirely.
+
+- **It happened here, on the branch whose purpose was the deletion.** Reading another
+  branch's content to review it restored `roles/claude-code/templates/claude-loop-sudoers.j2`
+  — the sudo grant PET-408 exists to remove — into a commit that claimed to add `follow:
+  false` to two tasks. Nothing rendered the template, so no host would have received the
+  grant; what would have shipped is a repository containing the thing PET-408 deletes, one
+  task away from live.
+
+- **Read another ref with `git show <ref>:<path>` or a separate worktree.** If you must use
+  a pathspec checkout, name the paths rather than `-- .`, and run `git status --short` and
+  `git diff --cached --stat` before committing.
+
+- **No check caught it, and none of the obvious ones could.** `ansible-lint` passes — a
+  valid Jinja template is still valid when nothing renders it. `--syntax-check` never reads
+  templates. `scripts/test-claude-loop-tick.sh` never reads Ansible. What caught it was the
+  lint line: `193 files processed of 203` where the run before said `192 of 202`. A file
+  count that rises after a commit that deletes nothing.
+
+- **So diff the numbers, not the prose.** Two runs of the same command produce
+  identically-shaped output; the verdict line says `0 failures` both times and only the
+  counts carry the signal. Before comparing two runs, say which number should change and by
+  how much, then look. This only works if the check prints what it examined — which is the
+  standing rule in `.github/workflows/ansible-validate.yml`, earning its keep somewhere
+  nobody planned.
+
+
+## A required status check with a `paths:` filter hangs every PR that misses it (PET-399)
+
+- **A path-filtered workflow does not report "skipped" to branch protection — it reports
+  nothing at all.** GitHub holds the PR at `Expected — waiting for status to be reported`
+  and the merge button stays disabled forever. There is no timeout and nothing goes red, so
+  the PR looks like it is still building. `ansible-validate` carried
+  `paths: ["ansible/**", …]`, which would have made every Terraform-only and docs-only PR
+  permanently unmergeable the moment it became required.
+
+- **Check the trigger before you add a check to `required_status_checks`.** The rule is
+  narrow and absolute: a required check must run on *every* PR. `terraform.yml` gets this
+  right with a bare `pull_request: {}`, which is why `validate` and `gate` have been safe as
+  required checks for as long as they have.
+
+- **The two workarounds both cost more than they save.** A second always-running job that
+  reports the same context name is a green check that examined nothing, wearing the name of
+  one that does — the exact failure PET-298, PET-317, PET-360, PET-363, PET-372 and PET-374
+  all share. An early-exit step inside the job is honest only while someone keeps its log
+  line honest. Dropping the filter costs about two minutes of hosted runner on a PR that
+  changed no Ansible, and the job then means one thing: the whole tree was examined.
+
+- **`push` filters are unaffected.** Nothing gates `main`, so `ansible-validate` keeps its
+  `paths:` filter on `push` and drops it only on `pull_request`.
+
+## Branch protection in a one-person org (PET-399)
+
+- **`enforce_admins: true` plus one required review means NOTHING can ever merge.** GitHub
+  forbids approving your own pull request, so in an org of one the author cannot approve,
+  the admin bypass is gone, and there is nobody left to ask. It deadlocked this repo for an
+  hour on 2026-09-12 and left four pull requests unmergeable (#293, #294, #295,
+  `petedio-vault#23`). The symptom is `mergeStateStatus=BLOCKED` with
+  `reviewDecision=REVIEW_REQUIRED` and no way forward. **Keep `enforce_admins` false here.**
+
+- **It was never the control anyway.** The thing being constrained is a bot identity, and a
+  GitHub App is not a repo admin — `required_approving_review_count: 1` binds it with
+  `enforce_admins` off. Turning it on only constrained Pedro, which conflated "make the
+  rule real" with "make the rule universal".
+
+- **`BLOCKED` describes the protected path, not what a given identity can do.** A pull
+  request showed `mergeStateStatus=BLOCKED` / `reviewDecision=REVIEW_REQUIRED` and an admin
+  token merged it anyway, because `enforce_admins` was false. So a check that reads those
+  two fields and concludes "the merge gate held" proves nothing: it has to be made with the
+  identity that would actually do the merging.
+
+- **Branch protection is a full-replacement `PUT`, so reverting one field silently drops
+  every field you did not resend.** PET-397 made `ansible-validate` a required status check.
+  Reverting `enforce_admins` a day later took it back out, because the revert re-sent the
+  protection object without the contexts. Nothing reported it: the job still runs on every
+  pull request and still goes green.
+  `--jq '.required_status_checks.contexts'` answers `["validate","gate"]` (PET-418).
+
+- **That is worse than a check known to be advisory.** An advisory check is understood to be
+  advisory; this one was *believed* to be required, by a runbook that said so in writing.
+  A green tick whose gate was removed by an unrelated change is the same shape as the six
+  green-over-nothing tickets, arriving through configuration rather than code.
+
+- **So `PATCH` the sub-resource, and read it back.** `PATCH
+  /branches/main/protection/required_status_checks` changes the contexts without rewriting
+  the object. After any protection change, read the contexts back — the write succeeding
+  tells you nothing about what survived it. Neither this setting nor the fork-PR approval
+  policy is in Terraform, so nothing else will notice the drift; the fork-PR policy is not
+  even exposed by the REST API, so it cannot be checked by a script at all.
+
+- **`PUT /repos/{owner}/{repo}/pulls/{n}/merge` has no dry-run form.** A call described as
+  a gate test merged PR #292 for real. To test a merge gate without merging, read
+  `mergeStateStatus` and `reviewDecision` — and to test what an identity can do, point it at
+  a throwaway branch carrying the same rule, never at `main`, where a merge triggers
+  apply-on-merge.

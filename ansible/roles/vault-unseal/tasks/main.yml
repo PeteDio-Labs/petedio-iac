@@ -83,7 +83,11 @@
 # ⚠ PROVE IT, DO NOT ASSUME IT. Running the unit once here means a broken key or an
 # unreachable Vault fails the play, rather than waiting for the next 02:45 window to
 # find out. The script exits 0 when Vault is already open, so this is safe to repeat.
-- name: Run the unseal check once and require it to pass
+# noqa reason: `--wait` is the whole point — it blocks on the Type=oneshot unit and
+# propagates its exit code, which is what turns "PROVE IT" above into a real gate.
+# systemd_service state=started returns immediately and discards that code: a green check
+# over an unseal that may not have happened.
+- name: Run the unseal check once and require it to pass  # noqa: command-instead-of-module
   ansible.builtin.command:
     cmd: systemctl start --wait vault-unseal.service
   changed_when: false

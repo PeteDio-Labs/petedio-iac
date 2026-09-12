@@ -9,18 +9,17 @@
     src: plex-bridge.service.j2
     dest: /etc/systemd/system/plex-bridge.service
     mode: "0644"
-  register: bridge_unit
 
-- name: Reload systemd
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: bridge_unit.changed
-
+# daemon_reload here rather than in a task of its own: systemd reloads BEFORE acting on the
+# unit, so the restart below still picks up a rewritten unit file. A handler could not do
+# this — it would fire after the restart, and the wait_for underneath would then be probing
+# a process started from the stale unit.
 - name: Enable and start the bridge
   ansible.builtin.systemd:
     name: plex-bridge
     enabled: true
     state: restarted
+    daemon_reload: true
 
 - name: Wait for it to accept connections
   ansible.builtin.wait_for:

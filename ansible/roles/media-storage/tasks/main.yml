@@ -44,6 +44,10 @@
     zpool create -o failmode={{ media_storage_failmode }}
     -m {{ item.mount }} {{ item.name }} {{ item.raid }}
     {{ item.devices | map('regex_replace', '^', '/dev/disk/by-id/') | join(' ') }}
+  # Creating a pool IS a change, so say so. The command module already reports changed by
+  # default; stating it silences the rule without altering a byte of behaviour. NOT `false`
+  # — that would hide the one event that matters most in a role headed "NEVER DESTROYS".
+  changed_when: true
   loop: "{{ media_storage_pools }}"
   loop_control:
     label: "{{ item.name }}"
