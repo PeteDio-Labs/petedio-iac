@@ -957,6 +957,20 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   standing rule in `.github/workflows/ansible-validate.yml`, earning its keep somewhere
   nobody planned.
 
+- **And name what the number is counted over, or the rule generates false alarms.** A line
+  count quoted as "+70" from `git diff --stat origin/main` is the branch against `main`;
+  the same change reported by `git show --stat` is 19, because it is one commit. Both are
+  correct and they disagree, which cost a real stop-and-read on a push. An unstated
+  denominator turns a good rule into noise, and noise is what teaches people to wave the
+  next mismatch through. Quote the command with the number.
+
+- **Ask a question that can return more than one answer.** `git merge-base --is-ancestor`
+  answers "not in `main`" for every **squash-merged** commit, however completely the content
+  landed — squash writes a new SHA, so the original is never an ancestor. It looks like a
+  verification and cannot fail. Check for the content: `git show origin/main:<path>` and
+  grep for the thing the commit was supposed to add. The same trap waits behind any history
+  rewrite — rebase, cherry-pick, filter — not just squash.
+
 
 ## A required status check with a `paths:` filter hangs every PR that misses it (PET-399)
 
