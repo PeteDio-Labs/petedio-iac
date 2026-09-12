@@ -1058,7 +1058,11 @@ Seen five times on 2026-09-12 alone, in five unrelated systems:
   a field Plane does not return. A **read failure** was indistinguishable from a **fact about
   the item**, and the reader had no way to tell (PET-424).
 - **A state file mirroring `gh pr list`** went stale three times in twenty minutes, because
-  the person merging was not the one maintaining the file.
+  the person merging was not the one maintaining the file. ⚠ **This one is worth more than
+  the other four**: the convention that created it had been written, by the same author, four
+  hours earlier — and it was a rule *about staleness*. An instance where the author of the
+  rule broke it in the same session says more than four found in someone else's code. Knowing
+  the trap is not protection from it; only deferring to the source is.
 
 **The rule:** prefer deferring to the source over mirroring it. Where a copy is unavoidable,
 make it carry what it was computed *over* — `0 of 135 examined` rather than `0` — so an empty
