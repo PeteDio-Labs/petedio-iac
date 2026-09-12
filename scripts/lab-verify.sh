@@ -470,36 +470,36 @@ else
       fi
       ok "unit active: $U"
 
-      # ⚠ AN ACTIVE UNIT IS NOT A REGISTERED SERVER -- the lesson the runners taught twice.
-      # The server registers with the Anthropic API over OUTBOUND HTTPS and polls it; that
-      # connection IS the feature working. A server whose login expired exits, or sits there
-      # holding nothing, and `is-active` cannot tell the difference. Nothing listens on a
-      # port here, so there is no inbound check to make instead.
+      # ⚠ AN ACTIVE UNIT IS NOT A SERVING ONE -- the lesson the runners taught twice. A
+      # server whose login has expired exits, and `is-active` alone cannot tell that apart
+      # from a healthy one during the window before systemd gives up.
       #
-      # ATTRIBUTE THE SOCKET TO THIS UNIT'S OWN PROCESSES. A bare count of established :443
-      # sockets is satisfied by apt, gh, npm or a session's own fetch -- a green check earned
-      # by something else entirely. Read the pids from the unit's cgroup so a connection held
-      # by a forked child still counts, and fall back to MainPID if cgroupfs is not readable.
-      CPIDS=$(pct_on "$CNODE" 247 "sh -c 'cat /sys/fs/cgroup/system.slice/$U/cgroup.procs 2>/dev/null'" | tr -d '\r' | tr '\n' ' ')
-      [ -z "$(echo "$CPIDS" | tr -d ' ')" ] && CPIDS=$(pct_on "$CNODE" 247 "systemctl show -p MainPID --value ${U%.service}" | tr -d '\r ')
-      PIDRE=$(echo "$CPIDS" | tr ' ' '\n' | grep -E '^[0-9]+$' | grep -v '^0$' | paste -sd'|' -)
-      if [ -z "$PIDRE" ]; then
-        bad "registered: $U" "active but exposes no pid to check"
-        continue
-      fi
-
-      # Distinguish "no connection" from "no ss": both would otherwise print 0 and blame the
-      # login. Say what was examined, not only what was found.
-      if ! pct_on "$CNODE" 247 "sh -c 'command -v ss >/dev/null 2>&1'"; then
-        skip "registered: $U" "ss (iproute2) not installed — cannot attribute the connection"
-        continue
-      fi
-      ES=$(pct_on "$CNODE" 247 "sh -c 'ss -tnpH state established dport = :443 2>/dev/null'" | tr -d '\r' | grep -cE "pid=(${PIDRE}),")
-      if [ "${ES:-0}" -ge 1 ]; then
-        ok "registered: $U" "$ES outbound HTTPS from this unit"
-      else
-        bad "registered: $U" "unit is up but holds no :443 — expired login? journalctl -u ${U%.service}"
-      fi
+      # ⚠ AND IT DOES NOT HOLD A CONNECTION. The first version of this check asserted an
+      # established outbound :443 owned by the unit's cgroup, on the theory that the server
+      # registers with the API and polls it. That theory is wrong, measured on 247 while it
+      # was demonstrably working: the server held ZERO TCP sockets (4 socket fds, none TCP),
+      # NRestarts 0, journal showing the ready banner. Meanwhile the host had 26 established
+      # :443 connections, every one of them owned by an unrelated interactive SSH session in
+      # user.slice. So that check reported a healthy host as broken on every run, which is
+      # the "red on main teaches people to ignore it" hazard rather than a signal.
+      #
+      # Use what only success leaves behind. The two states this check exists to separate
+      # each write a distinct line, so read the most recent of them.
+      READY='keeps running on this machine'
+      LOGIN_ERR='must be logged in'
+      MARK=$(pct_on "$CNODE" 247 "sh -c 'journalctl -u ${U%.service} -n 200 --no-pager 2>/dev/null | grep -E \"$READY|$LOGIN_ERR\" | tail -1'" | tr -d '\r')
+      case "$MARK" in
+        *"$READY"*)
+          ok "serving: $U" "ready banner is the latest start marker" ;;
+        *"$LOGIN_ERR"*)
+          bad "serving: $U" "no eligible claude.ai login — run /login as the claude user, then re-run the play" ;;
+        "")
+          # Distinguish "nothing to read" from "read it and found neither". journalctl may be
+          # empty after a log rotation on a long-running unit, which is not a fault.
+          skip "serving: $U" "no start marker in the last 200 journal lines — rotated? journalctl -u ${U%.service}" ;;
+        *)
+          bad "serving: $U" "unrecognised start marker: $(printf '%.60s' "$MARK")" ;;
+      esac
     done
   fi
 fi
