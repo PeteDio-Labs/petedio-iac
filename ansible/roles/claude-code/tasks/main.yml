@@ -114,6 +114,13 @@
   ansible.builtin.file:
     path: "{{ claude_npm_prefix }}/bin"
     state: directory
+    # ⚠ follow: false is load-bearing (PET-410). ansible.builtin.file defaults to
+    # follow: yes, and this task runs as ROOT while the path lives inside a home the
+    # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
+    # any file on the host becomes claude-owned on the next play run. That is the one
+    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
+    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
     mode: "0755"
@@ -127,6 +134,39 @@
     content: |
       # Managed by Ansible (roles/claude-code).
       prefix={{ claude_npm_prefix }}
+
+# ⚠ blockinfile has NO `follow` parameter, and it DOES follow symlinks. Verified on
+# 2026-09-12 by pointing one at a scratch file: the link survived as a link and the TARGET
+# got the block. With owner/group/mode set below, root would chown that target to the session
+# user as well — the same PET-410 primitive as the file tasks above, through a door
+# `follow: false` cannot close because the parameter does not exist.
+#
+# So refuse to write through a link rather than trying to write through one safely. A
+# symlinked .bashrc on this host is either an attack or a broken home; both deserve a stop.
+#
+# ⚠ THIS CLOSES THE PLANTED CASE, NOT THE RACE. We check and then write; we do not write
+# atomically. A session could swap .bashrc for a symlink in the window between the two
+# tasks. That needs winning a race inside a play run whose timing the session does not
+# control, so it is far smaller than what this closes — but it is narrowed, not shut.
+# The full fix is to stop root writing into that home at all: move the loop's state to a
+# root-created /var/lib/claude-loop with only the leaf owned by the session user. That is
+# a bigger change than the one this guard belongs to (PET-410).
+- name: Check .bashrc is a real file before root writes to it
+  ansible.builtin.stat:
+    path: "{{ claude_home }}/.bashrc"
+    follow: false
+  register: claude_bashrc
+
+- name: Refuse to write through a symlinked .bashrc
+  ansible.builtin.assert:
+    that:
+      - not (claude_bashrc.stat.islnk | default(false))
+    fail_msg: >-
+      {{ claude_home }}/.bashrc is a symlink to
+      {{ claude_bashrc.stat.lnk_target | default('unknown') }}. The next task runs as root and
+      sets owner/group/mode, so writing through it would hand that target to
+      {{ claude_user }} (PET-410). Remove the link and re-run. Do not add `follow: false` —
+      blockinfile has no such parameter, which is why this check exists.
 
 - name: Put the per-user npm bin first on the session user's PATH
   ansible.builtin.blockinfile:
@@ -173,6 +213,13 @@
   ansible.builtin.file:
     path: "{{ claude_workspace }}"
     state: directory
+    # ⚠ follow: false is load-bearing (PET-410). ansible.builtin.file defaults to
+    # follow: yes, and this task runs as ROOT while the path lives inside a home the
+    # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
+    # any file on the host becomes claude-owned on the next play run. That is the one
+    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
+    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
     mode: "0755"
@@ -214,6 +261,13 @@
   ansible.builtin.file:
     path: "{{ claude_home }}/.claude"
     state: directory
+    # ⚠ follow: false is load-bearing (PET-410). ansible.builtin.file defaults to
+    # follow: yes, and this task runs as ROOT while the path lives inside a home the
+    # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
+    # any file on the host becomes claude-owned on the next play run. That is the one
+    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
+    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
     mode: "0700"
