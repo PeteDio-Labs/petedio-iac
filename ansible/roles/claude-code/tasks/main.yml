@@ -143,6 +143,14 @@
 #
 # So refuse to write through a link rather than trying to write through one safely. A
 # symlinked .bashrc on this host is either an attack or a broken home; both deserve a stop.
+#
+# ⚠ THIS CLOSES THE PLANTED CASE, NOT THE RACE. We check and then write; we do not write
+# atomically. A session could swap .bashrc for a symlink in the window between the two
+# tasks. That needs winning a race inside a play run whose timing the session does not
+# control, so it is far smaller than what this closes — but it is narrowed, not shut.
+# The full fix is to stop root writing into that home at all: move the loop's state to a
+# root-created /var/lib/claude-loop with only the leaf owned by the session user. That is
+# a bigger change than the one this guard belongs to (PET-410).
 - name: Check .bashrc is a real file before root writes to it
   ansible.builtin.stat:
     path: "{{ claude_home }}/.bashrc"
