@@ -11,6 +11,13 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
+    # ⚠ follow: false is load-bearing (PET-410). ansible.builtin.file defaults to
+    # follow: yes, and this task runs as ROOT while the path lives inside a home the
+    # `claude` user owns. Replace the path with a symlink and root chowns the TARGET —
+    # the one move that would reach /etc/claude-loop/app.pem, which this design claims is
+    # unreachable. PET-410 adds the same line to the three equivalents in main.yml; these
+    # are the loop's, and whichever branch merges second must not drop the other's.
+    follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
     mode: "0750"
@@ -55,6 +62,10 @@
   ansible.builtin.file:
     path: "{{ claude_loop_home }}/{{ claude_loop_project_dir }}/.git/claude-loop-checkout"
     state: touch
+    # Same reason as above, by a different code path: `state: touch` does not realpath in
+    # execute_touch, but load_file_common_arguments does it before lchown, so the target
+    # still gets the ownership. Same fix.
+    follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
     mode: "0644"
