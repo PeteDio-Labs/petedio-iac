@@ -448,3 +448,44 @@ resource "vault_policy" "infra_reconcile" {
     }
   EOT
 }
+
+# openfaas-ci — ⚠ THE NAME IS STALE, THE ROLE IS LIVE (PET-423).
+#
+# openfaas-241 was destroyed on 2026-09-12 (PET-403/404) and nothing declares it any more.
+# This policy is NOT dead with it: `.github/workflows/ansible-stack.yml` still mints as the
+# `openfaas-ci` role to deploy the ARR STACK. That workflow absorbed the OpenFaaS and
+# Palworld workflows and kept the old role name.
+#
+# It was absent from this config and present in Vault, so the next apply planned to destroy
+# it. The plan was refused by scripts/apply-vault-config.sh. Had it gone through, the arr
+# stack's next deploy would have failed with a Vault 403 and no visible connection to a
+# vault-config apply run hours earlier.
+#
+# RENAMING IT IS THE REAL FIX and is deliberately not done here: the role and the workflow
+# have to move together, with no run in between. Declared as it lives, so that rename is a
+# decision rather than an accident.
+#
+# ⚠ The `kv/data/services/registry` grant below is already dead — registry-106 will not
+# restore and its blob store is gone (PET-389). Kept because removing it is a destroy in
+# this root and wants its own reviewed plan. Do not tidy it in passing.
+resource "vault_policy" "openfaas_ci" {
+  name = "openfaas-ci"
+
+  policy = <<-EOT
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/registry" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}
