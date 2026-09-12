@@ -64,7 +64,14 @@ PB_CLIENT="$(read_field kv/services/pete-bot discord_client_id)"
 PB_OWNER="$(read_field kv/services/pete-bot owner_user_id)"
 PB_BEARER="$(read_field kv/services/pete-bot alert_bearer_token)"
 MTRACE_TOKEN="$(read_field kv/services/media/dashboard api_token)"
-echo "  resolved 5 values from 2 paths"
+# Optional (PET-395): the token /update dispatches with. Absent leaves /update saying it
+# is not configured, rather than failing the whole deploy.
+PB_UPDATES_TOKEN="$(vault kv get -field=github_updates_token kv/services/pete-bot 2>/dev/null || true)"
+if [ -n "$PB_UPDATES_TOKEN" ]; then
+  echo "  resolved 6 values from 2 paths, including the /update token"
+else
+  echo "  resolved 5 values from 2 paths; no github_updates_token, so /update will say it is not configured"
+fi
 
 if [ "$BUILD" = "1" ]; then
   step "Build the standalone binary"
@@ -89,6 +96,7 @@ trap 'rm -rf "$TMP"' EXIT
 OUT="$TMP/extra.json" \
 PB_TOKEN="$PB_TOKEN" PB_CLIENT="$PB_CLIENT" PB_OWNER="$PB_OWNER" \
 PB_BEARER="$PB_BEARER" MTRACE_TOKEN="$MTRACE_TOKEN" BIN="$BIN" \
+PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
 python3 -c '
 import json, os
 json.dump({
@@ -98,6 +106,7 @@ json.dump({
     "pete_bot_owner_user_id":    os.environ["PB_OWNER"],
     "pete_bot_alert_bearer":     os.environ["PB_BEARER"],
     "pete_bot_mtrace_token":     os.environ["MTRACE_TOKEN"],
+    "pete_bot_github_updates_token": os.environ.get("PB_UPDATES_TOKEN", ""),
 }, open(os.environ["OUT"], "w"))
 '
 

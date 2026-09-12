@@ -318,6 +318,19 @@ resource "vault_policy" "pete_bot_cd" {
   EOT
 }
 
+# media-updates: what pete-bot's update workflow may read (PET-395). The Ansible SSH key
+# and nothing else: not MinIO, not Proxmox, not mtrace's key. media-ci carries those for
+# Terraform; an update run needs none of them.
+resource "vault_policy" "media_updates" {
+  name = "media-updates"
+
+  policy = <<-EOT
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 resource "vault_policy" "media_dash_cd" {
   name = "media-dash-cd"
 

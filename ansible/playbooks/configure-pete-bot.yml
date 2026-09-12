@@ -37,6 +37,8 @@
     # Required, passed by scripts/deploy-pete-bot.sh. Never defaulted here.
     #   pete_bot_binary_src, pete_bot_discord_token, pete_bot_discord_client_id,
     #   pete_bot_owner_user_id, pete_bot_alert_bearer, pete_bot_mtrace_token
+    # Optional (PET-395): pete_bot_github_updates_token, for /update. Empty leaves
+    # /update answering that it is not configured.
 
   pre_tasks:
     - name: Assert the secrets were provided
