@@ -1,0 +1,136 @@
+# Workflow E — Ansible static checks (PET-397): validate-on-PR for the half of this repo
+# that had no check at all.
+#
+# WHY IT EXISTS. `terraform.yml`'s `validate` job covers Terraform only. Of the other
+# workflows, `ansible-openfaas`, `ansible-palworld` and `ansible-stack` APPLY a named
+# playbook against live hosts — they are deploys, not checks, and `ansible-stack` is a
+# `workflow_call` with no caller for most plays. So until this job, a role could be added,
+# edited or broken and nothing would look at it. PET-396 merged ~600 lines of Ansible with
+# two defects behind a green tick that only ever examined `.tf` files.
+#
+# SAME POSTURE AS `validate`: GitHub-hosted, ephemeral, NO Vault, NO LAN, NO state, and no
+# secrets. Every check here is static — nothing connects to a host — so this is safe to run
+# against PR-controlled code. It must stay that way: if a check here ever needs a
+# credential, it belongs in an apply workflow, not this one.
+#
+# ⚠ THE FAILURE THIS JOB IS BUILT AGAINST IS ITS OWN. A check that examined nothing and a
+# check that found nothing print the same thing, and this repo has shipped that bug six
+# times (PET-298, PET-317, PET-360, PET-363, PET-372, PET-374). It is not hypothetical
+# here: `ansible-lint .` run in `ansible/` reports
+#     Passed: 0 failure(s), 0 warning(s) in 0 files processed of 1 encountered
+# and exits 0. A green tick over an empty glob. So every step below counts what it is about
+# to look at, refuses to continue on zero, and prints the count next to the result.
+#
+# THE BACKLOG IS FROZEN, NOT WAIVED. `ansible/.ansible-lint-ignore` records the 28 file+rule
+# pairs that already existed when this landed. A NEW violation fails even in a file that
+# already carries an entry for a different rule, and a new file carries no entries at all,
+# so the backlog can only shrink. Work it down by deleting lines and fixing what they named.
+name: ansible-validate
+
+on:
+  pull_request:
+    paths:
+      - "ansible/**"
+      - ".github/workflows/ansible-validate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ansible/**"
+      - ".github/workflows/ansible-validate.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # ansible.cfg lives here and sets inventory/roles_path; --syntax-check needs it.
+    working-directory: ansible
+
+jobs:
+  ansible-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pinned to what the checks were verified against locally. A minor bump can add rules
+      # and turn this red on untouched files — when you raise these, run `ansible-lint` over
+      # `roles/ playbooks/` first and regenerate the ignore file if the new rules are ones
+      # you accept for now.
+      - name: Install ansible-lint
+        run: pip install "ansible-lint==26.4.0" "ansible-core==2.20.4"
+
+      # Without these, `community.general.ufw`, `community.docker.docker_compose_v2`,
+      # `community.postgresql.postgresql_user` and `community.general.timezone` resolve to
+      # nothing and ansible-lint reports nine `syntax-check[unknown-module]` errors that are
+      # not real. They are NOT in the ignore file, deliberately: if this step ever silently
+      # fails, the lint step goes red rather than quietly skipping those files.
+      - name: Install the collections this repo declares
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Count what is about to be examined
+        id: scope
+        run: |
+          set -euo pipefail
+          find playbooks -name '*.yml' -type f | sort > /tmp/playbooks.txt
+          ROLES=$(find roles -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+          PLAYS=$(wc -l < /tmp/playbooks.txt | tr -d ' ')
+          echo "roles=$ROLES" >> "$GITHUB_OUTPUT"
+          echo "plays=$PLAYS" >> "$GITHUB_OUTPUT"
+          if [ "$ROLES" -eq 0 ] || [ "$PLAYS" -eq 0 ]; then
+            echo "::error title=nothing to examine::Found $ROLES roles and $PLAYS playbooks. The layout moved or this job is looking in the wrong place. Refusing to report success over an empty set."
+            exit 1
+          fi
+          echo "Will examine $ROLES roles and $PLAYS playbooks."
+
+      # A hard gate with no backlog: all 40 playbooks passed when this landed, so any
+      # failure here is something this PR broke. NB `ansible-playbook` exits 0 when a play
+      # matches zero hosts (see ansible.cfg), which is why this is --syntax-check and not a
+      # dry run — a check-mode run against no inventory would be another green nothing.
+      - name: Syntax-check every playbook
+        run: |
+          set -uo pipefail
+          CHECKED=0; FAILED=0
+          while IFS= read -r pb; do
+            if ansible-playbook --syntax-check "$pb" > /tmp/sc.log 2>&1; then
+              CHECKED=$((CHECKED + 1))
+            else
+              FAILED=$((FAILED + 1))
+              echo "::error file=ansible/${pb}::ansible-playbook --syntax-check failed"
+              sed 's/^/    /' /tmp/sc.log
+            fi
+          done < /tmp/playbooks.txt
+          SEEN=$((CHECKED + FAILED))
+          echo "syntax-check: ${CHECKED} passed, ${FAILED} failed, of ${{ steps.scope.outputs.plays }} playbooks found"
+          if [ "$SEEN" -ne "${{ steps.scope.outputs.plays }}" ]; then
+            echo "::error title=loop skipped playbooks::Counted ${{ steps.scope.outputs.plays }} playbooks but only ran $SEEN. Not reporting on a partial sweep."
+            exit 1
+          fi
+          [ "$FAILED" -eq 0 ]
+
+      - name: Lint the roles and playbooks
+        run: |
+          set -uo pipefail
+          ansible-lint roles/ playbooks/ 2>&1 | tee /tmp/lint.log
+          RC=${PIPESTATUS[0]}
+          # ⚠ The count is the point, and ZERO IS THE WRONG THRESHOLD. ansible-lint prints
+          # "N files processed of M encountered" on both the pass and the fail path, and N
+          # can collapse without reaching 0: `ansible-lint .` in this directory reports
+          # "0 files processed" bare, and "1 files processed" once a config file exists —
+          # both green, both examining nothing that matters. Measured while writing this.
+          #
+          # So assert a FLOOR derived from what the scope step actually counted. Every
+          # playbook is one file lint must see, and every role contributes at least one, so
+          # roles+playbooks is a lower bound that rises as the repo grows and cannot be
+          # satisfied by a collapsed glob.
+          PROCESSED=$(grep -oE '[0-9]+ files processed' /tmp/lint.log | head -1 | grep -oE '^[0-9]+' || true)
+          FLOOR=$(( ${{ steps.scope.outputs.roles }} + ${{ steps.scope.outputs.plays }} ))
+          echo "ansible-lint examined ${PROCESSED:-0} files across ${{ steps.scope.outputs.roles }} roles and ${{ steps.scope.outputs.plays }} playbooks (floor ${FLOOR})"
+          if [ "${PROCESSED:-0}" -lt "$FLOOR" ]; then
+            echo "::error title=lint examined too little::ansible-lint processed ${PROCESSED:-0} files, below the floor of ${FLOOR} implied by ${{ steps.scope.outputs.roles }} roles + ${{ steps.scope.outputs.plays }} playbooks. That is a green check over a collapsed glob, not a clean repo. Refusing."
+            exit 1
+          fi
+          exit "$RC"

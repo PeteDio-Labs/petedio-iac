@@ -835,3 +835,26 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   (browser actions run in a visible window). A browser on the hypervisor next to a Claude
   Code LXC pairs with nothing. Evaluated and dropped for 247; if it is ever wanted, it costs
   a desktop and a remote-desktop transport **inside** the container.
+
+## `ansible-lint <dir>` can examine nothing and call it a pass (PET-397)
+
+- **`ansible-lint .` run inside `ansible/` reports `Passed: 0 failure(s), 0 warning(s) in 0
+  files processed of 1 encountered` and exits 0.** It is not linting the tree; it is linting
+  nothing and saying so in a line nobody reads. Pass explicit targets — `ansible-lint roles/
+  playbooks/` processes 186 files here — and assert the processed count in CI.
+
+- **Zero is the wrong threshold for that assertion.** Once a `.ansible-lint` config exists in
+  the directory, the same collapsed invocation reports `1 files processed`, still green. A
+  guard written as `-eq 0` passes it. Floor the count against something that grows with the
+  repo instead: `.github/workflows/ansible-validate.yml` uses roles + playbooks, counted in
+  an earlier step that itself refuses to continue on zero.
+
+- **`syntax-check[unknown-module]` usually means a missing collection, not a typo.** Nine of
+  them appear across this repo until `ansible-galaxy collection install -r
+  ansible/requirements.yml` has run. They are deliberately NOT in `.ansible-lint-ignore`, so
+  a silently failed collection install turns the check red rather than skipping those files.
+
+- **The backlog is frozen in `ansible/.ansible-lint-ignore`, one line per file+rule pair.**
+  A new violation fails even in a file that already has an entry for a different rule, and a
+  new file has no entries at all. Shrink it by deleting lines and fixing what they name;
+  do not regenerate it wholesale to make a red build green.

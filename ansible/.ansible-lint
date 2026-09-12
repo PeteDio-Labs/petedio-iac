@@ -1,0 +1,20 @@
+---
+# ansible-lint configuration for petedio-iac (PET-397).
+#
+# WHAT THIS FILE DOES NOT DO: lower the bar for new code. The findings that already
+# existed when the check was introduced are frozen in `.ansible-lint-ignore`, one line
+# per file+rule pair. A NEW violation fails even in a file that already carries an entry
+# for a different rule, and a new file carries no entries at all — so the backlog can
+# only shrink. To work it down, delete lines from that file and fix what they named.
+#
+# Run it the way CI does, from this directory:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-lint roles/ playbooks/
+
+skip_list:
+  # Every one of the 29 roles here uses a hyphen — apt-hygiene, cluster-qdevice,
+  # vault-unseal. That is the house convention, and renaming them would touch every
+  # playbook that includes them, so the rule is off rather than 29 ignore entries.
+  # Fires when a role is linted directly (`ansible-lint roles/claude-code`), which is
+  # what you do while writing one.
+  - role-name
