@@ -76,7 +76,8 @@ next-item)
   export PLANE_BASE_URL PLANE_WORKSPACE PLANE_PROJECT_ID PLANE_API_KEY
 
   PLANE_LABEL="$LABEL" python3 <<'PY'
-import json, os, sys, urllib.error, urllib.parse, urllib.request
+import json, os, re, sys, urllib.error, urllib.parse, urllib.request
+from html import unescape
 
 BASE = os.environ["PLANE_BASE_URL"].rstrip("/")
 WS, PROJ = os.environ["PLANE_WORKSPACE"], os.environ["PLANE_PROJECT_ID"]
@@ -143,6 +144,25 @@ def paged(path):
             die(f"{path} still paging after {MAX_PAGES} pages. Refusing a partial sweep.")
 
 
+def body_of(w):
+    """The work item's body, from whichever field this Plane actually populates.
+
+    ⚠ `description_stripped` IS NOT IT, and reading only that shipped a loop whose every
+    prompt said "(the work item has no description)" (PET-424). Plane returns the body as
+    `description_html`; the stripped variant came back absent or empty on the live
+    instance. Prefer the HTML, reduce it to text, and fall back rather than assume.
+
+    Returns "" when there is genuinely nothing, which the tick treats as a reason to refuse
+    the item — a body it could not read and a body that is not there must not look alike.
+    """
+    html_body = (w.get("description_html") or "").strip()
+    if html_body:
+        text = re.sub(r"<br\s*/?>|</p>|</div>|</li>", "\n", html_body, flags=re.I)
+        text = re.sub(r"<[^>]+>", "", text)
+        return re.sub(r"\n{3,}", "\n\n", unescape(text)).strip()
+    return (w.get("description_stripped") or w.get("description") or "").strip()
+
+
 labels = [x for x in paged("labels/") if str(x.get("name", "")).lower() == LABEL.lower()]
 if not labels:
     die(f"no label named '{LABEL}' in this project. Create it in Plane — the loop selects on it.")
@@ -173,7 +193,7 @@ json.dump({
             "key": f"PET-{w.get('sequence_id')}",
             "id": w.get("id"),
             "name": w.get("name") or "",
-            "description": (w.get("description_stripped") or "").strip(),
+            "description": body_of(w),
         }
         for w in eligible
     ],
