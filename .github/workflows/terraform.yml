@@ -24,13 +24,41 @@ on:
   push:
     branches: [main]
 
-# Serialize ALL runs in one group: the state lock is the S3-native lockfile (`use_lockfile`,
-# PET-105), and this group still serializes applies because bucket versioning is the recovery
-# net, not a lock substitute — two applies racing one state is the repo's #1 footgun. cancel-in-progress:
-# false queues instead of killing a mid-flight apply. (PET-105/PET-143.)
+# Applies share ONE group and never cancel: the state lock is the S3-native lockfile
+# (`use_lockfile`, PET-105), bucket versioning is the recovery net rather than a lock
+# substitute, and two applies racing one state is the repo's #1 footgun. That reasoning is
+# unchanged. (PET-105/PET-143.)
+#
+# ⚠ VALIDATION IS SCOPED PER REF, AND MUST STAY THAT WAY (PET-422). It used to share
+# `tf-homelab` with the applies. `validate` runs `init -backend=false`, so it takes no lock
+# and has nothing to serialize against — but GitHub keeps only ONE pending run per group, and
+# a third arrival evicts the one already waiting. On 2026-09-12 that cancelled `validate` on
+# an open PR and left another queued for four minutes behind an already-finished apply.
+#
+# `validate` is a REQUIRED check, so a cancelled or stuck one does not report at all: the PR
+# reads BLOCKED with nothing red and nothing to explain why. That is the hanging-required-check
+# shape docs/GOTCHAS.md documents for `paths:` filters, arriving through concurrency instead.
+#
+# If you ever put the PR path back in a shared group, you are re-buying that bug.
+#
+# ⚠ WHY CANCELLING IS SAFE, AND WHAT WOULD MAKE IT UNSAFE. `cancel-in-progress` is true for
+# every non-push event, which is only sound because NO NON-PUSH EVENT CAN REACH AN APPLY.
+# Three things enforce that, in three different places, and all three are load-bearing:
+#
+#   1. the trigger list is `pull_request` and `push` only — there is no `workflow_dispatch`
+#   2. `plan-gate` is gated `github.event_name == 'push' && github.ref == 'refs/heads/main'`
+#   3. `apply` carries the same guard
+#
+# So a `pull_request` run contains `validate` and nothing else, and `validate` holds no lock.
+# ADD A TRIGGER OR DROP ONE OF THOSE `if:` GUARDS AND A PULL REQUEST CAN CANCEL A MID-FLIGHT
+# APPLY — the original footgun, reintroduced by the fix for a different one, silently.
+#
+# ⚠ And the expression is `A && B || C`, which in Actions falls through to C whenever B is
+# falsy. `'tf-homelab-apply'` is a non-empty literal so it is fine. If anyone replaces it with
+# something that can evaluate empty, every push silently joins the per-ref group instead.
 concurrency:
-  group: tf-homelab
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'push' && 'tf-homelab-apply' || format('tf-homelab-validate-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 # Least privilege at the top: read-only by default. The apply job re-grants id-token below;
 # nothing here needs pull-requests:write anymore (the PR plan-comment step is gone — PET-104).
