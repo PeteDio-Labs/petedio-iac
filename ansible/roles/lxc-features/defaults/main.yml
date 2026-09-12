@@ -96,7 +96,6 @@ lxc_features_declared:
   # takes that window.
   "236": { nesting: "1", keyctl: "1" }   # plex-gpu — was nesting-only
   "237": { nesting: "1", keyctl: "1" }   # media-dash-237 — HAS NEITHER; created 2026-09-09
-  "241": { nesting: "1", keyctl: "1" }   # openfaas-241 — faasd; PET-86 set these by script
   "245": { nesting: "1", keyctl: "1" }   # minio-data-245 — HAS NEITHER
   # Declared but on neither node as of 2026-09-09. Kept so they are configured on
   # the way back rather than remembered: 106's rootfs will not `pct restore`

@@ -213,31 +213,6 @@ resource "vault_policy" "media_ci" {
   EOT
 }
 
-# openfaas-ci: the petedio-iac CI role that APPLIES configure-openfaas.yml to LXC 241 on
-# merge (the runner SSHes in). Least-privilege: ONLY the ansible SSH key (to reach 241) and
-# the registry pull creds (written into faasd's /var/lib/faasd/.docker/config.json). NOT the
-# broader ci-read/iac scope. (PET-88)
-resource "vault_policy" "openfaas_ci" {
-  name = "openfaas-ci"
-
-  policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/registry" {
-      capabilities = ["read"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
-    }
-  EOT
-}
 
 # palworld-panel-cd: the petedio-palworld-panel repo's CD role — deploy.yml runs the native
 # panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the ansible
