@@ -58,16 +58,37 @@ gh api /repos/PeteDio-Labs/petedio-iac/branches/main/protection \
 > meant to demonstrate it ran as an admin and demonstrated the opposite case instead — it
 > merged an unapproved PR (#292) and read as a successful gate test.
 >
-> To prove it: have the **App** open a pull request and confirm the merge endpoint refuses
-> it. Do this against a throwaway branch with the same protection rule, never against
-> `main` — `PUT /repos/{owner}/{repo}/pulls/{n}/merge` has no dry-run form, and a merge to
-> `main` triggers apply-on-merge.
+> To prove it: have the **App** open a pull request and attempt the merge with the App's
+> own token. Never against `main` — `PUT /repos/{owner}/{repo}/pulls/{n}/merge` has no
+> dry-run form, and a merge to `main` triggers apply-on-merge.
+>
+> ⚠ **The throwaway base must be protected, or the test proves nothing.** Branch protection
+> here applies to `main` and to nothing else, so a base branched off `main` inherits no
+> rules. The App would merge it and return `200` — which means "this branch has no rules",
+> not "the App can merge protected branches". Give the base
+> `required_approving_review_count: 1` and no required checks, so a refusal cannot be blamed
+> on a missing status check.
+>
+> ⚠ **Run a control arm, or a refusal is unreadable.** Repeat the whole thing against a
+> second, *unprotected* throwaway base. Without it, `405` on the protected base is
+> indistinguishable from a broken token, and "the App cannot merge" would be recorded on the
+> strength of a credential that could not merge anything.
+>
+> | protected base | unprotected base | meaning |
+> |---|---|---|
+> | refuses | merges | the premise holds — the review requirement binds the App |
+> | merges | merges | **the premise is false.** PET-399 does not ship as designed |
+> | refuses | refuses | the token is broken. Nothing was learned; fix the mint and re-run |
 >
 > ⚠ And do not read the answer off the pull request's own status fields.
 > `mergeStateStatus=BLOCKED` with `reviewDecision=REVIEW_REQUIRED` is what a PR shows on a
 > protected branch — an admin token merged one showing exactly that. **`BLOCKED` describes
 > the path, not what a given identity can do.** The check has to be made with the identity
 > that would do the merging.
+>
+> A script implementing this, with both arms and the cleanup, is at `~/pet399-proof.sh` on
+> the Mac. As of 2026-09-12 it has **not been run** — the session that wrote it was blocked
+> from minting a token, correctly. The premise remains unproven.
 
 > [!WARNING]
 > **`enforce_admins` stays `false`. Do not "fix" it.**
