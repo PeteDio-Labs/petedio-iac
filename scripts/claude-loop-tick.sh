@@ -384,6 +384,23 @@ fi
 [ -s "$SPEC_DIFF" ] \
   || fail_item "the session wrote no spec-diff at $SPEC_DIFF — refusing to open a PR that nobody can check against the work item"
 
+# ⚠ THE APP CANNOT PUSH .github/workflows/** AND THAT IS DELIBERATE (PET-425). GitHub gates
+# workflow files behind a `workflows` permission the loop's App does not have and must not
+# be given: this session takes its instructions from a work item anyone can write, and one
+# that could edit a workflow could change what runs on the self-hosted runner or alter a
+# required check — arriving as a PR that looks like ordinary work.
+#
+# GitHub refuses the push. It refuses it AFTER a full session has run, with
+#     refusing to allow a GitHub App to create or update workflow ... without `workflows` permission
+# which costs the quota and reads like a credential fault rather than a boundary.
+#
+# So catch it here, before the token is minted: cheaper, and the message says which file and
+# why rather than leaving someone to widen a permission to make an error go away.
+WF="$(as_loop_user git -C "$CHECKOUT" diff --cached --name-only origin/main -- '.github/workflows/' 2>/dev/null || true)"
+if [ -n "$WF" ]; then
+  fail_item "the session staged workflow files, which this App is not permitted to push: $(printf '%s' "$WF" | tr '\n' ' '). That permission is withheld on purpose — a work item anyone can write must not be able to change what CI runs. Do the workflow edit by hand."
+fi
+
 COMMITTED="$(as_loop_user git -C "$CHECKOUT" diff --cached --name-only origin/main | wc -l | tr -d ' ')"
 # `core.hooksPath=/dev/null`: a session-planted pre-commit hook runs between the two checks
 # above and this commit, and could put back exactly what they just rejected. No token is in

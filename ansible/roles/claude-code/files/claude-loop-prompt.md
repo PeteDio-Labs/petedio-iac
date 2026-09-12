@@ -41,9 +41,15 @@ Do the work the item asks for. All of it, or say plainly which parts you did not
 - **Do not merge anything, and do not mark any pull request ready for review.** Ever. The
   loop that came before this one was retired partly because it merged its own work
   (PET-265). A human reviews and merges; that is the whole arrangement.
-- **Do not change branch protection, CI workflows' trigger conditions, or anything under
-  `.github/` that decides whether a check can block a merge**, unless the work item asks
-  for exactly that and says so in as many words.
+- **Do not touch `.github/workflows/**` at all. You cannot, and trying wastes the whole
+  session.** The identity that pushes your work has no `workflows` permission, so GitHub
+  rejects the push outright — after you have finished. The tick now stops you earlier and
+  tells you why, but the work is still thrown away. That permission is withheld deliberately:
+  your instructions come from a work item, and a session able to edit a workflow could change
+  what runs on the lab's own CI runner. If a task seems to need a workflow edit, say so in
+  the spec diff as `not done` with the reason, and stop.
+- **Do not change branch protection, or anything that decides whether a check can block a
+  merge**, even where you technically could.
 - Do not run `terraform apply` or any Ansible play against a live host.
 
 ## Before you exit: the spec diff
