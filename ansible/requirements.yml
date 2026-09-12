@@ -3,6 +3,14 @@
 #   ansible-galaxy collection install -r requirements.yml
 collections:
   - name: community.general    # ufw (ollama-service firewall), misc modules
-  - name: ansible.posix        # authorized_key (provision-new-ollama-host)
+  # ⚠ FLOOR, not decoration. ansible.posix 2.1.0's authorized_key does
+  #   from ansible.module_utils._text import to_native
+  # which ansible-core deprecates and REMOVES in 2.24 — so today it prints a deprecation
+  # warning on every play that touches authorized_key, and on 2.24 the module stops
+  # importing at all. 2.2.2 uses ansible.module_utils.common.text.converters instead.
+  # Do NOT answer this with deprecation_warnings=False in ansible.cfg: that hides the
+  # warnings about our own code too, and this one is a countdown, not noise.
+  - name: ansible.posix        # authorized_key (provision-new-ollama-host, claude-code)
+    version: ">=2.2.2"
   - name: community.postgresql # configure-postgres.yml (postgres-rds, PET-19)
   - name: community.docker     # configure-poker-api.yml (docker_image pull, PET-44)
