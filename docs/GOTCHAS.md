@@ -871,3 +871,53 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
 - **Renaming a handler breaks every `notify:` that names it.** PET-303 did exactly that and
   left a dangling notify. When `name[casing]` makes you capitalise a handler, grep the repo
   for the old string and move the notifies in the same commit — `Restart zot` alone has four.
+
+## A required status check with a `paths:` filter hangs every PR that misses it (PET-399)
+
+- **A path-filtered workflow does not report "skipped" to branch protection — it reports
+  nothing at all.** GitHub holds the PR at `Expected — waiting for status to be reported`
+  and the merge button stays disabled forever. There is no timeout and nothing goes red, so
+  the PR looks like it is still building. `ansible-validate` carried
+  `paths: ["ansible/**", …]`, which would have made every Terraform-only and docs-only PR
+  permanently unmergeable the moment it became required.
+
+- **Check the trigger before you add a check to `required_status_checks`.** The rule is
+  narrow and absolute: a required check must run on *every* PR. `terraform.yml` gets this
+  right with a bare `pull_request: {}`, which is why `validate` and `gate` have been safe as
+  required checks for as long as they have.
+
+- **The two workarounds both cost more than they save.** A second always-running job that
+  reports the same context name is a green check that examined nothing, wearing the name of
+  one that does — the exact failure PET-298, PET-317, PET-360, PET-363, PET-372 and PET-374
+  all share. An early-exit step inside the job is honest only while someone keeps its log
+  line honest. Dropping the filter costs about two minutes of hosted runner on a PR that
+  changed no Ansible, and the job then means one thing: the whole tree was examined.
+
+- **`push` filters are unaffected.** Nothing gates `main`, so `ansible-validate` keeps its
+  `paths:` filter on `push` and drops it only on `pull_request`.
+
+## Branch protection in a one-person org (PET-399)
+
+- **`enforce_admins: true` plus one required review means NOTHING can ever merge.** GitHub
+  forbids approving your own pull request, so in an org of one the author cannot approve,
+  the admin bypass is gone, and there is nobody left to ask. It deadlocked this repo for an
+  hour on 2026-09-12 and left four pull requests unmergeable (#293, #294, #295,
+  `petedio-vault#23`). The symptom is `mergeStateStatus=BLOCKED` with
+  `reviewDecision=REVIEW_REQUIRED` and no way forward. **Keep `enforce_admins` false here.**
+
+- **It was never the control anyway.** The thing being constrained is a bot identity, and a
+  GitHub App is not a repo admin — `required_approving_review_count: 1` binds it with
+  `enforce_admins` off. Turning it on only constrained Pedro, which conflated "make the
+  rule real" with "make the rule universal".
+
+- **`BLOCKED` describes the protected path, not what a given identity can do.** A pull
+  request showed `mergeStateStatus=BLOCKED` / `reviewDecision=REVIEW_REQUIRED` and an admin
+  token merged it anyway, because `enforce_admins` was false. So a check that reads those
+  two fields and concludes "the merge gate held" proves nothing: it has to be made with the
+  identity that would actually do the merging.
+
+- **`PUT /repos/{owner}/{repo}/pulls/{n}/merge` has no dry-run form.** A call described as
+  a gate test merged PR #292 for real. To test a merge gate without merging, read
+  `mergeStateStatus` and `reviewDecision` — and to test what an identity can do, point it at
+  a throwaway branch carrying the same rule, never at `main`, where a merge triggers
+  apply-on-merge.
