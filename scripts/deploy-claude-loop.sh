@@ -47,6 +47,40 @@ for t in vault ansible-playbook python3 curl; do command -v "$t" >/dev/null || d
 [ -f "$SECRETS/ansible.role_id" ] && [ -f "$SECRETS/ansible.secret_id" ] \
   || die "ansible AppRole creds not in $SECRETS."
 
+# ⚠ REFUSE TO LAND A CREDENTIAL WITH NOTHING TO CONSUME IT (PET-414).
+#
+# This is not hypothetical tidiness. It happened: PR #298 merged the identity half of the
+# loop — this script, tasks/loop.yml, the broker — while the units, the tick script and
+# tasks/loop-units.yml were still on an unmerged branch. Running this script against that
+# tree would have installed sudo on a host that deliberately had none, written the sudoers
+# grant, landed a GitHub App private key beside it, and installed NOTHING that uses any of
+# it. Every session on the box would have gained a push/PR token and the loop would not
+# have existed. That is worse than both deploying properly and not deploying.
+#
+# The generalisation is worth keeping after the ordering problem is gone: a script that
+# lands a credential should check that the thing which consumes it is present. Here that
+# check is cheap and exact, because the consumers are files in this repo.
+for f in ansible/roles/claude-code/tasks/loop-units.yml \
+         ansible/roles/claude-code/templates/claude-loop.service.j2 \
+         ansible/roles/claude-code/templates/claude-loop.timer.j2 \
+         scripts/claude-loop-tick.sh; do
+  [ -f "$REPO_ROOT/$f" ] || die "$f is missing from this checkout.
+
+  This tree has the loop's CREDENTIALS but not the loop. Landing the App key now would give
+  every session on 247 a push/PR token with nothing to use it for. Merge the branch carrying
+  the units and the tick script first, then re-run. See PET-414."
+done
+
+# The reverse of the same mistake: a tree new enough to have the units but old enough to
+# still carry the sudoers grant means someone merged the halves out of order, or resurrected
+# a file. Landing the key alongside that grant is the PET-408 bypass, live.
+[ -f "$REPO_ROOT/ansible/roles/claude-code/templates/claude-loop-sudoers.j2" ] \
+  && die "ansible/roles/claude-code/templates/claude-loop-sudoers.j2 exists in this checkout.
+
+  PET-408 deleted it: the grant it renders belongs to the claude UID, which the loop's own
+  \`claude -p\` session also holds. If it is back, something restored it — do not deploy
+  until you know what."
+
 applogin() {
   local rid sid
   rid="$(cat "$SECRETS/$1.role_id")"

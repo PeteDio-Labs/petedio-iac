@@ -1,0 +1,29 @@
+{{ ansible_managed | comment }}
+# When claude-loop.service ticks (PET-399).
+#
+# Most ticks find nothing and cost one Plane query — that is why the schedule can be this
+# frequent. The tick's own guards decide whether any given firing does work: a PAUSED
+# sentinel parks it, a held flock parks it, and an empty queue parks it. All three write
+# the heartbeat, so an idle loop stays visibly alive.
+#
+# ⚠ KEEP claude_loop_max_age_sec IN STEP WITH OnCalendar. scripts/lab-verify.sh compares
+# the heartbeat's age against the max_age_sec the tick writes into it, rather than parsing
+# an OnCalendar expression. Two ticks plus the randomized delay is the rule.
+
+[Unit]
+Description=Periodic tick of the Claude Code work loop (PET-399)
+
+[Timer]
+OnCalendar={{ claude_loop_oncalendar }}
+
+# Persistent=true runs a missed tick after a reboot or a suspend, so a host that was down
+# at the scheduled minute does not wait a whole interval to come back. A catch-up tick can
+# land on top of a running one, which is what the tick's flock is for.
+Persistent=true
+
+# Spreads this off the other timers on the host and off the minute boundary, where every
+# other cron-shaped thing in the lab already is.
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
