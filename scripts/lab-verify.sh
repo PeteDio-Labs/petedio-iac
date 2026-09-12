@@ -407,6 +407,29 @@ resident = [(resolve(e.get("model")), e.get("port", primary))
             for e in hv.get("ollama_resident_models", [])]
 ports = {primary} | {i.get("port") for i in hv.get("ollama_extra_instances", [])}
 
+# ⚠ THIS CHECK READS ITS EXPECTATIONS FROM host_vars, SO host_vars GOING MISSING MUST BE A
+# FAILURE (PET-419). It did not used to be. `hv.get(key, [])` yields [] for a renamed host,
+# a moved inventory or a renamed variable, and an empty `declared` made `missing` empty too,
+# so the check printed:
+#
+#     OK   declared models pulled   all 0 present
+#
+# A pass, carrying a count, that examined nothing. That is the PET-298/317/360/363/372/374
+# shape wearing this repo's own house style — the count is real, it is just counting the
+# empty list it was handed. The resident loop was worse: zero entries emitted zero lines, so
+# a whole category of check vanished in silence rather than reporting anything at all.
+#
+# Reading expectations from a file was the right call and is not what is being reverted
+# here: hardcoding the model names in this script is how a second declared model goes
+# unchecked forever. The cost of reading them is that their absence has to be loud.
+if not host:
+    print("BAD\tollama inventory readable\tansible-inventory returned no ansible_host — host renamed or inventory moved")
+    sys.exit(0)
+if not declared:
+    print("BAD\tollama base models declared\thost_vars has no ollama_base_models — renamed, or the host is not the ollama host")
+if not resident:
+    print("SKIP\tollama resident models declared\thost_vars declares none; nothing to keep warm")
+
 served = {}
 for p in sorted(ports):
     try:
@@ -417,10 +440,11 @@ for p in sorted(ports):
         served[p] = set()
         print(f"BAD\tollama :{p} answers\t{type(e).__name__}")
 
-if served.get(primary):
+# `declared` is non-empty by the guard above, so "all N present" can no longer mean N=0.
+if served.get(primary) and declared:
     missing = [m for m in declared if m not in served[primary]]
     print(f"BAD\tdeclared models pulled\tMISSING {', '.join(missing)}" if missing
-          else f"OK\tdeclared models pulled\tall {len(declared)} present")
+          else f"OK\tdeclared models pulled\tall {len(declared)} of {len(declared)} declared present")
 
 for model, port in resident:
     if served.get(port):
@@ -429,9 +453,20 @@ for model, port in resident:
               f"{'' if here else 'declared keep_alive=-1, never pulled'}")
 PY
 )
+  # ⚠ THREE VERDICTS, NOT TWO. This used to be `OK -> ok, everything else -> bad`, which
+  # silently turned any new verdict into a failure — so emitting SKIP from the python above
+  # would have made a legitimately-empty declaration report red. An `else` that means
+  # "failure" is fine while there are two cases and a trap the moment there are three.
+  # `*)` is `bad` on purpose: an unrecognised verdict is this script disagreeing with itself,
+  # which is a fault and not a pass.
   while IFS=$'\t' read -r verdict name detail; do
     [ -z "$verdict" ] && continue
-    [ "$verdict" = "OK" ] && ok "$name" "$detail" || bad "$name" "$detail"
+    case "$verdict" in
+      OK)   ok   "$name" "$detail" ;;
+      SKIP) skip "$name" "$detail" ;;
+      BAD)  bad  "$name" "$detail" ;;
+      *)    bad  "$name" "unrecognised verdict '$verdict' — $detail" ;;
+    esac
   done <<< "$OLLAMA_OUT"
 fi
 
