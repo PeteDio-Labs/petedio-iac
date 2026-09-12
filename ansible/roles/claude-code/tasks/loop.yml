@@ -1,0 +1,173 @@
+---
+# claude-code / the ticket-driven work loop — identity half (PET-399).
+#
+# Lands the two secrets the loop needs, root-owned and unreadable by the session user, plus
+# the broker that is the only path to them and the two-line sudoers grant that lets the
+# loop call it. The units and the tick script are the other half, in tasks/loop-units.yml.
+#
+# ⚠ THE HOST NOW HOLDS AN OUTBOUND CREDENTIAL. claude.tf, this role's README and
+# playbooks/configure-claude-code.yml all used to say it did not. They have been corrected
+# rather than quietly left behind — read roles/claude-code/README.md, "What the loop
+# changes about the isolation story", before you enable this.
+
+# Gated on the enable flag, not on presence: a play run WITHOUT the deploy wrapper should
+# still converge the units (stopped), and only a run that means to turn the loop on has to
+# produce the credentials. Same shape as roles/mongodb/tasks/main.yml.
+- name: Assert the loop identity was provided when the loop is enabled (Vault kv/services/claude-loop + kv/services/plane — never a committed default)
+  ansible.builtin.assert:
+    that:
+      - claude_loop_plane_project_id is defined and claude_loop_plane_project_id | length > 0
+      - claude_loop_plane_api_key is defined and claude_loop_plane_api_key | length > 0
+      - claude_loop_github_app_id is defined and claude_loop_github_app_id | length > 0
+      - claude_loop_github_installation_id is defined and claude_loop_github_installation_id | length > 0
+      - claude_loop_github_app_pem is defined and claude_loop_github_app_pem | length > 0
+    fail_msg: >-
+      claude_loop_enable is true but the loop identity is missing. Resolve it from Vault
+      (kv/services/claude-loop fields app_id / installation_id / app_pem, and
+      kv/services/plane field api_key) and pass it as no_log extra-vars from a 0600 JSON
+      @file — scripts/deploy-claude-loop.sh does exactly that. Do NOT put these in
+      defaults or host_vars.
+  no_log: true
+  when: claude_loop_enable | bool
+
+# Everything below needs the secrets, so it converges only on a run that carries them. A
+# play run without the deploy wrapper still installs and converges the units (stopped),
+# which is what keeps `configure-claude-code.yml` runnable on its own.
+- name: Decide whether this run carries the loop identity
+  ansible.builtin.set_fact:
+    claude_loop_identity_present: >-
+      {{ claude_loop_plane_project_id | default('') | length > 0
+         and claude_loop_plane_api_key | default('') | length > 0
+         and claude_loop_github_app_id | default('') | length > 0
+         and claude_loop_github_installation_id | default('') | length > 0
+         and claude_loop_github_app_pem | default('') | length > 0 }}
+  no_log: true
+
+- name: Report that the loop identity was not passed, so the secrets are left alone
+  ansible.builtin.debug:
+    msg: >-
+      No loop identity in this run — {{ claude_loop_conf_dir }} and the broker are left as
+      they are, and the timer converges to
+      {{ 'enabled' if claude_loop_enable | bool else 'disabled' }}. Run
+      scripts/deploy-claude-loop.sh to land or rotate the credentials.
+  when: not claude_loop_identity_present | bool
+
+# ⚠ The minimal Debian LXC template this host is built from ships WITHOUT sudo — the same
+# gap that makes `become_user` fail with `sudo: not found` and rc=127 across this repo
+# (docs/GOTCHAS.md, PET-355). The broker grant needs it, so install it here rather than
+# letting the sudoers file land next to no sudo at all and fail at the first tick.
+- name: Install sudo, which the broker grant needs and this template omits
+  ansible.builtin.apt:
+    name: sudo
+    state: present
+    update_cache: true
+  when: claude_loop_identity_present | bool
+
+- name: Create the root-owned loop secret directory
+  ansible.builtin.file:
+    path: "{{ claude_loop_conf_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: claude_loop_identity_present | bool
+
+# 0400 root:root, and the mode is the entire point. Sessions on this host run
+# bypassPermissions as {{ claude_user }}; anything that user can read, a session can read.
+# These files are reachable ONLY through the broker below.
+- name: Land the Plane credential the broker reads
+  ansible.builtin.template:
+    src: claude-loop-plane.env.j2
+    dest: "{{ claude_loop_conf_dir }}/plane.env"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when: claude_loop_identity_present | bool
+
+- name: Land the GitHub App identity the broker reads
+  ansible.builtin.template:
+    src: claude-loop-github.env.j2
+    dest: "{{ claude_loop_conf_dir }}/github.env"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when: claude_loop_identity_present | bool
+
+# The App private key is the one credential here with no expiry, so it is also the one
+# worth rotating on a schedule — see the runbook. A trailing newline is added if the Vault
+# field lost one, because openssl rejects a PEM without it.
+- name: Land the GitHub App private key
+  ansible.builtin.copy:
+    content: "{{ claude_loop_github_app_pem | trim }}\n"
+    dest: "{{ claude_loop_conf_dir }}/app.pem"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when: claude_loop_identity_present | bool
+
+# 0500: root may run it, nobody may write it. The session user does not need read
+# permission — sudo runs it as root, which does.
+- name: Install the broker
+  ansible.builtin.template:
+    src: claude-loop-broker.j2
+    dest: "{{ claude_loop_broker }}"
+    owner: root
+    group: root
+    mode: "0500"
+  when: claude_loop_identity_present | bool
+
+# ⚠ `validate` is not optional here. A sudoers file that does not parse can make sudo
+# refuse every command on the host, including the one you would use to fix it. visudo -cf
+# checks the rendered file BEFORE it is moved into place; a bad render fails the task and
+# leaves /etc/sudoers.d untouched.
+- name: Grant the session user the two broker commands, and nothing else
+  ansible.builtin.template:
+    src: claude-loop-sudoers.j2
+    dest: /etc/sudoers.d/claude-loop
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+  when: claude_loop_identity_present | bool
+
+# Proves the grant works end to end, as the user that will use it, without printing the
+# token. `sudo -n` refuses rather than prompting, so a grant that did not take fails here
+# instead of at 03:00 in a tick nobody is watching.
+#
+# runuser rather than become_user, for the reason given at the npm install in main.yml.
+# ⚠ no_log HERE AND THE VERDICT IN THE NEXT TASK, deliberately. stdout IS the token, so
+# this task can never print its own result — but a task that both hides everything and
+# decides pass/fail leaves a failed deploy saying nothing at all. So this one only runs and
+# records; the next one judges, and is free to print the broker's stderr, which carries the
+# reason and never carries the token.
+- name: Mint a token through the broker, as the session user
+  ansible.builtin.command:
+    cmd: runuser -u {{ claude_user }} -- sudo -n {{ claude_loop_broker }} mint-token
+  register: claude_loop_mint_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: claude_loop_identity_present | bool
+
+# `sudo -n` refuses rather than prompting, so a grant that did not take fails here — in a
+# play an operator is watching — instead of at 03:00 in a tick nobody is watching. A short
+# stdout is checked as well as the return code: a broker that printed an empty line and
+# exited 0 would otherwise pass.
+- name: Fail if the broker could not mint a token
+  ansible.builtin.assert:
+    that:
+      - claude_loop_mint_check.rc == 0
+      - claude_loop_mint_check.stdout | trim | length >= 20
+    fail_msg: >-
+      The broker could not mint a GitHub installation token as {{ claude_user }}
+      (rc={{ claude_loop_mint_check.rc }}). It said: {{ claude_loop_mint_check.stderr | trim }}
+      — check the App id, the installation id and the key in Vault kv/services/claude-loop,
+      and that the App is still installed on {{ claude_loop_repo }}.
+    success_msg: >-
+      The broker minted a GitHub installation token as {{ claude_user }}
+      ({{ claude_loop_mint_check.stdout | trim | length }} characters, not logged). It
+      expires in an hour whether or not anything uses it.
+  when: claude_loop_identity_present | bool

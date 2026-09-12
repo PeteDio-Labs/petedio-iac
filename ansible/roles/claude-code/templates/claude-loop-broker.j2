@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+{{ ansible_managed | comment }}
+# claude-loop-broker — the only thing on this host that reads the loop's two secrets.
+#
+# WHY A BROKER AND NOT AN ENVIRONMENT FILE. Sessions on 247 run in `bypassPermissions` as
+# `{{ claude_user }}` (roles/claude-code/README.md, "The permission mode, on the record"),
+# and the loop has to run as that same user because the Plane connector is bound to its
+# interactive login. So anything the loop can read, a session can read. The repo's usual
+# landing pattern — a root-owned 0600 file handed to a unit through `EnvironmentFile=` —
+# does not hold here: systemd reads the file as root, but the values then sit in the
+# process environment of a process owned by `{{ claude_user }}`, and a session can read
+# `/proc/<pid>/environ` for its own uid while a tick runs.
+#
+# So the secrets stay root-owned 0400 under {{ claude_loop_conf_dir }} and this script is
+# the only path to them. It is allowed to `{{ claude_user }}` by one sudoers entry naming
+# these two exact command lines and nothing else:
+#
+#   next-item   queries Plane for the work items carrying the `{{ claude_loop_label }}`
+#               label, and prints them WITH THE COUNTS IT EXAMINED. Nothing else about
+#               Plane is exposed — not the PAT, not write access, not another project.
+#   mint-token  prints ONE installation access token, good for an hour.
+#
+# What a session can therefore get: a one-hour push/PR token whose blast radius branch
+# protection caps, and the text of one work item. What it cannot get: the App private key,
+# the Plane PAT, or any other subcommand — there are only these two.
+#
+# ⚠ ARGUMENTS ARE REFUSED, DELIBERATELY. The sudoers entry matches the full command line,
+# so a subcommand that took a flag would need a wildcard there, and a wildcard in sudoers
+# is how a narrow grant becomes a wide one. Both subcommands take none, and this script
+# rejects a second argument rather than ignoring it.
+set -euo pipefail
+umask 077
+
+CONF_DIR={{ claude_loop_conf_dir }}
+LABEL='{{ claude_loop_label }}'
+
+die() { printf 'claude-loop-broker: %s\n' "$*" >&2; exit 1; }
+
+# Running as anything but root means the sudoers entry was bypassed or the file lost its
+# mode — in either case the secrets below are not readable and the failure should say so.
+[ "$(id -u)" -eq 0 ] || die "must run as root, through the sudoers entry."
+[ $# -eq 1 ] || die "usage: claude-loop-broker <next-item|mint-token> (no arguments)"
+
+case "$1" in
+
+# --------------------------------------------------------------------------- next-item
+#
+# Prints ONE JSON object: the eligible work items AND the counts behind them.
+#
+#   {"label":"…","examined":41,"labelled":2,"eligible":1,"items":[{…}]}
+#
+# ⚠ THE COUNTS ARE THE POINT. An empty `items` has to be distinguishable from a query that
+# looked at nothing — "0 eligible of 41 examined" and "0 eligible of 0 examined" are
+# different facts and this repo has shipped the bug that conflates them six times
+# (PET-298, PET-317, PET-360, PET-363, PET-372, PET-374). Every structural surprise below
+# — a missing label, no Todo state, work items with no `labels` field, more pages than the
+# cap — EXITS NON-ZERO rather than returning an empty list that reads like an idle queue.
+#
+# Eligible = carries the label AND sits in the `Todo` state. The state half is what stops
+# the loop re-picking an item it already worked: opening a draft PR on a `pet-<n>-` branch
+# fires plane-sync.yml, which moves the item to In Progress. That sync is advisory and
+# exits 0 on failure, so the tick keeps its own claim record too — belt and braces, see
+# scripts/claude-loop-tick.sh.
+next-item)
+  # shellcheck source=/dev/null
+  . "$CONF_DIR/plane.env"
+  for v in PLANE_BASE_URL PLANE_WORKSPACE PLANE_PROJECT_ID PLANE_API_KEY; do
+    [ -n "${!v:-}" ] || die "$v is missing from $CONF_DIR/plane.env"
+  done
+  # `.` makes these SHELL variables, not environment ones, and the python3 below reads them
+  # from os.environ. Without this export it fails with a KeyError on a correct config file.
+  export PLANE_BASE_URL PLANE_WORKSPACE PLANE_PROJECT_ID PLANE_API_KEY
+
+  PLANE_LABEL="$LABEL" python3 <<'PY'
+import json, os, sys, urllib.error, urllib.parse, urllib.request
+
+BASE = os.environ["PLANE_BASE_URL"].rstrip("/")
+WS, PROJ = os.environ["PLANE_WORKSPACE"], os.environ["PLANE_PROJECT_ID"]
+API = f"{BASE}/api/v1/workspaces/{WS}/projects/{PROJ}"
+HEAD = {"X-API-Key": os.environ["PLANE_API_KEY"]}
+LABEL = os.environ["PLANE_LABEL"]
+
+MAX_PAGES = 20  # 2000 work items at per_page=100. A real project hits this only if paging broke.
+
+
+def die(msg):
+    sys.stderr.write(f"claude-loop-broker: next-item: {msg}\n")
+    raise SystemExit(1)
+
+
+def get(path):
+    try:
+        req = urllib.request.Request(f"{API}/{path}", headers=HEAD)
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        die(f"{path} answered HTTP {e.code} — check the PAT and the project id in plane.env.")
+    except Exception as e:
+        die(f"{path} unreachable: {e}")
+
+
+def items(resp):
+    """Plane answers list endpoints in three shapes — absorbed once, here.
+
+    Lifted from scripts/infra-reconcile.py, which documents why: a paginated
+    object iterated blind yields dict KEYS, and a single unwrapped object looks
+    like an empty page. Both fail far from the cause.
+    """
+    if isinstance(resp, list):
+        return resp
+    if isinstance(resp, dict):
+        if "results" in resp:
+            return resp["results"] or []
+        if resp.get("id"):
+            return [resp]
+    return []
+
+
+def paged(path):
+    """Every page of a list endpoint, or a hard failure.
+
+    Stopping at the first page would silently examine a subset as the project
+    grows, and report the shortfall as an idle queue.
+    """
+    out, cursor, seen = [], None, 0
+    while True:
+        q = {"per_page": 100}
+        if cursor:
+            q["cursor"] = cursor
+        resp = get(f"{path}?{urllib.parse.urlencode(q)}")
+        out.extend(items(resp))
+        seen += 1
+        if not (isinstance(resp, dict) and resp.get("next_page_results")):
+            return out
+        cursor = resp.get("next_cursor")
+        if not cursor:
+            die(f"{path} says more pages follow but returned no cursor. Refusing a partial sweep.")
+        if seen >= MAX_PAGES:
+            die(f"{path} still paging after {MAX_PAGES} pages. Refusing a partial sweep.")
+
+
+labels = [x for x in paged("labels/") if str(x.get("name", "")).lower() == LABEL.lower()]
+if not labels:
+    die(f"no label named '{LABEL}' in this project. Create it in Plane — the loop selects on it.")
+label_id = labels[0]["id"]
+
+todo = {s["id"] for s in paged("states/") if str(s.get("name", "")).strip().lower() == "todo"}
+if not todo:
+    die("no state named 'Todo' in this project. The loop only ever takes Todo items.")
+
+work = paged("work-items/")
+
+# A response whose items carry no `labels` key is an API shape change, not an empty queue.
+# Without this, the filter below quietly matches nothing and the loop reports itself idle
+# forever while the backlog fills up.
+if work and not any("labels" in w for w in work):
+    die("work items came back with no 'labels' field — the Plane API shape moved. Refusing to report an empty queue.")
+
+labelled = [w for w in work if label_id in (w.get("labels") or [])]
+eligible = [w for w in labelled if w.get("state") in todo]
+
+json.dump({
+    "label": LABEL,
+    "examined": len(work),
+    "labelled": len(labelled),
+    "eligible": len(eligible),
+    "items": [
+        {
+            "key": f"PET-{w.get('sequence_id')}",
+            "id": w.get("id"),
+            "name": w.get("name") or "",
+            "description": (w.get("description_stripped") or "").strip(),
+        }
+        for w in eligible
+    ],
+}, sys.stdout)
+sys.stdout.write("\n")
+PY
+  ;;
+
+# -------------------------------------------------------------------------- mint-token
+#
+# Body carried over from scripts/agent-mint-token.sh (last live at 445a985^), trimmed from
+# the fleet's four bot roles to this one. Three things in it are load-bearing and were paid
+# for once already:
+#
+#   · The JWT window is 540s (iat back-dated 60s, exp 480s out) under GitHub's HARD 600s
+#     exp-iat ceiling. It was exactly 600 once — zero margin, and a latent mint failure the
+#     first time a clock drifted.
+#   · The JWT goes to curl through STDIN (`-H @-`), never argv. For its lifetime the JWT is
+#     App-bearer-equivalent, and anything on this host could read it out of
+#     /proc/<pid>/cmdline. printf is a bash builtin, so the value never reaches an external
+#     process's command line. The token-exchange POST has no body, so stdin is free.
+#   · The PEM goes to openssl through a process substitution, for the same reason.
+#
+# The token is printed ONCE, to stdout. The caller captures it into GH_TOKEN and never logs
+# it. It expires in an hour whether or not anyone uses it.
+mint-token)
+  # shellcheck source=/dev/null
+  . "$CONF_DIR/github.env"
+  for v in GITHUB_APP_ID GITHUB_INSTALLATION_ID; do
+    [ -n "${!v:-}" ] || die "$v is missing from $CONF_DIR/github.env"
+  done
+  PEM_FILE="$CONF_DIR/app.pem"
+  [ -r "$PEM_FILE" ] || die "$PEM_FILE is missing or unreadable."
+  for t in openssl curl python3; do command -v "$t" >/dev/null || die "$t is not in PATH."; done
+
+  b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+  now="$(date +%s)"
+  h="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
+  p="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 480))" "$GITHUB_APP_ID" | b64url)"
+  sig="$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -sign "$PEM_FILE" -binary | b64url)"
+  jwt="${h}.${p}.${sig}"
+
+  resp="$(printf 'Authorization: Bearer %s\n' "$jwt" | curl -sS --max-time 20 -X POST \
+    -H @- \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "https://api.github.com/app/installations/${GITHUB_INSTALLATION_ID}/access_tokens")"
+
+  token="$(printf '%s' "$resp" | python3 -c 'import sys,json
+try:
+    print(json.load(sys.stdin).get("token") or "")
+except Exception:
+    print("")')"
+  # Truncated to 200 bytes: GitHub echoes nothing secret in an error body, but a mint that
+  # half-succeeded should not paste an unknown payload into a log either.
+  [ -n "$token" ] || die "mint failed. GitHub said: $(printf '%s' "$resp" | head -c 200)"
+  printf '%s\n' "$token"
+  ;;
+
+*)
+  die "unknown subcommand '$1' (next-item | mint-token)"
+  ;;
+esac
