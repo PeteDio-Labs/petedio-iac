@@ -29,11 +29,19 @@
 # suppress it where the code is and say why.
 name: ansible-validate
 
+# ⚠ NO paths FILTER ON pull_request, DELIBERATELY — this job is a REQUIRED status check.
+# A required check that is path-filtered never reports on a PR outside those paths, and
+# GitHub waits for it forever: every Terraform-only or docs-only PR would be unmergeable
+# with "Expected — waiting for status to be reported". terraform.yml avoids this the same
+# way, with a bare `pull_request: {}`, which is why `validate` and `gate` are safe as
+# required checks and this one was not.
+#
+# The cost is ~2 minutes of hosted runner on a PR that changed no Ansible. That is the
+# right trade: the job examines the whole tree and reports real counts either way, so
+# there is never a question of whether it ran. `push` stays filtered — those runs gate
+# nothing.
 on:
-  pull_request:
-    paths:
-      - "ansible/**"
-      - ".github/workflows/ansible-validate.yml"
+  pull_request: {}
   push:
     branches: [main]
     paths:
