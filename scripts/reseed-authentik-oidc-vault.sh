@@ -8,7 +8,10 @@
 # dashboard (the automation never mutates the SSO box) — slug `cloudflare-access`, confidential
 # client, redirect https://petedillo-labs.cloudflareaccess.com/cdn-cgi/access/callback,
 # implicit-consent flow, scopes `openid email profile`. That app mints the two values below.
-# See docs/runbooks/fleet-activity-view.md §"Swap login to Authentik OIDC".
+# Pin the slug: the JWKS URL in cloudflare-oidc.tf embeds it. Before you seed, confirm the app
+# answers: curl https://auth.pdlab.dev/application/o/cloudflare-access/.well-known/openid-configuration
+# The Cloudflare side is IaC in cloudflare-oidc.tf; its traps are in docs/GOTCHAS.md
+# §"Cloudflare — tunnel ingress + Access". The runbook that held this went with the fleet (PET-265).
 #
 # Idempotent. Prints no secrets. Reads inputs at runtime:
 #   Vault token:   $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM, else prompt
