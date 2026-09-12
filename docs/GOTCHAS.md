@@ -1002,6 +1002,25 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   two fields and concludes "the merge gate held" proves nothing: it has to be made with the
   identity that would actually do the merging.
 
+- **Branch protection is a full-replacement `PUT`, so reverting one field silently drops
+  every field you did not resend.** PET-397 made `ansible-validate` a required status check.
+  Reverting `enforce_admins` a day later took it back out, because the revert re-sent the
+  protection object without the contexts. Nothing reported it: the job still runs on every
+  pull request and still goes green.
+  `--jq '.required_status_checks.contexts'` answers `["validate","gate"]` (PET-418).
+
+- **That is worse than a check known to be advisory.** An advisory check is understood to be
+  advisory; this one was *believed* to be required, by a runbook that said so in writing.
+  A green tick whose gate was removed by an unrelated change is the same shape as the six
+  green-over-nothing tickets, arriving through configuration rather than code.
+
+- **So `PATCH` the sub-resource, and read it back.** `PATCH
+  /branches/main/protection/required_status_checks` changes the contexts without rewriting
+  the object. After any protection change, read the contexts back — the write succeeding
+  tells you nothing about what survived it. Neither this setting nor the fork-PR approval
+  policy is in Terraform, so nothing else will notice the drift; the fork-PR policy is not
+  even exposed by the REST API, so it cannot be checked by a script at all.
+
 - **`PUT /repos/{owner}/{repo}/pulls/{n}/merge` has no dry-run form.** A call described as
   a gate test merged PR #292 for real. To test a merge gate without merging, read
   `mergeStateStatus` and `reviewDecision` — and to test what an identity can do, point it at
