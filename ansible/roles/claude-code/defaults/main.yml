@@ -32,12 +32,6 @@ claude_repos:
   - { name: co-latro-backend, dest: co-latro/backend }
   - { name: co-latro-frontend, dest: co-latro/frontend }
 
-# Clones are SEEDED, never updated. This is a working host: a re-run that fast-forwarded
-# every repo would move the branch out from under a session mid-task, and a re-run that
-# reset them would delete uncommitted work. Ansible creates a clone that is missing and
-# then never touches it again — the session pulls its own repos, like any developer.
-claude_update_repos: false
-
 # --- Toolchain ------------------------------------------------------------------------
 # Node.js LTS major (NodeSource). 22 = active LTS ("jod").
 claude_nodejs_major: 22
@@ -58,14 +52,19 @@ claude_authorized_keys:
 
 # --- Remote Control -------------------------------------------------------------------
 # The permission mode the served sessions START in. `bypassPermissions` was chosen
-# deliberately for this host (PET-396): it is an isolated container whose reason to exist
-# is unattended work you drive from a phone, and a prompt you cannot see is a stall.
+# deliberately for this host (PET-396): its reason to exist is work you drive from a phone,
+# and a prompt you cannot see is a stall.
 #
 # Know what it buys and what it costs. Claude Code's own guidance for this mode is
-# "isolated containers and VMs only", and this container is NOT isolated from the lab: it
-# holds an SSH key and sits on the LAN with Vault, Proxmox and Postgres. Deny rules still
-# apply in this mode; allow rules do not. Set this to `default` (Manual) or `acceptEdits`
-# to walk it back — it is one variable and a play re-run.
+# "isolated containers and VMs only", and this container is NOT isolated from the lab — it
+# sits on the LAN with Vault, Proxmox and Postgres. The role provisions no outbound
+# credential (the only key it places is a PUBLIC key, authorizing inbound SSH), so a session
+# reaches what the LAN serves unauthenticated plus whatever an operator adds by hand.
+#
+# Deny rules still apply in this mode; allow rules do not — but they live in a
+# settings.json this same user owns and can rewrite. roles/claude-code/README.md says where
+# to put rules that have to hold. Set this to `default` (Manual) or `acceptEdits` to walk it
+# back — it is one variable and a play re-run.
 claude_permission_mode: bypassPermissions
 
 # One `claude remote-control` server per project directory. Each entry renders its own
@@ -81,7 +80,10 @@ claude_remote_sessions:
   - { name: iac, dir: iac, spawn: worktree }
 
 # Whether the units are enabled and started. DEFAULT FALSE, and that is load-bearing: a
-# server started before the operator has signed in with `/login` exits immediately and
-# systemd restarts it in a loop. Bootstrap the login first (roles/claude-code/README.md),
-# then re-run the play with `-e claude_remote_enable=true`.
+# server started before the operator has signed in with `/login` exits immediately, and
+# systemd restarts it until the unit's start limit trips. Bootstrap the login first
+# (roles/claude-code/README.md), then re-run the play with `-e claude_remote_enable=true`.
+#
+# ⚠ Override it with `=true` / `=false` and NOTHING ELSE, and note that the task reading it
+# has to say `| bool`: `-e` hands Jinja a STRING, and the string "false" is truthy.
 claude_remote_enable: false

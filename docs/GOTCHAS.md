@@ -777,8 +777,18 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   can install Claude Code, render its units and set every variable, and the host still
   cannot serve until a human runs `/login` over SSH. Plan the rollout as two phases and
   leave the units **stopped** in phase one — a server started without an eligible login
-  exits immediately, and `Restart=always` turns a missing step into a crash loop that reads
-  like a broken host.
+  exits immediately, and an unbounded `Restart=always` turns a missing step into a crash
+  loop that reads like a broken host. Bound it with `StartLimitIntervalSec` +
+  `StartLimitBurst` in `[Unit]` so it lands in `failed` instead, and remember that clearing
+  `failed` needs `systemctl reset-failed` before the next start will be accepted.
+
+- **`-e var=false` is a truthy STRING, so an enable gate needs `| bool` on every read.**
+  Ansible's `-e key=value` never yields a bool. `{{ 'started' if enable else 'stopped' }}`
+  evaluates to `started` under `-e enable=false`, while a sibling `enabled: "{{ enable }}"`
+  goes through Ansible's own coercion and says false — leaving a **running, disabled** unit.
+  Worse, a `when: not enable | bool` elsewhere in the play *does* coerce, so the closing
+  message cheerfully reports the units as stopped. Found in review of PET-396; it is the
+  green-check-over-work-that-never-happened shape in miniature, inside one play.
 
 - **`bypassPermissions` is refused as root and under `sudo` on Linux.** A unit that runs
   the server as root fails at startup, so the dedicated non-root user is a requirement of

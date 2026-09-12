@@ -17,9 +17,11 @@ Description=Claude Code Remote Control server ({{ item.name }})
 Documentation=https://code.claude.com/docs/en/remote-control
 After=network-online.target
 Wants=network-online.target
-# A server whose login has expired exits at once, and Restart=always would spin on it
-# forever. Give up after 5 tries in 5 minutes so `systemctl status` shows a failed unit —
-# a state you can see — instead of a host that looks busy.
+# A server whose login has expired exits at once, and a BARE Restart=always would spin on it
+# forever. This unit uses Restart=always BOUNDED by the pair below: 5 starts in 5 minutes,
+# then systemd gives up and `systemctl status` shows a failed unit — a state you can see —
+# instead of a host that looks busy. Clearing that state needs `systemctl reset-failed`,
+# which the play runs before it starts anything.
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

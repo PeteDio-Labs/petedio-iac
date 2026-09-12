@@ -149,11 +149,18 @@
     path: "{{ claude_npm_prefix }}/bin/claude"
   register: claude_binary
 
+# ⚠ runuser, NOT become_user. `become_user` defaults to sudo, and the minimal Debian LXC
+# template this host is built from ships without it — the task dies with
+# `/bin/sh: 1: sudo: not found` and rc=127 (docs/GOTCHAS.md, PET-355). Installing sudo is not
+# enough on its own either: Ansible's unprivileged become still has to hand its temp module
+# file to the target user, which needs `acl` on this template, and mangles the module's JSON
+# into `Module result deserialization failed: No start of json char found` when it cannot.
+# That is how runner-233 ended up built, running and never registered (PET-128,
+# playbooks/configure-runner.yml). Dropping privileges INSIDE the command, from the root
+# connection, avoids the unprivileged-become machinery altogether.
 - name: Install Claude Code (npm global, as the session user)
-  become: true
-  become_user: "{{ claude_user }}"
   ansible.builtin.command:
-    cmd: npm install -g {{ claude_npm_package }}
+    cmd: runuser -u {{ claude_user }} -- npm install -g {{ claude_npm_package }}
   environment:
     HOME: "{{ claude_home }}"
     NPM_CONFIG_PREFIX: "{{ claude_npm_prefix }}"
@@ -170,14 +177,23 @@
     group: "{{ claude_user }}"
     mode: "0755"
 
+# SEEDED, NEVER UPDATED — and `creates:` is the thing that says so. This is a working host:
+# a re-run that fast-forwarded every repo would move the branch out from under a session
+# mid-task, and one that reset them would delete uncommitted work. A clone that already
+# exists is left alone; the session pulls its own repos, like any developer.
+#
+# runuser rather than become_user, for the reason given at the npm install above.
 - name: Clone the workspace repos
-  become: true
-  become_user: "{{ claude_user }}"
-  ansible.builtin.git:
-    repo: "{{ claude_github_base }}/{{ item.name }}.git"
-    dest: "{{ claude_workspace }}/{{ item.dest }}"
-    update: "{{ claude_update_repos }}"
-    version: HEAD
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git clone {{ claude_github_base }}/{{ item.name }}.git
+      {{ claude_workspace }}/{{ item.dest }}
+    creates: "{{ claude_workspace }}/{{ item.dest }}/.git"
+  # runuser does not start a login shell, so HOME would still be root's — and git reading
+  # /root/.gitconfig as the claude user is a permission error, not a miss.
+  environment:
+    HOME: "{{ claude_home }}"
   loop: "{{ claude_repos }}"
   loop_control:
     label: "{{ item.name }}"
@@ -219,6 +235,29 @@
 
 # --- The Remote Control servers --------------------------------------------------------------
 # One unit per project directory, rendered from claude_remote_sessions.
+
+# A unit whose WorkingDirectory does not exist fails at startup with status=200/CHDIR,
+# which names the unit and not the cause. claude_remote_sessions[].dir and
+# claude_repos[].dest are independent lists, and private repos are cloned by hand
+# (defaults/main.yml) — so prove the directory is there before rendering a unit for it.
+- name: Check the directory each remote-control session serves
+  ansible.builtin.stat:
+    path: "{{ claude_workspace }}/{{ item.dir }}"
+  register: claude_session_dirs
+  loop: "{{ claude_remote_sessions }}"
+  loop_control:
+    label: "{{ item.dir }}"
+
+- name: Fail on a session whose directory is missing
+  ansible.builtin.assert:
+    that: item.stat.isdir is defined and item.stat.isdir
+    fail_msg: >-
+      claude_remote_sessions entry '{{ item.item.name }}' serves
+      {{ claude_workspace }}/{{ item.item.dir }}, which does not exist. Clone it — this role
+      does not clone private repos — or drop the entry.
+  loop: "{{ claude_session_dirs.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
 
 - name: Install the remote-control units
   ansible.builtin.template:
@@ -264,14 +303,34 @@
 - name: Flush handlers so a changed unit is on disk before it is started
   ansible.builtin.meta: flush_handlers
 
+# A unit that tripped its start limit on a previous run sits in `failed`, and `systemctl
+# start` answers `Start request repeated too quickly` until someone clears it — so the
+# re-run that carries the operator's fresh login would fail on the wreckage of the run
+# before it. Clear it first; a no-op on a unit that is not failed.
+- name: Clear a tripped start limit before starting
+  ansible.builtin.command:
+    cmd: systemctl reset-failed claude-remote-{{ item.name }}.service
+  loop: "{{ claude_remote_sessions }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: claude_remote_enable | bool
+  changed_when: false
+  failed_when: false
+
 # Started only once the operator has logged in — see claude_remote_enable in defaults. A
-# server started without an eligible login exits immediately, and Restart=always turns that
-# into a crash loop that reads like a broken host rather than a missing step.
+# server started without an eligible login exits immediately; Restart=always is bounded by
+# the StartLimit pair in the unit so that lands in `failed` rather than a crash loop.
+#
+# ⚠ `| bool` IS LOAD-BEARING ON BOTH LINES. `-e claude_remote_enable=false` hands Jinja the
+# STRING "false", which is truthy — so a bare `if claude_remote_enable` evaluates to
+# `started` and the documented way to turn this off silently turns it on. `enabled:` goes
+# through Ansible's own bool coercion and would say false, leaving a running, disabled unit,
+# while the play's closing message (which does coerce) reports the units as stopped.
 - name: Enable and start the remote-control servers
   ansible.builtin.systemd:
     name: "claude-remote-{{ item.name }}.service"
-    enabled: "{{ claude_remote_enable }}"
-    state: "{{ 'started' if claude_remote_enable else 'stopped' }}"
+    enabled: "{{ claude_remote_enable | bool }}"
+    state: "{{ 'started' if claude_remote_enable | bool else 'stopped' }}"
     daemon_reload: true
   loop: "{{ claude_remote_sessions }}"
   loop_control:

@@ -25,8 +25,8 @@ is true of `gh`.
 
 So this role installs, configures, renders the units, and stops. `claude_remote_enable`
 defaults to `false`, and that default is load-bearing: a server started before the login
-exists exits immediately, and `Restart=always` turns that into a crash loop that reads like
-a broken host rather than a missing step.
+exists exits immediately, and systemd restarts it until the unit's start limit trips —
+turning a missing step into a failed unit that reads like a broken host.
 
 ## Bootstrap
 
@@ -99,6 +99,12 @@ feature reporting itself unavailable. **Untrusted workspace**: the trust dialog 
 accepted somewhere other than the project directory, so accept it again from
 `~/work/petedio/iac`.
 
+**If `systemctl start` answers `Start request repeated too quickly`,** the unit tripped the
+`StartLimitBurst` in its `[Unit]` section and is parked in `failed`. Clear it with
+`systemctl reset-failed claude-remote-<name>`, then start it. The play does this for you
+before starting, so a re-run with `-e claude_remote_enable=true` is not blocked by the
+wreckage of the run before it.
+
 If the server turns out to want a terminal it does not have under systemd, run it in a
 detached `tmux` session as the `claude` user instead (`tmux` is installed for this) and
 leave the unit disabled. That is a fallback, not the design — record it here if you need it,
@@ -116,9 +122,10 @@ running server, because a restart disconnects whoever is using it. Restart delib
 `systemctl restart claude-remote-iac`. Sessions the server was serving can be brought back
 for about four hours afterwards.
 
-**Repos are seeded, never updated.** `claude_update_repos` is `false` on purpose: a re-run
-that fast-forwarded every repo would move a branch out from under a session mid-task. The
-session pulls its own repos, like any developer.
+**Repos are seeded, never updated.** The clone task carries a `creates:` guard, so a repo
+that is already there is left alone: a re-run that fast-forwarded every repo would move a
+branch out from under a session mid-task. The session pulls its own repos, like any
+developer.
 
 **Claude Code updates itself.** The npm prefix is per-user (`~/.npm-global`) so the
 auto-update can write to it. The play installs the binary only when it is missing; the
@@ -131,10 +138,21 @@ this host: its reason to exist is work you drive from a phone, and a permission 
 cannot see is a stall.
 
 Be clear about what that means. Claude Code's own guidance for the mode is "isolated
-containers and VMs only", and **this container is not isolated from the lab** — it holds an
-SSH key and sits on the LAN with Vault, Proxmox and Postgres. Deny rules still apply in this
-mode; allow rules do not. Walking it back is one variable and a play re-run: set
-`claude_permission_mode` to `default` (Manual) or `acceptEdits`.
+containers and VMs only", and **this container is not isolated from the lab** — it sits on
+the LAN with Vault, Proxmox and Postgres. The role provisions no outbound credential: the
+only key it places is your *public* key, authorizing inbound SSH. So a session reaches what
+the LAN serves unauthenticated, plus whatever you add by hand afterwards — note that
+`gh auth login` leaves its OAuth token in `~/.config/gh/hosts.yml`, under the same user the
+sessions run as.
+
+Deny rules still apply in this mode; allow rules do not. ⚠ But those deny rules live in
+`~/.claude/settings.json`, which is owned by `claude` — the user the sessions run as — so a
+session can rewrite them. To make them hold, put them in root-owned
+`/etc/claude-code/managed-settings.json` instead. The same goes for `~/.bashrc` and
+`~/.ssh/authorized_keys`: as seeded, a session can persist its own access.
+
+Walking it back is one variable and a play re-run: set `claude_permission_mode` to `default`
+(Manual) or `acceptEdits`.
 
 The mode is also why the session user is not root. Claude Code refuses `bypassPermissions`
 as root or under sudo on Linux, so a unit running as root would fail at startup.

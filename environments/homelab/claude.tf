@@ -17,14 +17,17 @@
 #   241  openfaas          live
 #   242  ex-resume-242     removed in PET-307, but tickets and runbooks still name it —
 #                          the same reason plane.tf took 235 over a free-but-loaded 234
-#   243  waterfast         live (its DB is in databases.tf; the LXC predates capture)
+#   243  ex-waterfast      destroyed in PET-306 (2026-08-24) with fast.pdlab.dev; only its
+#                          DB row in databases.tf survives. Same "still named everywhere"
+#                          caution as 242
 #   244  ex-tailscale      died with pve01 and MUST NOT be recreated (see tailscale.tf)
 #   245  minio-data        live
 #   246  reserved          claimed for the still-unbuilt notes-svc by minio-data.tf
 #
-# Debian 13 (module default template) — must exist on pve03's `local` storage or
-# apply-on-merge fails at create (it is the greenfield default, so normally present):
-#   pveam update && pveam download local debian-13-standard_13.1-2_amd64.tar.zst
+# Debian 13, PINNED to the 13.6-1 image media-dash.tf, palworld.tf and runner.tf all use —
+# not the module default 13.1-2, which nothing else in this environment still asks for. The
+# template must exist on pve03's `local` storage or apply-on-merge fails at create:
+#   pveam update && pveam download local debian-13-standard_13.6-1_amd64.tar.zst
 #
 # NO out-of-band post-create step, DELIBERATELY. Nothing here runs Docker, so this host
 # needs no `features{}` (nesting/keyctl) and no device passthrough — the two things a
@@ -64,6 +67,7 @@ module "claude_code" {
   memory_swap      = 2048
   disk_size        = 40
   datastore_id     = "local"
+  template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
   description      = "Claude Code host — runs `claude remote-control` so sessions are drivable from claude.ai/code and the Claude app. Managed by Terraform."
 }
 
