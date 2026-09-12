@@ -21,10 +21,12 @@
 # and exits 0. A green tick over an empty glob. So every step below counts what it is about
 # to look at, refuses to continue on zero, and prints the count next to the result.
 #
-# THE BACKLOG IS FROZEN, NOT WAIVED. `ansible/.ansible-lint-ignore` records the 28 file+rule
-# pairs that already existed when this landed. A NEW violation fails even in a file that
-# already carries an entry for a different rule, and a new file carries no entries at all,
-# so the backlog can only shrink. Work it down by deleting lines and fixing what they named.
+# THERE IS NO BACKLOG AND NO IGNORE FILE. The tree lints clean at ansible-lint's `production`
+# profile: 0 failures, 0 warnings over 186 files. The findings that existed when this job was
+# written were fixed, except for eleven that were deliberate — those carry `# noqa: <rule>`
+# at their own site with the reason written above them, which is arguable in review in a way
+# that a path in an ignore file is not. Keep it that way: if you need to suppress a rule,
+# suppress it where the code is and say why.
 name: ansible-validate
 
 on:

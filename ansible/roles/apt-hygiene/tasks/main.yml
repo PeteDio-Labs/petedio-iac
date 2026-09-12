@@ -8,7 +8,10 @@
 
 # Proving apt works again is the point of the whole role, so check it rather
 # than assuming the removals were sufficient.
-- name: Prove apt update now succeeds
+# noqa reason: the assert below reads apt_hygiene_update.stderr for "not bound" and
+# "signature verification". apt-get exits 0 while printing those, and ansible.builtin.apt
+# does not expose stderr on success — so the module form cannot make this assertion.
+- name: Prove apt update now succeeds  # noqa: command-instead-of-module
   ansible.builtin.command: apt-get update
   register: apt_hygiene_update
   changed_when: false
@@ -27,7 +30,10 @@
 # Not acted on, only surfaced. Upgrading 190 packages on the node that carries
 # Vault, MinIO, Plane, Authentik and the media stack is a planned window, not a
 # side effect of a repo cleanup.
-- name: Report pending upgrades without touching them
+# noqa reason: `-s` is a SIMULATION. ansible.builtin.apt with upgrade=dist would actually
+# upgrade the ~190 packages this task exists only to count, on the node carrying Vault,
+# MinIO, Plane, Authentik and the media stack. Never convert this one.
+- name: Report pending upgrades without touching them  # noqa: command-instead-of-module
   ansible.builtin.command: apt-get -s upgrade
   register: apt_hygiene_pending
   changed_when: false

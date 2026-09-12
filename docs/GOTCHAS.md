@@ -851,10 +851,23 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
 
 - **`syntax-check[unknown-module]` usually means a missing collection, not a typo.** Nine of
   them appear across this repo until `ansible-galaxy collection install -r
-  ansible/requirements.yml` has run. They are deliberately NOT in `.ansible-lint-ignore`, so
-  a silently failed collection install turns the check red rather than skipping those files.
+  ansible/requirements.yml` has run. They are deliberately NOT suppressed with `# noqa`, so a
+  silently failed collection install turns the check red rather than skipping those files.
 
-- **The backlog is frozen in `ansible/.ansible-lint-ignore`, one line per file+rule pair.**
-  A new violation fails even in a file that already has an entry for a different rule, and a
-  new file has no entries at all. Shrink it by deleting lines and fixing what they name;
-  do not regenerate it wholesale to make a red build green.
+- **There is no ignore file — suppress at the site, with the reason.** The tree lints clean
+  at the `production` profile. Eleven findings were deliberate and carry `# noqa: <rule>`
+  where the code is, with the why above them. Three of those are worth knowing before you
+  "tidy" one: `apt-get -s upgrade` in `apt-hygiene` is a SIMULATION whose stdout is parsed —
+  the `ansible.builtin.apt` form would actually upgrade ~190 packages on pve03;
+  `systemctl start --wait` in `vault-unseal` propagates the oneshot's exit code, which
+  `systemd_service: state=started` discards; and the reboot in `ollama-service` must precede
+  the `nvidia-smi` assert in the same play, so it cannot become a handler.
+
+- **`set -o pipefail` needs `executable: /bin/bash`.** `/bin/sh` is dash on Debian and
+  answers `Illegal option -o pipefail` with rc=2. Fixed once on runner-233 (`6cb5bfb`), and
+  again in `configure-openfaas.yml` when the lint backlog was cleared. If you add a pipeline
+  to a `shell:` task, add the `args: executable:` in the same edit.
+
+- **Renaming a handler breaks every `notify:` that names it.** PET-303 did exactly that and
+  left a dangling notify. When `name[casing]` makes you capitalise a handler, grep the repo
+  for the old string and move the notifies in the same commit — `Restart zot` alone has four.

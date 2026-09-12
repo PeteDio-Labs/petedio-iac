@@ -97,7 +97,10 @@
   register: nvidia_installed
   when: not nvidia_smi_stat.stat.exists
 
-- name: Reboot to load NVIDIA driver
+# noqa reason: ORDERING. The nvidia-smi query and the two-GPU assert directly below run in
+# this same play. A handler would defer the reboot past them, leaving the driver installed
+# with its kernel module unloaded — so the verification would fail on a correct install.
+- name: Reboot to load NVIDIA driver  # noqa: no-handler
   ansible.builtin.reboot:
     reboot_timeout: 600
     msg: "Rebooting to load NVIDIA driver"

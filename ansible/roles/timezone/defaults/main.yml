@@ -14,7 +14,7 @@
 # Split timezones also make correlating logs across guests during an incident
 # needlessly hard, which is exactly when you can least afford it.
 
-homelab_timezone: America/New_York
+timezone_name: America/New_York
 
 # Guests are reached through the node rather than over SSH on purpose: they are
 # split across two repos' inventories and several are in neither, so iterating
