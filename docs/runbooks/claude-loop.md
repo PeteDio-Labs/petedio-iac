@@ -41,7 +41,7 @@ The second is a convenience. **The first is the control.** If the required revie
 `main` ever goes to zero, this identity can merge unreviewed work the same afternoon.
 
 Read the protection back rather than trusting that it is set. As of 2026-09-12 it answers
-`validate, gate, ansible-validate` / `strict: true` / `reviews: 1` / `enforce_admins: false`:
+`["validate","gate"]` / `strict: true` / `reviews: 1` / `enforce_admins: false`:
 
 ```sh
 gh api /repos/PeteDio-Labs/petedio-iac/branches/main/protection \
@@ -86,13 +86,26 @@ gh api /repos/PeteDio-Labs/petedio-iac/branches/main/protection \
 > **Never add a path-filtered workflow to `required_status_checks`.** A required check with
 > a `paths:` filter never reports on a PR outside those paths, and GitHub waits for it
 > forever at `Expected — waiting for status to be reported`. `ansible-validate` had such a
-> filter removed in #293 for exactly this reason before it was made required —
-> `docs/GOTCHAS.md`.
+> filter removed in #293 for exactly this reason — `docs/GOTCHAS.md`.
+
+> [!CAUTION]
+> **`ansible-validate` is NOT a required check, whatever a green tick suggests.** Read back
+> live on 2026-09-12, `.required_status_checks.contexts` is `["validate","gate"]`. PET-397
+> made it required; reverting `enforce_admins` silently took it back out, because branch
+> protection is a **full-replacement `PUT`** and the revert did not resend the contexts.
 >
-> That fix is not yet exercised: every pull request merged since #293 happened to touch
-> `ansible/**`. The first Terraform-only or docs-only PR is the test. If it hangs at
-> `Expected — waiting for status`, drop the check back out:
-> `gh api -X PATCH /repos/PeteDio-Labs/petedio-iac/branches/main/protection/required_status_checks -f 'contexts[]=validate' -f 'contexts[]=gate'`
+> So the job runs on every pull request, goes green, and blocks nothing. That is worse than
+> a check known to be advisory: this one is *believed* to be required, which is the state
+> the six green-over-nothing tickets describe. This runbook asserted it was required until
+> the contexts were actually read.
+>
+> Restoring it is Pedro's call. If he does, `PATCH` the sub-resource rather than `PUT` the
+> object, and read the contexts back afterwards:
+> `gh api -X PATCH /repos/PeteDio-Labs/petedio-iac/branches/main/protection/required_status_checks -f 'contexts[]=validate' -f 'contexts[]=gate' -f 'contexts[]=ansible-validate'`
+>
+> The path-filter hazard above is still not exercised — every PR merged since #293 happened
+> to touch `ansible/**`. The first Terraform-only or docs-only PR tests it, but only once
+> the check is required again.
 
 ---
 

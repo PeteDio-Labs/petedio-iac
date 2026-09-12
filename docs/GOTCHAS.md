@@ -923,3 +923,36 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   before the fix keeps `/etc/sudoers.d/claude-loop` forever if the role simply stops
   rendering it. Reconcile what you removed with `state: absent`, the same way the role
   already reaps undeclared `claude-remote-*` units.
+
+## `git checkout <ref> -- .` restores files you deleted, through the index (PET-408)
+
+- **It is a restore, not a merge.** It writes that ref's tree into the index *and* the
+  working tree for every matching path. A file that exists at `<ref>` and was **deleted on
+  your branch comes back already staged**, with no conflict and nothing in the output to say
+  so. `git checkout HEAD -- .` afterwards does not undo it: that restores tracked files, it
+  never removes an extra one. The next `git add -A` then sweeps it into a commit whose
+  message describes something else entirely.
+
+- **It happened here, on the branch whose purpose was the deletion.** Reading another
+  branch's content to review it restored `roles/claude-code/templates/claude-loop-sudoers.j2`
+  — the sudo grant PET-408 exists to remove — into a commit that claimed to add `follow:
+  false` to two tasks. Nothing rendered the template, so no host would have received the
+  grant; what would have shipped is a repository containing the thing PET-408 deletes, one
+  task away from live.
+
+- **Read another ref with `git show <ref>:<path>` or a separate worktree.** If you must use
+  a pathspec checkout, name the paths rather than `-- .`, and run `git status --short` and
+  `git diff --cached --stat` before committing.
+
+- **No check caught it, and none of the obvious ones could.** `ansible-lint` passes — a
+  valid Jinja template is still valid when nothing renders it. `--syntax-check` never reads
+  templates. `scripts/test-claude-loop-tick.sh` never reads Ansible. What caught it was the
+  lint line: `193 files processed of 203` where the run before said `192 of 202`. A file
+  count that rises after a commit that deletes nothing.
+
+- **So diff the numbers, not the prose.** Two runs of the same command produce
+  identically-shaped output; the verdict line says `0 failures` both times and only the
+  counts carry the signal. Before comparing two runs, say which number should change and by
+  how much, then look. This only works if the check prints what it examined — which is the
+  standing rule in `.github/workflows/ansible-validate.yml`, earning its keep somewhere
+  nobody planned.
