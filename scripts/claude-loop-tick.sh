@@ -236,6 +236,7 @@ SEQ="${ITEM#PET-}"
 [[ "$SEQ" =~ ^[0-9]+$ ]] || fail "work item key '$ITEM' is not PET-<n>"
 log "taking $ITEM — $TITLE"
 
+
 # --- step 5: claim it before doing anything that can fail --------------------------------
 # Written FIRST so a tick that dies mid-run still counts as an attempt. Claiming after the
 # work would let a crash loop retry the same item forever.
@@ -270,6 +271,21 @@ fail_item() {
   record_claim failed "$1"
   fail "$ITEM: $1"
 }
+
+# ⚠ REFUSE AN ITEM WITH NO BODY RATHER THAN WORKING FROM ITS TITLE (PET-424). The first
+# live tick rendered "(the work item has no description)" into every prompt, because the
+# broker read a field Plane does not return. The session would have worked from the title
+# alone — and PET-421's body is what named its preferred fix and authorised the change at
+# all.
+#
+# The old fallback string is why it went unnoticed: "this item has no description" and "I
+# could not read the description" are indistinguishable to the session, so a read failure
+# arrived wearing the costume of a fact about the item. That is this repo's own bug, inside
+# the loop, on its first live run. There is now no fallback: an empty body stops the tick.
+BODY="$(printf '%s' "$PICK" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("description") or "")')"
+if [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then
+  fail_item "work item has no readable body. The loop does not work from a title alone — either the item genuinely has no description, or the broker could not read it (check next-item's output for this key)."
+fi
 
 # --- step 6: a clean branch, in the loop's OWN clone -------------------------------------
 #
@@ -314,7 +330,15 @@ log "branch $BRANCH off origin/main"
 # readable by anything on the host through /proc/<pid>/cmdline.
 TICK_DIR="$LOOP_HOME/run/$ITEM"
 rm -rf "$TICK_DIR"
-mkdir -p "$TICK_DIR"
+# ⚠ CREATED AS THE LOOP USER, NOT AS ROOT (PET-424). The session runs dropped and is asked
+# to write spec-diff.md in here. A root-owned directory meant it could not: on the first
+# live tick the session fell back to writing in the parent, the tick read the path it had
+# named, found nothing, and refused to open a PR — correctly, for the wrong reason.
+#
+# Nothing secret lives here. The secrets are root 0400 in the broker's conf dir; this holds
+# a rendered prompt, a session log and the spec diff, all of which the session may read and
+# one of which it must write.
+as_loop_user mkdir -p "$TICK_DIR" || fail_item "could not create $TICK_DIR as $LOOP_USER"
 SPEC_DIFF="$TICK_DIR/spec-diff.md"
 
 PICK="$PICK" SPEC_DIFF="$SPEC_DIFF" BRANCH="$BRANCH" REPO="$REPO" \
@@ -325,7 +349,7 @@ body = open(os.environ["PROMPT_FILE"]).read()
 body = (body
         .replace("{{ITEM_KEY}}", item["key"])
         .replace("{{ITEM_TITLE}}", item["name"])
-        .replace("{{ITEM_BODY}}", item["description"] or "(the work item has no description)")
+        .replace("{{ITEM_BODY}}", item["description"])
         .replace("{{SPEC_DIFF_PATH}}", os.environ["SPEC_DIFF"])
         .replace("{{BRANCH}}", os.environ["BRANCH"])
         .replace("{{REPO}}", os.environ["REPO"]))

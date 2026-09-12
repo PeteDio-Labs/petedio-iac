@@ -141,6 +141,10 @@ hb() { python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sys.ar
 
 ONE='{"label":"agent-ready","examined":41,"labelled":2,"eligible":1,"items":[{"key":"PET-500","id":"u1","name":"Give the thing a second copy","description":"Do A. Do B."}]}'
 NONE='{"label":"agent-ready","examined":41,"labelled":0,"eligible":0,"items":[]}'
+# An item whose body the broker could not read. Before PET-424 the tick rendered a fallback
+# string and worked from the title; now it refuses. Found on the first LIVE tick, not here —
+# every stub until this one supplied a body, so the suite could not see it.
+NOBODY='{"label":"agent-ready","examined":41,"labelled":1,"eligible":1,"items":[{"key":"PET-500","id":"u1","name":"Give the thing a second copy","description":""}]}'
 
 say "1. an empty queue parks as no-work and still reports what it examined"
 setup "$NONE" good
@@ -282,6 +286,16 @@ else
   ok "the hook never ran (core.hooksPath)"
   ok "GH_TOKEN could not have leaked to it"
 fi
+
+say "15. an item with no readable body is refused, not worked from its title (PET-424)"
+setup "$NOBODY" good
+"$TICK" >/dev/null 2>&1; RC=$?
+[ "$RC" -ne 0 ] && ok "exits non-zero" || no "exits non-zero" "rc=$RC"
+[ "$(hb outcome)" = "failed" ] && ok "outcome=failed" || no "outcome=failed" "got $(hb outcome)"
+hb detail | grep -q "no readable body" && ok "detail says the body was unreadable" || no "detail" "$(hb detail)"
+[ ! -s "$GH_LOG" ] && ok "no PR was opened" || no "no PR" "$(cat "$GH_LOG")"
+# The session must never have run: refusing after burning quota is the expensive version.
+[ ! -f "$CLAUDE_LOOP_HOME/run/PET-500/session.log" ] && ok "refused BEFORE running the session" || no "session ran anyway" ""
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
