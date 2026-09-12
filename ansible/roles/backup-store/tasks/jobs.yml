@@ -57,6 +57,8 @@
       --storage {{ backup_store_pve_storage_id }}
       --compress zstd
       --all 1
+      {{ ('--exclude ' ~ (backup_store_job_wanted.exclude | join(',')))
+         if (backup_store_job_wanted.exclude | default([]) | length > 0) else '' }}
       --enabled 1
       --notes-template '{{ '{{guestname}}' }}'
       --comment 'backup-store nightly ({{ inventory_hostname }}) — managed by ansible'
@@ -75,12 +77,18 @@
       --mode {{ backup_store_job_wanted.mode }}
       --schedule {{ backup_store_job_wanted.schedule }}
       --storage {{ backup_store_pve_storage_id }}
+      --exclude '{{ backup_store_job_wanted.exclude | default([]) | join(',') }}'
   when:
     - backup_store_job_wanted | length > 0
     - backup_store_job_live | length > 0
+    # ⚠ Exclusions are drift too. Without this, a VMID removed in the web UI quietly
+    # rejoins the nightly stop and this play goes on reporting ok. A live job carries
+    # NO `exclude` key until one is set, hence the default('').
     - backup_store_job_live.mode != backup_store_job_wanted.mode
       or backup_store_job_live.schedule != backup_store_job_wanted.schedule
       or backup_store_job_live.storage != backup_store_pve_storage_id
+      or (backup_store_job_live.exclude | default('') | string)
+         != (backup_store_job_wanted.exclude | default([]) | join(','))
   changed_when: true
 
 - name: Report the job as it now stands
