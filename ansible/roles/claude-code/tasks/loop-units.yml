@@ -1,0 +1,142 @@
+---
+# claude-code / the ticket-driven work loop — units half (PET-399).
+#
+# The loop's home, its own clone of the repo, the prompt, the tick script and the
+# timer/service pair. Unlike tasks/loop.yml, everything here converges on EVERY run whether
+# or not the identity was passed: the timer must be reconcilable to `disabled` by someone
+# who does not hold the credentials, and a play that installs half a loop is worse than one
+# that installs all of it and leaves it off.
+
+- name: Create the loop home and its state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0750"
+  loop:
+    - "{{ claude_loop_home }}"
+    - "{{ claude_loop_home }}/state"
+    - "{{ claude_loop_home }}/state/items"
+    - "{{ claude_loop_home }}/run"
+
+# ⚠ THE LOOP GETS ITS OWN CLONE, NOT {{ claude_workspace }}/{{ claude_loop_project_dir }}.
+# A tick runs `git reset --hard` and `git clean -ffdx` on this directory before branching,
+# and the workspace clone is what a human drives over SSH and what the remote-control
+# servers hand out worktrees from. A tick must never be able to throw away someone's
+# uncommitted work.
+#
+# This costs nothing that the shared clone bought: `claude -p` skips the workspace trust
+# dialog entirely (`claude --help`, under -p), so the loop does not need a pre-trusted
+# directory the way an interactive session does. Trust it by hand anyway if you want MCP
+# tools resolving inside a tick — docs/runbooks/claude-loop.md.
+#
+# SEEDED, NEVER UPDATED, like the workspace clones: `creates:` guards it, and each tick
+# fetches and re-branches for itself. runuser rather than become_user, for the reason given
+# at the npm install in main.yml.
+- name: Clone the repo the loop works in
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git clone {{ claude_github_base }}/{{ claude_loop_repo | basename }}.git
+      {{ claude_loop_home }}/{{ claude_loop_project_dir }}
+    creates: "{{ claude_loop_home }}/{{ claude_loop_project_dir }}/.git"
+  environment:
+    HOME: "{{ claude_home }}"
+
+# The tick refuses to reset a directory that does not carry this file, so a mis-set
+# CLAUDE_LOOP_CHECKOUT fails loudly instead of cleaning whatever it was pointed at.
+#
+# It lives INSIDE .git/ on purpose: in the working tree it would be untracked, so
+# `git clean -ffdx` would delete it (and the second tick would refuse to run) and
+# `git add -A` would commit it into the pull request. Both were found by running
+# scripts/test-claude-loop-tick.sh.
+- name: Mark the clone as the loop's own
+  ansible.builtin.file:
+    path: "{{ claude_loop_home }}/{{ claude_loop_project_dir }}/.git/claude-loop-checkout"
+    state: touch
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0644"
+    modification_time: preserve
+    access_time: preserve
+
+# A `files/` entry, not a template. The tick substitutes the prompt's double-brace
+# placeholders itself, with a plain string replace — so Ansible must copy the file verbatim
+# rather than try to resolve them as variables, which is what moving it to templates/ would
+# do, and it would fail the play on the first one.
+- name: Install the loop prompt
+  ansible.builtin.copy:
+    src: claude-loop-prompt.md
+    dest: "{{ claude_loop_home }}/prompt.md"
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0644"
+
+# Kept in scripts/ rather than this role's files/, because it is an operational script: an
+# operator runs it by hand before ever enabling the timer, and
+# scripts/test-claude-loop-tick.sh exercises it there. A second copy under files/ would
+# drift from the one the tests run.
+- name: Check that the tick script is where this role expects it
+  ansible.builtin.stat:
+    path: "{{ role_path }}/../../../scripts/claude-loop-tick.sh"
+  register: claude_loop_tick_src
+  delegate_to: localhost
+  become: false
+
+- name: Fail if the tick script is missing from the repo
+  ansible.builtin.assert:
+    that: claude_loop_tick_src.stat.exists
+    fail_msg: >-
+      scripts/claude-loop-tick.sh is not at
+      {{ role_path }}/../../../scripts/claude-loop-tick.sh. This role reaches out of
+      ansible/ for it on purpose — if the repo layout moved, fix the path here rather than
+      copying the script into the role.
+
+# root-owned 0555: the loop runs it, nobody rewrites it by accident. This is a guard
+# against a stray edit, NOT a boundary — a session on this host already reaches the broker,
+# so treat it as tidiness rather than security.
+- name: Install the tick script
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../scripts/claude-loop-tick.sh"
+    dest: "{{ claude_loop_home }}/claude-loop-tick.sh"
+    owner: root
+    group: root
+    mode: "0555"
+
+- name: Install the loop units
+  ansible.builtin.template:
+    src: "claude-loop.{{ item }}.j2"
+    dest: "/etc/systemd/system/claude-loop.{{ item }}"
+    mode: "0644"
+  loop:
+    - service
+    - timer
+  notify: Reload systemd
+
+- name: Flush handlers so a changed unit is on disk before it is started
+  ansible.builtin.meta: flush_handlers
+
+# ⚠ `| bool` IS LOAD-BEARING ON BOTH LINES, for the reason spelled out at the remote-control
+# equivalent in main.yml: `-e claude_loop_enable=false` hands Jinja the STRING "false",
+# which is truthy, so a bare `if claude_loop_enable` would turn the loop ON by way of the
+# documented way to turn it off. That exact bug shipped in PET-396.
+#
+# Both branches converge, which is the other half. Most gated timers in this tree wrap
+# installation in `when: <flag> | bool` and leave a running timer running when the flag goes
+# false; this role does not, and a loop that opens pull requests is the last place to start.
+- name: Enable and start the loop timer
+  ansible.builtin.systemd:
+    name: claude-loop.timer
+    enabled: "{{ claude_loop_enable | bool }}"
+    state: "{{ 'started' if claude_loop_enable | bool else 'stopped' }}"
+    daemon_reload: true
+
+- name: Report where the loop stands
+  ansible.builtin.debug:
+    msg: >-
+      claude-loop.timer is {{ 'ENABLED — it will open draft pull requests on ' ~ claude_loop_repo
+                              if claude_loop_enable | bool
+                              else 'installed and STOPPED. Run one tick by hand before you enable it' }}.
+      Schedule {{ claude_loop_oncalendar }}, label '{{ claude_loop_label }}',
+      heartbeat {{ claude_loop_home }}/state/last-tick.json.

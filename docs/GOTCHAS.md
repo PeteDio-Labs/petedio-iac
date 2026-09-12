@@ -811,6 +811,20 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   session from a project directory, or Remote Control refuses to run later for a reason
   that points nowhere near the trust prompt you clicked past weeks ago.
 
+- **`claude -p` skips the trust dialog entirely, so trust is not a constraint on an
+  unattended job** (`claude --help`, under `-p`: the dialog is skipped whenever Claude runs
+  non-interactively, which includes any run whose stdout is not a TTY). Read that both
+  ways. It means the PET-399 work loop can run in a directory nobody ever trusted by hand,
+  which is what lets it keep its own clone instead of sharing the one a human drives. It
+  also means a piped `claude` in a directory you did not mean to trust does not stop to
+  ask. Trust the directory anyway if you want MCP tools resolving in that session.
+
+- **There is no `--max-turns` in Claude Code 2.1.x.** An unattended `claude -p` has no
+  turn ceiling, so wall-clock is the only bound available: `timeout` around the process,
+  and a `TimeoutStartSec` above it in the unit so the inner one reports first and says why.
+  Checked against `claude --help` on 247 while writing the loop — a `--max-turns` copied
+  out of an older runbook fails the whole invocation rather than being ignored.
+
 - **Nothing about this host needs `features{}`** — no Docker, so no nesting, no keyctl, and
   no `scripts/lxc-features-<id>.sh` step on the node. Worth stating because the reflex on
   this cluster is that every app LXC needs the root@pam dance. It is also worth *keeping*

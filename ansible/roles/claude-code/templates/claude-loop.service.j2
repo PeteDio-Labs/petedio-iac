@@ -1,0 +1,63 @@
+{{ ansible_managed | comment }}
+# One tick of the ticket-driven work loop (PET-399), triggered by claude-loop.timer.
+#
+# Runs AS {{ claude_user }}, which is not a convenience: the Plane connector and the
+# claude.ai login are bound to that user's interactive session, and a different service
+# user loses both. It is also why the loop's two secrets are NOT handed to this unit
+# through `EnvironmentFile=` — a session in bypassPermissions owns this uid and can read
+# /proc/<pid>/environ while a tick runs. The tick asks a root-owned broker instead, and
+# nothing secret appears below.
+#
+# Type=oneshot: a tick does at most one work item and exits. The timer decides when the
+# next one happens; the tick's own flock decides whether it may start at all.
+
+[Unit]
+Description=One tick of the Claude Code work loop (PET-399)
+Documentation=file://{{ claude_workspace }}/{{ claude_loop_project_dir }}/docs/runbooks/claude-loop.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ claude_user }}
+Group={{ claude_user }}
+WorkingDirectory={{ claude_loop_home }}
+
+# ⚠ PATH IS SET EXPLICITLY, and it has to be. Debian's .bashrc returns early for
+# non-interactive shells, so the line the role appends there is invisible to systemd —
+# which is exactly the trap that makes a working host report as broken (docs/GOTCHAS.md).
+# {{ claude_npm_prefix }}/bin must come first so the tick runs the same Claude Code an
+# operator gets over SSH, including whatever version its auto-updater has moved to.
+Environment=HOME={{ claude_home }}
+Environment=PATH={{ claude_npm_prefix }}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=CLAUDE_BIN={{ claude_npm_prefix }}/bin/claude
+Environment=CLAUDE_LOOP_HOME={{ claude_loop_home }}
+Environment=CLAUDE_LOOP_CHECKOUT={{ claude_loop_home }}/{{ claude_loop_project_dir }}
+Environment=CLAUDE_LOOP_BROKER={{ claude_loop_broker }}
+Environment=CLAUDE_LOOP_REPO={{ claude_loop_repo }}
+Environment=CLAUDE_LOOP_MAX_ATTEMPTS={{ claude_loop_max_attempts }}
+Environment=CLAUDE_LOOP_TIMEOUT_SEC={{ claude_loop_timeout_sec }}
+Environment=CLAUDE_LOOP_MAX_AGE_SEC={{ claude_loop_max_age_sec }}
+
+ExecStart=/usr/bin/env bash {{ claude_loop_home }}/claude-loop-tick.sh
+
+# NoNewPrivileges would block the one sudo call the tick makes, and that call is the whole
+# credential design — the broker is how this unit reaches a GitHub token without holding
+# one. The sudoers entry is two exact command lines with no wildcards
+# (templates/claude-loop-sudoers.j2), which is where the narrowing actually lives.
+NoNewPrivileges=false
+#
+# NO OTHER SANDBOXING DIRECTIVES, deliberately. The sibling claude-remote-*.service carries
+# none either, and adding ProtectSystem/PrivateTmp here would be untested hardening around
+# a Node process whose temp and socket behaviour nobody has checked under them. The
+# boundary that matters on this host is the broker and the sudoers entry, not a systemd
+# sandbox — if you add one, verify a full tick end to end afterwards, not just that the
+# unit starts.
+
+# The tick boxes `claude -p` with `timeout` at CLAUDE_LOOP_TIMEOUT_SEC. This is the outer
+# bound on the whole tick, set above it so the inner one reports first and says why — a
+# systemd kill leaves no reason in the heartbeat, only a missing tick.
+TimeoutStartSec={{ claude_loop_timeout_sec | int + 600 }}
+
+[Install]
+WantedBy=multi-user.target

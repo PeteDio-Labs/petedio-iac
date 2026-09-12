@@ -171,3 +171,9 @@
       ({{ claude_loop_mint_check.stdout | trim | length }} characters, not logged). It
       expires in an hour whether or not anything uses it.
   when: claude_loop_identity_present | bool
+
+# The units, the loop's own clone, the prompt and the tick script. Separate because
+# everything above needs the credentials and everything below does not: the timer has to be
+# reconcilable to `disabled` by someone who does not hold them.
+- name: Install the loop units, the tick script and the loop's own clone
+  ansible.builtin.import_tasks: loop-units.yml
