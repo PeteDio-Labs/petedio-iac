@@ -67,9 +67,10 @@ Use this shape, one row per thing the work item asked for:
 ```markdown
 ## {{ITEM_KEY}} — what was asked, and what shipped
 
-| Asked for | What shipped | Status |
-|---|---|---|
-| <a bullet from the work item, in its own words> | <what you actually did, with file paths> | done / partial / not done |
+| Asked for | What shipped |
+|---|---|
+| **done** — <a bullet from the work item, in its own words> | <what you actually did, with file paths> |
+| **partial** — <the next asked-for thing> | <what you did, and see Shortfalls> |
 
 ### Shortfalls
 
@@ -82,7 +83,11 @@ says done.>
 "the change is correct" is not. If you could not verify something, say so here.>
 ```
 
-Three rules for the table, and they are the point of it:
+**Two columns, never three.** The status is the first thing in the *Asked for* cell, in
+bold, not a column of its own. These tables are read on a phone, and a third column wraps
+every row into unreadable slivers. `done`, `partial` and `not done` are the only values.
+
+Four rules for the table, and they are the point of it:
 
 1. **One row per asked-for thing, taken from the work item — not from what you did.** A
    table derived from your own diff can only ever say everything is done.
@@ -91,6 +96,8 @@ Three rules for the table, and they are the point of it:
    reviewer who reads a confident summary next to two green checks cannot.
 3. **Say what you examined, not only what you found.** "No other callers, checked with
    `grep -rn` across `ansible/` and `scripts/`" and "no other callers" are different claims.
+4. **Keep the cells short enough to read on a phone.** A cell that runs to a paragraph
+   belongs in *Shortfalls* or *How this was verified*, with the row pointing at it.
 
 ## Optional: comment on the work item
 
