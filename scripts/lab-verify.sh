@@ -470,37 +470,122 @@ else
       fi
       ok "unit active: $U"
 
-      # ⚠ AN ACTIVE UNIT IS NOT A REGISTERED SERVER -- the lesson the runners taught twice.
-      # The server registers with the Anthropic API over OUTBOUND HTTPS and polls it; that
-      # connection IS the feature working. A server whose login expired exits, or sits there
-      # holding nothing, and `is-active` cannot tell the difference. Nothing listens on a
-      # port here, so there is no inbound check to make instead.
+      # ⚠ AN ACTIVE UNIT IS NOT A SERVING ONE -- the lesson the runners taught twice. A
+      # server whose login has expired exits, and `is-active` alone cannot tell that apart
+      # from a healthy one during the window before systemd gives up.
       #
-      # ATTRIBUTE THE SOCKET TO THIS UNIT'S OWN PROCESSES. A bare count of established :443
-      # sockets is satisfied by apt, gh, npm or a session's own fetch -- a green check earned
-      # by something else entirely. Read the pids from the unit's cgroup so a connection held
-      # by a forked child still counts, and fall back to MainPID if cgroupfs is not readable.
-      CPIDS=$(pct_on "$CNODE" 247 "sh -c 'cat /sys/fs/cgroup/system.slice/$U/cgroup.procs 2>/dev/null'" | tr -d '\r' | tr '\n' ' ')
-      [ -z "$(echo "$CPIDS" | tr -d ' ')" ] && CPIDS=$(pct_on "$CNODE" 247 "systemctl show -p MainPID --value ${U%.service}" | tr -d '\r ')
-      PIDRE=$(echo "$CPIDS" | tr ' ' '\n' | grep -E '^[0-9]+$' | grep -v '^0$' | paste -sd'|' -)
-      if [ -z "$PIDRE" ]; then
-        bad "registered: $U" "active but exposes no pid to check"
-        continue
-      fi
-
-      # Distinguish "no connection" from "no ss": both would otherwise print 0 and blame the
-      # login. Say what was examined, not only what was found.
-      if ! pct_on "$CNODE" 247 "sh -c 'command -v ss >/dev/null 2>&1'"; then
-        skip "registered: $U" "ss (iproute2) not installed — cannot attribute the connection"
-        continue
-      fi
-      ES=$(pct_on "$CNODE" 247 "sh -c 'ss -tnpH state established dport = :443 2>/dev/null'" | tr -d '\r' | grep -cE "pid=(${PIDRE}),")
-      if [ "${ES:-0}" -ge 1 ]; then
-        ok "registered: $U" "$ES outbound HTTPS from this unit"
-      else
-        bad "registered: $U" "unit is up but holds no :443 — expired login? journalctl -u ${U%.service}"
-      fi
+      # ⚠ AND IT DOES NOT HOLD A CONNECTION. The first version of this check asserted an
+      # established outbound :443 owned by the unit's cgroup, on the theory that the server
+      # registers with the API and polls it. That theory is wrong, measured on 247 while it
+      # was demonstrably working: the server held ZERO TCP sockets (4 socket fds, none TCP),
+      # NRestarts 0, journal showing the ready banner. Meanwhile the host had 26 established
+      # :443 connections, every one of them owned by an unrelated interactive SSH session in
+      # user.slice. So that check reported a healthy host as broken on every run, which is
+      # the "red on main teaches people to ignore it" hazard rather than a signal.
+      #
+      # Use what only success leaves behind. The two states this check exists to separate
+      # each write a distinct line, so read the most recent of them.
+      READY='keeps running on this machine'
+      LOGIN_ERR='must be logged in'
+      MARK=$(pct_on "$CNODE" 247 "sh -c 'journalctl -u ${U%.service} -n 200 --no-pager 2>/dev/null | grep -E \"$READY|$LOGIN_ERR\" | tail -1'" | tr -d '\r')
+      case "$MARK" in
+        *"$READY"*)
+          ok "serving: $U" "ready banner is the latest start marker" ;;
+        *"$LOGIN_ERR"*)
+          bad "serving: $U" "no eligible claude.ai login — run /login as the claude user, then re-run the play" ;;
+        "")
+          # Distinguish "nothing to read" from "read it and found neither". journalctl may be
+          # empty after a log rotation on a long-running unit, which is not a fault.
+          skip "serving: $U" "no start marker in the last 200 journal lines — rotated? journalctl -u ${U%.service}" ;;
+        *)
+          bad "serving: $U" "unrecognised start marker: $(printf '%.60s' "$MARK")" ;;
+      esac
     done
+  fi
+
+  # ── The ticket-driven work loop (PET-399) ─────────────────────────────────
+  # ⚠ THIS BLOCK EXISTS TO SEPARATE "ran and found nothing" FROM "did not run".
+  # Those are the two states a scheduled job most often conflates, and this repo
+  # has shipped that conflation six times (PET-298, PET-317, PET-360, PET-363,
+  # PET-372, PET-374). A loop that opens pull requests is the last place to
+  # start: a silent one looks exactly like an idle one.
+  #
+  # So every line below prints the timestamp and the outcome, a heartbeat that
+  # is merely OLD is a failure rather than a quiet pass, and the staleness
+  # threshold is read out of the heartbeat itself (the tick writes the
+  # max_age_sec its unit was given) rather than guessed from an OnCalendar
+  # expression this script would have to parse and would eventually parse wrong.
+  #
+  # Paths are hardcoded to claude_loop_home's default, like the claude binary
+  # above. If you move it in the role, move it here.
+  LOOPTIMER=$(pct_on "$CNODE" 247 "sh -c 'ls -1 /etc/systemd/system/claude-loop.timer 2>/dev/null'" | tr -d '\r')
+  if [ -z "$LOOPTIMER" ]; then
+    # The loop is a separate opt-in from the remote-control servers, so its
+    # absence is "not installed", not drift.
+    skip "work loop" "claude-loop.timer is not on the host — not installed"
+  else
+    LOOPEN=$(pct_on "$CNODE" 247 "systemctl is-enabled claude-loop.timer" | tr -d '\r')
+    LOOPHB=$(pct_on "$CNODE" 247 "sh -c 'cat /home/claude/loop/state/last-tick.json 2>/dev/null'" | tr -d '\r')
+    LOOPINFO=$(HB="$LOOPHB" python3 -c '
+import datetime, json, os
+raw = os.environ["HB"].strip()
+if not raw:
+    print("missing - - -1 -1 -1 -1 - - no heartbeat file"); raise SystemExit
+try:
+    d = json.loads(raw)
+except Exception:
+    print("unparseable - - -1 -1 -1 -1 - - the heartbeat is not JSON"); raise SystemExit
+ts = d.get("ts", "")
+try:
+    when = datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    age = int((datetime.datetime.now(datetime.timezone.utc) - when).total_seconds())
+except Exception:
+    age = -1
+# Space-separated with the free-text detail LAST, so bash `read` can take the
+# rest of the line into it without quoting games.
+print(" ".join(str(x) for x in [
+    "ok", d.get("outcome", "?"), ts or "-", age, d.get("max_age_sec", 3900),
+    d.get("examined", -1), d.get("eligible", -1), d.get("item") or "-",
+    d.get("pr") or "-", (d.get("detail") or "-").replace("\n", " "),
+]))
+')
+    read -r LST LOUT LTS LAGE LMAX LEX LEL LITEM LPR LDET <<EOF
+$LOOPINFO
+EOF
+
+    if [ "$LOOPEN" != "enabled" ]; then
+      # Off by default and documented as such, so this is a skip — but say WHICH
+      # disabled state, and when it last ran, or "disabled" and "broken" read the
+      # same in a --quiet run.
+      if [ "$LST" = ok ]; then
+        skip "work loop" "timer is ${LOOPEN:-unknown} — off; last tick $LTS ($LOUT)"
+      else
+        skip "work loop" "timer is ${LOOPEN:-unknown} — off, and has never ticked"
+      fi
+    elif [ "$LST" != ok ]; then
+      bad "work loop" "timer is enabled but $LDET — it has never completed a tick"
+    elif [ "$LAGE" -lt 0 ]; then
+      bad "work loop" "heartbeat has no readable timestamp (ts='$LTS')"
+    elif [ "$LAGE" -gt "$LMAX" ]; then
+      # Distinguish "systemd never fired it" from "systemd fired it and the tick
+      # wrote nothing" — the same distinction the rest of this file insists on,
+      # one level down. They need different fixes.
+      LTRIG=$(pct_on "$CNODE" 247 "systemctl show claude-loop.timer -p LastTriggerUSec --value" | tr -d '\r')
+      bad "work loop" "timer enabled, last tick $LTS (${LAGE}s ago, limit ${LMAX}s) — the loop did not run. systemd last triggered it: ${LTRIG:-never}"
+    else
+      case "$LOUT" in
+        no-work) ok   "work loop" "ticked $LTS — 0 eligible of $LEX examined" ;;
+        worked)  ok   "work loop" "ticked $LTS — $LITEM → $LPR" ;;
+        skipped) ok   "work loop" "ticked $LTS — $LITEM already had a branch on origin" ;;
+        busy)    ok   "work loop" "ticked $LTS — a previous tick was still running" ;;
+        # The timer is healthy and a human has deliberately parked the loop. That
+        # is neither a pass nor a failure, and it must be visible: a PAUSED
+        # sentinel nobody remembers setting is how a loop stays silently off.
+        paused)  skip "work loop" "ticked $LTS — PAUSED sentinel is set; the timer runs, the loop parks" ;;
+        failed)  bad  "work loop" "ticked $LTS — failed: $LDET" ;;
+        *)       bad  "work loop" "ticked $LTS — unknown outcome '$LOUT' (this script and the tick disagree)" ;;
+      esac
+    fi
   fi
 fi
 
