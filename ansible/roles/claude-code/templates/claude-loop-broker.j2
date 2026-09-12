@@ -12,22 +12,25 @@
 # `/proc/<pid>/environ` for its own uid while a tick runs.
 #
 # So the secrets stay root-owned 0400 under {{ claude_loop_conf_dir }} and this script is
-# the only path to them. It is allowed to `{{ claude_user }}` by one sudoers entry naming
-# these two exact command lines and nothing else:
+# the only path to them. It is callable only by ROOT — the tick runs as root and drops to
+# `{{ claude_user }}` for the session, rather than the other way around (PET-408). Two
+# subcommands and nothing else:
 #
 #   next-item   queries Plane for the work items carrying the `{{ claude_loop_label }}`
 #               label, and prints them WITH THE COUNTS IT EXAMINED. Nothing else about
 #               Plane is exposed — not the PAT, not write access, not another project.
 #   mint-token  prints ONE installation access token, good for an hour.
 #
-# What a session can therefore get: a one-hour push/PR token whose blast radius branch
-# protection caps, and the text of one work item. What it cannot get: the App private key,
-# the Plane PAT, or any other subcommand — there are only these two.
+# ⚠ THERE IS NO SUDOERS GRANT, AND ADDING ONE UNDOES THIS. An earlier version let
+# `{{ claude_user }}` call these two subcommands through sudo. That was wrong: sudo binds a
+# grant to the UID, so the `claude -p` session the tick starts held the identical grant —
+# and that session's instructions come from a Plane work item. Anyone who could write one
+# could mint the token directly. What a session can get now is nothing: it cannot read the
+# 0400 files and it cannot run this script.
 #
-# ⚠ ARGUMENTS ARE REFUSED, DELIBERATELY. The sudoers entry matches the full command line,
-# so a subcommand that took a flag would need a wildcard there, and a wildcard in sudoers
-# is how a narrow grant becomes a wide one. Both subcommands take none, and this script
-# rejects a second argument rather than ignoring it.
+# ⚠ ARGUMENTS ARE STILL REFUSED, DELIBERATELY. Kept from the sudo design, because it is
+# good hygiene independent of the caller: neither subcommand takes an argument, so an
+# unexpected one is a sign of something wrong rather than something to ignore.
 set -euo pipefail
 umask 077
 
@@ -36,9 +39,10 @@ LABEL='{{ claude_loop_label }}'
 
 die() { printf 'claude-loop-broker: %s\n' "$*" >&2; exit 1; }
 
-# Running as anything but root means the sudoers entry was bypassed or the file lost its
-# mode — in either case the secrets below are not readable and the failure should say so.
-[ "$(id -u)" -eq 0 ] || die "must run as root, through the sudoers entry."
+# Running as anything but root means the caller is not the tick — most likely a session
+# trying its luck. The 0400 files below would not be readable anyway; say so plainly rather
+# than failing later with a confusing permission error.
+[ "$(id -u)" -eq 0 ] || die "must run as root. There is no sudoers grant for this (PET-408)."
 [ $# -eq 1 ] || die "usage: claude-loop-broker <next-item|mint-token> (no arguments)"
 
 case "$1" in

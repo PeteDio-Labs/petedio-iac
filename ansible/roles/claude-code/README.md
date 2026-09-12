@@ -13,7 +13,7 @@ closes.
 | Host | `claude-247` — `192.168.50.247`, VMID 247, pve03 |
 | Terraform | `environments/homelab/claude.tf` |
 | Playbook | `ansible/playbooks/configure-claude-code.yml` |
-| Runs as | `claude`, a non-root user. No sudo, except the two broker commands the work loop needs — see below |
+| Runs as | `claude`, a non-root user with **no sudo at all** |
 | Serves | one `claude remote-control` server per entry in `claude_remote_sessions`, plus the work-loop timer when `claude_loop_enable` is set |
 
 ## What Ansible cannot do, and why
@@ -179,15 +179,28 @@ process owned by `claude`, and a session in `bypassPermissions` can read
 through `/usr/local/sbin/claude-loop-broker`, which is root-owned `0500` and exposes
 exactly two subcommands: `next-item` and `mint-token`.
 
-**The one sudo grant on this host.** `/etc/sudoers.d/claude-loop` names those two full
-command lines and nothing else — no wildcards, no `ALL`, no command directories. It
-reverses, narrowly, the "this user deliberately gets no sudo" decision in `tasks/main.yml`,
-and the file itself says so.
+**There is no sudo on this host, and that is a correction (PET-408).** An earlier version
+of this role installed `sudo` and an `/etc/sudoers.d/claude-loop` grant so that a tick
+running as `claude` could call the broker. That was wrong, and it was wrong in a way worth
+remembering: **sudo binds a grant to the UID, not to a process.** The tick and the
+`claude -p` session it starts are the same user, so the session held the identical grant —
+and the session's instructions come from a Plane work item. Anyone who could write one
+could mint the token directly and skip every guard in the tick.
 
-**So state the exposure plainly.** A session on this host can run
-`sudo -n /usr/local/sbin/claude-loop-broker mint-token` whenever it likes and get a
-one-hour token that can push a branch and open a pull request on `PeteDio-Labs/petedio-iac`.
-It cannot get the App key, the Plane PAT, or any other command as root.
+**So the privilege runs the other way now.** `claude-loop.service` runs as **root**, reads
+`/etc/claude-loop/` directly, and calls `runuser -u claude` for the two things that must
+not be root: the session, and every command touching the working tree. The token exists
+only on the root side and is passed per-command, never exported.
+
+**State the exposure plainly.** A session on this host can read its own home and reach
+whatever the LAN serves unauthenticated. It **cannot** read the App key or the Plane PAT,
+cannot run the broker, and cannot obtain a GitHub token — `runuser` drops privilege and
+cannot raise it, and there is no sudoers entry to abuse. Verify that rather than trusting
+it: `runuser -u claude -- /usr/local/sbin/claude-loop-broker mint-token` must fail.
+
+**The push is the one root command that touches the repo**, and it pushes to an explicit
+URL rather than to `origin`, so git updates no remote-tracking ref. That keeps root from
+writing a root-owned object into a `claude`-owned `.git` and breaking the next session.
 
 ⚠ **Branch protection is the only thing that stops that token merging.** `contents: write`
 and `pull_requests: write` are the permissions that merge; nothing about a GitHub App
