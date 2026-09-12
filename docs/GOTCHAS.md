@@ -1040,3 +1040,135 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   `mergeStateStatus` and `reviewDecision` — and to test what an identity can do, point it at
   a throwaway branch carrying the same rule, never at `main`, where a merge triggers
   apply-on-merge.
+
+## A thing that holds a copy of a fact is only ever wrong in the direction nobody is looking
+
+The most general trap here, and the one the others are instances of. Whenever something
+stores an *answer* rather than asking the *source*, the copy can drift — and it drifts
+silently, because the whole point of the copy was that nobody re-checks it.
+
+Seen five times on 2026-09-12 alone, in five unrelated systems:
+
+- **`lab-verify.sh`** printed `all 0 present` as a **pass**. The count was a copy of "how
+  many models are declared", and an empty declaration read as a satisfied one (PET-419).
+- **`ansible-lint .`** answered `0 findings` over `0 files` and exited 0 (PET-397).
+- **`git merge-base --is-ancestor`** answers "not in `main`" for every squash-merged commit,
+  however completely the content landed. It looks like verification and cannot fail.
+- **The loop's prompt** rendered `(the work item has no description)` because the broker read
+  a field Plane does not return. A **read failure** was indistinguishable from a **fact about
+  the item**, and the reader had no way to tell (PET-424).
+- **A state file mirroring `gh pr list`** went stale three times in twenty minutes, because
+  the person merging was not the one maintaining the file.
+
+**The rule:** prefer deferring to the source over mirroring it. Where a copy is unavoidable,
+make it carry what it was computed *over* — `0 of 135 examined` rather than `0` — so an empty
+corpus and an empty result cannot look alike. And never let "there is nothing" and "I could
+not read it" render as the same string.
+
+## `git bundle create - <a>..<sha>` writes a bundle with no refs
+
+Moving a branch between machines that share no remote — 247 has no git credential, so its
+work reaches GitHub by bundle. A revision range with no ref name produces a **valid, empty**
+bundle:
+
+```bash
+git bundle create - 29c2e5c..a77f032          # 112 bytes, "The bundle contains these 0 refs"
+git bundle create - 29c2e5c..my-branch        # 7.8 KB, one ref — correct
+```
+
+`git bundle verify` says `is okay` for the empty one, because it *is* a well-formed bundle.
+The tell is the **byte count**: three commits are not 112 bytes. Name the branch, and read
+the size before trusting the transfer. Hit twice in one evening.
+
+## A push that reports success from a variable instead of an exit status
+
+```bash
+git push origin from247/x:refs/heads/y        # FAILED — unqualified refspec
+echo "  pushed: $(git rev-parse --short HEAD)"   # printed "pushed: dc6dfea" anyway
+```
+
+The echo read the *local* SHA and never looked at `$?`. It would have told a colleague their
+branch was on origin when it was not. Verify a push by **asking the remote** —
+`git ls-remote origin refs/heads/<branch>` — rather than asking your own shell what it hoped
+it did. This is the green-over-nothing bug in a one-line helper, four hours after the lesson
+about it was written down.
+
+## An `else` that means failure is a trap the moment a third case exists
+
+```sh
+[ "$verdict" = "OK" ] && ok "$name" "$detail" || bad "$name" "$detail"
+```
+
+`OK` to `ok`, **everything else to `bad`**. Correct for two verdicts, wrong the instant a
+`SKIP` is added — and the `SKIP` was added four lines above, so a deliberate skip would have
+reported red (PET-419).
+
+Nobody auditing that line would have flagged it, because it *is* correct for the inputs it
+had. It was found by emitting a third value and running it. Switch on the cases explicitly,
+and make an unrecognised value a **fault** rather than a pass: a script disagreeing with
+itself has no business returning green.
+
+## Run the commands CI runs, not one of them
+
+`bun run test:run` passed locally; CI went red on `main`. CI runs **five** steps —
+`lint`, `typecheck`, `test:run`, `build`, `build:binary` — and the failure was `tsc`
+rejecting a regex capture group as `string | undefined`, which no test execution reaches.
+
+The existing rule (PET-384) says the CI test command is the project's own script, never a
+runner chosen because it happens to be installed. This is that rule one level up: **read the
+CI workflow's run steps and execute all of them** before pushing something you expect to be
+green. One of five is not a dry run.
+
+## The test suite needs `flock`, which macOS does not ship
+
+`scripts/test-claude-loop-tick.sh` reports **52 passed / 0 failed** on 247 and **18 passed /
+29 failed** on a Mac. Every one of those failures is `flock: command not found` — the tick
+cannot take its lock, so every scenario parks as `busy`.
+
+Nothing is wrong with the code. Run it on the host. The general form bit twice in one day:
+GNU grep calls a tee'd log binary where BSD grep does not, and made CI red on a tree that
+linted clean locally.
+
+⚠ **A suite that cannot run on one of the two machines that maintain it will eventually be
+run there, believed, and acted on.** If you add a harness with a GNU/util-linux dependency,
+either preflight it with a clear exit or say so in the header.
+
+## `ignoreNotFound` covers a missing PATH, not a missing KEY
+
+`hashicorp/vault-action`:
+
+```yaml
+secrets: kv/data/services/pete-bot github_updates_token | PB_UPDATES_TOKEN
+ignoreNotFound: true        # still fails
+```
+
+> Unable to retrieve result for `data.data."github_updates_token"`. No match data was found.
+
+The flag tolerates Vault answering **404 for the path**. Here the path exists and has
+no such key, so the *selector* finds nothing and the action errors regardless. Use
+`continue-on-error: true` on the step for a genuinely optional secret.
+
+⚠ **And put the tolerant step AFTER a strict one against the same Vault.** The strict step
+proves Vault is reachable and the role good, so a real outage still fails loudly one step
+earlier. A tolerant step first silently swallows an outage. Never put `ignoreNotFound` or
+`continue-on-error` on a step that also fetches a required secret — a silently-absent
+`discord_token` deploys a bot that cannot log in, green.
+
+## A GitHub App cannot push `.github/workflows/**` without `workflows` permission
+
+```
+! [remote rejected] HEAD -> pet-421-…
+  (refusing to allow a GitHub App to create or update workflow
+   `.github/workflows/ansible-palworld.yml` without `workflows` permission)
+```
+
+`contents: write` is not enough; GitHub gates workflow files separately.
+
+**For the claude-loop App this is a feature — do not grant it (PET-425).** The loop's session
+takes its instructions from a Plane work item any org member can write, and a session that
+can edit `.github/workflows/**` can change what runs on the self-hosted runner or alter a
+required check, arriving as a PR that looks like ordinary work. GitHub is enforcing a
+boundary this design wanted and did not think to ask for.
+
+The cost is that the refusal lands *after* a full session has run. Say it in the prompt, and
+check the staged diff for `.github/workflows/**` before the push.
