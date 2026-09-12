@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-claude-loop-tick.sh — drive scripts/claude-loop-tick.sh through every path it has,
-# against a throwaway git remote and stubbed sudo / broker / claude / gh (PET-399).
+# against a throwaway git remote and a stubbed broker, claude and gh (PET-399).
 #
 #   ./scripts/test-claude-loop-tick.sh
 #
@@ -24,10 +24,8 @@
 # Same posture as scripts/test-palworld-unit-render.py — a static check you run by hand, not
 # a CI job. Nothing in .github/workflows watches it.
 #
-# ⚠ IT STUBS `sudo` BY PUTTING ONE FIRST ON PATH. That is safe here — the stub just drops
-# `-n` and execs — but it means this script must never be run with anything that matters on
-# PATH ahead of it, and it is not a test of the real sudoers grant. The grant is verified by
-# the play, which mints a token as the session user.
+# ⚠ IT PUTS STUBS FIRST ON PATH. Harmless here, but it means this script must never be run
+# with anything that matters on PATH ahead of it.
 set -uo pipefail
 TICK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/claude-loop-tick.sh"
 [ -x "$TICK" ] || { echo "cannot find an executable claude-loop-tick.sh next to this script" >&2; exit 1; }
@@ -38,12 +36,14 @@ ok() { PASS=$((PASS+1)); printf '  PASS  %s\n' "$1"; }
 no() { FAIL=$((FAIL+1)); printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; }
 say() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
+# No sudo stub: the tick does not call sudo any more (PET-408). It runs as root in
+# production and drops privilege with runuser; under test it runs as an ordinary user and
+# `as_loop_user` is a pass-through, so neither binary is needed here.
+#
+# ⚠ That means THIS HARNESS DOES NOT EXERCISE THE PRIVILEGE BOUNDARY. It proves the tick's
+# logic, not that root-vs-claude separation holds on the host. The play checks that half,
+# by minting as root and requiring the same call to fail as the loop user.
 BIN="$ROOT/bin"; mkdir -p "$BIN"
-cat > "$BIN/sudo" <<'S'
-#!/usr/bin/env bash
-[ "${1:-}" = "-n" ] && shift
-exec "$@"
-S
 cat > "$BIN/gh" <<'S'
 #!/usr/bin/env bash
 echo "gh $*" >> "$GH_LOG"
@@ -53,7 +53,7 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 S
-chmod +x "$BIN/sudo" "$BIN/gh"
+chmod +x "$BIN/gh"
 export PATH="$BIN:$PATH"
 
 setup() {  # $1 = broker next-item JSON, $2 = STUB_MODE
@@ -186,6 +186,14 @@ git -C "$CLAUDE_LOOP_CHECKOUT" ls-remote --heads origin 2>/dev/null | grep -q pe
   && ok "the branch reached origin" || no "push" ""
 git -C "$CLAUDE_LOOP_CHECKOUT" show --stat --name-only HEAD | grep -q "claude-loop-checkout" \
   && no "the marker leaked into the commit" "" || ok "the marker stays out of the commit"
+# ⚠ PET-408 rests on this. In production the push is the ONE command that stays root, in a
+# repository owned by the loop user. It pushes to an explicit URL rather than to `origin`
+# precisely so git updates no remote-tracking ref — because that write would land as a
+# root-owned file in a claude-owned .git and break the next session. If a tracking ref
+# appears here, the push went through the remote alias and that guarantee is gone.
+[ ! -e "$CLAUDE_LOOP_CHECKOUT/.git/refs/remotes/origin/$(git -C "$CLAUDE_LOOP_CHECKOUT" rev-parse --abbrev-ref HEAD)" ] \
+  && ok "the push wrote no remote-tracking ref (root only reads the repo)" \
+  || no "push updated a tracking ref — root would write into a claude-owned .git" ""
 
 say "5. a session that writes NO spec diff opens no PR"
 setup "$ONE" nospecdiff

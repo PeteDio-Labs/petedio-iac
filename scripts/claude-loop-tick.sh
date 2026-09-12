@@ -9,6 +9,18 @@
 # This revives the shape of the agent fleet retired in PET-265 and destroyed in PET-307.
 # Two things killed that fleet, and both are answered here rather than in a comment:
 #
+# PRIVILEGE MODEL (PET-408). This script runs as ROOT and drops to the loop user for
+# the two things that must not be root: the `claude -p` session, and every command that
+# touches the loop's working tree. The token never exists on the unprivileged side.
+#
+# It is written this way because the previous shape did not work. The tick ran as `claude`
+# and reached its credentials through a sudoers grant — but sudo binds to the UID, not to
+# this process, so the `claude -p` session it had just started held the identical grant.
+# Since that session's instructions come from a Plane work item, anyone who could write one
+# could mint the token directly and skip every guard below. There is now NO sudoers entry
+# and NO sudo on this host at all, which restores the role's original rule that the session
+# user gets none.
+#
 #   · IT MERGED ITS OWN WORK. This tick holds a token with contents:write and
 #     pull_requests:write, which are the permissions that merge. Nothing here calls merge,
 #     but that is not the control — the one required approving review on `main` is, which
@@ -72,7 +84,24 @@ PROMPT_FILE="$LOOP_HOME/prompt.md"
 # under .git/ is reachable by either.
 MARKER=".git/claude-loop-checkout"
 
+LOOP_USER="${CLAUDE_LOOP_USER:-claude}"
+
 log() { printf '\033[1;34m[claude-loop] %s\033[0m\n' "$*" >&2; }
+
+# Run something as the unprivileged loop user. Everything that reads or writes the working
+# tree goes through this, so the tree stays owned by one user and a root-owned object never
+# lands in it to break the next session.
+#
+# When NOT root this is a pass-through, which is deliberate and covers two real cases: an
+# operator debugging a tick by hand, and scripts/test-claude-loop-tick.sh. Neither can read
+# the 0400 credentials, so both fail at the broker with a clear error rather than silently
+# doing something different.
+#
+# ⚠ runuser, NOT sudo. There is no sudo on this host any more and that is the point
+# (PET-408). runuser is setuid-root and drops privilege; it cannot raise it.
+as_loop_user() {
+  if [ "$(id -u)" -eq 0 ]; then runuser -u "$LOOP_USER" -- "$@"; else "$@"; fi
+}
 
 # --- the heartbeat ----------------------------------------------------------------------
 # Set by the steps below and flushed by the EXIT trap, whatever happens. `failed` is the
@@ -133,19 +162,31 @@ mkdir -p "$STATE_DIR" "$ITEMS_DIR"
 exec 9>"$LOCK_FILE" || fail "cannot open the lock file $LOCK_FILE"
 flock -n 9 || park busy "another tick holds $LOCK_FILE"
 
-# gh and sudo are as load-bearing here as git: without sudo there is no broker, and without
-# gh there is no pull request. A tick that discovers either at step 9, after running a
-# session, has already burned the quota to find out.
-for t in git flock python3 timeout gh sudo; do
+# gh is as load-bearing here as git: a tick that discovers it missing at step 9, after
+# running a session, has burned the quota to find out.
+for t in git flock python3 timeout gh; do
   command -v "$t" >/dev/null || fail "$t is not in PATH"
 done
+
+# runuser is required ONLY when this runs as root, which is the only time it is called.
+# Demanding it unconditionally breaks a hand-run as the loop user for a reason that has
+# nothing to do with the tick: runuser lives in /usr/sbin, which is not on a non-root PATH.
+# The unit's own PATH carries /usr/sbin and /sbin, so the root path resolves it.
+#
+# ⚠ Without runuser, a root tick would run `claude -p` AS ROOT. Claude Code refuses
+# bypassPermissions as root, so it would fail — but it would fail late, after the item was
+# claimed. Fail here instead, and say why.
+if [ "$(id -u)" -eq 0 ]; then
+  command -v runuser >/dev/null \
+    || fail "runuser is not in PATH and this tick is root — it cannot drop privilege to run the session"
+fi
 [ -x "$CLAUDE_BIN" ] || fail "claude is not executable at $CLAUDE_BIN"
 [ -r "$PROMPT_FILE" ] || fail "the loop prompt is missing at $PROMPT_FILE — re-run the play"
 
 # --- guard 3: is there work? -------------------------------------------------------------
 # The broker exits non-zero on every structural surprise, so a failure here is a real
 # failure and not an idle queue. Do not soften it into a warning.
-QUERY="$(sudo -n "$BROKER" next-item 2>"$STATE_DIR/next-item.err")" \
+QUERY="$("$BROKER" next-item 2>"$STATE_DIR/next-item.err")" \
   || fail "the broker could not list work items: $(tr '\n' ' ' < "$STATE_DIR/next-item.err" | head -c 300)"
 
 EXAMINED="$(printf '%s' "$QUERY" | python3 -c 'import json,sys; print(json.load(sys.stdin)["examined"])' 2>/dev/null)" \
@@ -247,20 +288,20 @@ SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \
 [ -n "$SLUG" ] || SLUG=work
 BRANCH="pet-${SEQ}-${SLUG}"
 
-git -C "$CHECKOUT" fetch --prune origin 2>&1 | sed 's/^/    /' >&2 \
+as_loop_user git -C "$CHECKOUT" fetch --prune origin 2>&1 | sed 's/^/    /' >&2 \
   || fail_item "git fetch failed"
 
 # An existing remote branch means a previous tick already pushed for this item — the claim
 # record was lost or cleared. Opening a second PR for one work item is exactly the mess
 # this loop exists to avoid, so stop and let a human look.
-if git -C "$CHECKOUT" ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+if as_loop_user git -C "$CHECKOUT" ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
   record_claim worked "origin already has $BRANCH — a previous tick pushed it"
   park skipped "$ITEM already has the branch $BRANCH on origin; not opening a second PR"
 fi
 
-git -C "$CHECKOUT" reset --hard >/dev/null 2>&1 || true
-git -C "$CHECKOUT" clean -ffdx >/dev/null 2>&1 || true
-git -C "$CHECKOUT" checkout -B "$BRANCH" origin/main >/dev/null 2>&1 \
+as_loop_user git -C "$CHECKOUT" reset --hard >/dev/null 2>&1 || true
+as_loop_user git -C "$CHECKOUT" clean -ffdx >/dev/null 2>&1 || true
+as_loop_user git -C "$CHECKOUT" checkout -B "$BRANCH" origin/main >/dev/null 2>&1 \
   || fail_item "could not branch $BRANCH off origin/main"
 log "branch $BRANCH off origin/main"
 
@@ -297,7 +338,7 @@ cd "$CHECKOUT" || fail_item "cannot enter $CHECKOUT"
 # aborts before anything reads it, and the tick would then report the generic starting
 # failure instead of "the session hit the ceiling".
 SESSION_RC=0
-timeout --signal=TERM --kill-after=60 "$TIMEOUT_SEC" \
+as_loop_user timeout --signal=TERM --kill-after=60 "$TIMEOUT_SEC" \
   "$CLAUDE_BIN" -p --permission-mode bypassPermissions \
   < "$TICK_DIR/prompt.txt" > "$TICK_DIR/session.log" 2>&1 || SESSION_RC=$?
 if [ "$SESSION_RC" -eq 124 ]; then
@@ -312,18 +353,18 @@ fi
 # green check, and the retirement note's conclusion was blunt: a passing test suite is not
 # evidence of a complete implementation. So two things must BOTH be true before a pull
 # request exists, and neither is inferred from the session saying it is done.
-git -C "$CHECKOUT" add -A >/dev/null 2>&1 || fail_item "could not stage the session's work"
-if git -C "$CHECKOUT" diff --cached --quiet origin/main -- 2>/dev/null; then
+as_loop_user git -C "$CHECKOUT" add -A >/dev/null 2>&1 || fail_item "could not stage the session's work"
+if as_loop_user git -C "$CHECKOUT" diff --cached --quiet origin/main -- 2>/dev/null; then
   fail_item "the session produced no diff against origin/main — nothing to open a PR for"
 fi
 [ -s "$SPEC_DIFF" ] \
   || fail_item "the session wrote no spec-diff at $SPEC_DIFF — refusing to open a PR that nobody can check against the work item"
 
-COMMITTED="$(git -C "$CHECKOUT" diff --cached --name-only origin/main | wc -l | tr -d ' ')"
+COMMITTED="$(as_loop_user git -C "$CHECKOUT" diff --cached --name-only origin/main | wc -l | tr -d ' ')"
 # `core.hooksPath=/dev/null`: a session-planted pre-commit hook runs between the two checks
 # above and this commit, and could put back exactly what they just rejected. No token is in
 # the environment yet, so this is an integrity guard rather than a credential one.
-git -C "$CHECKOUT" -c core.hooksPath=/dev/null \
+as_loop_user git -C "$CHECKOUT" -c core.hooksPath=/dev/null \
   -c user.name="claude-loop" -c user.email="claude-loop@pdlab.dev" \
   commit -q -m "${ITEM}: ${TITLE}" -m "Opened by the claude-247 work loop (PET-399). Draft: a human reviews and merges." \
   || fail_item "could not commit the session's work"
@@ -346,7 +387,7 @@ log "committed ${COMMITTED} files"
 # systemd unit and this script's own process, and the session is a CHILD, which cannot
 # reach back and change its parent's environment.
 EXPECT_REMOTE="${CLAUDE_LOOP_REMOTE:-https://github.com/${REPO}}"
-ACTUAL_REMOTE="$(git -C "$CHECKOUT" ls-remote --get-url origin 2>/dev/null || true)"
+ACTUAL_REMOTE="$(as_loop_user git -C "$CHECKOUT" ls-remote --get-url origin 2>/dev/null || true)"
 case "$ACTUAL_REMOTE" in
   "$EXPECT_REMOTE" | "${EXPECT_REMOTE}.git") ;;
   *) fail_item "origin resolves to '${ACTUAL_REMOTE:-nothing}', not ${EXPECT_REMOTE} — refusing to mint a token for it" ;;
@@ -354,7 +395,7 @@ esac
 
 # The token is minted here and nowhere earlier, so it exists for the shortest time that
 # works. It expires in an hour regardless.
-TOKEN="$(sudo -n "$BROKER" mint-token 2>"$STATE_DIR/mint.err")" \
+TOKEN="$("$BROKER" mint-token 2>"$STATE_DIR/mint.err")" \
   || fail_item "could not mint a GitHub token: $(tr '\n' ' ' < "$STATE_DIR/mint.err" | head -c 200)"
 [ -n "$TOKEN" ] || fail_item "the broker minted an empty token"
 
@@ -377,14 +418,27 @@ TOKEN="$(sudo -n "$BROKER" mint-token 2>"$STATE_DIR/mint.err")" \
 # returns the token. `credential.https://github.com.helper` does not.
 #
 # `core.hooksPath=/dev/null` closes the last exec path in the push itself.
+# ⚠ THIS IS THE ONE COMMAND THAT STAYS ROOT — no as_loop_user. The token exists only on
+# this side of the privilege boundary, which is the whole of PET-408's fix.
+#
+# ⚠ IT PUSHES TO AN EXPLICIT URL, NOT TO `origin`, and that is not a style choice. Pushing
+# to a named remote updates that remote's tracking ref, which would write into a
+# claude-owned .git as root and break the next session with objects it cannot
+# touch. Pushing to a URL updates no tracking ref, so root only READS the repository.
+# It also means a session that repointed `origin` cannot redirect this push at all — the
+# assertion above becomes defence in depth rather than the only guard.
+#
+# `safe.directory` is required because the repository is owned by another user and git
+# refuses "dubious ownership" otherwise. Scoped to this one path, not `*`.
 if ! GH_TOKEN="$TOKEN" git -C "$CHECKOUT" \
+  -c "safe.directory=$CHECKOUT" \
   -c core.hooksPath=/dev/null \
   -c credential.helper= \
   -c 'credential.https://github.com.helper=!f(){ echo username=x-access-token; echo "password=$GH_TOKEN"; };f' \
-  push --quiet origin "HEAD:refs/heads/$BRANCH" 2>"$TICK_DIR/push.err"; then
+  push --quiet "$EXPECT_REMOTE" "HEAD:refs/heads/$BRANCH" 2>"$TICK_DIR/push.err"; then
   fail_item "push failed: $(tr '\n' ' ' < "$TICK_DIR/push.err" | head -c 300)"
 fi
-log "pushed $BRANCH to $ACTUAL_REMOTE"
+log "pushed $BRANCH to $EXPECT_REMOTE"
 
 # --draft is not a preference. A draft PR cannot be merged by anyone until a human marks it
 # ready, which makes "the bot cannot merge" true through a second, independent mechanism

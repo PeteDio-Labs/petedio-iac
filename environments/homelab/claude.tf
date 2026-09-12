@@ -48,9 +48,13 @@
 # (PET-399). `claude_loop_enable` adds a timer that takes one labelled Plane work item and
 # opens a DRAFT pull request, and that needs two secrets on the box: the Plane PAT CI
 # already uses, and a GitHub App key with contents:write + pull_requests:write on this
-# repo. They land root-owned 0400 in /etc/claude-loop and are reachable only through a
-# root-owned broker, because sessions here run in bypassPermissions and would otherwise
-# read them straight out of a unit's /proc/<pid>/environ.
+# repo. They land root-owned 0400 in /etc/claude-loop and are reachable only by root,
+# because sessions here run in bypassPermissions and would otherwise read them straight out
+# of a unit's /proc/<pid>/environ.
+#
+# The loop's timer therefore runs as ROOT and drops to `claude` with runuser for the
+# session, rather than running as `claude` and reaching up through sudo (PET-408). There is
+# no sudo on this host at all — a grant to that UID is also a grant to every session on it.
 #
 # So this host still opens no inbound port, and still holds no Vault credential — the
 # deploy wrapper does the Vault reading from the operator's machine. What it holds is a

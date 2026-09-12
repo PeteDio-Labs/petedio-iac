@@ -2,8 +2,10 @@
 # claude-code / the ticket-driven work loop — identity half (PET-399).
 #
 # Lands the two secrets the loop needs, root-owned and unreadable by the session user, plus
-# the broker that is the only path to them and the two-line sudoers grant that lets the
-# loop call it. The units and the tick script are the other half, in tasks/loop-units.yml.
+# the broker that is the only path to them. The units and the tick script are the other
+# half, in tasks/loop-units.yml.
+#
+# There is deliberately no sudoers grant here — see the comment above the secret directory.
 #
 # ⚠ THE HOST NOW HOLDS AN OUTBOUND CREDENTIAL. claude.tf, this role's README and
 # playbooks/configure-claude-code.yml all used to say it did not. They have been corrected
@@ -52,16 +54,15 @@
       scripts/deploy-claude-loop.sh to land or rotate the credentials.
   when: not claude_loop_identity_present | bool
 
-# ⚠ The minimal Debian LXC template this host is built from ships WITHOUT sudo — the same
-# gap that makes `become_user` fail with `sudo: not found` and rc=127 across this repo
-# (docs/GOTCHAS.md, PET-355). The broker grant needs it, so install it here rather than
-# letting the sudoers file land next to no sudo at all and fail at the first tick.
-- name: Install sudo, which the broker grant needs and this template omits
-  ansible.builtin.apt:
-    name: sudo
-    state: present
-    update_cache: true
-  when: claude_loop_identity_present | bool
+# ⚠ NO sudo IS INSTALLED, AND NO SUDOERS FILE IS WRITTEN (PET-408). An earlier version of
+# this role did both, to let a tick running as `claude` reach the broker. That was wrong:
+# sudo binds a grant to the UID, so the `claude -p` session the tick starts held the same
+# grant, and the session's instructions come from a Plane work item. The tick now runs as
+# root and drops privilege with `runuser` instead, so this host keeps the role's original
+# rule — the session user gets no sudo at all.
+#
+# If you are reading this because you want to add a sudoers entry here: the thing you are
+# about to grant to `claude` is also granted to every bypassPermissions session on the box.
 
 - name: Create the root-owned loop secret directory
   ansible.builtin.file:
@@ -119,33 +120,27 @@
     mode: "0500"
   when: claude_loop_identity_present | bool
 
-# ⚠ `validate` is not optional here. A sudoers file that does not parse can make sudo
-# refuse every command on the host, including the one you would use to fix it. visudo -cf
-# checks the rendered file BEFORE it is moved into place; a bad render fails the task and
-# leaves /etc/sudoers.d untouched.
-- name: Grant the session user the two broker commands, and nothing else
-  ansible.builtin.template:
-    src: claude-loop-sudoers.j2
-    dest: /etc/sudoers.d/claude-loop
-    owner: root
-    group: root
-    mode: "0440"
-    validate: visudo -cf %s
-  when: claude_loop_identity_present | bool
+# Removes the sudoers file an earlier version of this role installed. Without this, a host
+# converged before PET-408 keeps the grant forever: the template is gone, so nothing would
+# overwrite it, and `claude` would go on holding `mint-token` long after the tick stopped
+# needing it. Reconcile what you removed, not only what you add.
+- name: Remove the sudoers grant this role used to install
+  ansible.builtin.file:
+    path: /etc/sudoers.d/claude-loop
+    state: absent
 
-# Proves the grant works end to end, as the user that will use it, without printing the
-# token. `sudo -n` refuses rather than prompting, so a grant that did not take fails here
-# instead of at 03:00 in a tick nobody is watching.
-#
-# runuser rather than become_user, for the reason given at the npm install in main.yml.
 # ⚠ no_log HERE AND THE VERDICT IN THE NEXT TASK, deliberately. stdout IS the token, so
 # this task can never print its own result — but a task that both hides everything and
 # decides pass/fail leaves a failed deploy saying nothing at all. So this one only runs and
 # records; the next one judges, and is free to print the broker's stderr, which carries the
 # reason and never carries the token.
-- name: Mint a token through the broker, as the session user
+#
+# Run as root, which is how the tick runs it. It is NOT run as {{ claude_user }} any more,
+# and that change is the point of PET-408: if this succeeded as that user, the grant this
+# role spent PET-399 removing would still be there.
+- name: Mint a token through the broker, as root
   ansible.builtin.command:
-    cmd: runuser -u {{ claude_user }} -- sudo -n {{ claude_loop_broker }} mint-token
+    cmd: "{{ claude_loop_broker }} mint-token"
   register: claude_loop_mint_check
   changed_when: false
   failed_when: false
@@ -162,14 +157,16 @@
       - claude_loop_mint_check.rc == 0
       - claude_loop_mint_check.stdout | trim | length >= 20
     fail_msg: >-
-      The broker could not mint a GitHub installation token as {{ claude_user }}
+      The broker could not mint a GitHub installation token as root
       (rc={{ claude_loop_mint_check.rc }}). It said: {{ claude_loop_mint_check.stderr | trim }}
       — check the App id, the installation id and the key in Vault kv/services/claude-loop,
       and that the App is still installed on {{ claude_loop_repo }}.
     success_msg: >-
-      The broker minted a GitHub installation token as {{ claude_user }}
+      The broker minted a GitHub installation token as root
       ({{ claude_loop_mint_check.stdout | trim | length }} characters, not logged). It
-      expires in an hour whether or not anything uses it.
+      expires in an hour whether or not anything uses it. {{ claude_user }} cannot do this
+      — verify that with `runuser -u {{ claude_user }} -- {{ claude_loop_broker }} mint-token`,
+      which must fail with a permission error.
   when: claude_loop_identity_present | bool
 
 # The units, the loop's own clone, the prompt and the tick script. Separate because

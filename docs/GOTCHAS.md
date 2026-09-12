@@ -885,3 +885,41 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
 - **Renaming a handler breaks every `notify:` that names it.** PET-303 did exactly that and
   left a dangling notify. When `name[casing]` makes you capitalise a handler, grep the repo
   for the old string and move the notifies in the same commit — `Restart zot` alone has four.
+
+## A sudoers grant belongs to the UID, not to the process you wrote it for (PET-408)
+
+- **If a program runs a `claude -p` session as its own user, that session inherits every
+  sudo grant the program has.** The PET-399 loop shipped with `/etc/sudoers.d/claude-loop`
+  granting `claude` two exact broker commands, no wildcards, `visudo`-validated — a
+  textbook-narrow grant. It was still wrong, because the tick ran as `claude` and started a
+  session as `claude`, and the session's instructions come from a Plane work item. Anyone
+  who could write one could run the granted command directly and skip every guard in the
+  tick. Narrowing *which* commands a grant covers does nothing about *who* can call them.
+
+- **Invert the privilege instead of reaching up through it.** The unit now runs as root,
+  reads `/etc/claude-loop/` directly and calls `runuser -u claude` for the session and for
+  every command that touches the working tree. `runuser` drops privilege and cannot raise
+  it, so there is no grant to inherit and no sudo on the host at all.
+
+- **`runuser` lives in `/usr/sbin`, which is not on a non-root `PATH`.** A tool check that
+  demands it unconditionally fails a hand-run as the unprivileged user for a reason that has
+  nothing to do with the problem. Require it only when `id -u` is 0, and set the unit's
+  `PATH` explicitly — Debian's `.bashrc` returns early for non-interactive shells, so the
+  role's `PATH` line never runs under systemd.
+
+- **`HOME` does not follow `runuser -u`.** A root unit whose `Environment=HOME` points at
+  `/root` makes `claude -p` look for the claude.ai login in the wrong place and report
+  itself as not logged in. Set `HOME` to the session user's home in the unit.
+
+- **A root process pushing from a user-owned clone must push to a URL, not to `origin`.**
+  Pushing to a named remote updates that remote's tracking ref, which writes a root-owned
+  file into a `claude`-owned `.git` and breaks the next session with objects it cannot
+  touch. Pushing to an explicit URL updates no tracking ref, so root only reads the
+  repository — and a session that repointed `origin` cannot redirect the push at all. Git
+  also refuses a repository owned by another user, so the push needs
+  `-c safe.directory=<path>`, scoped to that path and never `*`.
+
+- **Removing a grant means removing the file, not deleting the template.** A host converged
+  before the fix keeps `/etc/sudoers.d/claude-loop` forever if the role simply stops
+  rendering it. Reconcile what you removed with `state: absent`, the same way the role
+  already reaps undeclared `claude-remote-*` units.

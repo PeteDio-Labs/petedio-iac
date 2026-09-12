@@ -122,10 +122,9 @@ Everything before step 4 is one-time.
    ./scripts/deploy-claude-loop.sh
    ```
 
-   The play lands the secrets, installs the broker and the sudoers grant, clones the loop's
-   own copy of the repo into `~/loop/iac`, and **leaves the timer stopped**. It finishes by
-   minting a token as the `claude` user, so a grant that did not take fails here rather than
-   at 03:00 in a tick nobody is watching.
+   The play lands the secrets, installs the broker, clones the loop's own copy of the repo
+   into `~/loop/iac`, and **leaves the timer stopped**. It finishes by minting a token as
+   root, so a broken key fails here rather than at 03:00 in a tick nobody is watching.
 
 5. **Optional — trust the loop's clone.** `claude -p` skips the workspace trust dialog
    entirely, so the loop runs without this. Do it anyway if you want MCP tools resolving
@@ -142,12 +141,24 @@ Everything before step 4 is one-time.
 **Run one tick by hand and read what it did.** The timer stays off until a draft pull
 request from the bot has been looked at by a person.
 
+The tick runs as root and drops to `claude` itself, so run it as root:
+
 ```sh
-ssh claude@192.168.50.247
-sudo -n /usr/local/sbin/claude-loop-broker next-item   # {"examined":41,"labelled":1,…}
-~/loop/claude-loop-tick.sh                             # one tick, in the foreground
-cat ~/loop/state/last-tick.json
+ssh pedro@192.168.50.247
+sudo /usr/local/sbin/claude-loop-broker next-item   # {"examined":41,"labelled":1,…}
+sudo /home/claude/loop/claude-loop-tick.sh          # one tick, in the foreground
+cat /home/claude/loop/state/last-tick.json
 ```
+
+**Then check the boundary holds, rather than assuming it.** This must fail:
+
+```sh
+ssh claude@192.168.50.247 '/usr/local/sbin/claude-loop-broker mint-token'   # permission denied
+ssh claude@192.168.50.247 'sudo -n true'                                    # no sudo on this host
+```
+
+If either succeeds, stop: the `claude -p` session runs as that user, its instructions come
+from a work item, and PET-408 is back.
 
 Label one small, real work item first. Check the draft pull request has the spec-diff
 comment, that its author is the App and not you, and that the `Merge` button is unavailable.
@@ -192,7 +203,7 @@ one behind. Most gated timers in this tree do not do that; this role does.
 **Kill a tick that is running:**
 
 ```sh
-ssh claude@192.168.50.247 'sudo systemctl stop claude-loop.service'   # needs root, not the claude user
+ssh pedro@192.168.50.247 'sudo systemctl stop claude-loop.service'   # the claude user has no sudo
 ```
 
 **Retry an item the loop gave up on.** After `claude_loop_max_attempts` failed ticks the
@@ -266,7 +277,7 @@ happens anyway, the claim records in `~/loop/state/items/` are the place to star
 
 `scripts/test-claude-loop-tick.sh` drives the tick through every path it has — including
 the ones that must *not* open a pull request — against a throwaway git remote and stubbed
-`sudo`, broker, `claude` and `gh`. It needs no credential and touches no network:
+the broker, `claude` and `gh`. It needs no credential and touches no network:
 
 ```sh
 ./scripts/test-claude-loop-tick.sh
