@@ -1,0 +1,45 @@
+---
+# configure-claude-code.yml — Claude Code on LXC 247 (claude.tf).
+#
+# The host runs `claude remote-control`, so a session lives on hardware that stays up and
+# is drivable from claude.ai/code or the Claude phone app. Everything the box needs —
+# Node.js, Claude Code, gh, the mirrored workspace repos, the per-project units — is in
+# roles/claude-code.
+#
+# NO PRECONDITIONS. Unlike configure-plane.yml there is no scripts/lxc-features-247.sh to
+# run first and no Vault secret to pass in: nothing here runs Docker, and the one credential
+# this host needs (a claude.ai login) cannot be injected — the feature refuses API keys and
+# `claude setup-token` tokens alike. That login is an operator step over SSH.
+#
+# TWO-PHASE BY DESIGN. The first run installs everything and leaves the units STOPPED,
+# because a server started before the login exists exits at once and crash-loops. After the
+# operator signs in, re-run with `-e claude_remote_enable=true` to hand it to systemd:
+#
+#   ansible-playbook playbooks/configure-claude-code.yml
+#   ansible-playbook playbooks/configure-claude-code.yml -e claude_remote_enable=true
+#
+# Full sequence, including what to click: ansible/roles/claude-code/README.md.
+#
+# Manual-validation-first (standing convention, PET-266): run this by hand and get it green
+# before any CD-on-merge workflow is wired to it. Nothing in .github/workflows watches this
+# play today, and the inventory group it uses is unwatched too.
+
+- name: Configure the Claude Code host (LXC 247)
+  hosts: claude
+  become: true
+
+  roles:
+    - claude-code
+
+  post_tasks:
+    # The play cannot finish the job, so it says so rather than reporting all-green and
+    # leaving you to discover the stopped units later.
+    - name: Report the operator steps that remain
+      ansible.builtin.debug:
+        msg:
+          - "Claude Code is installed, and the remote-control units are stopped."
+          - "1. ssh claude@{{ ansible_host | default('192.168.50.247') }}"
+          - "2. cd ~/work/petedio/iac && claude   # accept workspace trust, then /login"
+          - "3. claude remote-control             # answer y once, confirm a session URL, Ctrl+C"
+          - "4. re-run this play with -e claude_remote_enable=true"
+      when: not claude_remote_enable | bool

@@ -1,12 +1,12 @@
 ---
 - name: Set the timezone on the node itself
   community.general.timezone:
-    name: "{{ homelab_timezone }}"
-  register: tz_host
+    name: "{{ timezone_name }}"
+  register: timezone_host
 
 - name: Find the guests on this node
   ansible.builtin.command: pct list
-  register: tz_guests
+  register: timezone_guests
   changed_when: false
   failed_when: false
   when: timezone_include_guests | bool
@@ -14,18 +14,18 @@
 - name: Set the timezone inside every guest
   when:
     - timezone_include_guests | bool
-    - tz_guests.rc | default(1) == 0
+    - timezone_guests.rc | default(1) == 0
   # /etc/timezone plus the /etc/localtime symlink, rather than timedatectl: an
   # unprivileged container cannot set the system clock, so timedatectl refuses
   # there even though the timezone itself is just a file.
   ansible.builtin.command: >-
     pct exec {{ item }} -- sh -c
-    'ln -sf /usr/share/zoneinfo/{{ homelab_timezone }} /etc/localtime;
-     echo {{ homelab_timezone }} > /etc/timezone'
-  loop: "{{ tz_guests.stdout_lines[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
+    'ln -sf /usr/share/zoneinfo/{{ timezone_name }} /etc/localtime;
+     echo {{ timezone_name }} > /etc/timezone'
+  loop: "{{ timezone_guests.stdout_lines[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
   loop_control:
     label: "guest {{ item }}"
-  register: tz_applied
+  register: timezone_applied
   changed_when: true
 
 # ⚠ THE CONTAINER FILE IS NOT ENOUGH. Proxmox has its own `timezone:` key in the
@@ -39,49 +39,49 @@
 - name: Align the Proxmox-level timezone key with the files
   when:
     - timezone_include_guests | bool
-    - tz_guests.rc | default(1) == 0
+    - timezone_guests.rc | default(1) == 0
   ansible.builtin.shell: |
     set -o pipefail
     cur=$(pct config {{ item }} | grep -oP '^timezone: \K.*' || true)
-    if [ -n "$cur" ] && [ "$cur" != "{{ homelab_timezone }}" ]; then
-      pct set {{ item }} --timezone {{ homelab_timezone }} && echo "changed {{ item }}: $cur -> {{ homelab_timezone }}"
+    if [ -n "$cur" ] && [ "$cur" != "{{ timezone_name }}" ]; then
+      pct set {{ item }} --timezone {{ timezone_name }} && echo "changed {{ item }}: $cur -> {{ timezone_name }}"
     fi
   args: { executable: /bin/bash }
-  loop: "{{ tz_guests.stdout_lines[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
+  loop: "{{ timezone_guests.stdout_lines[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
   loop_control:
     label: "guest {{ item }}"
-  register: tz_pct_key
-  changed_when: "'changed' in tz_pct_key.stdout"
+  register: timezone_pct_key
+  changed_when: "'changed' in timezone_pct_key.stdout"
 
 - name: Report any Proxmox-level keys corrected
-  when: tz_pct_key is defined and tz_pct_key.results is defined
+  when: timezone_pct_key is defined and timezone_pct_key.results is defined
   ansible.builtin.debug:
     msg: >-
-      {{ tz_pct_key.results | selectattr('stdout','defined') | map(attribute='stdout')
+      {{ timezone_pct_key.results | selectattr('stdout','defined') | map(attribute='stdout')
          | select('search','changed') | list | default(['no stale pct timezone keys'], true) }}
 
 # ------------------------------------------------------------- verification --
 - name: Read back what every guest now believes the time is
   when:
     - timezone_include_guests | bool
-    - tz_guests.rc | default(1) == 0
+    - timezone_guests.rc | default(1) == 0
   ansible.builtin.command: >-
     pct exec {{ item }} -- date +%Z
-  loop: "{{ tz_guests.stdout_lines[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
+  loop: "{{ timezone_guests.stdout_lines[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
   loop_control:
     label: "guest {{ item }}"
-  register: tz_verify
+  register: timezone_verify
   changed_when: false
   failed_when: false
 
 - name: Report
-  when: tz_verify is defined and tz_verify.results is defined
+  when: timezone_verify is defined and timezone_verify.results is defined
   ansible.builtin.debug:
     msg: >-
-      {{ inventory_hostname }} ({{ homelab_timezone }}):
-      {{ tz_verify.results | selectattr('stdout', 'defined')
+      {{ inventory_hostname }} ({{ timezone_name }}):
+      {{ timezone_verify.results | selectattr('stdout', 'defined')
          | map(attribute='stdout') | list | unique | join(', ') }}
-      across {{ tz_verify.results | length }} guests.
+      across {{ timezone_verify.results | length }} guests.
 
 # Plex reads TZ once at start, so until it restarts it keeps scheduling against
 # the old offset — which is the actual bug this role exists to fix. Restarting
@@ -94,14 +94,14 @@
       if pct exec "$id" -- systemctl is-active plexmediaserver >/dev/null 2>&1; then echo "$id"; fi
     done
   args: { executable: /bin/bash }
-  register: tz_plex
+  register: timezone_plex
   changed_when: false
   failed_when: false
 
 - name: Restart Plex only where nobody is watching
   when:
     - timezone_include_guests | bool
-    - tz_plex.stdout_lines | default([]) | length > 0
+    - timezone_plex.stdout_lines | default([]) | length > 0
   ansible.builtin.shell: |
     set -o pipefail
     TOK=$(pct exec {{ item }} -- grep -oE 'PlexOnlineToken="[^"]*"' \
@@ -115,13 +115,13 @@
       pct exec {{ item }} -- systemctl restart plexmediaserver && echo "restarted {{ item }}"
     fi
   args: { executable: /bin/bash }
-  loop: "{{ tz_plex.stdout_lines | default([]) }}"
+  loop: "{{ timezone_plex.stdout_lines | default([]) }}"
   loop_control:
     label: "plex on {{ item }}"
-  register: tz_plex_restart
-  changed_when: "'restarted' in tz_plex_restart.stdout"
+  register: timezone_plex_restart
+  changed_when: "'restarted' in timezone_plex_restart.stdout"
 
 - name: Report the Plex outcome
-  when: tz_plex_restart is defined and tz_plex_restart.results is defined
+  when: timezone_plex_restart is defined and timezone_plex_restart.results is defined
   ansible.builtin.debug:
-    msg: "{{ tz_plex_restart.results | selectattr('stdout', 'defined') | map(attribute='stdout') | select('!=', '') | list }}"
+    msg: "{{ timezone_plex_restart.results | selectattr('stdout', 'defined') | map(attribute='stdout') | select('!=', '') | list }}"

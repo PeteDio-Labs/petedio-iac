@@ -127,7 +127,7 @@
 
     # ---- PET-204/F1: firewall the gateway to the backend only (BEFORE the smoke test, so the
     #      validation below also proves loopback/CNI still work with the rule in place) ----
-    - name: Install the faasd gateway lockdown unit (mangle PREROUTING drop, :{{ faasd_gateway_port }} ← {{ faasd_gateway_allow_src }})
+    - name: Install the faasd gateway lockdown unit (mangle PREROUTING drop)
       ansible.builtin.template:
         src: faasd-gateway-lockdown.service.j2
         dest: /etc/systemd/system/faasd-gateway-lockdown.service
@@ -186,7 +186,11 @@
 
     - name: Invoke the smoke-test function (must return output — proves function networking/CNI)
       ansible.builtin.shell:
-        cmd: "echo '' | {{ faas_cli }} invoke {{ smoke_function }} --gateway {{ faasd_gateway }}"
+        cmd: "set -o pipefail; echo '' | {{ faas_cli }} invoke {{ smoke_function }} --gateway {{ faasd_gateway }}"
+      args:
+        # Same bashism as the login task above — /bin/sh is dash on Debian and rejects
+        # `set -o pipefail` with "Illegal option" (6cb5bfb, hit provisioning runner-233).
+        executable: /bin/bash
       register: faas_invoke
       retries: 10
       delay: 6

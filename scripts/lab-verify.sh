@@ -435,5 +435,74 @@ PY
   done <<< "$OLLAMA_OUT"
 fi
 
+sec "Claude Code host"
+# 247 runs `claude remote-control`, so a session on it is drivable from a phone. Placement
+# is already asserted above (everything not in INTENT_PVE02 must be on pve03); what this
+# section asks is whether the thing the host exists for actually works.
+CNODE=$(node_for 247)
+if [ -z "$CNODE" ]; then
+  bad "claude-247 exists" "on neither node — claude.tf declares it"
+else
+  # A file on disk is not a runnable toolchain. Run the binary, as the user that owns it.
+  # ABSOLUTE PATH ON PURPOSE: `su - claude -c ...` is non-interactive, Debian's .bashrc
+  # returns early for that, and the PATH line the role appends never runs — so a PATH-based
+  # check would report a broken host that is fine. The unit sets PATH explicitly for the
+  # same reason; this mirrors what the unit does.
+  CV=$(pct_on "$CNODE" 247 "su - claude -c '/home/claude/.npm-global/bin/claude --version'" | tr -d '\r' | head -1)
+  [ -n "$CV" ] && ok "claude code runs" "$CV" || bad "claude code runs" "no version from the claude user"
+
+  # ⚠ ENUMERATE THE UNITS, NEVER NAME ONE. claude_remote_sessions in the role's defaults
+  # decides which units exist. A check hardcoding `claude-remote-iac` would go on reporting
+  # green while a second declared project was never looked at -- the same trap the Ollama
+  # section below refuses by reading its model names from host_vars instead of this file.
+  CUNITS=$(pct_on "$CNODE" 247 "sh -c 'ls -1 /etc/systemd/system/claude-remote-*.service 2>/dev/null'" | tr -d '\r' | xargs -r -n1 basename)
+  if [ -z "$CUNITS" ]; then
+    # The units land STOPPED and stay that way until an operator has signed in with /login --
+    # a step no play can do (Remote Control refuses API keys and setup-token tokens). So NO
+    # unit at all is "bootstrap unfinished", not drift, and skips rather than fails.
+    skip "remote-control server" "no units on the host — ansible/roles/claude-code/README.md"
+  else
+    for U in $CUNITS; do
+      ST=$(pct_on "$CNODE" 247 "systemctl is-active ${U%.service}" | tr -d '\r')
+      if [ "$ST" != "active" ]; then
+        bad "unit active: $U" "is-active: ${ST:-unknown}"
+        continue
+      fi
+      ok "unit active: $U"
+
+      # ⚠ AN ACTIVE UNIT IS NOT A REGISTERED SERVER -- the lesson the runners taught twice.
+      # The server registers with the Anthropic API over OUTBOUND HTTPS and polls it; that
+      # connection IS the feature working. A server whose login expired exits, or sits there
+      # holding nothing, and `is-active` cannot tell the difference. Nothing listens on a
+      # port here, so there is no inbound check to make instead.
+      #
+      # ATTRIBUTE THE SOCKET TO THIS UNIT'S OWN PROCESSES. A bare count of established :443
+      # sockets is satisfied by apt, gh, npm or a session's own fetch -- a green check earned
+      # by something else entirely. Read the pids from the unit's cgroup so a connection held
+      # by a forked child still counts, and fall back to MainPID if cgroupfs is not readable.
+      CPIDS=$(pct_on "$CNODE" 247 "sh -c 'cat /sys/fs/cgroup/system.slice/$U/cgroup.procs 2>/dev/null'" | tr -d '\r' | tr '\n' ' ')
+      [ -z "$(echo "$CPIDS" | tr -d ' ')" ] && CPIDS=$(pct_on "$CNODE" 247 "systemctl show -p MainPID --value ${U%.service}" | tr -d '\r ')
+      PIDRE=$(echo "$CPIDS" | tr ' ' '\n' | grep -E '^[0-9]+$' | grep -v '^0$' | paste -sd'|' -)
+      if [ -z "$PIDRE" ]; then
+        bad "registered: $U" "active but exposes no pid to check"
+        continue
+      fi
+
+      # Distinguish "no connection" from "no ss": both would otherwise print 0 and blame the
+      # login. Say what was examined, not only what was found.
+      if ! pct_on "$CNODE" 247 "sh -c 'command -v ss >/dev/null 2>&1'"; then
+        skip "registered: $U" "ss (iproute2) not installed — cannot attribute the connection"
+        continue
+      fi
+      ES=$(pct_on "$CNODE" 247 "sh -c 'ss -tnpH state established dport = :443 2>/dev/null'" | tr -d '\r' | grep -cE "pid=(${PIDRE}),")
+      if [ "${ES:-0}" -ge 1 ]; then
+        ok "registered: $U" "$ES outbound HTTPS from this unit"
+      else
+        bad "registered: $U" "unit is up but holds no :443 — expired login? journalctl -u ${U%.service}"
+      fi
+    done
+  fi
+fi
+
 printf "\n\033[1m%d passed, %d failed, %d skipped\033[0m\n" "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1

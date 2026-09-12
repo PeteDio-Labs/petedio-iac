@@ -1,0 +1,89 @@
+---
+# claude-code role defaults (PET-396). This host's whole job is to run Claude Code with
+# Remote Control on, so a session is drivable from claude.ai/code or the Claude app while
+# the process itself stays on hardware that does not close its lid.
+
+# Claude Code runs as a dedicated NON-ROOT user. That is a hard requirement here, not
+# hygiene: on Linux, Claude Code REFUSES to start in bypassPermissions mode as root or
+# under sudo, and this host's sessions run in exactly that mode (claude_permission_mode
+# below). Running the units as root would fail at startup, not degrade quietly.
+claude_user: claude
+claude_home: "/home/{{ claude_user }}"
+
+# Timezone for the session user — feeds ~/.claude/settings.json `env.TZ` so timestamps in
+# a session match the lab rather than UTC.
+claude_timezone: America/Chicago
+
+# --- The workspace ------------------------------------------------------------------
+# MIRRORS the petedio-workspace layout: a workspace root with the child repos cloned into
+# the SAME gitignored nested paths the parent repo uses, so an IaC issue is worked in
+# {{ claude_workspace }}/iac and a Co-latro issue in co-latro/backend|frontend. The layout
+# is carried over from the retired agent-loop role (PET-130), which proved it; nothing
+# else is inherited from that role, which the fleet teardown left as dead code.
+claude_workspace: "{{ claude_home }}/work/petedio"
+claude_github_base: https://github.com/PeteDio-Labs
+
+# Public child repos — cloned over HTTPS with no token. `dest` is RELATIVE to
+# claude_workspace. Private repos (petedio-workspace, co-latro-admin) need `gh auth` on the
+# host and are deliberately NOT cloned here; clone them by hand after the gh login.
+claude_repos:
+  - { name: petedio-iac, dest: iac }
+  - { name: petedio-media-iac, dest: media-iac }
+  - { name: co-latro-backend, dest: co-latro/backend }
+  - { name: co-latro-frontend, dest: co-latro/frontend }
+
+# --- Toolchain ------------------------------------------------------------------------
+# Node.js LTS major (NodeSource). 22 = active LTS ("jod").
+claude_nodejs_major: 22
+
+# Per-user npm global prefix. Claude Code installs here AS the session user, NOT into the
+# root-owned /usr prefix, so its auto-update (`npm i -g`) succeeds instead of failing with
+# "Auto-update failed: no write permission to npm prefix". Learned the hard way on the
+# agent-loop host (PET-139) — the same mistake is available to anyone who installs this
+# with `become: true` and a system prefix.
+claude_npm_prefix: "{{ claude_home }}/.npm-global"
+claude_npm_package: "@anthropic-ai/claude-code"
+
+# Operator SSH public keys authorized to log in directly as the session user, so you can
+# `ssh claude@192.168.50.247` and run the one-time login without hopping through root.
+# Public keys only (safe to commit). Append to add more operators.
+claude_authorized_keys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEgSIpFv6ipc5B3CATvK1CIqul0hG6MSUT0cR5TqhAX4 pedro@type-shit"
+
+# --- Remote Control -------------------------------------------------------------------
+# The permission mode the served sessions START in. `bypassPermissions` was chosen
+# deliberately for this host (PET-396): its reason to exist is work you drive from a phone,
+# and a prompt you cannot see is a stall.
+#
+# Know what it buys and what it costs. Claude Code's own guidance for this mode is
+# "isolated containers and VMs only", and this container is NOT isolated from the lab — it
+# sits on the LAN with Vault, Proxmox and Postgres. The role provisions no outbound
+# credential (the only key it places is a PUBLIC key, authorizing inbound SSH), so a session
+# reaches what the LAN serves unauthenticated plus whatever an operator adds by hand.
+#
+# Deny rules still apply in this mode; allow rules do not — but they live in a
+# settings.json this same user owns and can rewrite. roles/claude-code/README.md says where
+# to put rules that have to hold. Set this to `default` (Manual) or `acceptEdits` to walk it
+# back — it is one variable and a play re-run.
+claude_permission_mode: bypassPermissions
+
+# One `claude remote-control` server per project directory. Each entry renders its own
+# systemd unit, so `systemctl status claude-remote-iac` names the project it serves and a
+# crash in one does not take the others with it.
+#   name   instance name — the unit suffix AND the session-name prefix shown at
+#          claude.ai/code, which is how you tell two servers apart on a phone
+#   dir    project directory, RELATIVE to claude_workspace
+#   spawn  how the server creates sessions: `worktree` gives each on-demand session its own
+#          git worktree (requires a git repo — every entry here is one), `same-dir` shares
+#          the directory and lets concurrent sessions collide, `session` serves exactly one
+claude_remote_sessions:
+  - { name: iac, dir: iac, spawn: worktree }
+
+# Whether the units are enabled and started. DEFAULT FALSE, and that is load-bearing: a
+# server started before the operator has signed in with `/login` exits immediately, and
+# systemd restarts it until the unit's start limit trips. Bootstrap the login first
+# (roles/claude-code/README.md), then re-run the play with `-e claude_remote_enable=true`.
+#
+# ⚠ Override it with `=true` / `=false` and NOTHING ELSE, and note that the task reading it
+# has to say `| bool`: `-e` hands Jinja a STRING, and the string "false" is truthy.
+claude_remote_enable: false

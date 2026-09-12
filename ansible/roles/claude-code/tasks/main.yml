@@ -1,0 +1,337 @@
+---
+# claude-code tasks (PET-396) — put Claude Code on LXC 247 and leave it ready to serve
+# Remote Control sessions. Idempotent: apt/key/repo/user/clone all converge, and the npm
+# install runs only when the binary is missing (see its comment).
+#
+# NO PRECONDITION ON THE NODE. Unlike plane-235 or openfaas-241 there is no
+# scripts/lxc-features-247.sh to run first: nothing here needs nesting or keyctl, because
+# nothing here runs Docker.
+#
+# WHAT THIS PLAY CANNOT DO. Remote Control needs a real claude.ai login, and there is no
+# unattended path to one — API keys and `claude setup-token` tokens are both refused by the
+# feature. So this role installs, configures, and stops. The login, the workspace-trust
+# dialog and the one-time Remote Control confirmation are operator steps over SSH, after
+# which the units come up by re-running with `-e claude_remote_enable=true`. See README.md
+# in this role.
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - git
+      - gnupg
+      - jq
+      - less
+      - tmux
+      - unzip
+    state: present
+    update_cache: true
+
+- name: Ensure the apt keyring directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+# --- Node.js (NodeSource) --------------------------------------------------------------
+# Claude Code is an npm package, so Node is the runtime, not an accessory. Debian's own
+# nodejs is too old for it; NodeSource pins a chosen LTS major instead.
+#
+# The key is fetched ARMORED to a .asc path. apt reads ascii-armored keys from `signed-by`
+# directly, which skips the `gpg --dearmor` dance and the non-idempotent temp file it needs.
+
+- name: Add the NodeSource apt signing key
+  ansible.builtin.get_url:
+    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+    dest: /etc/apt/keyrings/nodesource.asc
+    mode: "0644"
+
+- name: Add the NodeSource apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/nodesource.asc]
+      https://deb.nodesource.com/node_{{ claude_nodejs_major }}.x nodistro main
+    filename: nodesource
+    state: present
+
+- name: Install Node.js
+  ansible.builtin.apt:
+    name: nodejs
+    state: present
+    update_cache: true
+
+# --- GitHub CLI --------------------------------------------------------------------------
+# The session opens its own PRs from this box, which is most of the point of giving it the
+# repos. `gh` carries its own auth (`gh auth login`), an operator step like the claude login.
+
+- name: Add the GitHub CLI apt signing key
+  ansible.builtin.get_url:
+    url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+    dest: /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    mode: "0644"
+
+- name: Add the GitHub CLI apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg]
+      https://cli.github.com/packages stable main
+    filename: github-cli
+    state: present
+
+- name: Install the GitHub CLI
+  ansible.builtin.apt:
+    name: gh
+    state: present
+    update_cache: true
+
+# --- The session user --------------------------------------------------------------------
+# Non-root, and required to be: Claude Code refuses bypassPermissions as root or under sudo.
+# This user deliberately gets NO sudo — a session that can reconfigure the host it runs on
+# can also undo the boundary it was given.
+
+- name: Create the session user
+  ansible.builtin.user:
+    name: "{{ claude_user }}"
+    home: "{{ claude_home }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Authorize the operator SSH keys for the session user
+  ansible.posix.authorized_key:
+    user: "{{ claude_user }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ claude_authorized_keys }}"
+
+# --- npm prefix ----------------------------------------------------------------------------
+# Per-user, so Claude Code can update ITSELF. With a root-owned system prefix the auto-update
+# fails with EACCES and the host silently rots on the version it was installed with (PET-139,
+# learned on the agent-loop box).
+
+- name: Create the per-user npm prefix
+  ansible.builtin.file:
+    path: "{{ claude_npm_prefix }}/bin"
+    state: directory
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0755"
+
+- name: Point npm at the per-user prefix
+  ansible.builtin.copy:
+    dest: "{{ claude_home }}/.npmrc"
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/claude-code).
+      prefix={{ claude_npm_prefix }}
+
+- name: Put the per-user npm bin first on the session user's PATH
+  ansible.builtin.blockinfile:
+    path: "{{ claude_home }}/.bashrc"
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0644"
+    create: true
+    marker: "# {mark} ANSIBLE MANAGED BLOCK (claude-code)"
+    block: |
+      # The user copy of Claude Code must win over anything in /usr/bin, so that an
+      # auto-update is the version you get on the next login.
+      export PATH="{{ claude_npm_prefix }}/bin:$PATH"
+
+# Installed ONLY when absent. Claude Code updates itself, so re-running `npm i -g` on every
+# play would fight the auto-updater and could move a session's version mid-task. Ansible's
+# job here is that the binary EXISTS; which version it is belongs to the tool.
+- name: Check whether Claude Code is already installed
+  ansible.builtin.stat:
+    path: "{{ claude_npm_prefix }}/bin/claude"
+  register: claude_binary
+
+# ⚠ runuser, NOT become_user. `become_user` defaults to sudo, and the minimal Debian LXC
+# template this host is built from ships without it — the task dies with
+# `/bin/sh: 1: sudo: not found` and rc=127 (docs/GOTCHAS.md, PET-355). Installing sudo is not
+# enough on its own either: Ansible's unprivileged become still has to hand its temp module
+# file to the target user, which needs `acl` on this template, and mangles the module's JSON
+# into `Module result deserialization failed: No start of json char found` when it cannot.
+# That is how runner-233 ended up built, running and never registered (PET-128,
+# playbooks/configure-runner.yml). Dropping privileges INSIDE the command, from the root
+# connection, avoids the unprivileged-become machinery altogether.
+- name: Install Claude Code (npm global, as the session user)
+  ansible.builtin.command:
+    cmd: runuser -u {{ claude_user }} -- npm install -g {{ claude_npm_package }}
+  environment:
+    HOME: "{{ claude_home }}"
+    NPM_CONFIG_PREFIX: "{{ claude_npm_prefix }}"
+  when: not claude_binary.stat.exists
+  changed_when: true
+
+# --- The workspace -------------------------------------------------------------------------
+
+- name: Create the workspace root
+  ansible.builtin.file:
+    path: "{{ claude_workspace }}"
+    state: directory
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0755"
+
+# SEEDED, NEVER UPDATED — and `creates:` is the thing that says so. This is a working host:
+# a re-run that fast-forwarded every repo would move the branch out from under a session
+# mid-task, and one that reset them would delete uncommitted work. A clone that already
+# exists is left alone; the session pulls its own repos, like any developer.
+#
+# runuser rather than become_user, for the reason given at the npm install above.
+- name: Clone the workspace repos
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git clone {{ claude_github_base }}/{{ item.name }}.git
+      {{ claude_workspace }}/{{ item.dest }}
+    creates: "{{ claude_workspace }}/{{ item.dest }}/.git"
+  # runuser does not start a login shell, so HOME would still be root's — and git reading
+  # /root/.gitconfig as the claude user is a permission error, not a miss.
+  environment:
+    HOME: "{{ claude_home }}"
+  loop: "{{ claude_repos }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# --- Claude Code settings ------------------------------------------------------------------
+# SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles
+# and one-time prompts land here — so an Ansible-owned copy would silently revert choices
+# made in a session. What the units actually depend on is passed on their command line
+# instead, where a flag outranks every settings file. This file only makes a hand-run
+# `claude` over SSH behave the way the units do.
+#
+# ⚠ DO NOT add DISABLE_TELEMETRY, DO_NOT_TRACK, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC or
+# DISABLE_GROWTHBOOK to `env` here, or to the units. Each one disables the feature-flag
+# evaluation that Remote Control availability depends on, so the feature stops being offered
+# at all — and it presents as "unavailable", which reads like an outage rather than a setting.
+
+- name: Create the Claude Code config directory
+  ansible.builtin.file:
+    path: "{{ claude_home }}/.claude"
+    state: directory
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0700"
+
+- name: Seed the Claude Code user settings
+  ansible.builtin.copy:
+    dest: "{{ claude_home }}/.claude/settings.json"
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0600"
+    force: false
+    content: "{{ claude_seed_settings | to_nice_json }}\n"
+  vars:
+    claude_seed_settings:
+      permissions:
+        defaultMode: "{{ claude_permission_mode }}"
+      env:
+        TZ: "{{ claude_timezone }}"
+
+# --- The Remote Control servers --------------------------------------------------------------
+# One unit per project directory, rendered from claude_remote_sessions.
+
+# A unit whose WorkingDirectory does not exist fails at startup with status=200/CHDIR,
+# which names the unit and not the cause. claude_remote_sessions[].dir and
+# claude_repos[].dest are independent lists, and private repos are cloned by hand
+# (defaults/main.yml) — so prove the directory is there before rendering a unit for it.
+- name: Check the directory each remote-control session serves
+  ansible.builtin.stat:
+    path: "{{ claude_workspace }}/{{ item.dir }}"
+  register: claude_session_dirs
+  loop: "{{ claude_remote_sessions }}"
+  loop_control:
+    label: "{{ item.dir }}"
+
+- name: Fail on a session whose directory is missing
+  ansible.builtin.assert:
+    that: item.stat.isdir is defined and item.stat.isdir
+    fail_msg: >-
+      claude_remote_sessions entry '{{ item.item.name }}' serves
+      {{ claude_workspace }}/{{ item.item.dir }}, which does not exist. Clone it — this role
+      does not clone private repos — or drop the entry.
+  loop: "{{ claude_session_dirs.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Install the remote-control units
+  ansible.builtin.template:
+    src: claude-remote.service.j2
+    dest: "/etc/systemd/system/claude-remote-{{ item.name }}.service"
+    mode: "0644"
+  loop: "{{ claude_remote_sessions }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload systemd
+
+# A unit left behind by an entry REMOVED from claude_remote_sessions would keep serving a
+# session nobody declares any more — drift that answers from a phone. Reconcile by removing
+# every managed unit this run did not render.
+- name: Find the remote-control units on the host
+  ansible.builtin.find:
+    paths: /etc/systemd/system
+    patterns: "claude-remote-*.service"
+  register: claude_units_present
+
+- name: Work out which units are no longer declared
+  ansible.builtin.set_fact:
+    claude_units_stale: >-
+      {{ claude_units_present.files | map(attribute='path') | map('basename') | list
+         | difference(claude_remote_sessions | map(attribute='name')
+                      | map('regex_replace', '^', 'claude-remote-')
+                      | map('regex_replace', '$', '.service') | list) }}
+
+- name: Stop and disable the undeclared remote-control units
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ claude_units_stale }}"
+
+- name: Delete the undeclared remote-control unit files
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop: "{{ claude_units_stale }}"
+  notify: Reload systemd
+
+- name: Flush handlers so a changed unit is on disk before it is started
+  ansible.builtin.meta: flush_handlers
+
+# A unit that tripped its start limit on a previous run sits in `failed`, and `systemctl
+# start` answers `Start request repeated too quickly` until someone clears it — so the
+# re-run that carries the operator's fresh login would fail on the wreckage of the run
+# before it. Clear it first; a no-op on a unit that is not failed.
+- name: Clear a tripped start limit before starting
+  ansible.builtin.command:
+    cmd: systemctl reset-failed claude-remote-{{ item.name }}.service
+  loop: "{{ claude_remote_sessions }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: claude_remote_enable | bool
+  changed_when: false
+  failed_when: false
+
+# Started only once the operator has logged in — see claude_remote_enable in defaults. A
+# server started without an eligible login exits immediately; Restart=always is bounded by
+# the StartLimit pair in the unit so that lands in `failed` rather than a crash loop.
+#
+# ⚠ `| bool` IS LOAD-BEARING ON BOTH LINES. `-e claude_remote_enable=false` hands Jinja the
+# STRING "false", which is truthy — so a bare `if claude_remote_enable` evaluates to
+# `started` and the documented way to turn this off silently turns it on. `enabled:` goes
+# through Ansible's own bool coercion and would say false, leaving a running, disabled unit,
+# while the play's closing message (which does coerce) reports the units as stopped.
+- name: Enable and start the remote-control servers
+  ansible.builtin.systemd:
+    name: "claude-remote-{{ item.name }}.service"
+    enabled: "{{ claude_remote_enable | bool }}"
+    state: "{{ 'started' if claude_remote_enable | bool else 'stopped' }}"
+    daemon_reload: true
+  loop: "{{ claude_remote_sessions }}"
+  loop_control:
+    label: "{{ item.name }}"

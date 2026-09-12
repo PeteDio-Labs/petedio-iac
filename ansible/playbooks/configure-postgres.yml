@@ -94,6 +94,7 @@
     # On Debian the bootstrap `postgres` role is peer-auth/passwordless; give it a
     # password so the provider can authenticate over TCP (scram-sha-256).
     - name: Create / update the Postgres admin role used by the Terraform provider
+      become: true
       community.postgresql.postgresql_user:
         name: "{{ postgres_admin_user }}"
         password: "{{ postgres_admin_password }}" # required extra-var, asserted above (PET-106)

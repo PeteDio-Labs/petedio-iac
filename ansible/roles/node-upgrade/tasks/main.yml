@@ -10,7 +10,10 @@
 # A transient timer rather than a permanent unit: this is a one-off maintenance
 # window, and a persistent timer that silently upgrades a hypervisor every night
 # is a different decision from the one being made here.
-- name: Cancel any previous scheduled run
+# noqa reason: the unit is transient (created by `systemd-run --unit=`), so on a first run
+# it does not exist. systemd_service state=stopped errors on an unknown unit; the command
+# form carries failed_when: false precisely to tolerate that.
+- name: Cancel any previous scheduled run  # noqa: command-instead-of-module
   ansible.builtin.command: systemctl stop node-upgrade.timer
   changed_when: false
   failed_when: false
@@ -23,7 +26,9 @@
   register: node_upgrade_scheduled
   changed_when: true
 
-- name: Confirm it is actually scheduled
+# noqa reason: the Report task below prints the next-elapse row from `list-timers`.
+# systemd_service returns unit facts and no such row.
+- name: Confirm it is actually scheduled  # noqa: command-instead-of-module
   ansible.builtin.command: systemctl list-timers node-upgrade.timer --no-pager
   register: node_upgrade_timer
   changed_when: false

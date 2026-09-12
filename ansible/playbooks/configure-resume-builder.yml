@@ -194,10 +194,11 @@
 
     # Platform-specific deps must be installed ON THE TARGET — copying node_modules from
     # the operator's Mac (arm64/x86_64) would ship the wrong binaries.
-    - name: bun install --production in the app dir (target-native deps)
+    - name: Bun install --production in the app dir (target-native deps)
       ansible.builtin.command:
         cmd: "{{ bun_bin }} install --production"
         chdir: "{{ resume_builder_app_dir }}"
+      become: true
       become_user: "{{ resume_builder_user }}"
       changed_when: true
       notify: Restart resume-builder

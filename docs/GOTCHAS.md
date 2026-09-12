@@ -768,3 +768,106 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   operator-applied via `scripts/apply-vault-config.sh` and **never runs in CI** — so it does not
   land with a normal merge, and apply-on-merge fails on a permission denied it cannot diagnose
   for itself.
+
+## Claude Code as a service — the Claude host (247) (PET-396)
+
+- **Remote Control and the Chrome integration both refuse API keys and long-lived
+  `claude setup-token` tokens.** Each needs an interactive claude.ai login on a Pro, Max,
+  Team or Enterprise plan. That removes the unattended provisioning path entirely: a play
+  can install Claude Code, render its units and set every variable, and the host still
+  cannot serve until a human runs `/login` over SSH. Plan the rollout as two phases and
+  leave the units **stopped** in phase one — a server started without an eligible login
+  exits immediately, and an unbounded `Restart=always` turns a missing step into a crash
+  loop that reads like a broken host. Bound it with `StartLimitIntervalSec` +
+  `StartLimitBurst` in `[Unit]` so it lands in `failed` instead, and remember that clearing
+  `failed` needs `systemctl reset-failed` before the next start will be accepted.
+
+- **`-e var=false` is a truthy STRING, so an enable gate needs `| bool` on every read.**
+  Ansible's `-e key=value` never yields a bool. `{{ 'started' if enable else 'stopped' }}`
+  evaluates to `started` under `-e enable=false`, while a sibling `enabled: "{{ enable }}"`
+  goes through Ansible's own coercion and says false — leaving a **running, disabled** unit.
+  Worse, a `when: not enable | bool` elsewhere in the play *does* coerce, so the closing
+  message cheerfully reports the units as stopped. Found in review of PET-396; it is the
+  green-check-over-work-that-never-happened shape in miniature, inside one play.
+
+- **`bypassPermissions` is refused as root and under `sudo` on Linux.** A unit that runs
+  the server as root fails at startup, so the dedicated non-root user is a requirement of
+  the mode, not hygiene. The check is skipped inside a recognized sandbox, which an LXC is
+  not.
+
+- **Flags go AFTER the `remote-control` subcommand.** A global `claude` flag placed before
+  it is not carried over to the sessions the server creates, and Claude Code refuses to
+  start rather than run them with less than you asked for, naming the flag to move. So
+  `claude remote-control --permission-mode X` works and `claude --permission-mode X
+  remote-control` does not — which looks like the same command to anyone tidying a unit file.
+
+- **Four telemetry opt-outs disable Remote Control, and it does not present as a setting.**
+  `DISABLE_TELEMETRY`, `DO_NOT_TRACK`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and
+  `DISABLE_GROWTHBOOK` each disable the feature-flag evaluation the feature's availability
+  depends on, wherever they are set — shell, unit, or a `settings.json` `env` block. The
+  symptom is "unavailable", which reads like an outage rather than something you chose.
+
+- **The startup trust dialog never saves trust for a home directory.** Start the first
+  session from a project directory, or Remote Control refuses to run later for a reason
+  that points nowhere near the trust prompt you clicked past weeks ago.
+
+- **Nothing about this host needs `features{}`** — no Docker, so no nesting, no keyctl, and
+  no `scripts/lxc-features-<id>.sh` step on the node. Worth stating because the reflex on
+  this cluster is that every app LXC needs the root@pam dance. It is also worth *keeping*
+  true: the day something here wants Docker is the day this host gains an out-of-band step
+  that every rebuild has to remember.
+
+- **Remote Control opens no inbound port.** The session registers with the Anthropic API
+  over outbound HTTPS and polls it, so the most remotely-reachable box in the lab needs no
+  Cloudflare route, no UFW rule and no port forward. The corollary is that liveness cannot
+  be checked by connecting to it: `lab-verify` asserts an established outbound :443
+  connection instead, because an `active` unit with an expired login looks identical to a
+  working one.
+
+- **Debian's `.bashrc` returns early for non-interactive shells, so a PATH line appended
+  there is invisible to `su - user -c ...` and to systemd.** Not Claude-specific, but it is
+  exactly the trap that makes a health check report a working host as broken: set `PATH`
+  explicitly in the unit, and use absolute paths in checks.
+
+- **Chrome integration cannot be satisfied by a browser on the node.** It pairs over native
+  messaging — a local pipe keyed to a file in the session user's own home — so Claude Code
+  and the browser must be the same user on the same machine, and headless is unsupported
+  (browser actions run in a visible window). A browser on the hypervisor next to a Claude
+  Code LXC pairs with nothing. Evaluated and dropped for 247; if it is ever wanted, it costs
+  a desktop and a remote-desktop transport **inside** the container.
+
+## `ansible-lint <dir>` can examine nothing and call it a pass (PET-397)
+
+- **`ansible-lint .` run inside `ansible/` reports `Passed: 0 failure(s), 0 warning(s) in 0
+  files processed of 1 encountered` and exits 0.** It is not linting the tree; it is linting
+  nothing and saying so in a line nobody reads. Pass explicit targets — `ansible-lint roles/
+  playbooks/` processes 186 files here — and assert the processed count in CI.
+
+- **Zero is the wrong threshold for that assertion.** Once a `.ansible-lint` config exists in
+  the directory, the same collapsed invocation reports `1 files processed`, still green. A
+  guard written as `-eq 0` passes it. Floor the count against something that grows with the
+  repo instead: `.github/workflows/ansible-validate.yml` uses roles + playbooks, counted in
+  an earlier step that itself refuses to continue on zero.
+
+- **`syntax-check[unknown-module]` usually means a missing collection, not a typo.** Nine of
+  them appear across this repo until `ansible-galaxy collection install -r
+  ansible/requirements.yml` has run. They are deliberately NOT suppressed with `# noqa`, so a
+  silently failed collection install turns the check red rather than skipping those files.
+
+- **There is no ignore file — suppress at the site, with the reason.** The tree lints clean
+  at the `production` profile. Eleven findings were deliberate and carry `# noqa: <rule>`
+  where the code is, with the why above them. Three of those are worth knowing before you
+  "tidy" one: `apt-get -s upgrade` in `apt-hygiene` is a SIMULATION whose stdout is parsed —
+  the `ansible.builtin.apt` form would actually upgrade ~190 packages on pve03;
+  `systemctl start --wait` in `vault-unseal` propagates the oneshot's exit code, which
+  `systemd_service: state=started` discards; and the reboot in `ollama-service` must precede
+  the `nvidia-smi` assert in the same play, so it cannot become a handler.
+
+- **`set -o pipefail` needs `executable: /bin/bash`.** `/bin/sh` is dash on Debian and
+  answers `Illegal option -o pipefail` with rc=2. Fixed once on runner-233 (`6cb5bfb`), and
+  again in `configure-openfaas.yml` when the lint backlog was cleared. If you add a pipeline
+  to a `shell:` task, add the `args: executable:` in the same edit.
+
+- **Renaming a handler breaks every `notify:` that names it.** PET-303 did exactly that and
+  left a dangling notify. When `name[casing]` makes you capitalise a handler, grep the repo
+  for the old string and move the notifies in the same commit — `Restart zot` alone has four.
