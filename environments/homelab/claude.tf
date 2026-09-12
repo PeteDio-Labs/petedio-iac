@@ -14,7 +14,9 @@
 #
 # VMID 247 = next free in the .24x compute/AI block; VMID = last IP octet. The four
 # before it are all spoken for, and two of them only look free:
-#   241  openfaas          live
+#   241  ex-openfaas       DESTROYED 2026-09-12 (PET-403). Its gateway admitted only
+#                          the .230 that died with Co-latro, so nothing could invoke a
+#                          function. Do not reuse the VMID casually — same caution as 242
 #   242  ex-resume-242     removed in PET-307, but tickets and runbooks still name it —
 #                          the same reason plane.tf took 235 over a free-but-loaded 234
 #   243  ex-waterfast      destroyed in PET-306 (2026-08-24) with fast.pdlab.dev; only its
