@@ -114,6 +114,13 @@
   ansible.builtin.file:
     path: "{{ claude_npm_prefix }}/bin"
     state: directory
+    # ⚠ follow: false is load-bearing (PET-410). ansible.builtin.file defaults to
+    # follow: yes, and this task runs as ROOT while the path lives inside a home the
+    # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
+    # any file on the host becomes claude-owned on the next play run. That is the one
+    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
+    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
     mode: "0755"
@@ -173,6 +180,13 @@
   ansible.builtin.file:
     path: "{{ claude_workspace }}"
     state: directory
+    # ⚠ follow: false is load-bearing (PET-410). ansible.builtin.file defaults to
+    # follow: yes, and this task runs as ROOT while the path lives inside a home the
+    # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
+    # any file on the host becomes claude-owned on the next play run. That is the one
+    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
+    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
     mode: "0755"
@@ -214,6 +228,13 @@
   ansible.builtin.file:
     path: "{{ claude_home }}/.claude"
     state: directory
+    # ⚠ follow: false is load-bearing (PET-410). ansible.builtin.file defaults to
+    # follow: yes, and this task runs as ROOT while the path lives inside a home the
+    # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
+    # any file on the host becomes claude-owned on the next play run. That is the one
+    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
+    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
     mode: "0700"
