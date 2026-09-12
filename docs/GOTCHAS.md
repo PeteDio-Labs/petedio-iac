@@ -811,6 +811,20 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   session from a project directory, or Remote Control refuses to run later for a reason
   that points nowhere near the trust prompt you clicked past weeks ago.
 
+- **`claude -p` skips the trust dialog entirely, so trust is not a constraint on an
+  unattended job** (`claude --help`, under `-p`: the dialog is skipped whenever Claude runs
+  non-interactively, which includes any run whose stdout is not a TTY). Read that both
+  ways. It means the PET-399 work loop can run in a directory nobody ever trusted by hand,
+  which is what lets it keep its own clone instead of sharing the one a human drives. It
+  also means a piped `claude` in a directory you did not mean to trust does not stop to
+  ask. Trust the directory anyway if you want MCP tools resolving in that session.
+
+- **There is no `--max-turns` in Claude Code 2.1.x.** An unattended `claude -p` has no
+  turn ceiling, so wall-clock is the only bound available: `timeout` around the process,
+  and a `TimeoutStartSec` above it in the unit so the inner one reports first and says why.
+  Checked against `claude --help` on 247 while writing the loop — a `--max-turns` copied
+  out of an older runbook fails the whole invocation rather than being ignored.
+
 - **Nothing about this host needs `features{}`** — no Docker, so no nesting, no keyctl, and
   no `scripts/lxc-features-<id>.sh` step on the node. Worth stating because the reflex on
   this cluster is that every app LXC needs the root@pam dance. It is also worth *keeping*
@@ -871,6 +885,78 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
 - **Renaming a handler breaks every `notify:` that names it.** PET-303 did exactly that and
   left a dangling notify. When `name[casing]` makes you capitalise a handler, grep the repo
   for the old string and move the notifies in the same commit — `Restart zot` alone has four.
+
+## A sudoers grant belongs to the UID, not to the process you wrote it for (PET-408)
+
+- **If a program runs a `claude -p` session as its own user, that session inherits every
+  sudo grant the program has.** The PET-399 loop shipped with `/etc/sudoers.d/claude-loop`
+  granting `claude` two exact broker commands, no wildcards, `visudo`-validated — a
+  textbook-narrow grant. It was still wrong, because the tick ran as `claude` and started a
+  session as `claude`, and the session's instructions come from a Plane work item. Anyone
+  who could write one could run the granted command directly and skip every guard in the
+  tick. Narrowing *which* commands a grant covers does nothing about *who* can call them.
+
+- **Invert the privilege instead of reaching up through it.** The unit now runs as root,
+  reads `/etc/claude-loop/` directly and calls `runuser -u claude` for the session and for
+  every command that touches the working tree. `runuser` drops privilege and cannot raise
+  it, so there is no grant to inherit and no sudo on the host at all.
+
+- **`runuser` lives in `/usr/sbin`, which is not on a non-root `PATH`.** A tool check that
+  demands it unconditionally fails a hand-run as the unprivileged user for a reason that has
+  nothing to do with the problem. Require it only when `id -u` is 0, and set the unit's
+  `PATH` explicitly — Debian's `.bashrc` returns early for non-interactive shells, so the
+  role's `PATH` line never runs under systemd.
+
+- **`HOME` does not follow `runuser -u`.** A root unit whose `Environment=HOME` points at
+  `/root` makes `claude -p` look for the claude.ai login in the wrong place and report
+  itself as not logged in. Set `HOME` to the session user's home in the unit.
+
+- **A root process pushing from a user-owned clone must push to a URL, not to `origin`.**
+  Pushing to a named remote updates that remote's tracking ref, which writes a root-owned
+  file into a `claude`-owned `.git` and breaks the next session with objects it cannot
+  touch. Pushing to an explicit URL updates no tracking ref, so root only reads the
+  repository — and a session that repointed `origin` cannot redirect the push at all. Git
+  also refuses a repository owned by another user, so the push needs
+  `-c safe.directory=<path>`, scoped to that path and never `*`.
+
+- **Removing a grant means removing the file, not deleting the template.** A host converged
+  before the fix keeps `/etc/sudoers.d/claude-loop` forever if the role simply stops
+  rendering it. Reconcile what you removed with `state: absent`, the same way the role
+  already reaps undeclared `claude-remote-*` units.
+
+## `git checkout <ref> -- .` restores files you deleted, through the index (PET-408)
+
+- **It is a restore, not a merge.** It writes that ref's tree into the index *and* the
+  working tree for every matching path. A file that exists at `<ref>` and was **deleted on
+  your branch comes back already staged**, with no conflict and nothing in the output to say
+  so. `git checkout HEAD -- .` afterwards does not undo it: that restores tracked files, it
+  never removes an extra one. The next `git add -A` then sweeps it into a commit whose
+  message describes something else entirely.
+
+- **It happened here, on the branch whose purpose was the deletion.** Reading another
+  branch's content to review it restored `roles/claude-code/templates/claude-loop-sudoers.j2`
+  — the sudo grant PET-408 exists to remove — into a commit that claimed to add `follow:
+  false` to two tasks. Nothing rendered the template, so no host would have received the
+  grant; what would have shipped is a repository containing the thing PET-408 deletes, one
+  task away from live.
+
+- **Read another ref with `git show <ref>:<path>` or a separate worktree.** If you must use
+  a pathspec checkout, name the paths rather than `-- .`, and run `git status --short` and
+  `git diff --cached --stat` before committing.
+
+- **No check caught it, and none of the obvious ones could.** `ansible-lint` passes — a
+  valid Jinja template is still valid when nothing renders it. `--syntax-check` never reads
+  templates. `scripts/test-claude-loop-tick.sh` never reads Ansible. What caught it was the
+  lint line: `193 files processed of 203` where the run before said `192 of 202`. A file
+  count that rises after a commit that deletes nothing.
+
+- **So diff the numbers, not the prose.** Two runs of the same command produce
+  identically-shaped output; the verdict line says `0 failures` both times and only the
+  counts carry the signal. Before comparing two runs, say which number should change and by
+  how much, then look. This only works if the check prints what it examined — which is the
+  standing rule in `.github/workflows/ansible-validate.yml`, earning its keep somewhere
+  nobody planned.
+
 
 ## A required status check with a `paths:` filter hangs every PR that misses it (PET-399)
 
