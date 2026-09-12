@@ -135,6 +135,31 @@
       # Managed by Ansible (roles/claude-code).
       prefix={{ claude_npm_prefix }}
 
+# ⚠ blockinfile has NO `follow` parameter, and it DOES follow symlinks. Verified on
+# 2026-09-12 by pointing one at a scratch file: the link survived as a link and the TARGET
+# got the block. With owner/group/mode set below, root would chown that target to the session
+# user as well — the same PET-410 primitive as the file tasks above, through a door
+# `follow: false` cannot close because the parameter does not exist.
+#
+# So refuse to write through a link rather than trying to write through one safely. A
+# symlinked .bashrc on this host is either an attack or a broken home; both deserve a stop.
+- name: Check .bashrc is a real file before root writes to it
+  ansible.builtin.stat:
+    path: "{{ claude_home }}/.bashrc"
+    follow: false
+  register: claude_bashrc
+
+- name: Refuse to write through a symlinked .bashrc
+  ansible.builtin.assert:
+    that:
+      - not (claude_bashrc.stat.islnk | default(false))
+    fail_msg: >-
+      {{ claude_home }}/.bashrc is a symlink to
+      {{ claude_bashrc.stat.lnk_target | default('unknown') }}. The next task runs as root and
+      sets owner/group/mode, so writing through it would hand that target to
+      {{ claude_user }} (PET-410). Remove the link and re-run. Do not add `follow: false` —
+      blockinfile has no such parameter, which is why this check exists.
+
 - name: Put the per-user npm bin first on the session user's PATH
   ansible.builtin.blockinfile:
     path: "{{ claude_home }}/.bashrc"
