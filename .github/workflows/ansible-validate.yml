@@ -49,6 +49,13 @@ defaults:
 jobs:
   ansible-validate:
     runs-on: ubuntu-latest
+    # GNU grep calls a file binary when it hits bytes it cannot decode in the current
+    # locale, and prints "binary file matches" INSTEAD of the match. Task names in this repo
+    # are full of em-dashes, so a C locale turns the count-extraction below into an empty
+    # string and the floor guard fires on a clean tree. Found on this job's first CI run.
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
     steps:
       - uses: actions/checkout@v4
 
@@ -114,7 +121,10 @@ jobs:
       - name: Lint the roles and playbooks
         run: |
           set -uo pipefail
-          ansible-lint roles/ playbooks/ 2>&1 | tee /tmp/lint.log
+          # --nocolor: ANSI escapes in the tee'd log are the other half of the binary-file
+          # problem above. Belt and braces — this parses a number out of a log, and the
+          # guard below treats "could not parse" as failure, so both must be reliable.
+          ansible-lint --nocolor roles/ playbooks/ 2>&1 | tee /tmp/lint.log
           RC=${PIPESTATUS[0]}
           # ⚠ The count is the point, and ZERO IS THE WRONG THRESHOLD. ansible-lint prints
           # "N files processed of M encountered" on both the pass and the fail path, and N
@@ -126,7 +136,7 @@ jobs:
           # playbook is one file lint must see, and every role contributes at least one, so
           # roles+playbooks is a lower bound that rises as the repo grows and cannot be
           # satisfied by a collapsed glob.
-          PROCESSED=$(grep -oE '[0-9]+ files processed' /tmp/lint.log | head -1 | grep -oE '^[0-9]+' || true)
+          PROCESSED=$(grep -aoE '[0-9]+ files processed' /tmp/lint.log | head -1 | grep -aoE '^[0-9]+' || true)
           FLOOR=$(( ${{ steps.scope.outputs.roles }} + ${{ steps.scope.outputs.plays }} ))
           echo "ansible-lint examined ${PROCESSED:-0} files across ${{ steps.scope.outputs.roles }} roles and ${{ steps.scope.outputs.plays }} playbooks (floor ${FLOOR})"
           if [ "${PROCESSED:-0}" -lt "$FLOOR" ]; then
