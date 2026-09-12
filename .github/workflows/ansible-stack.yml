@@ -1,11 +1,10 @@
-# Reusable Ansible stack workflow (PET-250) — the ONE copy of the syntax-check/apply logic
+# Reusable Ansible stack workflow (PET-250) — the ONE copy of the apply logic
 # that ansible-openfaas.yml and ansible-palworld.yml used to duplicate (~109 lines each).
 # Per-stack workflows are now thin CALLERS: they own their `on.paths` triggers and their
 # per-host `concurrency` group (serialization semantics unchanged), and pass their playbook
 # + knobs here via `workflow_call` inputs. A new stack = a ~20-line caller, not a clone.
 #
 # Jobs (gated on the CALLER's event, which propagates to reusable workflows):
-#   syntax-check  pull_request — prove the play parses. No secrets, no host contact.
 #   apply         push to main — OIDC → Vault (openfaas-ci role: lxc-ssh + registry pull creds
 #                 only) → ansible-playbook against the live host, from the self-hosted
 #                 homelab x64 runner (LXC 232 on pve03, or 233 on pve02).
