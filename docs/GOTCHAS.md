@@ -1041,6 +1041,42 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   a throwaway branch carrying the same rule, never at `main`, where a merge triggers
   apply-on-merge.
 
+## `MERGED` is a fact about the pull request, not about what is on `main`
+
+A squash-merge takes **the head the pull request had when the button was pressed**. Commits
+pushed to the branch after that can sit on origin, reachable, with the PR showing `MERGED` and
+`main` carrying an earlier draft.
+
+That happened to `petedio-vault#26` on 2026-09-12. Three correction commits were on the branch
+at `b26eeec`; the PR merged at `d8082a81`, its first commit. `main` kept a note whose claims had
+been disproved an hour earlier and whose own subject is stale copies.
+
+```bash
+gh pr view <n> -R <repo> --json state,mergedAt          # MERGED — true, and useless
+gh pr view <n> -R <repo> --json headRefOid              # what actually merged
+git ls-remote origin refs/heads/<branch>                # what the branch had
+```
+
+**Verify the merged CONTENT, not the merge state.** Grep `main` for the sentence, the guard,
+the function that was supposed to land:
+
+```bash
+git show origin/main:path/to/file | grep -c 'the thing that should be there'   # want 1
+git show origin/main:path/to/file | grep -c 'the thing that should be gone'    # want 0
+```
+
+⚠ **Check for what should be ABSENT as well as present.** A restored file and a stale file both
+answer 1 to the first grep.
+
+Two related traps, both seen the same night:
+
+- ⚠ **`git log origin/main..<branch>` lists every commit after a squash**, including the ones
+  whose content landed, because squash writes a new SHA. It is not evidence that anything is
+  missing. `git merge-base --is-ancestor` has the same problem from the other direction.
+- ⚠ **A push reported from `git rev-parse --short HEAD` is the LOCAL sha.** It is right whenever
+  the push succeeded, so it reads as verification and is not. It said nothing about whether the
+  pull request had the commits. Ask the remote: `git ls-remote origin refs/heads/<branch>`.
+
 ## A thing that holds a copy of a fact is only ever wrong in the direction nobody is looking
 
 The most general trap here, and the one the others are instances of. Whenever something
