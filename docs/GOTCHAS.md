@@ -1176,3 +1176,38 @@ boundary this design wanted and did not think to ask for.
 
 The cost is that the refusal lands *after* a full session has run. Say it in the prompt, and
 check the staged diff for `.github/workflows/**` before the push.
+
+## A reusable workflow that asks for more than its caller granted never starts, and leaves no log (PET-430)
+
+- **The run does not fail. It never begins.** If a called workflow's job requests a permission
+  the caller did not grant, GitHub rejects the run at validation with conclusion
+  `startup_failure`. Measured on a throwaway branch: the same caller pointed at the same
+  reusable workflow failed at startup without the grant, and started normally with it.
+
+- **A `startup_failure` produces no logs at all.** Every route returns nothing:
+
+  ```
+  gh run view <id> --log          → failed to get run log: log not found
+  gh run view <id> --log-failed   → nothing
+  gh api .../runs/<id>/attempts/1/logs → 404
+  ```
+
+  The message naming the offending permission — *"requesting 'X', but is only allowed 'Y'"* —
+  **exists only in the web UI.** The conclusion string `startup_failure` is the entire signal
+  available to anything automated. A job that fails before it starts is invisible to every tool
+  that reads logs, which is most of them.
+
+- **So widening a reusable workflow's permissions is a two-phase change, in one order only.**
+  Grant the scope in *every* caller first — that is a genuine no-op, because the called job's
+  own block still strips it — and only then add it to the called job. Reverse the order and
+  every caller that has not been updated stops running, including the ones that work today.
+
+- **Count the callers, not the broken ones.** PET-430 began as "five private repos 403 nightly"
+  and the fix looked like five edits. Eleven repos call that workflow; the six healthy ones
+  would have been taken down by a change made to fix the five sick ones. The set that matters
+  is everything that calls the workflow, not everything that currently fails.
+
+- **The asymmetry is worth remembering on its own.** A caller granting *more* than the job
+  requests is fine — the job's block narrows it. A job requesting more than the caller granted
+  is fatal. Permissions flow downward and can only be reduced, so the caller is always the
+  place a grant has to exist first.
