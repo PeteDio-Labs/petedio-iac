@@ -35,5 +35,16 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      # ⚠ REQUIRED, AND THE REUSABLE JOB CANNOT ADD IT FOR US (PET-430). plane-reconcile
+      # lists pull requests, which needs the Pull requests permission. A called workflow
+      # can only NARROW what its caller grants, never widen it — so this line has to exist
+      # here, in every one of the eleven repos that calls it.
+      #
+      # ⚠ AND IT MUST LAND BEFORE the reusable workflow starts asking for it. A job
+      # requesting more than its caller granted does not fail — it never STARTS
+      # (`startup_failure`), and a run that never starts writes no log at all. Measured,
+      # not assumed. Until petedio-iac's side lands this line is a harmless no-op: the
+      # called job still strips the scope.
+      pull-requests: read
     with:
       lookback_days: ${{ github.event.inputs.lookback_days || '3' }}
