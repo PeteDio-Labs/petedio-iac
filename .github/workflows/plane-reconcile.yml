@@ -53,6 +53,19 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      # ⚠ REQUIRED FOR PRIVATE CALLERS, AND ITS ABSENCE WAS INVISIBLE IN PUBLIC ONES
+      # (PET-430). The curl below lists pull requests, which needs the Pull requests
+      # permission. A public repo serves that endpoint to any token, so petedio-iac and the
+      # other public callers passed for years; every private caller got
+      #     403 {"message": "Resource not accessible by integration"}
+      # nightly, into a void. 403 rather than 404 is the tell: `contents: read` lets the
+      # token SEE the repo, so it is refused the endpoint rather than the resource.
+      #
+      # ⚠ THIS LINE ALONE DOES NOT FIX IT. A reusable workflow cannot exceed what the caller
+      # granted, and this block further restricts it — so every caller's job-level
+      # `permissions:` needs `pull-requests: read` too, or this is stripped straight back off.
+      # Both, or neither works.
+      pull-requests: read
     env:
       PLANE_BASE_URL: ${{ vars.PLANE_BASE_URL }}
       PLANE_WORKSPACE: ${{ vars.PLANE_WORKSPACE }}
