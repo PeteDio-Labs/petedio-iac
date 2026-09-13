@@ -1100,6 +1100,39 @@ Seen five times on 2026-09-12 alone, in five unrelated systems:
   rule broke it in the same session says more than four found in someone else's code. Knowing
   the trap is not protection from it; only deferring to the source is.
 
+### The copy is often your own working state (PET-430)
+
+The instances above are copies of *someone else's* fact. The nastier ones are copies of your
+own, because a command that defaults to "wherever you are" never announces which state it used
+— and that is the state you are least likely to re-read, since you believe you know where you
+are standing. Five in one night, across four different tools:
+
+- **`git checkout <ref> -- .`** writes the INDEX. A file deleted on your branch comes back
+  staged, and `git checkout HEAD -- .` will not remove it. It resurrected the sudo grant
+  PET-408 exists to delete, into a commit whose message described something else.
+- **`git checkout -b <name>`** with no base takes whatever is checked out. It branched a
+  caller edit off an unrelated docs branch, bundling a change that could land immediately into
+  the one branch with the tightest ordering constraint.
+- **A named base can still be stale.** `git checkout -b x origin/HEAD` in a clone nobody has
+  fetched is five commits behind and looks entirely correct. Naming the base is necessary and
+  not sufficient: `git fetch` first, and `git diff --stat <base> HEAD` before handing the
+  branch to anyone.
+- **`git rev-parse --short HEAD` to report a push** prints the LOCAL sha, which is right
+  whenever the push succeeded — so it cannot report the case it exists to report. Ask the
+  remote: `git ls-remote origin refs/heads/<branch>`.
+- **A filter that summarises hides the column that distinguishes.** A run sweep matching
+  `reconcile` caught `infra-reconcile` too, and printed repo/time/conclusion without the
+  workflow NAME — producing an "anomaly" that dissolved the moment the dropped column was
+  restored.
+
+**The rule, and it is the same rule twice:** name the base, and refresh it. Print the column
+that distinguishes, not the column that summarises. `git diff --stat <base> HEAD` is the first
+applied to a branch; a run list's `name` field is the second applied to a query.
+
+⚠ Every one of these was committed by someone who had read this section. Two were committed by
+its authors, hours after writing it. The defence is not vigilance — it is asking a question
+whose answer could come back either way.
+
 **The rule:** prefer deferring to the source over mirroring it. Where a copy is unavoidable,
 make it carry what it was computed *over* — `0 of 135 examined` rather than `0` — so an empty
 corpus and an empty result cannot look alike. And never let "there is nothing" and "I could
