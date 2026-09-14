@@ -858,9 +858,10 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   ⚠ PET-406 replaced that assertion with a journal "ready banner", after measuring zero TCP
   sockets on the unit while Remote Control demonstrably worked. The unit was waiting at its
   consent prompt, and a hand-started `claude` was doing the serving with 26 connections of its
-  own. A serving unit, measured on 2026-09-14, held 18 to 19 established :443 connections, all
-  owned by `claude.exe` in the unit's cgroup. PET-431 restored the assertion. Keep attributing
-  the sockets to the unit's cgroup, or the hand-started process passes the check for it.
+  own. A serving unit, measured on 2026-09-14, held 18 or 19 established :443 connections in
+  its first minute and a steady 3 or 4 after (minimum 3 over 30 samples), all owned by
+  `claude.exe` in the unit's cgroup. PET-431 restored the assertion. Keep attributing the
+  sockets to the unit's cgroup, or the hand-started process passes the check for it.
 
 - **A serving `claude remote-control` redraws its status line into the journal about five
   times a second** — over 400,000 lines a day. `journalctl -u claude-remote-iac -n 50` shows

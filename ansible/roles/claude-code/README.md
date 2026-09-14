@@ -90,8 +90,9 @@ on merge; nothing here needs a node-side step, because nothing here runs Docker.
 
 A unit that is `active` is not a server that registered: one waiting at the consent prompt is
 `active` too. `scripts/lab-verify.sh` passes a server only when its own cgroup holds
-established outbound HTTPS — 18 to 19 connections on claude-247 on 2026-09-14 — and fails one
-whose current start logged the consent dialog or the login error.
+established outbound HTTPS — on claude-247 on 2026-09-14, 18 or 19 connections in the first
+minute and a steady 3 or 4 after — and fails one whose current start logged the consent
+dialog or the login error.
 
 To check by hand, read the start of the current run, not the tail of the unit's journal:
 
