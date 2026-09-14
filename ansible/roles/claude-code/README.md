@@ -176,13 +176,26 @@ version it runs is the tool's business, not Ansible's.
 
 ## The permission mode, on the record
 
-Sessions start in `bypassPermissions` (`claude_permission_mode`), chosen deliberately for
-this host: its reason to exist is work you drive from a phone, and a permission prompt you
-cannot see is a stall.
+Sessions start in `auto` (`claude_permission_mode`), since PET-433. Claude Code approves
+routine actions itself and asks only for risky ones, and Remote Control carries that question
+to the Claude app. Work you drive from a phone keeps moving, which is why PET-396 first chose
+`bypassPermissions`.
 
-Be clear about what that means. Claude Code's own guidance for the mode is "isolated
-containers and VMs only", and **this container is not isolated from the lab** — it sits on
-the LAN with Vault, Proxmox and Postgres. Until the work loop, the role provisioned no
+**The mode also decides whether sessions can message each other.** With
+`crossSessionInbound` unset, Claude Code delivers `SendMessage` only between sessions of the
+same permission-mode class, and holds any other for approval while the sender sees
+`success`. Under `bypassPermissions`, every message between a 247 session and the prompting
+Mac session was held (PET-431). `auto` is in the prompting class.
+
+Two things keep their own mode. The work loop's `claude -p` passes
+`--permission-mode bypassPermissions` itself (`scripts/claude-loop-tick.sh`). And
+`~/.claude/settings.json` is seeded once and never rewritten, so a `claude` you start by hand
+over SSH keeps that file's `defaultMode`.
+
+Be clear about what the host exposes whatever the mode. Claude Code's own guidance for
+`bypassPermissions`, which the loop still uses, is "isolated containers and VMs only", and
+**this container is not isolated from the lab** — it sits on the LAN with Vault, Proxmox and
+Postgres. Until the work loop, the role provisioned no
 outbound credential: the only key it placed was your *public* key, authorizing inbound SSH.
 So a session reached what the LAN serves unauthenticated, plus whatever you added by hand
 afterwards — note that `gh auth login` leaves its OAuth token in `~/.config/gh/hosts.yml`,
@@ -191,17 +204,19 @@ under the same user the sessions run as.
 ⚠ **The work loop changes that.** See "What the loop changes about the isolation story"
 below before you set `claude_loop_enable`.
 
-Deny rules still apply in this mode; allow rules do not. ⚠ But those deny rules live in
+Deny rules apply in every mode. ⚠ But those deny rules live in
 `~/.claude/settings.json`, which is owned by `claude` — the user the sessions run as — so a
 session can rewrite them. To make them hold, put them in root-owned
 `/etc/claude-code/managed-settings.json` instead. The same goes for `~/.bashrc` and
 `~/.ssh/authorized_keys`: as seeded, a session can persist its own access.
 
-Walking it back is one variable and a play re-run: set `claude_permission_mode` to `default`
-(Manual) or `acceptEdits`.
+Changing the mode is one variable, a play re-run, and `systemctl restart claude-remote-iac`.
+The handler never restarts a running server, so it keeps the old mode until you restart it,
+and the restart drops whoever is connected. For stricter prompting, set `default` (Manual)
+or `acceptEdits`.
 
-The mode is also why the session user is not root. Claude Code refuses `bypassPermissions`
-as root or under sudo on Linux, so a unit running as root would fail at startup.
+The session user is not root because the loop runs `bypassPermissions`, which Claude Code
+refuses as root or under sudo on Linux.
 
 ## What the loop changes about the isolation story (PET-399)
 
