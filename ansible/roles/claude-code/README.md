@@ -102,9 +102,10 @@ journalctl _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value claud
 ```
 
 A serving start logs `Connecting · petedio-iac · <branch>`, a `Connected` status line,
-`Capacity: 0/32` and a `https://claude.ai/code?environment=…` URL. After that the server
-redraws its status line into the journal about five times a second, so
-`journalctl -u claude-remote-iac -n 50` shows nothing but redraws.
+`Capacity: 0/32` and a `https://claude.ai/code?environment=…` URL. For its first few minutes
+the server also redraws that status into the journal several times a second, with terminal
+escape codes, so a tail taken then shows only redraws. After that it logs only events, such
+as `Reconnected after 2s`.
 
 ⚠ `<branch>` is whatever the clone at `~/work/petedio/iac` has checked out. Sessions start
 their worktrees from it, so a clone parked on an old branch serves every session that

@@ -537,8 +537,8 @@ else
       # dialog's first line instead, which is newline-terminated and lands at once.
       #
       # Only the FIRST lines of a start, because both markers print before the server does
-      # anything else, and a serving server redraws its status line into the journal about
-      # five times a second -- over 400,000 lines a day that a full read would stream.
+      # anything else. After them a run only grows: a startup burst of status redraws (about
+      # 670 lines in the first 2.5 minutes on 2026-09-14), then a line per reconnect.
       CONSENT='Take this session with you'
       LOGIN_ERR='must be logged in'
       MARK=$(pct_on "$CNODE" 247 "sh -c 'journalctl _SYSTEMD_INVOCATION_ID=$INV -o cat --no-pager 2>/dev/null | head -n 100 | grep -E \"$CONSENT|$LOGIN_ERR\" | tail -1'" | tr -d '\r')

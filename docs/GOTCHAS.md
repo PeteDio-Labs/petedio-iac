@@ -863,11 +863,13 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   `claude.exe` in the unit's cgroup. PET-431 restored the assertion. Keep attributing the
   sockets to the unit's cgroup, or the hand-started process passes the check for it.
 
-- **A serving `claude remote-control` redraws its status line into the journal about five
-  times a second** — over 400,000 lines a day. `journalctl -u claude-remote-iac -n 50` shows
-  only redraws, and a check that reads a whole run streams all of them. Read the first lines
-  of the current start (`_SYSTEMD_INVOCATION_ID=`, then `head`), where the connect, consent
-  and login lines are.
+- **A starting `claude remote-control` redraws its status line into the journal in a burst,
+  then goes quiet.** On 2026-09-14 a start logged about 670 lines in its first 2.5 minutes,
+  then logged only reconnects, and 0 lines in a quiet two-minute window. A tail taken during
+  the burst shows only redraws, and a rate measured then is not a rate: extrapolated from the
+  burst, it read as 400,000 lines a day, and it went into three documents before a
+  steady-state measurement caught it (PET-431). Read the first lines of the current start
+  (`_SYSTEMD_INVOCATION_ID=`, then `head`), where the connect, consent and login lines are.
 
 - **Debian's `.bashrc` returns early for non-interactive shells, so a PATH line appended
   there is invisible to `su - user -c ...` and to systemd.** Not Claude-specific, but it is
