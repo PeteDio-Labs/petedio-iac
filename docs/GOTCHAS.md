@@ -2,6 +2,13 @@
 
 Carry-forward lessons. Every story that hits a new one appends here (Definition of Done).
 
+Claude Code loads the short form of each gotcha from `.claude/rules/`, by path: a
+session gets `terraform.md` when it reads a file under `environments/` or `modules/`,
+`ansible.md` under `ansible/`, `ci.md` under `.github/`, `scripts.md` under `scripts/` or
+`tools/`, and `general.md` at start. This file holds the narratives. To add a gotcha,
+write its section here and add a one-line rule to the matching rules file, citing the
+section heading. History sections for systems that are gone get no rule.
+
 ## Proxmox / bpg
 
 - **bpg import never round-trips** `operating_system.template_file_id`, `features`,

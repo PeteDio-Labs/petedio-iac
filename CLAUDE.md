@@ -2,7 +2,7 @@
 
 Greenfield **Terraform + Ansible** for the PeteDio homelab — an **AWS-shape** platform on Proxmox (LXC≈EC2, MinIO≈S3, Postgres≈RDS, Vault≈Secrets-Manager), built to graduate to real AWS by swapping provider / endpoint / variables, not a rewrite. One environment: `environments/homelab/`.
 
-> Host inventory + IP/VMID scheme → `vault/Hosts/hosts-inventory.md`, reconciled to `pvesh` on 2026-09-10 (the Linear document it replaced is retired and drifted; don't re-derive it here). **`docs/GOTCHAS.md` is the single most useful read before touching anything.**
+> Host inventory + IP/VMID scheme → `vault/Hosts/hosts-inventory.md`, reconciled to `pvesh` on 2026-09-10 (the Linear document it replaced is retired and drifted; don't re-derive it here). **The gotcha rules load automatically:** `.claude/rules/general.md` at start, and the Terraform, Ansible, CI and script rules when you read a file under that path. `docs/GOTCHAS.md` holds the detail behind each rule — read the cited section when a rule applies.
 
 ## Tooling
 - **Terraform** for all infra — providers: `bpg/proxmox`, `hashicorp/vault`, `postgresql`, `cloudflare`. **Ansible** for host-level OS/service config (roles + playbooks).
@@ -10,13 +10,14 @@ Greenfield **Terraform + Ansible** for the PeteDio homelab — an **AWS-shape** 
 - **Secrets:** HashiCorp Vault (`.223`), reached in CI via **GitHub OIDC** (no static Actions secrets). **No secrets in code or PRs** — Vault paths by reference only.
 
 ## The co-ownership gotcha (read before touching Docker/containerd LXCs)
-TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API tokens for `features{}`, so **TF creates the container** (with `features` in `ignore_changes`) and **Ansible sets `nesting`/`keyctl`** over SSH. Full detail + the rest of the hard-won quirks → `docs/GOTCHAS.md`.
+TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API tokens for `features{}`, so **TF creates the container** (with `features` in `ignore_changes`) and **Ansible sets `nesting`/`keyctl`** over SSH. The rule loads from `.claude/rules/` when you read a Terraform or Ansible file; full detail → `docs/GOTCHAS.md`.
 
 ## Layout
 - `environments/homelab/` — the one env: per-host `*.tf` files + `vault-config/` (separate state).
 - `modules/` — `proxmox-lxc`, `baremetal-host`, `postgres-db`, `cloudflare-ingress`.
 - `ansible/` — `inventory/`, `playbooks/`, `roles/`.
 - `docs/` — `GOTCHAS.md` + runbooks. `scripts/` — operational helpers.
+- `.claude/rules/` — one-line gotcha rules, loaded by path; each cites its `GOTCHAS.md` section.
 
 ## Workflow (trunk-based GitOps)
 - Branch `pet-<n>-<slug>` off **fresh `main`** → PR → **squash-merge**. Mention `PET-<n>` in the PR.
