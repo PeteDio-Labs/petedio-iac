@@ -88,13 +88,26 @@ on merge; nothing here needs a node-side step, because nothing here runs Docker.
 
 ## Verify
 
-A unit that is `active` is not a server that registered. Read the log for the session URL,
-then look for the session itself:
+A unit that is `active` is not a server that registered: one waiting at the consent prompt is
+`active` too. `scripts/lab-verify.sh` passes a server only when its own cgroup holds
+established outbound HTTPS — 18 to 19 connections on claude-247 on 2026-09-14 — and fails one
+whose current start logged the consent dialog or the login error.
+
+To check by hand, read the start of the current run, not the tail of the unit's journal:
 
 ```sh
 systemctl status claude-remote-iac
-journalctl -u claude-remote-iac -n 50 --no-pager
+journalctl _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value claude-remote-iac) -o cat | head -20
 ```
+
+A serving start logs `Connecting · petedio-iac · <branch>`, a `Connected` status line,
+`Capacity: 0/32` and a `https://claude.ai/code?environment=…` URL. After that the server
+redraws its status line into the journal about five times a second, so
+`journalctl -u claude-remote-iac -n 50` shows nothing but redraws.
+
+⚠ `<branch>` is whatever the clone at `~/work/petedio/iac` has checked out. Sessions start
+their worktrees from it, so a clone parked on an old branch serves every session that
+branch.
 
 The session then appears in the list at `claude.ai/code`, named `iac-<something>`. Opening
 it from a phone and asking for `pwd` is the check that proves the whole path end to end.

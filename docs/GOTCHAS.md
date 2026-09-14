@@ -855,6 +855,19 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   connection instead, because an `active` unit with an expired login looks identical to a
   working one.
 
+  ⚠ PET-406 replaced that assertion with a journal "ready banner", after measuring zero TCP
+  sockets on the unit while Remote Control demonstrably worked. The unit was waiting at its
+  consent prompt, and a hand-started `claude` was doing the serving with 26 connections of its
+  own. A serving unit, measured on 2026-09-14, held 18 to 19 established :443 connections, all
+  owned by `claude.exe` in the unit's cgroup. PET-431 restored the assertion. Keep attributing
+  the sockets to the unit's cgroup, or the hand-started process passes the check for it.
+
+- **A serving `claude remote-control` redraws its status line into the journal about five
+  times a second** — over 400,000 lines a day. `journalctl -u claude-remote-iac -n 50` shows
+  only redraws, and a check that reads a whole run streams all of them. Read the first lines
+  of the current start (`_SYSTEMD_INVOCATION_ID=`, then `head`), where the connect, consent
+  and login lines are.
+
 - **Debian's `.bashrc` returns early for non-interactive shells, so a PATH line appended
   there is invisible to `su - user -c ...` and to systemd.** Not Claude-specific, but it is
   exactly the trap that makes a health check report a working host as broken: set `PATH`

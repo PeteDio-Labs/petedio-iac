@@ -504,7 +504,8 @@ else
         # down while a `claude` started from an SSH login served Remote Control. Failing was
         # right -- that process died with its login -- but "is-active: inactive" contradicted
         # the screen of the person using it, and two diagnoses went wrong from there.
-        STRAY=$(pct_on "$CNODE" 247 "sh -c 'for p in \$(pgrep -u claude -x claude); do grep -qs user.slice /proc/\$p/cgroup && echo \$p; done'" | tr -d '\r' | xargs)
+        # Match both names: the `claude` launcher execs `claude.exe`, which holds the sockets.
+        STRAY=$(pct_on "$CNODE" 247 "sh -c 'for p in \$(pgrep -u claude -x \"claude(\\.exe)?\"); do grep -qs user.slice /proc/\$p/cgroup && echo \$p; done'" | tr -d '\r' | xargs)
         if [ -n "$STRAY" ]; then
           bad "unit active: $U" "is-active: ${ST:-unknown}; a claude started by hand (pid $STRAY) runs outside systemd and dies with its login"
         else
@@ -534,9 +535,13 @@ else
       # journald holds it until the stream closes and stamps it with the STOP time
       # (`_LINE_BREAK=eof`) -- which is how it was read as a shutdown message. Match the
       # dialog's first line instead, which is newline-terminated and lands at once.
+      #
+      # Only the FIRST lines of a start, because both markers print before the server does
+      # anything else, and a serving server redraws its status line into the journal about
+      # five times a second -- over 400,000 lines a day that a full read would stream.
       CONSENT='Take this session with you'
       LOGIN_ERR='must be logged in'
-      MARK=$(pct_on "$CNODE" 247 "sh -c 'journalctl _SYSTEMD_INVOCATION_ID=$INV -o cat --no-pager 2>/dev/null | grep -E \"$CONSENT|$LOGIN_ERR\" | tail -1'" | tr -d '\r')
+      MARK=$(pct_on "$CNODE" 247 "sh -c 'journalctl _SYSTEMD_INVOCATION_ID=$INV -o cat --no-pager 2>/dev/null | head -n 100 | grep -E \"$CONSENT|$LOGIN_ERR\" | tail -1'" | tr -d '\r')
       case "$MARK" in
         *"$CONSENT"*)
           bad "serving: $U" "waiting at the one-time 'Enable Remote Control? (y/n)' prompt — roles/claude-code/README.md, step 4"
