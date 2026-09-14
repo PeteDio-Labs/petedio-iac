@@ -9,10 +9,10 @@
 #
 # WHAT THIS PLAY CANNOT DO. Remote Control needs a real claude.ai login, and there is no
 # unattended path to one — API keys and `claude setup-token` tokens are both refused by the
-# feature. So this role installs, configures, and stops. The login, the workspace-trust
-# dialog and the one-time Remote Control confirmation are operator steps over SSH, after
-# which the units come up by re-running with `-e claude_remote_enable=true`. See README.md
-# in this role.
+# feature. The login, the workspace-trust dialog and the one-time Remote Control consent are
+# operator steps over SSH. The host declares `claude_remote_enable: true` in host_vars, and
+# the role starts the units on the first run that finds the consent on disk (PET-431). See
+# README.md in this role.
 
 - name: Install base packages
   ansible.builtin.apt:
@@ -357,6 +357,32 @@
 - name: Flush handlers so a changed unit is on disk before it is started
   ansible.builtin.meta: flush_handlers
 
+# ⚠ A SERVER STARTED BEFORE THE ONE-TIME CONSENT HANGS FOREVER, AND LOOKS HEALTHY (PET-431).
+# `claude remote-control` asks `Enable Remote Control? (y/n)` until `remoteDialogSeen` is
+# true in ~/.claude.json. Under systemd stdin is /dev/null, so nothing ever answers: the
+# process waits at the prompt, `systemctl is-active` says active, and the prompt never
+# reaches the journal while it waits, because it has no newline. claude-247 spent 15 hours
+# of 2026-09-12 like that, while a claude started by hand from SSH did the serving.
+#
+# So read the answer before starting anything, AS THE SESSION USER. Root reading a file in a
+# home that user controls is the PET-410 shape; jq run through runuser can read only what
+# `claude` can. runuser rather than become_user, for the reason given at the npm install.
+#
+# The key belongs to Claude Code, not to this role: 2.1.270 gates the prompt on
+# `if(!getGlobalConfig().remoteDialogSeen)`. If a release renames it, this check refuses a
+# host that would serve. Find the new key with `grep -a 'Enable Remote Control?'` on the
+# claude binary, and change it here.
+- name: Check the one-time Remote Control consent is on disk
+  ansible.builtin.command:
+    cmd: runuser -u {{ claude_user }} -- jq -e '.remoteDialogSeen == true' {{ claude_home }}/.claude.json
+  register: claude_remote_consent
+  changed_when: false
+  failed_when: false
+  # Read-only, so it runs under --check as well; otherwise a dry run could not tell you
+  # the real run will refuse to start the units.
+  check_mode: false
+  when: claude_remote_enable | bool
+
 # A unit that tripped its start limit on a previous run sits in `failed`, and `systemctl
 # start` answers `Start request repeated too quickly` until someone clears it — so the
 # re-run that carries the operator's fresh login would fail on the wreckage of the run
@@ -367,19 +393,27 @@
   loop: "{{ claude_remote_sessions }}"
   loop_control:
     label: "{{ item.name }}"
-  when: claude_remote_enable | bool
+  when:
+    - claude_remote_enable | bool
+    - claude_remote_consent.rc | default(1) == 0
   changed_when: false
   failed_when: false
 
-# Started only once the operator has logged in — see claude_remote_enable in defaults. A
-# server started without an eligible login exits immediately; Restart=always is bounded by
-# the StartLimit pair in the unit so that lands in `failed` rather than a crash loop.
+# Started only once the operator has logged in and given the consent above — see
+# claude_remote_enable in defaults. A server started without an eligible login exits
+# immediately; Restart=always is bounded by the StartLimit pair in the unit so that lands in
+# `failed` rather than a crash loop.
 #
 # ⚠ `| bool` IS LOAD-BEARING ON BOTH LINES. `-e claude_remote_enable=false` hands Jinja the
 # STRING "false", which is truthy — so a bare `if claude_remote_enable` evaluates to
 # `started` and the documented way to turn this off silently turns it on. `enabled:` goes
 # through Ansible's own bool coercion and would say false, leaving a running, disabled unit,
 # while the play's closing message (which does coerce) reports the units as stopped.
+#
+# ⚠ `false` STOPS AND DISABLES, so a host that serves must DECLARE `true` (PET-431). Before
+# PET-431 the bootstrap passed `-e claude_remote_enable=true` once, and the next run that
+# did not carry it, a loop deploy on 2026-09-12, stopped the server. claude-247 declares it
+# in inventory/host_vars/claude-247.yml.
 - name: Enable and start the remote-control servers
   ansible.builtin.systemd:
     name: "claude-remote-{{ item.name }}.service"
@@ -389,6 +423,9 @@
   loop: "{{ claude_remote_sessions }}"
   loop_control:
     label: "{{ item.name }}"
+  # Declared on but no consent: a start would only hang, so leave the units exactly as they
+  # are. playbooks/configure-claude-code.yml fails the run at the end with the step to take.
+  when: not (claude_remote_enable | bool) or claude_remote_consent.rc | default(1) == 0
 
 # --- The ticket-driven work loop (PET-399) --------------------------------------------
 # Split into its own file because it is a second, separable thing this host does: the

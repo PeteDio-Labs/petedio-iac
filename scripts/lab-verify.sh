@@ -500,41 +500,83 @@ else
     for U in $CUNITS; do
       ST=$(pct_on "$CNODE" 247 "systemctl is-active ${U%.service}" | tr -d '\r')
       if [ "$ST" != "active" ]; then
-        bad "unit active: $U" "is-active: ${ST:-unknown}"
+        # ⚠ NAME A CLAUDE STARTED BY HAND (PET-431). From 2026-09-12 to 2026-09-14 this unit was
+        # down while a `claude` started from an SSH login served Remote Control. Failing was
+        # right -- that process died with its login -- but "is-active: inactive" contradicted
+        # the screen of the person using it, and two diagnoses went wrong from there.
+        # Match both names: the `claude` launcher execs `claude.exe`, which holds the sockets.
+        STRAY=$(pct_on "$CNODE" 247 "sh -c 'for p in \$(pgrep -u claude -x \"claude(\\.exe)?\"); do grep -qs user.slice /proc/\$p/cgroup && echo \$p; done'" | tr -d '\r' | xargs)
+        if [ -n "$STRAY" ]; then
+          bad "unit active: $U" "is-active: ${ST:-unknown}; a claude started by hand (pid $STRAY) runs outside systemd and dies with its login"
+        else
+          bad "unit active: $U" "is-active: ${ST:-unknown}"
+        fi
         continue
       fi
       ok "unit active: $U"
 
-      # ⚠ AN ACTIVE UNIT IS NOT A SERVING ONE -- the lesson the runners taught twice. A
-      # server whose login has expired exits, and `is-active` alone cannot tell that apart
-      # from a healthy one during the window before systemd gives up.
+      # ⚠ READ THIS START'S JOURNAL, NOT THE UNIT'S. `journalctl -u` returns every run the
+      # journal still holds, so a marker from a run that ended hours ago would describe a
+      # process that no longer exists. The invocation id names this run and no other.
+      INV=$(pct_on "$CNODE" 247 "systemctl show -p InvocationID --value ${U%.service}" | tr -d '\r ')
+      if [ -z "$INV" ]; then
+        bad "serving: $U" "active, but systemd reports no InvocationID to read its journal by"
+        continue
+      fi
+
+      # ⚠ THE "READY BANNER" THIS CHECK USED TO PASS ON WAS THE CONSENT PROMPT (PET-431).
+      # In `claude remote-control`, 'The session keeps running on this machine' is printed
+      # ONLY by the one-time consent dialog, right before the server blocks on
+      # `Enable Remote Control? (y/n)` -- forever, under systemd, with stdin on /dev/null, while
+      # `is-active` says active. So this check reported `serving` exactly when the server could
+      # not serve, and a server past the prompt never prints that sentence at all.
       #
-      # ⚠ AND IT DOES NOT HOLD A CONNECTION. The first version of this check asserted an
-      # established outbound :443 owned by the unit's cgroup, on the theory that the server
-      # registers with the API and polls it. That theory is wrong, measured on 247 while it
-      # was demonstrably working: the server held ZERO TCP sockets (4 socket fds, none TCP),
-      # NRestarts 0, journal showing the ready banner. Meanwhile the host had 26 established
-      # :443 connections, every one of them owned by an unrelated interactive SSH session in
-      # user.slice. So that check reported a healthy host as broken on every run, which is
-      # the "red on main teaches people to ignore it" hazard rather than a signal.
+      # The prompt itself is invisible while the process lives. It ends without a newline, so
+      # journald holds it until the stream closes and stamps it with the STOP time
+      # (`_LINE_BREAK=eof`) -- which is how it was read as a shutdown message. Match the
+      # dialog's first line instead, which is newline-terminated and lands at once.
       #
-      # Use what only success leaves behind. The two states this check exists to separate
-      # each write a distinct line, so read the most recent of them.
-      READY='keeps running on this machine'
+      # Only the FIRST lines of a start, because both markers print before the server does
+      # anything else. After them a run only grows: a startup burst of status redraws (about
+      # 670 lines in the first 2.5 minutes on 2026-09-14), then a line per reconnect.
+      CONSENT='Take this session with you'
       LOGIN_ERR='must be logged in'
-      MARK=$(pct_on "$CNODE" 247 "sh -c 'journalctl -u ${U%.service} -n 200 --no-pager 2>/dev/null | grep -E \"$READY|$LOGIN_ERR\" | tail -1'" | tr -d '\r')
+      MARK=$(pct_on "$CNODE" 247 "sh -c 'journalctl _SYSTEMD_INVOCATION_ID=$INV -o cat --no-pager 2>/dev/null | head -n 100 | grep -E \"$CONSENT|$LOGIN_ERR\" | tail -1'" | tr -d '\r')
       case "$MARK" in
-        *"$READY"*)
-          ok "serving: $U" "ready banner is the latest start marker" ;;
+        *"$CONSENT"*)
+          bad "serving: $U" "waiting at the one-time 'Enable Remote Control? (y/n)' prompt — roles/claude-code/README.md, step 4"
+          continue ;;
         *"$LOGIN_ERR"*)
-          bad "serving: $U" "no eligible claude.ai login — run /login as the claude user, then re-run the play" ;;
-        "")
-          # Distinguish "nothing to read" from "read it and found neither". journalctl may be
-          # empty after a log rotation on a long-running unit, which is not a fault.
-          skip "serving: $U" "no start marker in the last 200 journal lines — rotated? journalctl -u ${U%.service}" ;;
-        *)
-          bad "serving: $U" "unrecognised start marker: $(printf '%.60s' "$MARK")" ;;
+          bad "serving: $U" "no eligible claude.ai login — run /login as the claude user"
+          continue ;;
       esac
+
+      # A server past the prompt holds a connection to the API, and that connection is the
+      # feature working. ATTRIBUTE IT TO THIS UNIT'S OWN PROCESSES: a bare count of established
+      # :443 is satisfied by apt, gh, npm or a claude started by hand. On 2026-09-12 PET-406
+      # counted 26 of them in user.slice and none in this unit, and concluded the server holds
+      # no connection. The server was at the prompt; the 26 were the hand-started claude doing
+      # the serving. Read the pids from the unit's cgroup so a spawned session's socket counts.
+      CPIDS=$(pct_on "$CNODE" 247 "sh -c 'cat /sys/fs/cgroup/system.slice/$U/cgroup.procs 2>/dev/null'" | tr -d '\r' | tr '\n' ' ')
+      [ -z "$(echo "$CPIDS" | tr -d ' ')" ] && CPIDS=$(pct_on "$CNODE" 247 "systemctl show -p MainPID --value ${U%.service}" | tr -d '\r ')
+      PIDRE=$(echo "$CPIDS" | tr ' ' '\n' | grep -E '^[0-9]+$' | grep -v '^0$' | paste -sd'|' -)
+      if [ -z "$PIDRE" ]; then
+        bad "serving: $U" "active but exposes no pid to check"
+        continue
+      fi
+
+      # Distinguish "no connection" from "no ss": both would otherwise print 0 and blame the
+      # server. Say what was examined, not only what was found.
+      if ! pct_on "$CNODE" 247 "sh -c 'command -v ss >/dev/null 2>&1'"; then
+        skip "serving: $U" "ss (iproute2) not installed — cannot attribute a connection"
+        continue
+      fi
+      ES=$(pct_on "$CNODE" 247 "sh -c 'ss -tnpH state established dport = :443 2>/dev/null'" | tr -d '\r' | grep -cE "pid=(${PIDRE}),")
+      if [ "${ES:-0}" -ge 1 ]; then
+        ok "serving: $U" "$ES outbound HTTPS from this unit; no consent or login marker since it started"
+      else
+        bad "serving: $U" "past the prompt, but holds no :443 — journalctl _SYSTEMD_INVOCATION_ID=$INV"
+      fi
     done
   fi
 

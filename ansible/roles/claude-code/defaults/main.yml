@@ -79,13 +79,21 @@ claude_permission_mode: bypassPermissions
 claude_remote_sessions:
   - { name: iac, dir: iac, spawn: worktree }
 
-# Whether the units are enabled and started. DEFAULT FALSE, and that is load-bearing: a
-# server started before the operator has signed in with `/login` exits immediately, and
-# systemd restarts it until the unit's start limit trips. Bootstrap the login first
-# (roles/claude-code/README.md), then re-run the play with `-e claude_remote_enable=true`.
+# Whether the units are enabled and started. DEFAULT FALSE, so a host that has never been
+# bootstrapped gets stopped units rather than a server with no login behind it.
 #
-# ⚠ Override it with `=true` / `=false` and NOTHING ELSE, and note that the task reading it
-# has to say `| bool`: `-e` hands Jinja a STRING, and the string "false" is truthy.
+# ⚠ `false` STOPS AND DISABLES THE UNITS, RUNNING OR NOT. A host that serves Remote Control
+# must declare `true` in its host_vars, never pass it with `-e`: the next run without the
+# flag stops the server. That is how a loop deploy took claude-247's server down on
+# 2026-09-12 (PET-431). inventory/host_vars/claude-247.yml declares it.
+#
+# `true` starts nothing until the operator has signed in and answered the one-time consent
+# (roles/claude-code/README.md). The role checks for the consent first, because a unit
+# started without it waits at the prompt forever while systemd reports it active.
+#
+# ⚠ If you override it on the command line anyway, use `=true` / `=false` and NOTHING ELSE,
+# and note that the task reading it has to say `| bool`: `-e` hands Jinja a STRING, and the
+# string "false" is truthy.
 claude_remote_enable: false
 
 # --- The ticket-driven work loop (PET-399) ---------------------------------------------
