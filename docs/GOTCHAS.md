@@ -853,11 +853,14 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   also means a piped `claude` in a directory you did not mean to trust does not stop to
   ask. Trust the directory anyway if you want MCP tools resolving in that session.
 
-- **There is no `--max-turns` in Claude Code 2.1.x.** An unattended `claude -p` has no
-  turn ceiling, so wall-clock is the only bound available: `timeout` around the process,
-  and a `TimeoutStartSec` above it in the unit so the inner one reports first and says why.
-  Checked against `claude --help` on 247 while writing the loop — a `--max-turns` copied
-  out of an older runbook fails the whole invocation rather than being ignored.
+- **`--max-turns` works in Claude Code 2.1.270, although `claude --help` does not list it
+  (PET-435).** This bullet used to say the flag did not exist, from reading `--help` alone.
+  Measured on 247 on 2026-09-14: `--max-turns 1` gave `subtype=error_max_turns`,
+  `is_error=true`, `num_turns=2`; the same prompt without it succeeded in 3 turns; an
+  unknown flag fails with `error: unknown option`. In text output a stop prints `Error:
+  Reached max turns (N)` and exits 1. The loop passes `--max-turns` and keeps `timeout`
+  around the process, with a `TimeoutStartSec` above it in the unit, so the inner bound
+  reports first and says why. **Test a flag, don't infer its absence from `--help`.**
 
 - **Nothing about this host needs `features{}`** — no Docker, so no nesting, no keyctl, and
   no `scripts/lxc-features-<id>.sh` step on the node. Worth stating because the reflex on

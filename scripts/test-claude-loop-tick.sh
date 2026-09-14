@@ -80,6 +80,7 @@ S
   cat > "$H/claude" <<'S'
 #!/usr/bin/env bash
 PROMPT="$(cat)"
+printf '%s\n' "$*" > "$(dirname "$0")/claude.args"
 case "${STUB_MODE:-good}" in
   good)
     echo hello > newfile.txt
@@ -100,6 +101,8 @@ case "${STUB_MODE:-good}" in
     ;;
   nochange)   : ;;
   boom)       exit 3 ;;
+  # What Claude Code 2.1.270 prints and returns in text mode when --max-turns stops it.
+  maxturns)   echo hello > newfile.txt; echo "Error: Reached max turns (7)"; exit 1 ;;
 
   # --- hostile sessions (PET-409) -------------------------------------------------------
   # Everything above models a session that behaves itself, which is exactly why the
@@ -132,6 +135,7 @@ S
   export CLAUDE_LOOP_HOME="$H" CLAUDE_LOOP_CHECKOUT="$CO" CLAUDE_LOOP_BROKER="$H/broker"
   export CLAUDE_BIN="$H/claude" CLAUDE_LOOP_REPO="PeteDio-Labs/petedio-iac"
   export CLAUDE_LOOP_MAX_ATTEMPTS=2 CLAUDE_LOOP_TIMEOUT_SEC=30 CLAUDE_LOOP_MAX_AGE_SEC=3900
+  export CLAUDE_LOOP_MAX_TURNS=7
   export GH_LOG="$H/gh.log"; : > "$GH_LOG"
   export GH_COMMENT_FAILS=0
   export STUB_MODE="${2:-good}"
@@ -315,6 +319,17 @@ hb detail | grep -q "ansible-palworld.yml" && ok "detail names the file" || no "
 [ ! -s "$GH_LOG" ] && ok "no PR was opened" || no "no PR" "$(cat "$GH_LOG")"
 # The point of catching it here is that no credential is created for a push that cannot work.
 grep -q "mint" "$CLAUDE_LOOP_HOME/state/mint.err" 2>/dev/null && no "the broker was asked to mint" "" || ok "no token was minted"
+
+say "17. a session stopped by --max-turns is recorded as failed and says so (PET-435)"
+setup "$ONE" maxturns
+"$TICK" >/dev/null 2>&1; RC=$?
+grep -q -- "--max-turns 7" "$CLAUDE_LOOP_HOME/claude.args" && ok "claude -p got --max-turns from CLAUDE_LOOP_MAX_TURNS" || no "--max-turns passed" "$(cat "$CLAUDE_LOOP_HOME/claude.args" 2>/dev/null)"
+[ "$RC" -ne 0 ] && ok "exits non-zero" || no "exits non-zero" "rc=$RC"
+[ "$(hb outcome)" = "failed" ] && ok "outcome=failed" || no "outcome=failed" "got $(hb outcome)"
+hb detail | grep -q "7-turn ceiling (exit 1)" && ok "detail names the turn ceiling and the exit code" || no "detail" "$(hb detail)"
+A="$(python3 -c "import json;print(json.load(open('$CLAUDE_LOOP_HOME/state/items/PET-500.json'))['attempts'])" 2>/dev/null)"
+[ "$A" = "1" ] && ok "counts as a failed attempt" || no "attempt counted" "got $A"
+[ ! -s "$GH_LOG" ] && ok "no PR was opened" || no "no PR" "$(cat "$GH_LOG")"
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

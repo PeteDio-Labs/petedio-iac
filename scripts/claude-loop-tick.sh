@@ -50,6 +50,7 @@
 #   CLAUDE_LOOP_REPO          owner/repo
 #   CLAUDE_LOOP_MAX_ATTEMPTS  give up on an item after this many failed ticks
 #   CLAUDE_LOOP_TIMEOUT_SEC   hard ceiling on one `claude -p`
+#   CLAUDE_LOOP_MAX_TURNS     turn ceiling on one `claude -p`, passed as --max-turns
 #   CLAUDE_LOOP_MAX_AGE_SEC   written into the heartbeat for lab-verify to compare against
 #   CLAUDE_BIN                absolute path to claude (PATH is not to be trusted here)
 #
@@ -67,6 +68,7 @@ BROKER="${CLAUDE_LOOP_BROKER:-/usr/local/sbin/claude-loop-broker}"
 REPO="${CLAUDE_LOOP_REPO:-PeteDio-Labs/petedio-iac}"
 MAX_ATTEMPTS="${CLAUDE_LOOP_MAX_ATTEMPTS:-3}"
 TIMEOUT_SEC="${CLAUDE_LOOP_TIMEOUT_SEC:-3600}"
+MAX_TURNS="${CLAUDE_LOOP_MAX_TURNS:-60}"
 MAX_AGE_SEC="${CLAUDE_LOOP_MAX_AGE_SEC:-3900}"
 CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.npm-global/bin/claude}"
 
@@ -322,9 +324,18 @@ as_loop_user git -C "$CHECKOUT" checkout -B "$BRANCH" origin/main >/dev/null 2>&
 log "branch $BRANCH off origin/main"
 
 # --- step 7: the session ------------------------------------------------------------------
-# One `claude -p` run, boxed by `timeout`. There is no --max-turns in this Claude Code, so
-# wall-clock is the only ceiling available and the unit carries a matching one; without it a
-# stuck session would hold the lock and every later tick would park as `busy`.
+# One `claude -p` run, bounded twice: by --max-turns, and by `timeout` with a matching
+# ceiling in the unit. Without the wall-clock bound a stuck session would hold the lock and
+# every later tick would park as `busy`; without the turn bound a session that keeps working
+# spends the shared quota until the clock stops it.
+#
+# ⚠ THIS COMMENT USED TO SAY THERE IS NO --max-turns, and that was wrong. The flag is missing
+# from `claude --help` but works. Measured on 247 on 2026-09-14 with Claude Code 2.1.270:
+# `--max-turns 1` gave subtype=error_max_turns, is_error=true, num_turns=2; the same prompt
+# without it gave success, num_turns=3; an unknown flag gave `error: unknown option`. In the
+# text output this tick uses, a max-turns stop prints `Error: Reached max turns (N)` and
+# exits 1, which the check below names. The three live ticks on 2026-09-12 made 12 to 15 API
+# requests each.
 #
 # The prompt goes in on STDIN rather than argv: it carries the whole work item, and argv is
 # readable by anything on the host through /proc/<pid>/cmdline.
@@ -356,17 +367,19 @@ body = (body
 open(os.environ["OUT"], "w").write(body)
 ' || fail_item "could not render the loop prompt"
 
-log "running claude -p (ceiling ${TIMEOUT_SEC}s)"
+log "running claude -p (ceiling ${TIMEOUT_SEC}s, ${MAX_TURNS} turns)"
 cd "$CHECKOUT" || fail_item "cannot enter $CHECKOUT"
 # `|| SESSION_RC=$?` and not a bare `$?` on the next line: under `set -e` a non-zero timeout
 # aborts before anything reads it, and the tick would then report the generic starting
 # failure instead of "the session hit the ceiling".
 SESSION_RC=0
 as_loop_user timeout --signal=TERM --kill-after=60 "$TIMEOUT_SEC" \
-  "$CLAUDE_BIN" -p --permission-mode bypassPermissions \
+  "$CLAUDE_BIN" -p --permission-mode bypassPermissions --max-turns "$MAX_TURNS" \
   < "$TICK_DIR/prompt.txt" > "$TICK_DIR/session.log" 2>&1 || SESSION_RC=$?
 if [ "$SESSION_RC" -eq 124 ]; then
   fail_item "the session hit the ${TIMEOUT_SEC}s ceiling; see $TICK_DIR/session.log"
+elif [ "$SESSION_RC" -ne 0 ] && grep -q '^Error: Reached max turns' "$TICK_DIR/session.log"; then
+  fail_item "the session hit the ${MAX_TURNS}-turn ceiling (exit $SESSION_RC); see $TICK_DIR/session.log"
 elif [ "$SESSION_RC" -ne 0 ]; then
   fail_item "the session exited $SESSION_RC; see $TICK_DIR/session.log"
 fi

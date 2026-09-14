@@ -165,6 +165,13 @@ claude_loop_max_attempts: 3
 # indefinitely and every later tick exiting "already running".
 claude_loop_timeout_sec: 3600
 
+# Turn ceiling on one `claude -p` run, passed as --max-turns. The flag is missing from
+# `claude --help` but works (measured on 2026-09-14, Claude Code 2.1.270). Sized at about
+# four times the 12 to 15 API requests each live tick made on 2026-09-12, so a normal item
+# never meets it and a runaway session stops long before the wall-clock ceiling above.
+# A stop exits 1 and the tick records the item as failed, naming the ceiling.
+claude_loop_max_turns: 60
+
 # --- Loop identity (resolved from Vault by scripts/deploy-claude-loop.sh) ---------------
 # NEVER give the secret ones a default. A committed placeholder here would land on the host
 # as a 0400 file that looks provisioned and fails at the first mint, and the assert in
