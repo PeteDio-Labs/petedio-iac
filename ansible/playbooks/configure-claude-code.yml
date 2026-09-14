@@ -21,12 +21,17 @@
 # Run bare, the play still converges everything else and leaves the loop's secrets alone —
 # see the "Decide whether this run carries the loop identity" task in roles/claude-code.
 #
-# TWO-PHASE BY DESIGN. The first run installs everything and leaves the units STOPPED,
-# because a server started before the login exists exits at once and crash-loops. After the
-# operator signs in, re-run with `-e claude_remote_enable=true` to hand it to systemd:
+# TWO-PHASE BY DESIGN, DECLARED ONCE. claude-247 declares `claude_remote_enable: true` in
+# inventory/host_vars/claude-247.yml, and the role starts the units only once the operator
+# has signed in and answered the one-time consent. Until then a run converges everything
+# else and FAILS at the end with the step to take, because a unit started without the
+# consent hangs at its prompt while systemd reports it active (PET-431). After the operator
+# steps, run the same command again:
 #
 #   ansible-playbook playbooks/configure-claude-code.yml
-#   ansible-playbook playbooks/configure-claude-code.yml -e claude_remote_enable=true
+#
+# ⚠ Do not pass `-e claude_remote_enable=true` instead of declaring it. That was the old
+# bootstrap, and the next run without the flag, a loop deploy, stopped the server.
 #
 # Full sequence, including what to click: ansible/roles/claude-code/README.md.
 #
@@ -42,14 +47,33 @@
     - claude-code
 
   post_tasks:
-    # The play cannot finish the job, so it says so rather than reporting all-green and
-    # leaving you to discover the stopped units later.
-    - name: Report the operator steps that remain
+    # Remote Control is off for this host, so the units are stopped. Say how to turn it on
+    # rather than leave you to discover the stopped units later.
+    - name: Report how to turn Remote Control on
       ansible.builtin.debug:
         msg:
           - "Claude Code is installed, and the remote-control units are stopped."
           - "1. ssh claude@{{ ansible_host | default('192.168.50.247') }}"
           - "2. cd ~/work/petedio/iac && claude   # accept workspace trust, then /login"
           - "3. claude remote-control             # answer y once, confirm a session URL, Ctrl+C"
-          - "4. re-run this play with -e claude_remote_enable=true"
+          - "4. declare claude_remote_enable: true in inventory/host_vars/{{ inventory_hostname }}.yml, then re-run this play"
       when: not claude_remote_enable | bool
+
+    # ⚠ DO NOT FINISH GREEN OVER A SERVER THAT WAS NOT STARTED (PET-431). The host declares
+    # Remote Control on, but the role found no consent and left the units alone, because a
+    # unit started without it waits at the prompt forever while systemd reports it active.
+    # Everything else in the play converged; this is the one thing the run could not do, and
+    # an exit code of 0 would say it had.
+    - name: Fail while Remote Control is declared on but the consent is missing
+      ansible.builtin.fail:
+        msg:
+          - "claude_remote_enable is true, but the one-time Remote Control consent is not on disk, so the remote-control units were NOT started."
+          - "Everything else in this play converged. To finish:"
+          - "1. ssh claude@{{ ansible_host | default('192.168.50.247') }}"
+          - "2. cd ~/work/petedio/iac && claude   # only if never done: accept workspace trust, then /login"
+          - "3. claude remote-control             # answer y once, confirm a session URL, Ctrl+C"
+          - "4. re-run this play"
+          - "jq rc={{ claude_remote_consent.rc | default('none') }} (1: remoteDialogSeen is absent or false) {{ claude_remote_consent.stderr | default('') }}"
+      when:
+        - claude_remote_enable | bool
+        - claude_remote_consent.rc | default(1) != 0

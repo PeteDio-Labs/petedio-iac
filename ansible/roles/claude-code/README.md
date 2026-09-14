@@ -23,10 +23,12 @@ Enterprise plan. **API keys and long-lived `claude setup-token` tokens are refus
 feature does not accept them, so there is no unattended path to an eligible login. The same
 is true of `gh`.
 
-So this role installs, configures, renders the units, and stops. `claude_remote_enable`
-defaults to `false`, and that default is load-bearing: a server started before the login
-exists exits immediately, and systemd restarts it until the unit's start limit trips —
-turning a missing step into a failed unit that reads like a broken host.
+So this role installs, configures and renders the units, and starts them only once the
+operator steps are done. `claude_remote_enable` defaults to `false`, so a host nobody has
+bootstrapped gets stopped units. claude-247 declares `true` in
+`inventory/host_vars/claude-247.yml`, and even then the role refuses to start a unit until
+the one-time consent is on disk: a server started without it waits at its prompt forever
+while systemd reports it active (PET-431).
 
 ## Bootstrap
 
@@ -63,11 +65,24 @@ on merge; nothing here needs a node-side step, because nothing here runs Docker.
    claude remote-control
    ```
 
-5. **Hand it to systemd:**
+   ⚠ **Do not skip this step, and do not leave it to the unit.** The answer lands in
+   `~/.claude.json` as `remoteDialogSeen: true`. A unit cannot answer — its stdin is
+   `/dev/null` — so without it the server waits at the prompt forever while `systemctl`
+   reports it active. claude-247 spent 15 hours of 2026-09-12 like that (PET-431). Using
+   Remote Control from an interactive `claude` session does not record it either: one served
+   on claude-247 for two days and left no `remoteDialogSeen` behind.
+
+5. **Hand it to systemd.** Declare `claude_remote_enable: true` in
+   `inventory/host_vars/<host>.yml` — claude-247 already does — and run the play:
 
    ```sh
-   ansible-playbook playbooks/configure-claude-code.yml -e claude_remote_enable=true
+   ansible-playbook playbooks/configure-claude-code.yml
    ```
+
+   The play checks for the consent before it starts anything. Without it, the play converges
+   everything else, leaves the units alone, and fails at the end with the steps above.
+   ⚠ Do not pass `-e claude_remote_enable=true` instead: the next run without the flag stops
+   the server, which is how a loop deploy took claude-247's down.
 
 6. **Optional — let it open PRs.** `gh auth login` as the `claude` user.
 
@@ -105,10 +120,23 @@ accepted somewhere other than the project directory, so accept it again from
 before starting, so a re-run with `-e claude_remote_enable=true` is not blocked by the
 wreckage of the run before it.
 
-If the server turns out to want a terminal it does not have under systemd, run it in a
-detached `tmux` session as the `claude` user instead (`tmux` is installed for this) and
-leave the unit disabled. That is a fallback, not the design — record it here if you need it,
-so the next person does not rediscover it.
+## If the unit stays up and serves nothing
+
+Suspect the one-time consent first. A server that never had its `y` prints the feature's
+introduction — *"Take this session with you… The session keeps running on this machine…"* —
+and then waits on stdin, which systemd points at `/dev/null`. It stays `active`, holds no
+connection, and never logs the prompt it waits at. The prompt has no newline, so journald
+holds it until the process stops and stamps it with the **stop** time, marked
+`_LINE_BREAK=eof`. Two diagnoses read that line as a shutdown message (PET-427, PET-431).
+
+```sh
+jq '.remoteDialogSeen' /home/claude/.claude.json   # must print true
+```
+
+To fix it, run bootstrap step 4 as the `claude` user, then
+`systemctl restart claude-remote-iac`. The unit needs no terminal after that. An earlier
+version of this README offered a detached `tmux` session as the fallback for a server that
+"wants a terminal"; the terminal was only ever wanted for this one answer.
 
 ## Operating it
 

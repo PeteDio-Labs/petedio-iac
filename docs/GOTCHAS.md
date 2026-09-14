@@ -782,6 +782,23 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   `StartLimitBurst` in `[Unit]` so it lands in `failed` instead, and remember that clearing
   `failed` needs `systemctl reset-failed` before the next start will be accepted.
 
+- **A `claude remote-control` unit started before the one-time consent waits at the prompt
+  forever, and every surface calls it healthy (PET-431).** The server asks
+  `Enable Remote Control? (y/n)` until `remoteDialogSeen` is true in `~/.claude.json`. Under
+  systemd stdin is `/dev/null`, so nothing answers. The process stays `active`, holds no
+  connection, and logs only the feature's introduction — *"The session keeps running on this
+  machine…"* — which reads like a ready banner and means the opposite. `lab-verify` passed on
+  that sentence from PET-406 until PET-431. Only running `claude remote-control` by hand and
+  answering `y` records the consent; Remote Control used from an interactive `claude` session
+  served on 247 for two days and never wrote the key. The role checks for it before starting
+  a unit, and the playbook fails the run while it is missing.
+
+- **A host that serves Remote Control must declare `claude_remote_enable: true`, never pass
+  it with `-e` (PET-431).** The role's `false` stops and disables the units. The bootstrap
+  once passed `-e claude_remote_enable=true` a single time, so the next run without the flag
+  — `deploy-claude-loop.sh`, on 2026-09-12 — stopped claude-247's server with nobody asking
+  it to. `inventory/host_vars/claude-247.yml` holds the declaration.
+
 - **`-e var=false` is a truthy STRING, so an enable gate needs `| bool` on every read.**
   Ansible's `-e key=value` never yields a bool. `{{ 'started' if enable else 'stopped' }}`
   evaluates to `started` under `-e enable=false`, while a sibling `enabled: "{{ enable }}"`
@@ -1137,6 +1154,37 @@ whose answer could come back either way.
 make it carry what it was computed *over* — `0 of 135 examined` rather than `0` — so an empty
 corpus and an empty result cannot look alike. And never let "there is nothing" and "I could
 not read it" render as the same string.
+
+## A journal line's timestamp is when journald committed it, not when it was written (PET-431)
+
+A process that prints a prompt and waits writes text with no newline. journald commits a
+stdout record at a newline, at its line-length limit, or when the stream closes — so the
+prompt sits in a buffer, invisible, until the process dies, then lands stamped with the
+**stop** time. Reproduced on claude-247:
+
+```
+21:08:42  Started claude-remote-iac.service
+21:08:42  The session keeps running on this machine. …   ← written at 21:08:42
+21:09:40  Stopping claude-remote-iac.service
+21:09:40  Enable Remote Control? (y/n)                   ← also written at 21:08:42
+```
+
+Two diagnoses read the 2026-09-12 copy of that last line as written at the stop, and reached
+opposite conclusions from the same wrong premise. PET-427 decided the server stopped because it
+wanted a terminal. PET-431 decided the line was a shutdown artifact and the unit had served
+for fifteen hours. It had waited at the prompt the whole time, and a hand-started `claude`
+had done the serving. journald records the truth in a field the default output hides:
+
+```bash
+journalctl _SYSTEMD_INVOCATION_ID=<id> -o json | jq '{MESSAGE, _LINE_BREAK}'
+# "_LINE_BREAK": "eof"   the record was cut by the stream closing, not by a newline
+```
+
+**The rule:** before a log line's position or timestamp counts as evidence of *when* something
+happened, check `_LINE_BREAK`; `eof` means written at an unknown earlier time. And before a
+string counts as a *marker*, find what prints it — `grep -a` on the binary takes seconds. The
+"ready banner" `lab-verify` trusted is printed by exactly one piece of server code: the consent
+prompt that blocks the server.
 
 ## `git bundle create - <a>..<sha>` writes a bundle with no refs
 

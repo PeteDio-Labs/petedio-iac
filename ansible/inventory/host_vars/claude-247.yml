@@ -1,0 +1,15 @@
+---
+# claude-247 — Claude Code, Remote Control and the ticket-driven work loop (PET-396, PET-399).
+# Terraform owns the container (environments/homelab/claude.tf); roles/claude-code owns
+# everything inside it.
+
+# ⚠ REMOTE CONTROL IS DECLARED HERE, NEVER PASSED WITH -e (PET-431). The role's default is
+# `false`, and `false` stops AND disables the servers. The bootstrap used to pass
+# `-e claude_remote_enable=true` once, so the next run without the flag — a
+# deploy-claude-loop.sh run on 2026-09-12 — stopped this host's server.
+#
+# Declaring it does not start a server before one can serve. The role first checks for the
+# one-time consent that `claude remote-control` asks for; without it, the play leaves the
+# units alone and fails at the end with the step to take. roles/claude-code/README.md has
+# the full bootstrap.
+claude_remote_enable: true
