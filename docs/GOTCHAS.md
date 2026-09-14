@@ -799,6 +799,16 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   — `deploy-claude-loop.sh`, on 2026-09-12 — stopped claude-247's server with nobody asking
   it to. `inventory/host_vars/claude-247.yml` holds the declaration.
 
+- **`SendMessage` delivers only within one permission-mode class, and reports `success`
+  either way (PET-431, PET-433).** With `crossSessionInbound` unset, Claude Code 2.1.270
+  auto-delivers a message only bypass↔bypass or prompting↔prompting, and holds any other in
+  the receiver's transcript for approval. A `bypassPermissions` session on 247 and the
+  prompting Mac session held each other's messages until 247's session moved to `auto`, and
+  every send in between reported `success`. That is why the unit starts sessions in `auto`.
+  Count a message as delivered only when its reply arrives. Setting
+  `crossSessionInbound: accept` on a bypass session instead would let a prompting session
+  steer it without approval.
+
 - **`-e var=false` is a truthy STRING, so an enable gate needs `| bool` on every read.**
   Ansible's `-e key=value` never yields a bool. `{{ 'started' if enable else 'stopped' }}`
   evaluates to `started` under `-e enable=false`, while a sibling `enabled: "{{ enable }}"`
