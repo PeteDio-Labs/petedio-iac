@@ -2,6 +2,13 @@
 
 Carry-forward lessons. Every story that hits a new one appends here (Definition of Done).
 
+Claude Code loads the short form of each gotcha from `.claude/rules/`, by path: a
+session gets `terraform.md` when it reads a file under `environments/` or `modules/`,
+`ansible.md` under `ansible/`, `ci.md` under `.github/`, `scripts.md` under `scripts/` or
+`tools/`, and `general.md` at start. This file holds the narratives. To add a gotcha,
+write its section here and add a one-line rule to the matching rules file, citing the
+section heading. History sections for systems that are gone get no rule.
+
 ## Proxmox / bpg
 
 - **bpg import never round-trips** `operating_system.template_file_id`, `features`,
@@ -769,6 +776,35 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   land with a normal merge, and apply-on-merge fails on a permission denied it cannot diagnose
   for itself.
 
+## Declare it, don't run it: Terraform blocks before scripts
+
+When a repair can be expressed as config, express it as config. A `.tf` change is reviewed,
+gated by the plan, applied on merge and re-applied for free. A script is none of those, and it
+can run at the wrong moment or not at all.
+
+Check before assuming Terraform cannot say it. The answer is usually yes:
+
+- An `import` block replaces `terraform import`.
+- A `removed` block replaces `terraform state rm`.
+- A `moved` block replaces a rename-shaped `terraform state mv`.
+- `ignore_changes` and `-replace` cover most of the rest.
+
+Two limits are real, found so far:
+
+- `removed` addresses a resource, never one instance of a `for_each`.
+- `removed` cannot be paired with `import` to repoint an address the config still declares.
+
+Write a script only for what the language cannot say, and record the refusal verbatim in the
+script. A script that survives that test must be idempotent, guarded against running out of
+order, and back up whatever it rewrites.
+
+The same rule applies to hosts: Ansible over SSH-and-remember. The known exceptions are the
+`root@pam`-gated ones (`features`, bind mounts, device passthrough), covered under
+"Proxmox / bpg" above.
+
+Moved here from the workspace `CLAUDE.md` on 2026-09-14 (PET-435). That file pointed at this
+one for the syntax while the text lived only in `CLAUDE.md`.
+
 ## Claude Code as a service — the Claude host (247) (PET-396)
 
 - **Remote Control and the Chrome integration both refuse API keys and long-lived
@@ -846,11 +882,14 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   also means a piped `claude` in a directory you did not mean to trust does not stop to
   ask. Trust the directory anyway if you want MCP tools resolving in that session.
 
-- **There is no `--max-turns` in Claude Code 2.1.x.** An unattended `claude -p` has no
-  turn ceiling, so wall-clock is the only bound available: `timeout` around the process,
-  and a `TimeoutStartSec` above it in the unit so the inner one reports first and says why.
-  Checked against `claude --help` on 247 while writing the loop — a `--max-turns` copied
-  out of an older runbook fails the whole invocation rather than being ignored.
+- **`--max-turns` works in Claude Code 2.1.270, although `claude --help` does not list it
+  (PET-435).** This bullet used to say the flag did not exist, from reading `--help` alone.
+  Measured on 247 on 2026-09-14: `--max-turns 1` gave `subtype=error_max_turns`,
+  `is_error=true`, `num_turns=2`; the same prompt without it succeeded in 3 turns; an
+  unknown flag fails with `error: unknown option`. In text output a stop prints `Error:
+  Reached max turns (N)` and exits 1. The loop passes `--max-turns` and keeps `timeout`
+  around the process, with a `TimeoutStartSec` above it in the unit, so the inner bound
+  reports first and says why. **Test a flag, don't infer its absence from `--help`.**
 
 - **Nothing about this host needs `features{}`** — no Docker, so no nesting, no keyctl, and
   no `scripts/lxc-features-<id>.sh` step on the node. Worth stating because the reflex on
