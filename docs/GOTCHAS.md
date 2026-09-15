@@ -776,6 +776,35 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   land with a normal merge, and apply-on-merge fails on a permission denied it cannot diagnose
   for itself.
 
+## Declare it, don't run it: Terraform blocks before scripts
+
+When a repair can be expressed as config, express it as config. A `.tf` change is reviewed,
+gated by the plan, applied on merge and re-applied for free. A script is none of those, and it
+can run at the wrong moment or not at all.
+
+Check before assuming Terraform cannot say it. The answer is usually yes:
+
+- An `import` block replaces `terraform import`.
+- A `removed` block replaces `terraform state rm`.
+- A `moved` block replaces a rename-shaped `terraform state mv`.
+- `ignore_changes` and `-replace` cover most of the rest.
+
+Two limits are real, found so far:
+
+- `removed` addresses a resource, never one instance of a `for_each`.
+- `removed` cannot be paired with `import` to repoint an address the config still declares.
+
+Write a script only for what the language cannot say, and record the refusal verbatim in the
+script. A script that survives that test must be idempotent, guarded against running out of
+order, and back up whatever it rewrites.
+
+The same rule applies to hosts: Ansible over SSH-and-remember. The known exceptions are the
+`root@pam`-gated ones (`features`, bind mounts, device passthrough), covered under
+"Proxmox / bpg" above.
+
+Moved here from the workspace `CLAUDE.md` on 2026-09-14 (PET-435). That file pointed at this
+one for the syntax while the text lived only in `CLAUDE.md`.
+
 ## Claude Code as a service — the Claude host (247) (PET-396)
 
 - **Remote Control and the Chrome integration both refuse API keys and long-lived
