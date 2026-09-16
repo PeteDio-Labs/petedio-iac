@@ -57,8 +57,12 @@ check_field kv/iac/lxc-ssh          private_key
 check_field kv/poker/db             DATABASE_URL
 check_field kv/poker/db             admin_password
 check_field kv/poker/db             poker_password
-check_field kv/services/qbittorrent username
-check_field kv/services/qbittorrent password
+# The path qBittorrent's gluetun sidecar reads. It replaced kv/services/qbittorrent,
+# which held a username and password nothing ever read (PET-452). This check is red
+# until the seed runs — `scripts/seed-qbittorrent-vault.sh` — and red is the correct
+# answer while the VPN credentials are absent.
+check_field kv/services/media/qbittorrent wireguard_private_key
+check_field kv/services/media/qbittorrent wireguard_addresses
 check_field kv/services/authentik   secret_key
 check_field kv/services/authentik   bootstrap_token
 check_field kv/services/cloudflare  tunnel_token

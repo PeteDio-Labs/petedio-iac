@@ -25,7 +25,6 @@
 #   MINIO_ACCESS_KEY  MINIO_SECRET_KEY
 #   LXC_SSH_PUBLIC_KEY  LXC_SSH_PRIVATE_KEY   (private key = full PEM contents)
 #   POSTGRES_ADMIN_PASSWORD  POKER_PASSWORD
-#   QBT_USERNAME  QBT_PASSWORD
 #   AUTHENTIK_SECRET_KEY  AUTHENTIK_BOOTSTRAP_TOKEN
 #   CLOUDFLARE_TUNNEL_TOKEN
 #   REGISTRY_PASSWORD
@@ -162,15 +161,6 @@ put_entry kv/poker/db \
   "admin_password=${pg_admin}" \
   "poker_password=${poker_pw}"
 unset pg_admin poker_pw poker_pw_enc database_url
-echo
-
-# --- kv/services/qbittorrent -----------------------------------------------------
-echo "kv/services/qbittorrent:"
-load_value QBT_USERNAME "qBittorrent username (homelab-infra qbittorrent.vault.yml)"
-qbt_user="${REPLY_VALUE}"
-load_value QBT_PASSWORD "qBittorrent password"
-put_entry kv/services/qbittorrent "username=${qbt_user}" "password=${REPLY_VALUE}"
-unset qbt_user
 echo
 
 # --- kv/services/authentik -------------------------------------------------------

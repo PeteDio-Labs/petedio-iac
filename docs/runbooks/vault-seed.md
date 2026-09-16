@@ -1,6 +1,6 @@
 # Runbook — Seed bootstrap secrets into Vault KV (PET-27)
 
-> **Corrected 2026-09-10 (PET-385).** The tracker is Plane, and the CI OIDC cutover (PET-29) this page defers is done. `kv/services/qbittorrent` holds only a phantom credential — see petedio-media-iac's `docs/runbooks/qbittorrent-vault-secret.md` — so drop it from `vault-seed.sh` and `vault-verify.sh` when they are next touched.
+> **Corrected 2026-09-10 (PET-385), amended 2026-09-16 (PET-452).** The tracker is Plane, and the CI OIDC cutover (PET-29) this page defers is done. `kv/services/qbittorrent` held only a phantom credential — see petedio-media-iac's `docs/runbooks/qbittorrent-vault-secret.md` — and PET-452 dropped it from `vault-seed.sh`, `vault-verify.sh` and this page. The path qBittorrent actually reads is `kv/services/media/qbittorrent`, and `scripts/seed-qbittorrent-vault.sh` seeds it.
 
 This runbook covers the **manual, one-time operator steps** to seed the initial
 secret **values** into the homelab Vault KV-v2 store at
@@ -96,7 +96,7 @@ The real values originate from **two** places:
    > [!NOTE]
    > Exact paths/filenames in `homelab-infra` may differ slightly from the table
    > below (the old repo predates this layout). If a file isn't where listed, grep the
-   > clone: `grep -rl "proxmox\|minio\|qbittorrent" --include="*vault*.yml" .` and
+   > clone: `grep -rl "proxmox\|minio\|authentik" --include="*vault*.yml" .` and
    > decrypt the match. Copy each value **straight from the `ansible-vault view`
    > output into the prompt / `vault kv put`** — never write it to an intermediate
    > plaintext file. If you must stage the SSH private key as a file, use a path under
@@ -114,7 +114,6 @@ The real values originate from **two** places:
 | `kv/iac/minio`            | `access_key`, `secret_key`                           | `homelab-infra` → `minio-terraform-state.vault.yml` (TF S3 state + S3-compat) |
 | `kv/iac/lxc-ssh`          | `public_key`, `private_key`                          | `homelab-infra` → the SSH keypair TF installs into LXCs                  |
 | `kv/poker/db`             | `DATABASE_URL`, `admin_password`, `poker_password`   | **Password manager** — set at the manual Postgres standup (LXC 231)     |
-| `kv/services/qbittorrent` | `username`, `password`                               | `homelab-infra` → `qbittorrent.vault.yml`                               |
 | `kv/services/authentik`   | `secret_key`, `bootstrap_token`                      | `homelab-infra` → authentik creds vault file                            |
 | `kv/services/cloudflare`  | `tunnel_token`                                       | `homelab-infra` → cloudflare tunnel vault file                          |
 | `kv/services/registry`    | `password` (+ optional `username`, default `admin`)  | zot htpasswd user (password manager)                                    |
@@ -155,10 +154,6 @@ vault kv put kv/poker/db \
     poker_password="<POKER_PASSWORD>"
 
 # --- Homelab services ---
-vault kv put kv/services/qbittorrent \
-    username="<QBT_USERNAME>" \
-    password="<QBT_PASSWORD>"
-
 vault kv put kv/services/authentik \
     secret_key="<AUTHENTIK_SECRET_KEY>" \
     bootstrap_token="<AUTHENTIK_BOOTSTRAP_TOKEN>"
