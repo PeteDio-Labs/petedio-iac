@@ -1123,6 +1123,36 @@ one for the syntax while the text lived only in `CLAUDE.md`.
   a throwaway branch carrying the same rule, never at `main`, where a merge triggers
   apply-on-merge.
 
+## A private repo in this org cannot be protected at all (PET-457)
+
+`PeteDio-Labs` is on the **Free** plan (`gh api orgs/PeteDio-Labs --jq .plan.name`). Branch
+protection and rulesets are both paid features for a private repository, so every private
+repo answers **403**, not 404:
+
+```bash
+gh api repos/PeteDio-Labs/petedio-vault/branches/main/protection
+# {"message":"Upgrade to GitHub Pro or make this repository public to enable this feature."}
+gh api repos/PeteDio-Labs/petedio-vault/rulesets        # same 403
+gh api orgs/PeteDio-Labs/rulesets                       # "Upgrade to GitHub Team"
+```
+
+- **403 and 404 mean opposite things, and a sweep that reads only the exit code merges
+  them.** 404 is "this branch could be protected and is not" — a decision nobody made. 403
+  is "this plan does not sell protection here" — a decision no configuration can carry out.
+  Reporting both as *unprotected* hides thirteen of thirty-seven repos behind a word that
+  sounds like a choice.
+- **Three of the four repos that deploy to a live host on push to `main` are private**:
+  `petedio-media-control` (237), `petedio-palworld-panel` (234) and `co-latro-admin`. No
+  required check can be added to any of them. The options are the plan, the repo's
+  visibility, or accepting it in writing — not a protection setting.
+- **`can_approve_pull_request_reviews` is free and repo-level, and it works on private
+  repos.** `GET /repos/{owner}/{repo}/actions/permissions/workflow` reads it. A workflow that
+  can approve a pull request defeats a required review without touching protection, so read
+  it alongside protection rather than after it.
+- **`scripts/repo-protection-verify.sh` reads all of it back** against a declared table and
+  exits non-zero on drift. `scripts/test-repo-protection-verify.sh` feeds its comparison
+  recorded objects, including the `enforce_admins` deadlock no live repo can reproduce.
+
 ## `MERGED` is a fact about the pull request, not about what is on `main`
 
 A squash-merge takes **the head the pull request had when the button was pressed**. Commits
