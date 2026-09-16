@@ -1,0 +1,44 @@
+---
+- name: Back up the interfaces file before first modification
+  ansible.builtin.copy:
+    src: /etc/network/interfaces
+    dest: /etc/network/interfaces.bak-pre-mesh-usb-bridge
+    remote_src: true
+    force: false          # never clobber the pristine pre-change copy
+    mode: "0644"
+
+# Purely additive: a new bridge on a NIC nothing else uses. vmbr0 (the LAN)
+# is never touched, so this cannot repeat the pve03 lockout — that trap fired
+# on a REPLACEMENT of the interface already carrying the SSH session, and no
+# NetworkManager runs on pve02 at all to fight ifupdown2 for ownership.
+- name: Declare the USB-NIC mesh bridge
+  ansible.builtin.blockinfile:
+    path: /etc/network/interfaces
+    marker: "# {mark} ANSIBLE MANAGED BLOCK — mesh-usb-bridge"
+    block: |
+      auto {{ mesh_usb_bridge }}
+      iface {{ mesh_usb_bridge }} inet dhcp
+          bridge-ports {{ mesh_usb_interface }}
+          bridge-stp off
+          bridge-fd 0
+    insertafter: EOF
+  register: mesh_usb_bridge_cfg
+
+# Syntax first, same discipline as mesh-vxlan: a bad interfaces file does not
+# surface until the next boot.
+- name: Validate the interfaces file without applying it
+  ansible.builtin.command: ifreload -a -n
+  register: mesh_usb_check
+  changed_when: false
+  failed_when: mesh_usb_check.rc != 0
+
+# Deliberately NOT reloading automatically, same reasoning as mesh-vxlan:
+# the config is written and validated, and a reboot comes up correct either
+# way. Run `ifreload -a` by hand once ready to bring vmbr2 up live.
+- name: Say what is left to do by hand
+  when: mesh_usb_bridge_cfg.changed
+  ansible.builtin.debug:
+    msg: >-
+      Config changed on {{ inventory_hostname }} and passed validation.
+      Run `ifreload -a` to bring {{ mesh_usb_bridge }} up — not applied
+      automatically.

@@ -1,0 +1,10 @@
+---
+# mesh-usb-bridge — pve02 gained a wired USB-to-Ethernet adapter (Realtek
+# RTL8153) cabled directly into the Google mesh (192.168.86.0/24). Unlike a
+# WiFi station, a wired NIC can bridge other MACs (no 802.11 three-address-
+# frame limit), so this restores a genuine layer-2 presence on the mesh for
+# Plex (236) — the capability lost when pve01 died and mesh-vxlan (superseded,
+# see that role) lost its anchor. See vault/Systems/plex-on-the-mesh.md.
+
+mesh_usb_interface: enx00e04c6861be
+mesh_usb_bridge: vmbr2
