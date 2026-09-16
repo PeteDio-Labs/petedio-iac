@@ -1,0 +1,135 @@
+# Blast radius — say what merging a pull request can actually do, before anyone
+# reads it (PET-463).
+#
+# Every PR in this org gets the same review whether it deletes a slide preview
+# or rewrites the workflow that mints Vault credentials. This job reads the
+# changed paths against THIS repo's own workflows and answers one question:
+#
+#   tier-0  cannot change desired state or a trust boundary
+#   tier-1  changes what an operator can run; nothing runs on merge
+#   tier-2  runs on merge, mints credentials, or moves the trust boundary
+#
+# It classifies. It does not merge anything, and it is not a branch-protection
+# gate: PeteDio-Labs is on the Free plan, so no private repo can require a check
+# (PET-457). Treat the label as routing, not enforcement.
+#
+# TWO THINGS ABOUT THIS FILE ARE LEAD-LINED. Keep them.
+#
+#   1. `runs-on: ubuntu-latest`, never the homelab runner. A pull request from a
+#      fork runs the fork's code. That is PET-460, and a classifier that reads
+#      workflow files is exactly the job someone would aim at the runner.
+#   2. The job asks for no `id-token`. It needs no credential, so it holds none.
+#
+# The reusable half of this file lets the other repos call it without copying
+# the rules. They fetch the classifier from petedio-iac's default branch, so
+# changing the tiers in one place changes them everywhere — including for repos
+# whose own PR is what changed them.
+name: blast-radius
+
+on:
+  pull_request: {}
+  workflow_call:
+    inputs:
+      fail-above:
+        description: >-
+          Fail the check when the tier is above this number. Left unset, the
+          check reports the tier and always passes.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Labelling the PR is the whole point — an unlabelled tier-2 reads like a
+      # tier-0 in the list. A fork's token is read-only whatever this says, so
+      # the label step below runs for same-repo pull requests only.
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number }}
+
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@v6
+
+      # The caller's workflows are what decide its live-apply set, so the
+      # classifier has to read the caller's checkout. Only the rules travel.
+      - name: Fetch the classifier
+        if: ${{ github.repository != 'PeteDio-Labs/petedio-iac' }}
+        uses: actions/checkout@v6
+        with:
+          repository: PeteDio-Labs/petedio-iac
+          path: .blast-radius
+          sparse-checkout: scripts/pr-blast-radius.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Locate the classifier
+        run: |
+          if [ "$GITHUB_REPOSITORY" = "PeteDio-Labs/petedio-iac" ]; then
+            # petedio-iac grades itself with the PR's own copy, so a change to
+            # the rules is tested by the PR that makes it.
+            echo "CLASSIFIER=scripts/pr-blast-radius.py" >> "$GITHUB_ENV"
+          else
+            echo "CLASSIFIER=.blast-radius/scripts/pr-blast-radius.py" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install PyYAML
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Classify
+        id: classify
+        run: |
+          set -euo pipefail
+          # `--repo-root .` reads the checked-out workflows rather than the
+          # remote ones: a PR that adds an apply-on-push workflow should be
+          # graded against the workflow it adds.
+          python3 "$CLASSIFIER" --pr "$PR" --repo-root . | tee radius.txt
+          python3 "$CLASSIFIER" --pr "$PR" --repo-root . --json > radius.json
+          echo "tier=$(jq -r '.tier' radius.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Write the job summary
+        run: |
+          {
+            echo "## Blast radius: tier-$(jq -r '.tier' radius.json)"
+            echo
+            echo "$(jq -r '.summary' radius.json)"
+            echo
+            echo '```'
+            cat radius.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Skipped for fork pull requests: their token cannot write, and asking
+      # anyway turns a classification into a red X for the wrong reason.
+      - name: Label the pull request
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          set -euo pipefail
+          tier="${{ steps.classify.outputs.tier }}"
+          gh label create "blast-radius/tier-$tier" --color ededed --force \
+            --description "Set by the blast-radius check" >/dev/null 2>&1 || true
+          # Drop the other two, so a push that lowers the tier does not leave
+          # the higher label sitting on the PR.
+          for other in 0 1 2; do
+            [ "$other" = "$tier" ] && continue
+            gh pr edit "$PR" --remove-label "blast-radius/tier-$other" >/dev/null 2>&1 || true
+          done
+          gh pr edit "$PR" --add-label "blast-radius/tier-$tier"
+
+      - name: Enforce the caller's ceiling
+        if: ${{ inputs.fail-above != '' }}
+        run: |
+          set -euo pipefail
+          tier="${{ steps.classify.outputs.tier }}"
+          if [ "$tier" -gt "${{ inputs.fail-above }}" ]; then
+            echo "::error::tier-$tier is above this repo's ceiling of tier-${{ inputs.fail-above }}"
+            exit 1
+          fi
+          echo "tier-$tier is within the ceiling of tier-${{ inputs.fail-above }}."
