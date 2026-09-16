@@ -17,7 +17,7 @@
     marker: "# {mark} ANSIBLE MANAGED BLOCK — mesh-usb-bridge"
     block: |
       auto {{ mesh_usb_bridge }}
-      iface {{ mesh_usb_bridge }} inet dhcp
+      iface {{ mesh_usb_bridge }} inet {{ mesh_usb_bridge_method }}
           bridge-ports {{ mesh_usb_interface }}
           bridge-stp off
           bridge-fd 0
