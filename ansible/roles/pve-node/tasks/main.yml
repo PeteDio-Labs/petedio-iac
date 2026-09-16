@@ -150,6 +150,13 @@
   ansible.builtin.debug:
     msg: "proxmox-ve install changed={{ pve_install.changed }}"
 
+# Unlike bridge.yml below, this is not a lockout risk: it installs a udev rule,
+# a unit and a script, and only ever ATTACHES an orphaned NIC to the bridge its
+# own config already declares. It never detaches or reconfigures anything.
+- name: Survive a NIC that drops off the bus and comes back
+  ansible.builtin.include_tasks:
+    file: hotplug-rebridge.yml
+
 # The bridge is the lockout risk, so it only runs when asked for by tag.
 #
 # `apply` is load-bearing: tags on an include_tasks apply to the include

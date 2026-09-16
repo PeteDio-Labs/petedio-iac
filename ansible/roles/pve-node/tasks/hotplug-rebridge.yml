@@ -1,0 +1,69 @@
+---
+# Make a hot-replugged NIC re-attach itself to its declared bridge (PET-445).
+#
+# Safe to run on any node: it installs a rule, a unit and a script, and changes
+# no running interface. The repair only fires on a udev `add` event.
+
+- name: Install the re-attach helper
+  ansible.builtin.copy:
+    src: pve-rebridge
+    dest: /usr/local/sbin/pve-rebridge
+    mode: "0755"
+    owner: root
+    group: root
+
+# ⚠ KERNEL=="en*" IS THE FILTER, and it is doing real work. A Proxmox node
+# hotplugs an interface every time a container starts — pve03 runs 16 of them,
+# each with a veth and some with fwbr/fwpr/fwln. Matching every net device would
+# queue a unit per container start forever. Physical NICs are the only `en*`
+# devices on the host: veth/vmbr/vxlan start with v, the firewall pairs with f,
+# and wireless with w. Wireless is excluded on purpose — NetworkManager owns it
+# on pve03, and it is the escape hatch that made the outage recoverable.
+- name: Install the udev rule that fires on a NIC coming back
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/99-pve-rebridge.rules
+    mode: "0644"
+    content: |
+      # Managed by ansible role pve-node — local edits are overwritten.
+      ACTION=="add", SUBSYSTEM=="net", KERNEL=="en*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="pve-rebridge@$env{INTERFACE}.service"
+  register: pve_node_rebridge_rule
+
+# udev RUN+= is the wrong place for this: it runs with a short timeout in a
+# constrained environment, and the bridge may not be up at that instant.
+# Handing it to systemd decouples the repair from the event.
+- name: Install the unit udev triggers
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/pve-rebridge@.service
+    mode: "0644"
+    content: |
+      # Managed by ansible role pve-node — local edits are overwritten.
+      [Unit]
+      Description=Re-attach %I to the bridge that declares it
+      After=network.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/pve-rebridge %I
+  register: pve_node_rebridge_unit
+
+- name: Reload systemd so the new unit is known
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: pve_node_rebridge_unit.changed
+
+- name: Reload udev rules
+  ansible.builtin.command: udevadm control --reload-rules
+  when: pve_node_rebridge_rule.changed
+  changed_when: true
+
+# Converge the CURRENT state too. Installing the rule does nothing for a NIC
+# that is already sitting orphaned — which is exactly the state this was written
+# for, and the state a node is in when someone reaches for this role.
+- name: Re-attach the LAN interface now, if it is already orphaned
+  ansible.builtin.command: /usr/local/sbin/pve-rebridge {{ pve_node_lan_interface }}
+  register: pve_node_rebridge_now
+  changed_when: "'attached ' in pve_node_rebridge_now.stdout"
+
+- name: Report
+  ansible.builtin.debug:
+    msg: "{{ pve_node_rebridge_now.stdout }}"

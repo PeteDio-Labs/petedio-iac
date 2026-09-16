@@ -1,0 +1,65 @@
+#!/bin/bash
+# Managed by ansible role pve-node — local edits are overwritten.
+#
+# Re-attach a hot-replugged NIC to the bridge that declares it.
+#
+# WHY THIS EXISTS. On 2026-09-15 pve03's USB Ethernet dongle dropped off the bus
+# and re-enumerated. It came back with no bridge master, and the whole platform
+# tier was unreachable for 45 minutes. `/etc/network/interfaces` was correct the
+# whole time: `bridge-ports` is applied at `ifup`, not on hotplug, so a NIC that
+# vanishes and returns is an orphan until something re-enslaves it.
+#
+# ⚠ EVERY OBVIOUS SIGNAL STAYS GREEN while this is broken. `ethtool` reports the
+# link up at full speed, the dongle's link light is lit, `lsusb` shows the
+# device, and the bridge still holds its address. Frames arrive and are dropped
+# at an unbridged port. `ip link set <dev> down/up` restores the link state and
+# never enslaves anything, so cycling it produces a fresh green reading over an
+# unchanged fault. The two accurate signals are a rising RX counter on the NIC
+# and an empty /sys/class/net/<dev>/master.
+#
+# This reads the DECLARED config rather than guessing a bridge, so it cannot
+# attach a NIC to the wrong one.
+set -uo pipefail
+
+IFACE="${1:?usage: pve-rebridge <interface>}"
+
+# Track the enclosing `iface <name>` stanza, then print it when a bridge-ports
+# line in that stanza names our interface. Both spellings are accepted because
+# ifupdown2 accepts both.
+BRIDGE=$(
+  { cat /etc/network/interfaces; cat /etc/network/interfaces.d/* 2>/dev/null; } |
+  awk -v want="$IFACE" '
+    /^[[:space:]]*iface[[:space:]]+/ { current = $2 }
+    /^[[:space:]]*bridge[-_]ports[[:space:]]+/ {
+      for (i = 2; i <= NF; i++) if ($i == want) { print current; exit }
+    }
+  '
+)
+
+if [ -z "$BRIDGE" ]; then
+  echo "pve-rebridge: $IFACE is not declared as a bridge port; nothing to do"
+  exit 0
+fi
+
+if [ ! -d "/sys/class/net/$BRIDGE" ]; then
+  echo "pve-rebridge: $IFACE belongs to $BRIDGE, which does not exist yet"
+  exit 0
+fi
+
+CURRENT=""
+if [ -e "/sys/class/net/$IFACE/master" ]; then
+  CURRENT=$(basename "$(readlink -f "/sys/class/net/$IFACE/master")")
+fi
+
+if [ "$CURRENT" = "$BRIDGE" ]; then
+  echo "pve-rebridge: $IFACE already attached to $BRIDGE"
+  exit 0
+fi
+
+ip link set "$IFACE" up || true
+if ip link set "$IFACE" master "$BRIDGE"; then
+  echo "pve-rebridge: attached $IFACE to $BRIDGE (was: ${CURRENT:-unattached})"
+else
+  echo "pve-rebridge: FAILED to attach $IFACE to $BRIDGE" >&2
+  exit 1
+fi

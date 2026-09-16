@@ -57,6 +57,37 @@ V=$(on $PVE02 'pvecm status 2>/dev/null | grep -c "A,V,"')
 W=$(on $PVE02 'touch /etc/pve/.verify 2>/dev/null && rm -f /etc/pve/.verify && echo yes')
 [ "$W" = "yes" ] && ok "/etc/pve writable" || bad "/etc/pve writable" "lost quorum?"
 
+# ── Bridges hold their declared ports (PET-445) ───────────────────────────────
+# A NIC that drops off the bus and re-enumerates comes back with NO bridge
+# master. `bridge-ports` is applied at `ifup`, not on hotplug, so the config
+# stays right while the running state is wrong, and the node loses the LAN.
+#
+# ⚠ THIS IS INVISIBLE TO EVERY OTHER CHECK HERE, and to every obvious probe on
+# the node itself. ethtool reports the link up at full speed, the dongle's link
+# light is lit, the bridge still holds its address, and the guests keep running
+# and answering each other over the bridge. Only traffic LEAVING the host is
+# gone. On 2026-09-15 that took the platform tier down for 45 minutes while
+# every signal anyone thought to read stayed green.
+#
+# Ask /sys which ports a bridge actually has, not what the file says it should.
+sec "Bridges hold their declared ports"
+BR_CHECK='{ cat /etc/network/interfaces; cat /etc/network/interfaces.d/* 2>/dev/null; } | awk "/^[[:space:]]*iface[[:space:]]+/ { br = \$2 } /^[[:space:]]*bridge[-_]ports[[:space:]]+/ { for (i = 2; i <= NF; i++) if (\$i != \"none\") print br \" \" \$i }" | while read -r br port; do [ -e /sys/class/net/$br/brif/$port ] || echo "$br:$port"; done'
+for NODE in $PVE02 $PVE03; do
+  # Distinguish "no orphans" from "could not ask" — an unreachable node must not
+  # read as a clean bridge. Echo a sentinel so an empty reply is unambiguous.
+  BR_OUT=$(on "$NODE" "$BR_CHECK; echo ASKED")
+  if [ -z "$BR_OUT" ]; then
+    bad "$NODE bridge ports attached" "could not reach node to ask"
+  else
+    ORPHANS=$(printf '%s\n' "$BR_OUT" | grep -v '^ASKED$' | tr '\n' ' ' | sed 's/ *$//')
+    if [ -n "$ORPHANS" ]; then
+      bad "$NODE bridge ports attached" "declared but NOT attached: $ORPHANS — run pve-rebridge"
+    else
+      ok "$NODE bridge ports attached" "every declared bridge-port is a real member"
+    fi
+  fi
+done
+
 # ── Placement (PET-334) ───────────────────────────────────────────────────────
 # pve02 is the MEDIA node: it holds the disks, Plex and qBittorrent, and nothing
 # else. Everything platform-tier lives on pve03, which has twice the cores and

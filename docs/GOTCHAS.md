@@ -1393,3 +1393,49 @@ check the staged diff for `.github/workflows/**` before the push.
   requests is fine — the job's block narrows it. A job requesting more than the caller granted
   is fatal. Permissions flow downward and can only be reduced, so the caller is always the
   place a grant has to exist first.
+
+## A hot-replugged NIC comes back with no bridge, and every signal stays green (PET-445)
+
+**Symptom.** A node is unreachable on the LAN. Its guests are all running and can
+reach each other. `ethtool` says `Link detected: yes` at `1000Mb/s`, the dongle's
+link light is lit, `lsusb` shows the device, and the bridge still holds its
+address. `pvecm status` on that node fails with `ipcc_send_rec … Unknown error -1`
+and the surviving node holds quorum without it.
+
+**Cause.** The NIC dropped off the bus and re-enumerated. `bridge-ports` in
+`/etc/network/interfaces` is applied at `ifup`, **not on hotplug**, so the
+interface returns as an orphan with no master. Frames arrive and are dropped at
+an unbridged port. The config was never wrong — only the running state.
+
+**The trap is the green readings.** `ip link set <dev> down/up` restores link
+state and **never enslaves anything**, so cycling the interface produces a fresh
+`Link detected: yes` over a completely unchanged fault. Reading that as progress
+sends you to the cable. On 2026-09-15 a cable was reseated on the strength of it;
+the cable was never broken.
+
+**The two signals that are accurate:**
+
+```bash
+ip -s link show dev <nic>          # RX packets RISING: frames ARE arriving
+ls /sys/class/net/<nic>/master     # No such file: it belongs to no bridge
+bridge link show                   # every veth listed, physical uplink absent
+```
+
+Frames arriving with no master is the whole diagnosis.
+
+**The fix** is one command, runtime-only, and a reboot would also have done it:
+
+```bash
+ip link set <nic> master <bridge>
+```
+
+**Prevention.** `roles/pve-node` installs a udev rule, a `pve-rebridge@.service`
+unit and `/usr/local/sbin/pve-rebridge`, which reads the declared `bridge-ports`
+and re-attaches the NIC on any `add` event. The rule matches `KERNEL=="en*"` on
+purpose: a node hotplugs an interface on every container start, and matching all
+net devices would queue a unit per container forever. `lab-verify.sh` asserts
+every declared bridge-port is a real member of its bridge.
+
+**Both nodes carry this failure mode** — pve02 gained a USB NIC on 2026-09-15 for
+the mesh leg, and it is also the node holding the disks and the QDevice-backed
+quorum anchor.
