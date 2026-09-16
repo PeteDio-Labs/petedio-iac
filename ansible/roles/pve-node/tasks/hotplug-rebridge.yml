@@ -26,7 +26,7 @@
     content: |
       # Managed by ansible role pve-node — local edits are overwritten.
       ACTION=="add", SUBSYSTEM=="net", KERNEL=="en*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="pve-rebridge@$env{INTERFACE}.service"
-  register: pve_node_rebridge_rule
+  notify: Reload udev rules
 
 # udev RUN+= is the wrong place for this: it runs with a short timeout in a
 # constrained environment, and the bridge may not be up at that instant.
@@ -44,17 +44,13 @@
       [Service]
       Type=oneshot
       ExecStart=/usr/local/sbin/pve-rebridge %I
-  register: pve_node_rebridge_unit
+  notify: Reload systemd units
 
-- name: Reload systemd so the new unit is known
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: pve_node_rebridge_unit.changed
-
-- name: Reload udev rules
-  ansible.builtin.command: udevadm control --reload-rules
-  when: pve_node_rebridge_rule.changed
-  changed_when: true
+# The repair below does not depend on either reload: the script is standalone,
+# and the rule and unit only matter for the NEXT hotplug. So letting the
+# handlers fire at end of play is correct, and collapses a double reload.
+- name: Apply the reloads before repairing current state
+  ansible.builtin.meta: flush_handlers
 
 # Converge the CURRENT state too. Installing the rule does nothing for a NIC
 # that is already sitting orphaned — which is exactly the state this was written
