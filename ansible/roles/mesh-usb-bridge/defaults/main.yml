@@ -8,3 +8,17 @@
 
 mesh_usb_interface: enx00e04c6861be
 mesh_usb_bridge: vmbr2
+
+# ⚠ `manual` MEANS NO ADDRESS ON THE HOST, AND THAT IS THE POINT. A bridge
+# switches frames for its ports whether or not the host holds an address on it —
+# vmbr1 on this same node is `inet manual` and carries the VXLAN fine. The guest
+# that needs the mesh (plex-gpu 236) takes its own address through this bridge.
+#
+# `dhcp` here would very likely install a SECOND DEFAULT ROUTE, via the mesh
+# gateway, competing with `default via 192.168.50.1 dev vmbr0`. Two defaults at
+# equal metric is a coin flip that re-flips on every reboot, on the node that
+# holds the disks and anchors quorum. Not worth a diagnostic address.
+#
+# To give the host a mesh address anyway, set this to `static` and add the
+# address — do NOT set a gateway.
+mesh_usb_bridge_method: manual
