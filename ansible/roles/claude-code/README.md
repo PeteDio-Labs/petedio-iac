@@ -160,6 +160,14 @@ its own unit, so one project's crash leaves the others serving. `spawn: worktree
 each on-demand session its own git worktree; `same-dir` shares the directory and lets
 concurrent sessions collide.
 
+**An entry whose directory is missing gets no unit, and everything else still converges.**
+The play then fails at the end naming the directory and the clone step. That order matters:
+until PET-466 the check was an assert in the middle of the role, so one entry pointing at a
+directory nobody had cloned stopped the play before *any* unit was rendered — and because
+the units already running keep answering, the host looked fine while the role quietly
+stopped converging. Clone the directory or drop the entry; a red play with every other
+session updated is the intended state in between.
+
 **Restarting drops connections.** The handler here reloads systemd but never restarts a
 running server, because a restart disconnects whoever is using it. Restart deliberately:
 `systemctl restart claude-remote-iac`. Sessions the server was serving can be brought back

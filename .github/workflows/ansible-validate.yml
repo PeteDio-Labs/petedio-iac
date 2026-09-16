@@ -93,15 +93,22 @@ jobs:
         run: |
           set -euo pipefail
           find playbooks -name '*.yml' -type f | sort > /tmp/playbooks.txt
+          # Only the top level is a suite to RUN; tests/cases/* are includes, and counting
+          # them here would make the run step's own count guard unsatisfiable.
+          find tests -maxdepth 1 -name '*.yml' -type f | sort > /tmp/tests.txt
           ROLES=$(find roles -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
           PLAYS=$(wc -l < /tmp/playbooks.txt | tr -d ' ')
+          SUITES=$(wc -l < /tmp/tests.txt | tr -d ' ')
+          TESTFILES=$(find tests -name '*.yml' -type f | wc -l | tr -d ' ')
           echo "roles=$ROLES" >> "$GITHUB_OUTPUT"
           echo "plays=$PLAYS" >> "$GITHUB_OUTPUT"
-          if [ "$ROLES" -eq 0 ] || [ "$PLAYS" -eq 0 ]; then
-            echo "::error title=nothing to examine::Found $ROLES roles and $PLAYS playbooks. The layout moved or this job is looking in the wrong place. Refusing to report success over an empty set."
+          echo "suites=$SUITES" >> "$GITHUB_OUTPUT"
+          echo "testfiles=$TESTFILES" >> "$GITHUB_OUTPUT"
+          if [ "$ROLES" -eq 0 ] || [ "$PLAYS" -eq 0 ] || [ "$SUITES" -eq 0 ]; then
+            echo "::error title=nothing to examine::Found $ROLES roles, $PLAYS playbooks and $SUITES test suites. The layout moved or this job is looking in the wrong place. Refusing to report success over an empty set."
             exit 1
           fi
-          echo "Will examine $ROLES roles and $PLAYS playbooks."
+          echo "Will examine $ROLES roles, $PLAYS playbooks and run $SUITES test suites."
 
       # A hard gate with no backlog: all 40 playbooks passed when this landed, so any
       # failure here is something this PR broke. NB `ansible-playbook` exits 0 when a play
@@ -128,13 +135,39 @@ jobs:
           fi
           [ "$FAILED" -eq 0 ]
 
-      - name: Lint the roles and playbooks
+      # Syntax-checking a play proves it parses, not that its logic is right. These suites
+      # run for real: localhost plays over recorded data, no inventory, no credential, no
+      # host touched. PET-466 added the first one because the bug it fixes — a role that
+      # stops converging while its host keeps answering — has no symptom a syntax check
+      # could ever see.
+      - name: Run the localhost test suites
+        run: |
+          set -uo pipefail
+          RAN=0; FAILED=0
+          while IFS= read -r t; do
+            if ansible-playbook "$t" > /tmp/test.log 2>&1; then
+              RAN=$((RAN + 1))
+            else
+              FAILED=$((FAILED + 1))
+              echo "::error file=ansible/${t}::test suite failed"
+              sed 's/^/    /' /tmp/test.log
+            fi
+          done < /tmp/tests.txt
+          SEEN=$((RAN + FAILED))
+          echo "tests: ${RAN} passed, ${FAILED} failed, of ${{ steps.scope.outputs.suites }} suites found"
+          if [ "$SEEN" -ne "${{ steps.scope.outputs.suites }}" ]; then
+            echo "::error title=loop skipped suites::Counted ${{ steps.scope.outputs.suites }} suites but only ran $SEEN. Not reporting on a partial sweep."
+            exit 1
+          fi
+          [ "$FAILED" -eq 0 ]
+
+      - name: Lint the roles, playbooks and tests
         run: |
           set -uo pipefail
           # --nocolor: ANSI escapes in the tee'd log are the other half of the binary-file
           # problem above. Belt and braces — this parses a number out of a log, and the
           # guard below treats "could not parse" as failure, so both must be reliable.
-          ansible-lint --nocolor roles/ playbooks/ 2>&1 | tee /tmp/lint.log
+          ansible-lint --nocolor roles/ playbooks/ tests/ 2>&1 | tee /tmp/lint.log
           RC=${PIPESTATUS[0]}
           # ⚠ The count is the point, and ZERO IS THE WRONG THRESHOLD. ansible-lint prints
           # "N files processed of M encountered" on both the pass and the fail path, and N
@@ -147,10 +180,12 @@ jobs:
           # roles+playbooks is a lower bound that rises as the repo grows and cannot be
           # satisfied by a collapsed glob.
           PROCESSED=$(grep -aoE '[0-9]+ files processed' /tmp/lint.log | head -1 | grep -aoE '^[0-9]+' || true)
-          FLOOR=$(( ${{ steps.scope.outputs.roles }} + ${{ steps.scope.outputs.plays }} ))
-          echo "ansible-lint examined ${PROCESSED:-0} files across ${{ steps.scope.outputs.roles }} roles and ${{ steps.scope.outputs.plays }} playbooks (floor ${FLOOR})"
+          # Every test file counts toward the floor as well, including tests/cases/*, so a
+          # suite that vanishes from the glob takes the floor with it instead of passing.
+          FLOOR=$(( ${{ steps.scope.outputs.roles }} + ${{ steps.scope.outputs.plays }} + ${{ steps.scope.outputs.testfiles }} ))
+          echo "ansible-lint examined ${PROCESSED:-0} files across ${{ steps.scope.outputs.roles }} roles, ${{ steps.scope.outputs.plays }} playbooks and ${{ steps.scope.outputs.testfiles }} test files (floor ${FLOOR})"
           if [ "${PROCESSED:-0}" -lt "$FLOOR" ]; then
-            echo "::error title=lint examined too little::ansible-lint processed ${PROCESSED:-0} files, below the floor of ${FLOOR} implied by ${{ steps.scope.outputs.roles }} roles + ${{ steps.scope.outputs.plays }} playbooks. That is a green check over a collapsed glob, not a clean repo. Refusing."
+            echo "::error title=lint examined too little::ansible-lint processed ${PROCESSED:-0} files, below the floor of ${FLOOR} implied by ${{ steps.scope.outputs.roles }} roles + ${{ steps.scope.outputs.plays }} playbooks + ${{ steps.scope.outputs.testfiles }} test files. That is a green check over a collapsed glob, not a clean repo. Refusing."
             exit 1
           fi
           exit "$RC"

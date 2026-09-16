@@ -302,30 +302,43 @@
   loop_control:
     label: "{{ item.dir }}"
 
-- name: Fail on a session whose directory is missing
-  ansible.builtin.assert:
-    that: item.stat.isdir is defined and item.stat.isdir
-    fail_msg: >-
-      claude_remote_sessions entry '{{ item.item.name }}' serves
-      {{ claude_workspace }}/{{ item.item.dir }}, which does not exist. Clone it — this role
-      does not clone private repos — or drop the entry.
-  loop: "{{ claude_session_dirs.results }}"
-  loop_control:
-    label: "{{ item.item.name }}"
+# ⚠ DO NOT FAIL HERE (PET-466). This was an assert, and an entry whose directory was missing
+# stopped the play on THIS line — before the unit template below, before the handler
+# reloads systemd, and before the reconcile. So one undeliverable entry left every OTHER
+# unit un-rendered and un-restarted, while the units already running kept answering: the
+# role stopped converging and the host showed no symptom at all. claude-247 ran that way
+# from 2026-09-16, when a `workspace` entry naming a directory nothing clones reached main,
+# and the host still carried only claude-remote-iac.service.
+#
+# Split instead. The servable entries converge, and playbooks/configure-claude-code.yml
+# fails at the END naming the clone step — the same shape the Remote Control consent below
+# uses, for the reason written there: an exit code of 0 would claim a run that did not
+# happen. Loud and blocking are different things, and only the first one was wanted.
+#
+# The split is its own file so the test suite can run the same bytes the role runs. See
+# tasks/session-split.yml and tests/remote-session-split.yml.
+- name: Sort the declared sessions into servable and unservable
+  ansible.builtin.include_tasks: session-split.yml
 
 - name: Install the remote-control units
   ansible.builtin.template:
     src: claude-remote.service.j2
     dest: "/etc/systemd/system/claude-remote-{{ item.name }}.service"
     mode: "0644"
-  loop: "{{ claude_remote_sessions }}"
+  loop: "{{ claude_sessions_servable }}"
   loop_control:
     label: "{{ item.name }}"
   notify: Reload systemd
 
 # A unit left behind by an entry REMOVED from claude_remote_sessions would keep serving a
 # session nobody declares any more — drift that answers from a phone. Reconcile by removing
-# every managed unit this run did not render.
+# every managed unit for an entry nobody declares.
+#
+# ⚠ Against the DECLARED list, not claude_sessions_servable. An unservable entry is still
+# declared, and reading the servable list here would make a directory that is missing for
+# one run stop, disable and DELETE a working server. A unit whose directory went away fails
+# at status=200/CHDIR and lands in `failed` — loud on the host, and recoverable by putting
+# the directory back. Deleting it is neither.
 - name: Find the remote-control units on the host
   ansible.builtin.find:
     paths: /etc/systemd/system
@@ -390,7 +403,7 @@
 - name: Clear a tripped start limit before starting
   ansible.builtin.command:
     cmd: systemctl reset-failed claude-remote-{{ item.name }}.service
-  loop: "{{ claude_remote_sessions }}"
+  loop: "{{ claude_sessions_servable }}"
   loop_control:
     label: "{{ item.name }}"
   when:
@@ -420,7 +433,9 @@
     enabled: "{{ claude_remote_enable | bool }}"
     state: "{{ 'started' if claude_remote_enable | bool else 'stopped' }}"
     daemon_reload: true
-  loop: "{{ claude_remote_sessions }}"
+  # Servable only. systemd cannot start — or stop — a unit no run ever rendered, and
+  # `state: stopped` on a missing unit fails just as `started` does.
+  loop: "{{ claude_sessions_servable }}"
   loop_control:
     label: "{{ item.name }}"
   # Declared on but no consent: a start would only hang, so leave the units exactly as they

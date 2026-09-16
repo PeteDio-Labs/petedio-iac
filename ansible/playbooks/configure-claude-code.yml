@@ -59,6 +59,30 @@
           - "4. declare claude_remote_enable: true in inventory/host_vars/{{ inventory_hostname }}.yml, then re-run this play"
       when: not claude_remote_enable | bool
 
+    # ⚠ DO NOT FINISH GREEN OVER A SESSION THAT GOT NO UNIT (PET-466). Until PET-466 the
+    # role asserted this in the middle of itself, so one entry whose directory was missing
+    # stopped the play before ANY unit was rendered — every other session stayed on
+    # whatever the last successful run left behind, while the running units kept answering
+    # and the host showed nothing wrong. Failing here instead keeps the report and drops
+    # the blocking, which is the same trade the consent check below already makes.
+    #
+    # msg as a LIST, like the task below. A folded scalar keeps the newline under any line
+    # indented further than its first, so a multi-line {{ }} expression lands a literal \n
+    # in the middle of the sentence — which only an operator reading a real failure would
+    # ever see.
+    - name: Fail on a declared session this host cannot serve
+      ansible.builtin.fail:
+        msg: "{{ ['These declared claude_remote_sessions entries got no unit, because their directories are missing:']
+                 + (claude_sessions_unservable | default([])
+                    | map(attribute='dir')
+                    | map('regex_replace', '^', claude_workspace ~ '/') | list)
+                 + ['Everything else in this play converged. This role does not clone private repos. To finish:',
+                    '1. ssh claude@' ~ (ansible_host | default('192.168.50.247')),
+                    '2. gh auth login    # only if never done',
+                    '3. clone each directory above, then re-run this play',
+                    'To stop serving one instead, drop its entry from claude_remote_sessions.'] }}"
+      when: claude_sessions_unservable | default([]) | length > 0
+
     # ⚠ DO NOT FINISH GREEN OVER A SERVER THAT WAS NOT STARTED (PET-431). The host declares
     # Remote Control on, but the role found no consent and left the units alone, because a
     # unit started without it waits at the prompt forever while systemd reports it active.
