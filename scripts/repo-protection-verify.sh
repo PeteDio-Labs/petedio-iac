@@ -64,6 +64,12 @@ sec()  { [ $QUIET -eq 1 ] || printf "\n\033[1m%s\033[0m\n" "$1"; }
 # WHY SO MANY `?` ROWS: PET-457 is the decision, and it is Pedro's. A row that
 # guessed would be a decision made by a script author, recorded as if it had been
 # made by an owner. `none` appears only where no deployment reads the repo at all.
+#
+# ARCHIVED REPOS ARE NOT LISTED. An archived repo takes no pull request and runs no
+# Actions, so it has no protection to read and nothing to protect. The live read
+# below already filters them out, so a row for one is drift by definition.
+# co-latro-backend, co-latro-frontend and co-latro-admin left this table when they
+# were archived (PET-465). Restore their rows when you unarchive them.
 read -r -d '' DECLARED <<'TABLE'
 # repo                    protection                                    approve
 # ── protected today ──────────────────────────────────────────────────────────
@@ -73,7 +79,6 @@ petedio-water-fast        ctx=test reviews=0 strict=yes admins=yes           ?
 # ── deploys to a live host on push to main; protection undecided (PET-457) ───
 pete-bot                  ?                                                  false
 petedio-media-iac         ?                                                  ?
-co-latro-admin            unavailable                                        ?
 petedio-media-control     unavailable                                        ?
 petedio-palworld-panel    unavailable                                        ?
 
@@ -90,8 +95,6 @@ petedio-vault             unavailable                                        ?
 petedio-workspace         unavailable                                        ?
 
 # ── public, no deployment reads them: unprotected on purpose ─────────────────
-co-latro-backend          none                                               ?
-co-latro-frontend         none                                               ?
 code-review-agent         none                                               ?
 infra-agent               none                                               ?
 job-hunt-app              none                                               ?
