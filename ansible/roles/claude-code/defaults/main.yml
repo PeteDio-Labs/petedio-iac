@@ -89,8 +89,17 @@ claude_permission_mode: auto
 #   spawn  how the server creates sessions: `worktree` gives each on-demand session its own
 #          git worktree (requires a git repo — every entry here is one), `same-dir` shares
 #          the directory and lets concurrent sessions collide, `session` serves exactly one
+#
+# The `workspace` entry below serves the private petedio-workspace repo, which this role
+# does not clone — `gh auth login` as claude, then clone it into
+# {{ claude_workspace }}/workspace by hand FIRST. tasks/main.yml checks the directory
+# exists before rendering a unit for it and FAILS THE WHOLE PLAY with that exact step if
+# it's missing — it does not skip just this entry. A run before the manual clone leaves
+# already-running units (iac included) untouched, but the play itself goes red until the
+# clone is done.
 claude_remote_sessions:
   - { name: iac, dir: iac, spawn: worktree }
+  - { name: workspace, dir: workspace, spawn: worktree }
 
 # Whether the units are enabled and started. DEFAULT FALSE, so a host that has never been
 # bootstrapped gets stopped units rather than a server with no login behind it.
