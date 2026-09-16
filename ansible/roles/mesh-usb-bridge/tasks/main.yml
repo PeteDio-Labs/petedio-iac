@@ -35,7 +35,10 @@
 # Deliberately NOT reloading automatically, same reasoning as mesh-vxlan:
 # the config is written and validated, and a reboot comes up correct either
 # way. Run `ifreload -a` by hand once ready to bring vmbr2 up live.
-- name: Say what is left to do by hand
+#
+# noqa reason: this is an operator notice, not deferred work — it has to
+# report inline, at this point in the play, not at end-of-play handler time.
+- name: Say what is left to do by hand  # noqa: no-handler
   when: mesh_usb_bridge_cfg.changed
   ansible.builtin.debug:
     msg: >-
