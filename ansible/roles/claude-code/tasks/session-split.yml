@@ -1,0 +1,39 @@
+# session-split.yml — which declared sessions this host can actually serve.
+#
+# Included from tasks/main.yml, and included AGAIN by tests/remote-session-split.yml with a
+# recorded `claude_session_dirs` — which is the whole reason it is a file rather than two
+# tasks inline. A test that reimplements the expression tests the copy.
+#
+# Input:  claude_session_dirs — the registered result of a `stat` loop over
+#         claude_remote_sessions, so each entry has `.item` and `.stat`.
+# Output: claude_sessions_servable, claude_sessions_unservable — both lists of the original
+#         claude_remote_sessions dicts.
+---
+# `stat.isdir` is UNDEFINED when the path is missing and FALSE when it is a regular file, so
+# both filters are load-bearing: either one alone lets a session pointed at a file through,
+# and the unit it renders then fails at status=200/CHDIR — the exact outcome this check
+# exists to prevent.
+- name: Sort the declared sessions into servable and unservable
+  ansible.builtin.set_fact:
+    claude_sessions_servable: >-
+      {{ claude_session_dirs.results
+         | selectattr('stat.isdir', 'defined') | selectattr('stat.isdir')
+         | map(attribute='item') | list }}
+    claude_sessions_unservable: >-
+      {{ ((claude_session_dirs.results | rejectattr('stat.isdir', 'defined') | list)
+          + (claude_session_dirs.results | selectattr('stat.isdir', 'defined')
+             | rejectattr('stat.isdir') | list))
+         | map(attribute='item') | list }}
+
+# Say it where the run happens, not only in the failure at the end, so `-v` output and the
+# closing message agree about which sessions this host is serving.
+- name: Report a session this run cannot serve
+  ansible.builtin.debug:
+    msg: >-
+      claude_remote_sessions entry '{{ item.name }}' serves
+      {{ claude_workspace }}/{{ item.dir }}, which is not a directory. No unit is rendered
+      for it, and the rest of this play converges. Clone it — this role does not clone
+      private repos — or drop the entry.
+  loop: "{{ claude_sessions_unservable }}"
+  loop_control:
+    label: "{{ item.name }}"

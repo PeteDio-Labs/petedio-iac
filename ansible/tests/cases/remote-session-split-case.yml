@@ -1,0 +1,41 @@
+# One case for tests/remote-session-split.yml. Included once per recorded row set.
+---
+# Reset both outputs explicitly. set_fact persists for the whole play, so a case that
+# produced no unservable entries would otherwise inherit the previous case's list and pass
+# while measuring the case before it.
+- name: "Load the recorded stat rows — {{ split_case.name }}"
+  ansible.builtin.set_fact:
+    claude_session_dirs: { results: "{{ split_case.rows }}" }
+    claude_sessions_servable: []
+    claude_sessions_unservable: []
+
+- name: "Split them — {{ split_case.name }}"
+  ansible.builtin.include_tasks: ../../roles/claude-code/tasks/session-split.yml
+
+# The one-filter version of the same idea, on the same rows. It is here to be printed, not
+# asserted: "one session points at a regular file" is the case where it disagrees, and a
+# reader who cannot see the disagreement has no reason to believe the second filter earns
+# its place.
+- name: "What a `is defined` test alone would have called unservable — {{ split_case.name }}"
+  ansible.builtin.set_fact:
+    split_naive: >-
+      {{ split_case.rows | rejectattr('stat.isdir', 'defined')
+         | map(attribute='item') | map(attribute='name') | list }}
+
+- name: "Assert the split — {{ split_case.name }}"
+  ansible.builtin.assert:
+    that:
+      - (claude_sessions_servable | map(attribute='name') | list) == split_case.want_servable
+      - (claude_sessions_unservable | map(attribute='name') | list) == split_case.want_unservable
+    fail_msg: >-
+      {{ split_case.name }}:
+      servable={{ claude_sessions_servable | map(attribute='name') | list }},
+      unservable={{ claude_sessions_unservable | map(attribute='name') | list }};
+      want servable={{ split_case.want_servable }},
+      unservable={{ split_case.want_unservable }}.
+    success_msg: >-
+      {{ split_case.name }}:
+      {{ split_case.rows | length }} declared ->
+      serve {{ claude_sessions_servable | map(attribute='name') | list }},
+      skip {{ claude_sessions_unservable | map(attribute='name') | list }}.
+      A `is defined` test alone would skip {{ split_naive }}.

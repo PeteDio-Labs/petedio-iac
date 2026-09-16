@@ -1,0 +1,84 @@
+# remote-session-split.yml — roles/claude-code/tasks/session-split.yml, on recorded stat rows.
+#
+# Runs on localhost, touches nothing, needs no credential. Run it from `ansible/`:
+#
+#   ansible-playbook tests/remote-session-split.yml
+#
+# WHAT THIS EXISTS TO CATCH. Until PET-466 the role asserted every declared session's
+# directory in the middle of itself, so ONE entry whose directory was missing stopped the
+# play before any unit was rendered. claude-247 ran that way for a day: two sessions
+# declared, one unit on the host, and no symptom anywhere because the running unit kept
+# answering.
+#
+# The replacement splits the entries instead of failing, and the split has one trap worth a
+# suite of its own. `stat` reports a missing path with NO `isdir` key and a regular file
+# with `isdir: false`. A filter that tests only `is defined` — the obvious reading of "the
+# directory is missing" — passes a session pointed at a file straight through to the unit
+# template, which is the status=200/CHDIR failure the check exists to prevent. Every case
+# below prints what that one-filter version would have concluded, so the third case shows
+# the difference rather than asserting it.
+---
+- name: Split the declared sessions, roles/claude-code
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # session-split.yml names this in its report; the role gets it from defaults.
+    claude_workspace: /home/claude/work/petedio
+
+    # `stat` rows as Ansible registers them. Only the keys the split reads are recorded.
+    dir_row: { exists: true, isdir: true }
+    file_row: { exists: true, isdir: false }
+    gone_row: { exists: false }
+
+    split_cases:
+      - name: every declared session has its directory
+        rows:
+          - { item: { name: iac, dir: iac, spawn: worktree }, stat: "{{ dir_row }}" }
+          - { item: { name: media, dir: media-iac, spawn: worktree }, stat: "{{ dir_row }}" }
+        want_servable: [iac, media]
+        want_unservable: []
+
+      # claude-247 on 2026-09-16, which is what filed PET-466.
+      - name: one session's directory was never cloned
+        rows:
+          - { item: { name: iac, dir: iac, spawn: worktree }, stat: "{{ dir_row }}" }
+          - { item: { name: workspace, dir: workspace, spawn: worktree }, stat: "{{ gone_row }}" }
+        want_servable: [iac]
+        want_unservable: [workspace]
+
+      # The case a `is defined` test alone gets wrong. Watch `naive` in the success line.
+      - name: one session points at a regular file
+        rows:
+          - { item: { name: iac, dir: iac, spawn: worktree }, stat: "{{ dir_row }}" }
+          - { item: { name: notes, dir: NOTES.md, spawn: session }, stat: "{{ file_row }}" }
+        want_servable: [iac]
+        want_unservable: [notes]
+
+      - name: a directory, a missing path and a file at once
+        rows:
+          - { item: { name: iac, dir: iac, spawn: worktree }, stat: "{{ dir_row }}" }
+          - { item: { name: workspace, dir: workspace, spawn: worktree }, stat: "{{ gone_row }}" }
+          - { item: { name: notes, dir: NOTES.md, spawn: session }, stat: "{{ file_row }}" }
+        want_servable: [iac]
+        want_unservable: [workspace, notes]
+
+      - name: no session is servable
+        rows:
+          - { item: { name: workspace, dir: workspace, spawn: worktree }, stat: "{{ gone_row }}" }
+        want_servable: []
+        want_unservable: [workspace]
+
+      # An empty claude_remote_sessions must produce two empty lists rather than an
+      # undefined-variable error in the play's closing failure.
+      - name: nothing is declared
+        rows: []
+        want_servable: []
+        want_unservable: []
+
+  tasks:
+    - name: Run every case
+      ansible.builtin.include_tasks: cases/remote-session-split-case.yml
+      loop: "{{ split_cases }}"
+      loop_control:
+        loop_var: split_case
+        label: "{{ split_case.name }}"

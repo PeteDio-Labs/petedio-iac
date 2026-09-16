@@ -90,13 +90,22 @@ claude_permission_mode: auto
 #          git worktree (requires a git repo — every entry here is one), `same-dir` shares
 #          the directory and lets concurrent sessions collide, `session` serves exactly one
 #
+# An entry whose directory is missing gets NO UNIT, and every other entry converges anyway
+# (PET-466). configure-claude-code.yml then fails at the end naming the clone step, so the
+# run is red without being stuck. Before PET-466 the check was an assert in the middle of
+# the role, and one such entry stopped the play before ANY unit was rendered.
+#
 # The `workspace` entry below serves the private petedio-workspace repo, which this role
 # does not clone — `gh auth login` as claude, then clone it into
-# {{ claude_workspace }}/workspace by hand FIRST. tasks/main.yml checks the directory
-# exists before rendering a unit for it and FAILS THE WHOLE PLAY with that exact step if
-# it's missing — it does not skip just this entry. A run before the manual clone leaves
-# already-running units (iac included) untouched, but the play itself goes red until the
-# clone is done.
+# {{ claude_workspace }}/workspace by hand. Until that is done the entry is inert.
+#
+# ⚠ THAT SESSION IS NOT A CROSS-REPO SESSION. petedio-workspace gitignores every child repo
+# (`iac/`, `media-iac/`, `vault/`, `co-latro/backend/` …) and tracks none of them, so a
+# `spawn: worktree` checkout of it holds .agent, .claude, .github, PET-LOG.md, co-latro's
+# umbrella docs, repair-eval and scripts — and no repo to work in. It is the right session
+# for `scripts/pet-log`, the skills and the lessons files; it is not the one for an IaC
+# change, which belongs in the `iac` entry above. Its `dir: workspace` also nests a second
+# workspace root inside {{ claude_workspace }}, which already mirrors that layout.
 claude_remote_sessions:
   - { name: iac, dir: iac, spawn: worktree }
   - { name: workspace, dir: workspace, spawn: worktree }
