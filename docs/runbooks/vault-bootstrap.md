@@ -221,7 +221,6 @@ With the `kv/` mount in place, seed the initial secrets. The commands below use
 | `kv/iac/minio`          | `access_key`, `secret_key`                    | MinIO creds (TF S3 state + S3-compat)      |
 | `kv/iac/lxc-ssh`        | `public_key`, `private_key`                   | SSH keypair TF installs into LXCs          |
 | `kv/poker/db`           | `DATABASE_URL`, `admin_password`, `poker_password` | Postgres admin + `poker` role creds   |
-| `kv/services/qbittorrent` | `username`, `password`                      | media stack                                |
 | `kv/services/authentik` | `secret_key`, `bootstrap_token`               | auth                                        |
 | `kv/services/cloudflare`| `tunnel_token`                                | Cloudflare tunnel                          |
 | `kv/services/registry`  | `password` (+ optional `username`, default `admin`) | registry                             |
@@ -252,7 +251,6 @@ vault kv put kv/poker/db \
     poker_password="<POKER_PASSWORD>"
 
 # --- Homelab services ---
-vault kv put kv/services/qbittorrent username="<QBT_USER>" password="<QBT_PASSWORD>"
 vault kv put kv/services/authentik    secret_key="<AUTHENTIK_SECRET_KEY>" bootstrap_token="<AUTHENTIK_BOOTSTRAP_TOKEN>"
 vault kv put kv/services/cloudflare   tunnel_token="<CLOUDFLARE_TUNNEL_TOKEN>"
 vault kv put kv/services/registry     password="<REGISTRY_PASSWORD>"
