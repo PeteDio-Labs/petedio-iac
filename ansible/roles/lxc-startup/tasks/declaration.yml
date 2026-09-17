@@ -1,0 +1,24 @@
+---
+# Check each lxc_startup_declared entry before any node is read. Included by main.yml and
+# by tests/lxc-startup-plan.yml, so CI checks the declaration in defaults/main.yml too.
+#
+# The key must be a quoted VMID, because plan.yml looks each guest up as a string. Each
+# value needs order, up and down as whole numbers, because main.yml passes all three to
+# `pct set --startup`, and Proxmox refuses any other form.
+
+- name: Check each declared entry
+  ansible.builtin.assert:
+    that:
+      - item.key is string
+      - item.key is match('^[0-9]+$')
+      - item.value.order | default('') | string is match('^[0-9]+$')
+      - item.value.up | default('') | string is match('^[0-9]+$')
+      - item.value.down | default('') | string is match('^[0-9]+$')
+    fail_msg: >-
+      lxc_startup_declared entry {{ item.key }} holds {{ item.value }}. Quote the VMID key,
+      and give order, up and down as whole numbers, as roles/lxc-startup/defaults/main.yml
+      does.
+    quiet: true
+  loop: "{{ lxc_startup_declared | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"

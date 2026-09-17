@@ -1,0 +1,35 @@
+---
+# Compare the declared guests in lxc_startup_report with lxc_startup_declared, and set
+# lxc_startup_plan. It reads nothing else, so tests/lxc-startup-plan.yml runs it on
+# localhost over recorded reports.
+#
+# ⚠ THE COMPARE IS EXACT, against the form main.yml passes to `pct set`:
+# order=N,up=N,down=N. Proxmox also accepts the keys in another order, or a bare number for
+# the order. A value in one of those forms differs here, and one run rewrites it. A parser
+# would save that one rewrite, and it would add a way to report a wrong value as correct.
+
+- name: Start a fresh plan
+  # Without this the second include keeps the first pass's entries, and the report after a
+  # set shows every guest twice, half of it stale.
+  ansible.builtin.set_fact:
+    lxc_startup_plan: []
+
+- name: Work out whether each declared guest differs
+  ansible.builtin.set_fact:
+    lxc_startup_plan: >-
+      {{ lxc_startup_plan + [{
+           'vmid': item.vmid | string,
+           'hostname': item.hostname,
+           'live': item.startup,
+           'want': _want,
+           'needs_set': (item.startup or '') != _want,
+         }] }}
+  vars:
+    _declared: "{{ lxc_startup_declared[item.vmid | string] }}"
+    _want: "{{ 'order=%s,up=%s,down=%s' | format(_declared.order, _declared.up, _declared.down) }}"
+    # The report carries each VMID as a JSON number, and a recorded one may be a string.
+    # Both forms of every declared key, so neither misses.
+    _declared_ids: "{{ (lxc_startup_declared | list) + (lxc_startup_declared | list | map('int') | list) }}"
+  loop: "{{ lxc_startup_report.containers | selectattr('vmid', 'in', _declared_ids) | list }}"
+  loop_control:
+    label: "{{ item.vmid }} {{ item.hostname }}"

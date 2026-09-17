@@ -1,0 +1,82 @@
+---
+# Converge the `startup` line of each declared media guest on one Proxmox node. See
+# defaults/main.yml for why this role exists.
+#
+# No restart, and none is needed. pve-container writes `startup` to the config at once,
+# even while the container runs, and the node reads it the next time it starts or stops its
+# guests. So the play sets each line that differs, RE-READS the node, and fails while any
+# declared guest on it still differs.
+#
+#   ansible-playbook playbooks/configure-lxc-startup.yml --check
+#   ansible-playbook playbooks/configure-lxc-startup.yml
+
+- name: Refuse a declaration that pct set cannot take
+  ansible.builtin.include_tasks: declaration.yml
+
+- name: Look for pct
+  # `pct` missing means the play is pointed at a container or the wrong machine. stat, not
+  # `command -v pct`: the command module runs no shell, so it cannot run `command`.
+  ansible.builtin.stat:
+    path: /usr/sbin/pct
+  register: lxc_startup_pct
+  check_mode: false
+
+- name: Assert this host is a Proxmox node
+  ansible.builtin.assert:
+    that: lxc_startup_pct.stat.exists
+    fail_msg: >-
+      No /usr/sbin/pct on {{ inventory_hostname }}. This play converges LXC
+      startup order on a Proxmox node; point it at pve02 or pve03.
+
+- name: Read the node and compare each declared guest
+  ansible.builtin.include_tasks: gather.yml
+
+- name: Set startup where it differs
+  # `pct set --startup` replaces the whole value, so `want` always carries all three keys.
+  ansible.builtin.command:
+    argv:
+      - pct
+      - set
+      - "{{ item.vmid }}"
+      - --startup
+      - "{{ item.want }}"
+  loop: "{{ lxc_startup_plan | selectattr('needs_set') | list }}"
+  loop_control:
+    label: "{{ item.vmid }} {{ item.hostname }} -> {{ item.want }}"
+  register: lxc_startup_set
+  changed_when: lxc_startup_set.rc == 0
+
+- name: Re-read the node so the report below is measured, not assumed
+  # Skipped under --check, where nothing was set and the first read still holds.
+  ansible.builtin.include_tasks: gather.yml
+  when: not ansible_check_mode
+
+- name: Report each declared guest on this node
+  ansible.builtin.debug:
+    msg: >-
+      {{ '%-5s %-16s startup=%-22s declared=%-22s %s' | format(item.vmid, item.hostname,
+      item.live or '<none>', item.want, item.needs_set | ternary('DIFFERS', 'ok')) }}
+  loop: "{{ lxc_startup_plan }}"
+  loop_control:
+    label: "{{ item.vmid }}"
+
+- name: Fail while a declared guest differs
+  # A node that holds none of the declared guests passes here with nothing compared, so
+  # the success line says how many it read. The last play of the playbook is what fails
+  # a guest that no node holds.
+  ansible.builtin.assert:
+    that: lxc_startup_plan | selectattr('needs_set') | list | length == 0
+    success_msg: >-
+      {{ lxc_startup_report.node }}: read {{ lxc_startup_report.containers | length }}
+      containers, and the {{ lxc_startup_plan | length }} declared here
+      ({{ lxc_startup_plan | map(attribute='vmid') | join(', ') or 'none' }}) carry the
+      startup they declare.
+    fail_msg: >-
+      {{ lxc_startup_report.node }}: startup differs from lxc_startup_declared for
+      {{ lxc_startup_plan | selectattr('needs_set') | map(attribute='vmid') | join(', ') }},
+      and the report above shows each value. {{ _next }}
+  vars:
+    _next: >-
+      {{ 'Under --check nothing was written, so run without --check to set it.'
+      if ansible_check_mode else
+      'The set ran and the re-read still differs, so read pct config on the node.' }}

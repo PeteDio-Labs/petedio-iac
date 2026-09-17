@@ -1,0 +1,107 @@
+---
+# configure-lxc-startup.yml — declare the boot order of the media guests on both nodes.
+#
+# petedio-media-iac keeps `startup` in `ignore_changes`, so Terraform never reports it. The
+# declaration and the reasons are in roles/lxc-startup/defaults/main.yml (PET-451).
+#
+#   cd ansible
+#   ansible-playbook playbooks/configure-lxc-startup.yml --check
+#   ansible-playbook playbooks/configure-lxc-startup.yml
+#
+# It changes only the `startup` line of the six declared guests, and it restarts nothing.
+#
+# ⚠ A PLAY PER NODE CANNOT SEE A GUEST THAT IS MISSING. `pct config` answers only for a
+# container on the node it runs on, so each node compares only the declared guests it holds.
+# A guest that was renumbered or rebuilt leaves nothing to compare and a clean result. The
+# last play collects what each node reported, and fails unless every declared guest was found
+# on exactly one node.
+#
+# ⚠ --limit SKIPS BOTH localhost PLAYS, and that check with them. Run the whole playbook when
+# you need to know every declared guest was compared.
+#
+# `proxmox:pve_new` and no `serial:`, for the reasons in configure-lxc-features.yml. pve02 is
+# in `proxmox` and pve03 is in `pve_new`, and a failed serial batch skips the other node.
+
+# ⚠ A HOST PATTERN THAT MATCHES NOTHING EXITS 0, so name the nodes it must reach.
+- name: Assert the play will reach every Proxmox node
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  vars:
+    lxc_startup_expected_nodes: [pve02, pve03]
+  tasks:
+    - name: Every expected node is in the pattern
+      ansible.builtin.assert:
+        that: lxc_startup_expected_nodes | difference(_matched) | length == 0
+        fail_msg: >-
+          The pattern `proxmox:pve_new` misses
+          {{ lxc_startup_expected_nodes | difference(_matched) | join(', ') }}.
+          It matched {{ _matched | join(', ') or 'nothing' }}. A node was renamed
+          or moved to another inventory file, so fix the pattern in this playbook.
+        success_msg: "Will converge: {{ _matched | join(', ') }}"
+      vars:
+        _matched: "{{ (groups.get('proxmox', []) + groups.get('pve_new', [])) | unique | sort }}"
+
+- name: Converge LXC startup order on the Proxmox nodes
+  hosts: proxmox:pve_new
+  become: true
+  gather_facts: false
+
+  roles:
+    - lxc-startup
+
+- name: Assert each declared guest was found on exactly one node
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  vars:
+    lxc_startup_expected_nodes: [pve02, pve03]
+  tasks:
+    - name: Start with no reports
+      ansible.builtin.set_fact:
+        lxc_startup_found: {}
+
+    # A node with no plan gave no report: it was unreachable, or it failed before the read.
+    - name: Collect the declared guests each node reported
+      ansible.builtin.set_fact:
+        lxc_startup_found: "{{ lxc_startup_found | combine({item: _vmids}) }}"
+      vars:
+        _vmids: >-
+          {{ (hostvars[item].lxc_startup_plan | map(attribute='vmid') | list)
+          if hostvars[item].lxc_startup_plan is defined else none }}
+      loop: "{{ lxc_startup_expected_nodes }}"
+
+    # public: the last task reads lxc_startup_declared, a role default. include_role keeps
+    # defaults to the included tasks otherwise, and the assert fails on an undefined variable
+    # before it can print either message.
+    - name: Work out which guests were not found on exactly one node
+      ansible.builtin.include_role:
+        name: lxc-startup
+        tasks_from: placement
+        public: true
+
+    - name: Every node gave a report
+      ansible.builtin.assert:
+        that: lxc_startup_unread | length == 0
+        fail_msg: >-
+          {{ lxc_startup_unread | join(' and ') }} gave no report, so no declared guest
+          on it was compared. The failure above for that node says why. Fix it, and run
+          the whole playbook again.
+
+    - name: Every declared guest is on exactly one node
+      ansible.builtin.assert:
+        that: lxc_startup_misplaced | length == 0
+        success_msg: >-
+          Each of the {{ lxc_startup_declared | length }} declared guests was found on
+          one node, and that node compared it.
+        fail_msg: >-
+          Declared guests not found on exactly one node: {{ _found }}. A guest on no
+          node was destroyed, renumbered or moved out of the inventory. A guest on two
+          nodes means two inventory names reach one machine. Check `pct list` on each
+          node against roles/lxc-startup/defaults/main.yml.
+      vars:
+        _found: >-
+          {% for m in lxc_startup_misplaced %}{{ m.vmid }} on
+          {{ (m.nodes | join(' and ')) or 'no node' }}{{ '' if loop.last else '; ' }}{% endfor %}

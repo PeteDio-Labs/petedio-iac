@@ -1,0 +1,28 @@
+# One plan case for tests/lxc-startup-plan.yml. Included once per recorded report.
+---
+- name: "Load the recorded report — {{ plan_case.name }}"
+  ansible.builtin.set_fact:
+    lxc_startup_report: "{{ plan_case.report }}"
+
+# plan.yml resets lxc_startup_plan itself, which is the behaviour main.yml relies on when it
+# includes gather.yml twice. So no reset here: a stale plan would fail the case.
+- name: "Compare — {{ plan_case.name }}"
+  ansible.builtin.include_tasks: ../../roles/lxc-startup/tasks/plan.yml
+
+- name: "Assert what was compared and what would be set — {{ plan_case.name }}"
+  ansible.builtin.assert:
+    that:
+      - (lxc_startup_plan | map(attribute='vmid') | list) == plan_case.want_compared
+      - (lxc_startup_plan | selectattr('needs_set') | map(attribute='vmid') | list) == plan_case.want_set
+      - lxc_startup_plan | map(attribute='want') | reject('match', '^order=[0-9]+,up=[0-9]+,down=[0-9]+$') | list | length == 0
+    fail_msg: >-
+      {{ plan_case.name }}:
+      compared={{ lxc_startup_plan | map(attribute='vmid') | list }},
+      set={{ lxc_startup_plan | selectattr('needs_set') | map(attribute='vmid') | list }},
+      want={{ lxc_startup_plan | map(attribute='want') | list }};
+      expected compared={{ plan_case.want_compared }}, set={{ plan_case.want_set }}.
+    success_msg: >-
+      {{ plan_case.name }}:
+      {{ plan_case.report.containers | length }} containers ->
+      compared {{ lxc_startup_plan | map(attribute='vmid') | list }},
+      set {{ lxc_startup_plan | selectattr('needs_set') | map(attribute='vmid') | list }}.

@@ -1,0 +1,20 @@
+---
+# Read the node, then compare. Included TWICE by main.yml, once before the set and once
+# after, so the report and the final assert come from the node rather than from what the
+# `pct set` task believed it did.
+
+- name: Read the startup line of every container on the node
+  # check_mode: false, deliberately. `script` skips under --check, which would leave
+  # lxc_startup_raw undefined and fail the parse below. The script runs only `pct list` and
+  # `pct config`, so running it during a check changes nothing.
+  ansible.builtin.script: lxc-startup-report.py
+  register: lxc_startup_raw
+  changed_when: false
+  check_mode: false
+
+- name: Parse the report
+  ansible.builtin.set_fact:
+    lxc_startup_report: "{{ lxc_startup_raw.stdout | from_json }}"
+
+- name: Compare each declared guest with its declaration
+  ansible.builtin.include_tasks: plan.yml
