@@ -4,8 +4,8 @@
 # kv/services/media/qbittorrent, prove the write by reading it back, and retire
 # the stale kv/services/qbittorrent. PET-452.
 #
-# operator-run; requires VAULT_ADDR/VAULT_CACERT/VAULT_TOKEN. No session runs it,
-# and no value it handles is ever seen by one.
+# operator-run; requires VAULT_ADDR, VAULT_CACERT and a token from `vault login` or
+# VAULT_TOKEN. No session runs it, and no value it handles is ever seen by one.
 #
 # WHY THIS SCRIPT EXISTS RATHER THAN THE RUNBOOK'S COMMAND.
 #   docs/runbooks/qbittorrent-vault-secret.md tells you to run:
@@ -25,8 +25,10 @@
 # read-back compares a SHA-256 digest rather than the value, so a mismatch is
 # debuggable without printing a secret.
 #
-# WHERE THE VALUES COME FROM. The live key is in /opt/qbittorrent/.env on LXC 110
-# (WIREGUARD_PRIVATE_KEY, WIREGUARD_ADDRESSES). Read them there and export them,
+# WHERE THE VALUES COME FROM. The live key is in /opt/qbittorrent-vpn/.env on LXC
+# 110, under PROTON_WG_PRIVATE_KEY and PROTON_WG_ADDRESSES. This script reads them
+# as WIREGUARD_PRIVATE_KEY and WIREGUARD_ADDRESSES, the names gluetun receives them
+# under in petedio-media-iac's docker-compose.yml.j2. Export them under those names,
 # or let the script prompt. Git history holds no key: `git log --all -S
 # WIREGUARD_PRIVATE_KEY` matches the template's variable name only.
 #
@@ -50,7 +52,7 @@ RETIRE_OLD=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --retire-old) RETIRE_OLD=1 ;;
-    -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "FATAL: unknown argument: $1  (try --help)" >&2; exit 1 ;;
   esac
   shift
@@ -59,7 +61,6 @@ done
 # --- preflight -------------------------------------------------------------------
 : "${VAULT_ADDR:?set VAULT_ADDR (e.g. https://192.168.50.223:8200)}"
 : "${VAULT_CACERT:?set VAULT_CACERT to the path of environments/homelab/vault-ca.crt}"
-: "${VAULT_TOKEN:?run 'vault login' or export VAULT_TOKEN (root token)}"
 
 command -v vault   >/dev/null 2>&1 || { echo "FATAL: vault CLI not found on PATH" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "FATAL: python3 not found on PATH (needed to build JSON payloads)" >&2; exit 1; }
@@ -67,6 +68,14 @@ command -v python3 >/dev/null 2>&1 || { echo "FATAL: python3 not found on PATH (
 # Vault seals nightly. Fail here rather than half-way through.
 if ! vault status >/dev/null 2>&1; then
   echo "FATAL: 'vault status' failed — Vault unreachable or sealed. Check VAULT_ADDR/CACERT and unseal." >&2
+  exit 1
+fi
+
+# Ask the CLI for the token, not VAULT_TOKEN. `vault login` stores its token with the
+# token helper and exports nothing, so a check of the variable refused that route
+# (PET-452). The CLI reads VAULT_TOKEN first and the helper second.
+if ! vault token lookup >/dev/null 2>&1; then
+  echo "FATAL: no usable Vault token. Run 'vault login', or export VAULT_TOKEN (root token)." >&2
   exit 1
 fi
 
@@ -98,9 +107,9 @@ echo "(values are read from env or prompted silently; nothing is echoed or writt
 echo
 
 # --- collect ---------------------------------------------------------------------
-load_value WIREGUARD_PRIVATE_KEY "Proton WireGuard private key (LXC 110 /opt/qbittorrent/.env)"
+load_value WIREGUARD_PRIVATE_KEY "Proton WireGuard private key (PROTON_WG_PRIVATE_KEY in /opt/qbittorrent-vpn/.env on LXC 110)"
 wg_key="${REPLY_VALUE}"
-load_value WIREGUARD_ADDRESSES   "Proton WireGuard addresses (same .env, e.g. 10.2.0.2/32)"
+load_value WIREGUARD_ADDRESSES   "Proton WireGuard addresses (PROTON_WG_ADDRESSES in the same .env, e.g. 10.2.0.2/32)"
 wg_addr="${REPLY_VALUE}"
 
 # Shape checks, not value checks. A WireGuard private key is 32 bytes base64, so 44

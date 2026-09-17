@@ -2,7 +2,8 @@
 #
 # vault-verify.sh — verify the bootstrap secrets are seeded and a consumer can read.
 #
-# operator-run; requires VAULT_ADDR/VAULT_CACERT/VAULT_TOKEN; no values are committed.
+# operator-run; requires VAULT_ADDR, VAULT_CACERT and a token from `vault login` or
+# VAULT_TOKEN; no values are committed.
 #
 # Checks (PRESENCE only — never prints a secret value):
 #   1. Every seeded KV path has each expected key (via `vault kv get -field=<key>`,
@@ -20,18 +21,37 @@
 #   ./scripts/vault-verify.sh
 #
 # AppRole creds are read from iac/.secrets/{terraform-local,ansible}.{role_id,secret_id}
-# (gitignored), created per docs/runbooks/vault-seed.md. Override the dir with
-# SECRETS_DIR=/abs/path if your checkout layout differs.
+# (gitignored), created per docs/runbooks/vault-seed.md. The script finds that
+# directory from its own path, so any working directory works. To read the creds
+# from somewhere else, set SECRETS_DIR=/abs/path.
 #
 set -euo pipefail
 
 : "${VAULT_ADDR:?set VAULT_ADDR (e.g. https://192.168.50.223:8200)}"
 : "${VAULT_CACERT:?set VAULT_CACERT to the path of environments/homelab/vault-ca.crt}"
-: "${VAULT_TOKEN:?run 'vault login' or export VAULT_TOKEN}"
 
 command -v vault >/dev/null 2>&1 || { echo "FATAL: vault CLI not found on PATH" >&2; exit 1; }
 
-SECRETS_DIR="${SECRETS_DIR:-iac/.secrets}"
+# Vault seals nightly. Check the seal first, so a sealed Vault does not read as a
+# missing token below.
+if ! vault status >/dev/null 2>&1; then
+  echo "FATAL: 'vault status' failed — Vault unreachable or sealed. Check VAULT_ADDR/CACERT and unseal." >&2
+  exit 1
+fi
+
+# Ask the CLI for the token, not VAULT_TOKEN. `vault login` stores its token with the
+# token helper and exports nothing, so a check of the variable refused that route
+# (PET-452). The CLI reads VAULT_TOKEN first and the helper second.
+if ! vault token lookup >/dev/null 2>&1; then
+  echo "FATAL: no usable Vault token. Run 'vault login', or export VAULT_TOKEN." >&2
+  exit 1
+fi
+
+# The default was the relative path iac/.secrets, which resolves only from the
+# workspace root. The usage above runs from iac/, where section 2 failed (PET-452).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SECRETS_DIR="${SECRETS_DIR:-$REPO_ROOT/.secrets}"
 
 fail=0
 pass() { printf 'PASS  %s\n' "$1"; }
@@ -80,10 +100,15 @@ else
   secret_id="$(cat "$secret_id_file")"
   # Log in via AppRole in a SUBSHELL so the scoped token never leaks into this script's
   # env or the operator's shell. Capture only the consumer-read result.
+  #
+  # The subshell exits before the read when the login fails. The CLI treats an empty
+  # VAULT_TOKEN as unset and falls back to the token helper, where `vault login` left
+  # your own token, so the read would pass with it and report a working AppRole.
   if consumer_url="$(
-        VAULT_TOKEN="$(vault write -field=token auth/approle/login \
-            role_id="$role_id" secret_id="$secret_id" 2>/dev/null)" \
-        vault kv get -field=DATABASE_URL kv/poker/db 2>/dev/null
+        approle_token="$(vault write -field=token auth/approle/login \
+            role_id="$role_id" secret_id="$secret_id" 2>/dev/null)" || exit 1
+        [ -n "$approle_token" ] || exit 1
+        VAULT_TOKEN="$approle_token" vault kv get -field=DATABASE_URL kv/poker/db 2>/dev/null
       )" && [ -n "$consumer_url" ]; then
     pass "terraform-local AppRole logged in and read kv/poker/db DATABASE_URL (${#consumer_url} chars)"
     # Sanity-check the FORMAT without printing the password: must start postgresql://
