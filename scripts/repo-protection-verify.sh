@@ -58,8 +58,8 @@ sec()  { [ $QUIET -eq 1 ] || printf "\n\033[1m%s\033[0m\n" "$1"; }
 #
 # The approve column takes `false`, `true` or `?`. It is asserted for every repo,
 # protected or not: a workflow that can approve a pull request defeats a required
-# review without touching protection at all. PET-458 decides the org-wide answer;
-# until then the repos that already read `false` are held there, and the rest are `?`.
+# review without touching protection at all. Every row declares `false`: PET-458
+# turned the setting off for the organisation and for each repo on 2026-09-17.
 #
 # WHY SO MANY `?` ROWS: PET-457 is the decision, and it is Pedro's. A row that
 # guessed would be a decision made by a script author, recorded as if it had been
@@ -74,45 +74,45 @@ read -r -d '' DECLARED <<'TABLE'
 # repo                    protection                                    approve
 # ── protected today ──────────────────────────────────────────────────────────
 petedio-iac               ctx=gate,validate reviews=1 strict=yes admins=no   false
-petedio-water-fast        ctx=test reviews=0 strict=yes admins=yes           ?
+petedio-water-fast        ctx=test reviews=0 strict=yes admins=yes           false
 
 # ── deploys to a live host on push to main; protection undecided (PET-457) ───
 pete-bot                  ?                                                  false
-petedio-media-iac         ?                                                  ?
-petedio-media-control     unavailable                                        ?
-petedio-palworld-panel    unavailable                                        ?
+petedio-media-iac         ?                                                  false
+petedio-media-control     unavailable                                        false
+petedio-palworld-panel    unavailable                                        false
 
 # ── private: protection and rulesets both 403 on the Free plan ───────────────
-claude-skills             unavailable                                        ?
-fs-mcs-vault              unavailable                                        ?
-notification-service      unavailable                                        ?
-pete-vision-backend       unavailable                                        ?
-pete-vision-desktop       unavailable                                        ?
-pete-vision-firmware      unavailable                                        ?
-pete-vision-shared        unavailable                                        ?
-pete-vision-web           unavailable                                        ?
-petedio-vault             unavailable                                        ?
-petedio-workspace         unavailable                                        ?
+claude-skills             unavailable                                        false
+fs-mcs-vault              unavailable                                        false
+notification-service      unavailable                                        false
+pete-vision-backend       unavailable                                        false
+pete-vision-desktop       unavailable                                        false
+pete-vision-firmware      unavailable                                        false
+pete-vision-shared        unavailable                                        false
+pete-vision-web           unavailable                                        false
+petedio-vault             unavailable                                        false
+petedio-workspace         unavailable                                        false
 
 # ── public, no deployment reads them: unprotected on purpose ─────────────────
-code-review-agent         none                                               ?
-infra-agent               none                                               ?
-job-hunt-app              none                                               ?
-knowledge-janitor         none                                               ?
-mcp-homelab               none                                               ?
-memory-agent              none                                               ?
+code-review-agent         none                                               false
+infra-agent               none                                               false
+job-hunt-app              none                                               false
+knowledge-janitor         none                                               false
+mcp-homelab               none                                               false
+memory-agent              none                                               false
 mission-control-backend   none                                               false
-mission-control-mcp       none                                               ?
+mission-control-mcp       none                                               false
 mission-control-web       none                                               false
-ops-investigator          none                                               ?
+ops-investigator          none                                               false
 pete-bot-gitops           none                                               false
-petedio-resume-builder    none                                               ?
-portfolio                 none                                               ?
-portfolio-gitops          none                                               ?
-research-agent            none                                               ?
-shared                    none                                               ?
-web-search-service        none                                               ?
-workstation-agent         none                                               ?
+petedio-resume-builder    none                                               false
+portfolio                 none                                               false
+portfolio-gitops          none                                               false
+research-agent            none                                               false
+shared                    none                                               false
+web-search-service        none                                               false
+workstation-agent         none                                               false
 TABLE
 
 # ── Live state ────────────────────────────────────────────────────────────────
