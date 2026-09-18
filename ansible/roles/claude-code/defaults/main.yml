@@ -96,8 +96,16 @@ claude_permission_mode: auto
 # the role, and one such entry stopped the play before ANY unit was rendered.
 #
 # The `workspace` entry below serves the private petedio-workspace repo, which this role
-# does not clone — `gh auth login` as claude, then clone it into
-# {{ claude_workspace }}/workspace by hand. Until that is done the entry is inert.
+# does not clone. Until the clone exists at {{ claude_workspace }}/workspace the entry is
+# inert, and the run is red at the end naming the clone step.
+#
+# ⚠ DO NOT CLEAR THAT BY RUNNING `gh auth login` ON 247. This comment said to, until
+# PET-480. `vault/Claude/claude-247.md` forbids it by name: the login leaves an OAuth
+# token carrying PEDRO's permissions in ~/.config/gh/hosts.yml, readable by any session on
+# the host whatever its mode — a stronger credential than the one the loop design works to
+# keep off that box. A red run is the cheaper outcome. Who delivers the clone, and by what
+# route that places no credential on 247, is open on PET-480; leave the entry inert until
+# that is decided.
 #
 # ⚠ THAT SESSION IS NOT A CROSS-REPO SESSION. petedio-workspace gitignores every child repo
 # (`iac/`, `media-iac/`, `vault/`, `co-latro/backend/` …) and tracks none of them, so a
