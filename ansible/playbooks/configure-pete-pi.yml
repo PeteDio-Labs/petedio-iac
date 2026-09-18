@@ -11,10 +11,12 @@
 #
 # WHAT IT REACHES, AND HOW. Pete-Pi is dual-homed: eth0 on 192.168.50.4 (default
 # route, metric 100) and wlan0 on 192.168.86.46 (metric 600). The .50 leg covers
-# the cluster, Vault and ollama; the .86 leg is where the TVs live, and the
-# plex-bridge role SERVES plex to them from it (192.168.86.46:32400 -> .50.236).
-# plex 103 at 192.168.86.140 died with pve01. No tailscale hop is involved in
-# either, so a tailnet outage cannot masquerade as a service fault in the data.
+# the cluster, Vault and ollama; the .86 leg is where the TVs live, and it is the
+# only vantage in this inventory that can prove a mesh path is real. This Pi used
+# to SERVE plex to the TVs over that leg; pve02's own mesh adapter replaced it
+# under PET-474. plex 103 at 192.168.86.140 died with pve01. No tailscale hop is
+# involved in either, so a tailnet outage cannot masquerade as a service fault in
+# the data.
 #
 # THIS PLAY TOUCHES NO MONITORED SERVICE. It installs nothing on pve02, pve03 or
 # any LXC, and every probe it configures is read-only against an endpoint those
@@ -37,9 +39,14 @@
     - role: cluster-qdevice
       tags: [qdevice]
 
-    # The TVs are on the mesh and Plex is not. pve01 used to bridge the two;
-    # this proxies the port instead.
+    # The socat proxy that served Plex to the TVs from this Pi is retired
+    # (PET-474): pve02's USB-Ethernet adapter puts CT 236 on the mesh at
+    # 192.168.86.236, so the hop is redundant. `absent` is what stops the unit
+    # coming back on converge, and it refuses to tear anything down until the
+    # mesh address answers 200.
     - role: plex-bridge
+      vars:
+        plex_bridge_state: absent
       tags: [plex-bridge]
 
     - role: lab-digest
