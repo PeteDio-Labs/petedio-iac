@@ -76,11 +76,16 @@
                  + (claude_sessions_unservable | default([])
                     | map(attribute='dir')
                     | map('regex_replace', '^', claude_workspace ~ '/') | list)
-                 + ['Everything else in this play converged. This role does not clone private repos. To finish:',
-                    '1. ssh claude@' ~ (ansible_host | default('192.168.50.247')),
-                    '2. gh auth login    # only if never done',
-                    '3. clone each directory above, then re-run this play',
-                    'To stop serving one instead, drop its entry from claude_remote_sessions.'] }}"
+                 + ['Everything else in this play converged. To finish:',
+                    '1. For petedio-workspace, declare claude_workspace_mirror_enable: true in inventory/host_vars/' ~ inventory_hostname ~ '.yml and re-run.',
+                    '   Run 1 prints a deploy key to paste at',
+                    '   github.com/PeteDio-Labs/petedio-workspace/settings/keys/new, with write access UNCHECKED.',
+                    '   Run 2 clones.',
+                    '2. For any other private repo, it needs the same treatment: roles/claude-code/tasks/workspace-mirror.yml.',
+                    'To stop serving one instead, drop its entry from claude_remote_sessions.',
+                    '⚠ DO NOT run `gh auth login` on this host to make this go away. This message said to, until PET-480.',
+                    '   vault/Claude/claude-247.md forbids it by name. The token it writes belongs to Pedro,',
+                    '   and every session on this box can read it. A red run is cheaper.'] }}"
       when: claude_sessions_unservable | default([]) | length > 0
 
     # ⚠ DO NOT FINISH GREEN OVER A SERVER THAT WAS NOT STARTED (PET-431). The host declares

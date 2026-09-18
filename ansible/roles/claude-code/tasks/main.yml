@@ -62,8 +62,17 @@
     update_cache: true
 
 # --- GitHub CLI --------------------------------------------------------------------------
-# The session opens its own PRs from this box, which is most of the point of giving it the
-# repos. `gh` carries its own auth (`gh auth login`), an operator step like the claude login.
+# ⚠ `gh` IS INSTALLED AND DELIBERATELY LEFT UNAUTHENTICATED. This comment used to say a
+# session opens its own PRs from this box and that the login was "an operator step like the
+# claude login". Both halves were wrong, and the second one read as an instruction:
+# vault/Claude/claude-247.md forbids `gh auth login` here by name, because the token it
+# writes to ~/.config/gh/hosts.yml carries PEDRO's permissions under the same user the
+# sessions run as.
+#
+# A session on this host does not push and does not open pull requests. It writes a branch,
+# and the Mac bundles and pushes it — `git bundle create - <base>..<branch>`, naming the
+# branch, or the bundle carries zero refs. Unauthenticated `gh` still answers read-only
+# queries against public repos, which is what it is here for.
 
 - name: Add the GitHub CLI apt signing key
   ansible.builtin.get_url:
@@ -244,6 +253,15 @@
   loop: "{{ claude_repos }}"
   loop_control:
     label: "{{ item.name }}"
+
+# --- The private workspace repo (PET-480) --------------------------------------------------
+# Delivered by a root-owned mirror and a read-only deploy key, because no HTTPS clone reaches
+# a private repo without a credential and this host forbids the login that would supply one.
+# Runs BEFORE the session directory check below, since the clone it creates is what makes the
+# `workspace` entry servable.
+- name: Deliver the private workspace repo
+  ansible.builtin.include_tasks: workspace-mirror.yml
+  when: claude_workspace_mirror_enable | bool
 
 # --- Claude Code settings ------------------------------------------------------------------
 # SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles
