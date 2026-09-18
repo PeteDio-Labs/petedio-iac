@@ -1,0 +1,40 @@
+{{ ansible_managed | comment }}
+# Refresh the root-owned bare mirror of {{ claude_workspace_mirror_repo }} (PET-480).
+#
+# ⚠ RUNS AS ROOT, AND ONLY INSIDE /var/lib. Root is the only user that can read the deploy
+# key, so root is the only user that can fetch. It must never run git inside
+# {{ claude_workspace }}, which the session user owns: git honours core.sshCommand,
+# core.hooksPath and core.fsmonitor from the repository's own config, so a session that
+# rewrites its clone's .git/config would get code execution as root on the next fetch.
+# --git-dir pins this to the mirror.
+#
+# The session user's clone is a SEPARATE working clone whose origin is that mirror. Nothing
+# updates it on a schedule: a session pulls its own repo, like any developer, and a fetch
+# that moved a branch under a session mid-task is the outcome the role avoids everywhere.
+
+[Unit]
+Description=Refresh the {{ claude_workspace_mirror_repo }} mirror (PET-480)
+# Fetching needs the network, and a boot-time firing before it is up fails noisily for no
+# reason. Persistent=true on the timer retries after this.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+
+# IdentitiesOnly=yes stops ssh offering root's other keys and authorizing by way of one this
+# unit did not arrange. GIT_TERMINAL_PROMPT=0 makes a credential failure exit instead of
+# blocking a systemd job on a prompt nobody can answer.
+Environment=GIT_SSH_COMMAND={{ claude_workspace_mirror_ssh }}
+Environment=GIT_TERMINAL_PROMPT=0
+
+ExecStart=/usr/bin/git --git-dir={{ claude_workspace_mirror_path }} remote update --prune
+
+# The mirror is a cache of a remote, so nothing here is worth writing outside it.
+ProtectSystem=strict
+ReadWritePaths={{ claude_workspace_mirror_state_dir }}
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
