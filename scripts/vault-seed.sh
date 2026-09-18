@@ -2,7 +2,8 @@
 #
 # vault-seed.sh — seed bootstrap secret VALUES into the homelab Vault KV-v2 store.
 #
-# operator-run; requires VAULT_ADDR/VAULT_CACERT/VAULT_TOKEN; no values are committed.
+# operator-run; requires VAULT_ADDR, VAULT_CACERT and a token from `vault login` or
+# VAULT_TOKEN; no values are committed.
 #
 # Each value is taken from a matching env var if already exported, otherwise prompted
 # for interactively with `read -s` (silent — no terminal echo). Values are held only
@@ -34,7 +35,6 @@ set -euo pipefail
 # --- preflight -------------------------------------------------------------------
 : "${VAULT_ADDR:?set VAULT_ADDR (e.g. https://192.168.50.223:8200)}"
 : "${VAULT_CACERT:?set VAULT_CACERT to the path of environments/homelab/vault-ca.crt}"
-: "${VAULT_TOKEN:?run 'vault login' or export VAULT_TOKEN (root/bootstrap token)}"
 
 command -v vault >/dev/null 2>&1 || { echo "FATAL: vault CLI not found on PATH" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "FATAL: python3 not found on PATH (needed to build JSON payloads)" >&2; exit 1; }
@@ -42,6 +42,14 @@ command -v python3 >/dev/null 2>&1 || { echo "FATAL: python3 not found on PATH (
 # Fail fast if Vault is unreachable or sealed (don't half-seed).
 if ! vault status >/dev/null 2>&1; then
   echo "FATAL: 'vault status' failed — Vault unreachable or sealed. Check VAULT_ADDR/CACERT and unseal." >&2
+  exit 1
+fi
+
+# Ask the CLI for the token, not VAULT_TOKEN. `vault login` stores its token with the
+# token helper and exports nothing, so a check of the variable refused that route
+# (PET-452). The CLI reads VAULT_TOKEN first and the helper second.
+if ! vault token lookup >/dev/null 2>&1; then
+  echo "FATAL: no usable Vault token. Run 'vault login', or export VAULT_TOKEN (root/bootstrap token)." >&2
   exit 1
 fi
 
