@@ -1,0 +1,24 @@
+# One placement case for tests/lxc-startup-plan.yml. Included once per recorded set of
+# node reports.
+---
+- name: "Load what each node reported — {{ placement_case.name }}"
+  ansible.builtin.set_fact:
+    lxc_startup_found: "{{ placement_case.found }}"
+
+- name: "Place each declared guest — {{ placement_case.name }}"
+  ansible.builtin.include_tasks: ../../roles/lxc-startup/tasks/placement.yml
+
+- name: "Assert the unread nodes and the misplaced guests — {{ placement_case.name }}"
+  ansible.builtin.assert:
+    that:
+      - lxc_startup_unread == placement_case.want_unread
+      - lxc_startup_misplaced == placement_case.want_misplaced
+    fail_msg: >-
+      {{ placement_case.name }}:
+      unread={{ lxc_startup_unread }}, misplaced={{ lxc_startup_misplaced }};
+      expected unread={{ placement_case.want_unread }},
+      misplaced={{ placement_case.want_misplaced }}.
+    success_msg: >-
+      {{ placement_case.name }}:
+      unread {{ lxc_startup_unread }},
+      misplaced {{ lxc_startup_misplaced | map(attribute='vmid') | list }}.

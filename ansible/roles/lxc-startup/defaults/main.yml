@@ -1,0 +1,36 @@
+---
+# lxc-startup — declare the boot order of the media guests, which Terraform leaves alone.
+#
+# WHY THIS ROLE EXISTS. `startup` sets the order in which a node starts its guests at boot
+# and stops them at shutdown. petedio-media-iac's `modules/proxmox-lxc` keeps `startup` in
+# `lifecycle.ignore_changes`, so its plan reads clean whether the line is there or not.
+# PET-305 set the values by hand, and nothing in code declared them.
+#
+# The module comment said PET-305 set a value on every media guest. The PET-440 audit read
+# the nodes on 2026-09-15 and found otherwise:
+#
+#   101 104 105 109   startup: order=7,up=0,down=15
+#   110               startup: order=6,up=20,down=30
+#   236               no startup line at all — the only Plex
+#
+# PET-451 set 236 by hand on 2026-09-17 and added this role. A run puts back a line that a
+# guest has lost, and a --check run fails on one.
+#
+# --------------------------------------------------------------- what it is not --
+# It declares the six media guests and nothing else. It reads every container on a node to
+# find them, and it never compares or changes a guest that this map does not name.
+#
+# The values are the ones PET-305 set, declared as found. In Proxmox terms, `order` is the
+# start position, and shutdown runs in reverse. `up` and `down` are the seconds to wait
+# before the next guest starts or stops.
+
+# ⚠ QUOTED KEYS, AND ALL THREE VALUES. A YAML bare 236 is an integer, and tasks/plan.yml
+# looks each VMID up as a string, so an unquoted key misses silently. tasks/declaration.yml
+# refuses a key that is not a quoted VMID and an entry without order, up and down.
+lxc_startup_declared:
+  "101": { order: "7", up: "0", down: "15" }    # seerr, pve03
+  "104": { order: "7", up: "0", down: "15" }    # sonarr, pve03
+  "105": { order: "7", up: "0", down: "15" }    # radarr, pve03
+  "109": { order: "7", up: "0", down: "15" }    # prowlarr, pve03
+  "110": { order: "6", up: "20", down: "30" }   # qbittorrent-vpn, pve02
+  "236": { order: "7", up: "0", down: "15" }    # plex-gpu, pve02 — no startup line until PET-451

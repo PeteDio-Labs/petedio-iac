@@ -1,0 +1,163 @@
+# lxc-startup-plan.yml — roles/lxc-startup, on recorded node reports.
+#
+# Runs on localhost, touches nothing, needs no credential. Run it from `ansible/`:
+#
+#   ansible-playbook tests/lxc-startup-plan.yml
+#
+# WHAT THIS EXISTS TO CATCH. Terraform keeps `startup` in `ignore_changes`, and on
+# 2026-09-15 the PET-440 audit found plex-gpu 236 with no startup line while every other
+# media guest had one. The role compares each node's guests with the declaration, and a
+# play on one node cannot see a guest that is on neither node. These cases run both halves
+# over reports shaped like the reporter's output, including the one the audit read.
+#
+# The declaration is the role's own defaults file, so a change to it runs through here.
+---
+- name: Compare recorded reports with the declaration, roles/lxc-startup
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ../roles/lxc-startup/defaults/main.yml
+  vars:
+    # Every declared value, as main.yml passes it to `pct set`.
+    arr_order: order=7,up=0,down=15
+    qbit_order: order=6,up=20,down=30
+
+    plan_cases:
+      - name: pve02 after PET-451 set 236
+        report:
+          node: pve02
+          containers:
+            - { vmid: 110, hostname: qbittorrent-vpn, startup: "{{ qbit_order }}" }
+            - { vmid: 233, hostname: runner-233, startup: null }
+            - { vmid: 236, hostname: plex-gpu, startup: "{{ arr_order }}" }
+        want_compared: ["110", "236"]
+        want_set: []
+
+      # As the PET-440 audit read pve02 on 2026-09-15.
+      - name: pve02 with no startup line on 236
+        report:
+          node: pve02
+          containers:
+            - { vmid: 110, hostname: qbittorrent-vpn, startup: "{{ qbit_order }}" }
+            - { vmid: 233, hostname: runner-233, startup: null }
+            - { vmid: 236, hostname: plex-gpu, startup: null }
+        want_compared: ["110", "236"]
+        want_set: ["236"]
+
+      # 102 and 223 are not declared, with and without a line of their own.
+      - name: pve03 with its four declared guests matching
+        report:
+          node: pve03
+          containers:
+            - { vmid: 101, hostname: seerr, startup: "{{ arr_order }}" }
+            - { vmid: 102, hostname: flaresolverr, startup: null }
+            - { vmid: 104, hostname: sonarr, startup: "{{ arr_order }}" }
+            - { vmid: 105, hostname: radarr, startup: "{{ arr_order }}" }
+            - { vmid: 109, hostname: prowlarr, startup: "{{ arr_order }}" }
+            - { vmid: 223, hostname: vault-223, startup: order=1 }
+        want_compared: ["101", "104", "105", "109"]
+        want_set: []
+
+      - name: a wrong delay on one guest
+        report:
+          node: pve03
+          containers:
+            - { vmid: 101, hostname: seerr, startup: "{{ arr_order }}" }
+            - { vmid: 104, hostname: sonarr, startup: "{{ arr_order }}" }
+            - { vmid: 105, hostname: radarr, startup: "order=7,up=0,down=30" }
+            - { vmid: 109, hostname: prowlarr, startup: "{{ arr_order }}" }
+        want_compared: ["101", "104", "105", "109"]
+        want_set: ["105"]
+
+      - name: a line that lacks up and down
+        report:
+          node: pve02
+          containers:
+            - { vmid: 236, hostname: plex-gpu, startup: order=7 }
+        want_compared: ["236"]
+        want_set: ["236"]
+
+      # Proxmox reads this as the declared value. The compare is exact, so one run rewrites
+      # it into the declared form; see the header of tasks/plan.yml.
+      - name: the declared value with its keys reordered
+        report:
+          node: pve02
+          containers:
+            - { vmid: 236, hostname: plex-gpu, startup: "up=0,order=7,down=15" }
+        want_compared: ["236"]
+        want_set: ["236"]
+
+      - name: a VMID recorded as a string
+        report:
+          node: pve02
+          containers:
+            - { vmid: "110", hostname: qbittorrent-vpn, startup: "{{ arr_order }}" }
+            - { vmid: "236", hostname: plex-gpu, startup: "{{ arr_order }}" }
+        want_compared: ["110", "236"]
+        want_set: ["110"]
+
+      - name: a node with no declared guest
+        report:
+          node: pve02
+          containers:
+            - { vmid: 233, hostname: runner-233, startup: null }
+        want_compared: []
+        want_set: []
+
+      - name: a node with no containers
+        report:
+          node: pve02
+          containers: []
+        want_compared: []
+        want_set: []
+
+    placement_cases:
+      - name: each declared guest on one node
+        found: { pve02: ["110", "236"], pve03: ["101", "104", "105", "109"] }
+        want_unread: []
+        want_misplaced: []
+
+      - name: 236 renumbered, so no node reports it
+        found: { pve02: ["110"], pve03: ["101", "104", "105", "109"] }
+        want_unread: []
+        want_misplaced:
+          - { vmid: "236", nodes: [] }
+
+      # Two inventory names that reach pve02: each node reports pve02's guests.
+      - name: both node names reach one machine
+        found: { pve02: ["110", "236"], pve03: ["110", "236"] }
+        want_unread: []
+        want_misplaced:
+          - { vmid: "101", nodes: [] }
+          - { vmid: "104", nodes: [] }
+          - { vmid: "105", nodes: [] }
+          - { vmid: "109", nodes: [] }
+          - { vmid: "110", nodes: [pve02, pve03] }
+          - { vmid: "236", nodes: [pve02, pve03] }
+
+      - name: pve03 gave no report
+        found: { pve02: ["110", "236"], pve03: null }
+        want_unread: [pve03]
+        want_misplaced:
+          - { vmid: "101", nodes: [] }
+          - { vmid: "104", nodes: [] }
+          - { vmid: "105", nodes: [] }
+          - { vmid: "109", nodes: [] }
+
+  tasks:
+    - name: Check the declaration in roles/lxc-startup/defaults/main.yml
+      ansible.builtin.include_tasks: ../roles/lxc-startup/tasks/declaration.yml
+
+    - name: Run each plan case
+      ansible.builtin.include_tasks: cases/lxc-startup-plan-case.yml
+      loop: "{{ plan_cases }}"
+      loop_control:
+        loop_var: plan_case
+        label: "{{ plan_case.name }}"
+
+    - name: Run each placement case
+      ansible.builtin.include_tasks: cases/lxc-startup-placement-case.yml
+      loop: "{{ placement_cases }}"
+      loop_control:
+        loop_var: placement_case
+        label: "{{ placement_case.name }}"

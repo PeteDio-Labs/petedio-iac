@@ -1,0 +1,25 @@
+---
+# Work out which nodes gave no report, and which declared guests were not found on exactly
+# one node. It reads lxc_startup_found and lxc_startup_declared and nothing else, so
+# tests/lxc-startup-plan.yml runs it on localhost.
+#
+# lxc_startup_found maps each node to the declared VMIDs it reported, or to null for a node
+# that gave no report. playbooks/configure-lxc-startup.yml builds it from each node's plan
+# and asserts on both results.
+
+- name: List the nodes that gave no report
+  ansible.builtin.set_fact:
+    lxc_startup_unread: "{{ lxc_startup_found | dict2items | selectattr('value', 'none') | map(attribute='key') | list }}"
+
+- name: Start a fresh list of misplaced guests
+  ansible.builtin.set_fact:
+    lxc_startup_misplaced: []
+
+- name: Find each declared guest that no node, or more than one, reported
+  ansible.builtin.set_fact:
+    lxc_startup_misplaced: "{{ lxc_startup_misplaced + ([{'vmid': item, 'nodes': _nodes}] if _nodes | length != 1 else []) }}"
+  vars:
+    _nodes: >-
+      {{ lxc_startup_found | dict2items | rejectattr('value', 'none')
+      | selectattr('value', 'contains', item) | map(attribute='key') | list }}
+  loop: "{{ lxc_startup_declared | list | sort }}"
