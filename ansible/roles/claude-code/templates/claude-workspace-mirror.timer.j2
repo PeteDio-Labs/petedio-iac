@@ -1,0 +1,23 @@
+{{ ansible_managed | comment }}
+# When the {{ claude_workspace_mirror_repo }} mirror refreshes (PET-480).
+#
+# Half-hourly, offset from claude-loop.timer's `*:0/30` so the two are never fetching in the
+# same minute. A miss costs nothing: the clone a session works in is behind by design, and
+# the session pulls when it needs to.
+
+[Unit]
+Description=Periodic refresh of the {{ claude_workspace_mirror_repo }} mirror (PET-480)
+
+[Timer]
+OnCalendar={{ claude_workspace_mirror_oncalendar }}
+
+# Runs a missed refresh after a reboot, so a host that was down at the scheduled minute does
+# not wait a whole interval. The fetch is idempotent, so a catch-up landing on top of a
+# scheduled one costs one wasted fetch and nothing else.
+Persistent=true
+
+# Spreads this off the other timers on the host and off the minute boundary.
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

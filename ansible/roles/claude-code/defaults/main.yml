@@ -24,13 +24,59 @@ claude_workspace: "{{ claude_home }}/work/petedio"
 claude_github_base: https://github.com/PeteDio-Labs
 
 # Public child repos — cloned over HTTPS with no token. `dest` is RELATIVE to
-# claude_workspace. Private repos (petedio-workspace, co-latro-admin) need `gh auth` on the
-# host and are deliberately NOT cloned here; clone them by hand after the gh login.
+# claude_workspace. A PRIVATE repo needs a credential, which this list deliberately cannot
+# carry: an HTTPS clone of one would need a token in the URL or a `gh auth login` this host
+# forbids. petedio-workspace is delivered by the mirror below instead (PET-480), and any
+# other private repo needs the same treatment or none.
 claude_repos:
   - { name: petedio-iac, dest: iac }
   - { name: petedio-media-iac, dest: media-iac }
   - { name: co-latro-backend, dest: co-latro/backend }
   - { name: co-latro-frontend, dest: co-latro/frontend }
+
+# --- The private workspace repo (PET-480) ---------------------------------------------
+# petedio-workspace is private, so no HTTPS clone reaches it without a credential. Pedro
+# chose a read-only deploy key on 2026-09-17, as an explicit override of the rule in
+# vault/Claude/claude-247.md that keeps every credential off this host.
+#
+# ⚠ THE OVERRIDE IS NARROW, AND THE SHAPE IS WHAT MAKES IT SO. Read tasks/workspace-mirror.yml
+# before changing anything here. The key is generated on the host, is 0400 root:root, and is
+# used only by a root timer fetching into a bare mirror under /var/lib. The session user gets
+# a working clone of that mirror and no credential at all. Do not "simplify" this by pointing
+# the session's clone at GitHub with the key: root would then run git inside a directory the
+# sessions own, which is code execution as root.
+#
+# DEFAULT FALSE, like every other delivery in this role. `true` belongs in host_vars, next to
+# claude_remote_enable.
+claude_workspace_mirror_enable: false
+
+claude_workspace_mirror_repo: PeteDio-Labs/petedio-workspace
+claude_workspace_mirror_url: "git@github.com:{{ claude_workspace_mirror_repo }}.git"
+
+# Where the session's working clone lands, RELATIVE to claude_workspace. Must match the
+# `dir` of the claude_remote_sessions entry that serves it, or the entry stays unservable.
+claude_workspace_mirror_dest: workspace
+
+# Root-owned, 0400. Sessions run as {{ claude_user }} with no sudo, so this is unreadable to
+# them — the same arrangement claude_loop_conf_dir uses for the loop's GitHub App key.
+claude_workspace_mirror_conf_dir: /etc/claude-workspace-mirror
+claude_workspace_mirror_key: "{{ claude_workspace_mirror_conf_dir }}/deploy-key"
+
+# The bare mirror root fetches into, and the only path root runs git in.
+claude_workspace_mirror_state_dir: /var/lib/claude-workspace-mirror
+claude_workspace_mirror_path: "{{ claude_workspace_mirror_state_dir }}/petedio-workspace.git"
+
+# Offset from claude_loop_oncalendar's `*:0/30`, so the two timers never fetch in the same
+# minute.
+claude_workspace_mirror_oncalendar: "*:15/30"
+
+# IdentitiesOnly=yes stops ssh offering root's other keys and authorizing by way of one this
+# role did not arrange — without it the probe in tasks/workspace-mirror.yml can pass for a
+# reason that has nothing to do with the deploy key. accept-new writes GitHub's host key on
+# first use and still refuses a CHANGED one, unlike `no`.
+claude_workspace_mirror_ssh: >-
+  ssh -i {{ claude_workspace_mirror_key }} -o IdentitiesOnly=yes
+  -o StrictHostKeyChecking=accept-new -o PasswordAuthentication=no
 
 # --- Toolchain ------------------------------------------------------------------------
 # Node.js LTS major (NodeSource). 22 = active LTS ("jod").
@@ -95,17 +141,15 @@ claude_permission_mode: auto
 # run is red without being stuck. Before PET-466 the check was an assert in the middle of
 # the role, and one such entry stopped the play before ANY unit was rendered.
 #
-# The `workspace` entry below serves the private petedio-workspace repo, which this role
-# does not clone. Until the clone exists at {{ claude_workspace }}/workspace the entry is
-# inert, and the run is red at the end naming the clone step.
+# The `workspace` entry below serves the PRIVATE petedio-workspace repo. Set
+# claude_workspace_mirror_enable and the mirror delivers the clone; until then the entry is
+# inert and the run is red at the end naming the step.
 #
 # ⚠ DO NOT CLEAR THAT BY RUNNING `gh auth login` ON 247. This comment said to, until
 # PET-480. `vault/Claude/claude-247.md` forbids it by name: the login leaves an OAuth
 # token carrying PEDRO's permissions in ~/.config/gh/hosts.yml, readable by any session on
 # the host whatever its mode — a stronger credential than the one the loop design works to
-# keep off that box. A red run is the cheaper outcome. Who delivers the clone, and by what
-# route that places no credential on 247, is open on PET-480; leave the entry inert until
-# that is decided.
+# keep off that box. A red run is cheaper than that, and the mirror above is cheaper still.
 #
 # ⚠ THAT SESSION IS NOT A CROSS-REPO SESSION. petedio-workspace gitignores every child repo
 # (`iac/`, `media-iac/`, `vault/`, `co-latro/backend/` …) and tracks none of them, so a

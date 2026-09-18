@@ -1,0 +1,226 @@
+# workspace-mirror.yml — deliver the PRIVATE petedio-workspace clone to this host while no
+# session on it holds a credential (PET-480).
+#
+# Pedro chose a read-only deploy key over dropping the session and over tailnet delivery, as
+# an explicit override: vault/Claude/claude-247.md works to keep every credential off this
+# box. The override is narrow rather than a loosening. The act that note forbids by name is
+# `gh auth login`, whose OAuth token carries PEDRO's permissions across every repo he can
+# reach, write included. A deploy key scoped read-only to ONE repository cannot push, cannot
+# read a second repository, and cannot act as him. Blast radius was the objection.
+#
+# THE SESSION USER STILL HOLDS NOTHING. Three properties carry that, and all three are
+# load-bearing:
+#
+#   1. The key is generated ON THIS HOST and never leaves it. No private half transits the
+#      Mac, a transcript, or a session's context. The play prints only the public half.
+#   2. The key is 0400 root:root. Sessions run as {{ claude_user }} with no sudo (PET-408),
+#      so a session cannot read it — the same arrangement /etc/claude-loop already uses.
+#   3. Root fetches into a BARE MIRROR it owns, and the session's working clone is cloned
+#      FROM THAT MIRROR over a local path. So the credential is used only by root, in a
+#      directory no session can write.
+#
+# ⚠ THE MIRROR IS WHY, NOT AN EXTRA STEP. The obvious shape — point the claude-owned clone
+# at GitHub and let a root timer fetch it — hands root a `git` process running inside a
+# directory the sessions own. `git` honours `core.sshCommand`, `core.fsmonitor` and
+# core.hooksPath from the repository's OWN config, so a session that rewrites
+# {{ claude_workspace }}/{{ claude_workspace_mirror_dest }}/.git/config gets arbitrary code
+# execution as root on the next fetch. Root must never run git inside a path a session can
+# write. The mirror keeps root's git in /var/lib and the session's git in its own clone.
+#
+# TWO-PHASE, like the Remote Control consent above it. Run 1 creates the key and prints it;
+# Pedro adds it to the repository as a deploy key with WRITE ACCESS UNCHECKED; run 2 mirrors
+# and clones. Run 1 does not fail here — playbooks/configure-claude-code.yml fails at the
+# end naming the step, for the reason written there (PET-466).
+---
+- name: Create the root-owned deploy-key directory
+  ansible.builtin.file:
+    path: "{{ claude_workspace_mirror_conf_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# -N '' is an EMPTY PASSPHRASE, deliberately: a root systemd timer has nowhere to type one,
+# and a key it cannot use is a key that silently stops delivering. The mode below is what
+# protects it, not a passphrase.
+#
+# `creates:` makes this seeded-never-rotated. To rotate, delete both files and re-run, then
+# replace the deploy key on GitHub — the runbook says so, because a run that regenerated the
+# key on every converge would break delivery until someone noticed.
+- name: Generate the read-only deploy key, on this host
+  ansible.builtin.command:
+    cmd: >-
+      ssh-keygen -t ed25519 -N '' -q
+      -C "claude-workspace-mirror@{{ inventory_hostname }} read-only PET-480"
+      -f {{ claude_workspace_mirror_key }}
+    creates: "{{ claude_workspace_mirror_key }}"
+
+- name: Lock the private half to root
+  ansible.builtin.file:
+    path: "{{ claude_workspace_mirror_key }}"
+    follow: false
+    owner: root
+    group: root
+    mode: "0400"
+
+- name: Make the public half readable, so the play can print it
+  ansible.builtin.file:
+    path: "{{ claude_workspace_mirror_key }}.pub"
+    follow: false
+    owner: root
+    group: root
+    mode: "0444"
+
+- name: Read the public half
+  ansible.builtin.slurp:
+    src: "{{ claude_workspace_mirror_key }}.pub"
+  register: claude_workspace_mirror_pub
+
+# A PUBLIC key is safe to print, and printing it is the whole handoff: Pedro pastes this
+# line into the repository's deploy keys. Nothing here prints the private half, and no task
+# in this file reads it into a variable.
+- name: Show the public key to paste as a deploy key
+  ansible.builtin.debug:
+    msg:
+      - "Deploy key for {{ claude_workspace_mirror_repo }}, generated on {{ inventory_hostname }}:"
+      - "{{ claude_workspace_mirror_pub.content | b64decode | trim }}"
+      - "Add it at https://github.com/{{ claude_workspace_mirror_repo }}/settings/keys/new"
+      - "⚠ LEAVE 'Allow write access' UNCHECKED. This host must not be able to push."
+
+# Probe before mirroring, so an unauthorized key reports itself as one line instead of a
+# clone failure. `failed_when: false` because run 1 is EXPECTED to fail this — the key exists
+# and nobody has added it yet.
+#
+# IdentitiesOnly=yes stops ssh offering root's other keys and matching one of them by
+# accident, which would make the probe pass for a reason this file did not arrange.
+#
+# noqa reason: `ansible.builtin.git` has no ls-remote. Its cheapest operation is a clone,
+# which is the thing this task exists to avoid attempting.
+- name: Check whether the deploy key is authorized yet  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: git ls-remote --heads {{ claude_workspace_mirror_url }} HEAD
+  environment:
+    GIT_SSH_COMMAND: "{{ claude_workspace_mirror_ssh }}"
+    GIT_TERMINAL_PROMPT: "0"
+  register: claude_workspace_mirror_probe
+  changed_when: false
+  failed_when: false
+
+- name: Record whether delivery can proceed in this run
+  ansible.builtin.set_fact:
+    claude_workspace_mirror_ready: "{{ claude_workspace_mirror_probe.rc == 0 }}"
+
+- name: Report that the deploy key is not authorized yet
+  ansible.builtin.debug:
+    msg:
+      - "The deploy key is on this host but {{ claude_workspace_mirror_repo }} does not accept it yet."
+      - "The mirror, its timer and the {{ claude_workspace_mirror_dest }} clone are left alone; everything else in this play converges."
+      - "Paste the public key printed above, with 'Allow write access' UNCHECKED, then re-run this play."
+      - "git ls-remote rc={{ claude_workspace_mirror_probe.rc }} {{ claude_workspace_mirror_probe.stderr | default('') | trim }}"
+  when: not claude_workspace_mirror_ready | bool
+
+- name: Create the root-owned mirror directory
+  ansible.builtin.file:
+    path: "{{ claude_workspace_mirror_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    # 0755: the session user must READ this to clone from it, and must never write it.
+    # Ownership is what keeps root's git out of a session-writable config; the mode only
+    # decides who can read.
+    mode: "0755"
+  when: claude_workspace_mirror_ready | bool
+
+# noqa reason: `ansible.builtin.git` offers `bare`, not `mirror`, and the two differ in the
+# one way that matters here. Measured on git 2.5x: `clone --bare` sets no
+# `remote.origin.fetch` at all, while `clone --mirror` sets `+refs/*:refs/*` and
+# `remote.origin.mirror=true`. The timer runs `remote update --prune`, which needs that
+# refspec, so a bare clone would refresh nothing.
+- name: Mirror the repository, as root  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      git clone --mirror {{ claude_workspace_mirror_url }}
+      {{ claude_workspace_mirror_path }}
+    creates: "{{ claude_workspace_mirror_path }}/HEAD"
+  environment:
+    GIT_SSH_COMMAND: "{{ claude_workspace_mirror_ssh }}"
+    GIT_TERMINAL_PROMPT: "0"
+  when: claude_workspace_mirror_ready | bool
+
+- name: Install the mirror refresh unit
+  ansible.builtin.template:
+    src: claude-workspace-mirror.service.j2
+    dest: /etc/systemd/system/claude-workspace-mirror.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install the mirror refresh timer
+  ansible.builtin.template:
+    src: claude-workspace-mirror.timer.j2
+    dest: /etc/systemd/system/claude-workspace-mirror.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers so the units are on disk before the timer is started
+  ansible.builtin.meta: flush_handlers
+
+# Converges BOTH ways: the timer stops when the mirror is not ready, so a host that loses the
+# key does not keep a unit that fails every half hour.
+- name: Converge the mirror refresh timer
+  ansible.builtin.systemd:
+    name: claude-workspace-mirror.timer
+    enabled: "{{ claude_workspace_mirror_ready | bool }}"
+    state: "{{ 'started' if claude_workspace_mirror_ready | bool else 'stopped' }}"
+
+# ⚠ safe.directory, and it is not optional. The mirror is root-owned and the session user
+# reads it, so every git command {{ claude_user }} runs against it — this clone, and every
+# `git fetch` a session runs later — refuses with "detected dubious ownership in repository"
+# until the path is allowlisted. The error names ownership and reads like corruption.
+- name: Read the session user's existing safe.directory entries
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git config --global --get-all safe.directory
+  environment:
+    HOME: "{{ claude_home }}"
+  register: claude_workspace_mirror_safe_existing
+  changed_when: false
+  # `--get-all` exits 1 when the key is unset, which is the normal first run.
+  failed_when: false
+  when: claude_workspace_mirror_ready | bool
+
+- name: Allow the session user to read the root-owned mirror
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git config --global --add safe.directory {{ claude_workspace_mirror_path }}
+  environment:
+    HOME: "{{ claude_home }}"
+  # The guard below is the idempotence, so reaching this task always writes a line.
+  changed_when: true
+  # `--add` APPENDS, so the command is not idempotent on its own: without the guard every
+  # converge writes another duplicate line into the session user's ~/.gitconfig, forever.
+  when:
+    - claude_workspace_mirror_ready | bool
+    - claude_workspace_mirror_path not in (claude_workspace_mirror_safe_existing.stdout | default(''))
+
+# SEEDED, NEVER UPDATED, for the same reason as the public clones above: a re-run that
+# fast-forwarded this would move the branch under a session mid-task.
+#
+# `origin` is the LOCAL MIRROR, not GitHub. That is deliberate and it is the design: a
+# session in this clone can commit and cannot push anywhere, which is the arrangement
+# claude-247.md already describes — 247 writes a branch, the Mac bundles and pushes it.
+- name: Clone the workspace repo from the mirror, as the session user
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git clone {{ claude_workspace_mirror_path }}
+      {{ claude_workspace }}/{{ claude_workspace_mirror_dest }}
+    creates: "{{ claude_workspace }}/{{ claude_workspace_mirror_dest }}/.git"
+  environment:
+    HOME: "{{ claude_home }}"
+  when: claude_workspace_mirror_ready | bool
