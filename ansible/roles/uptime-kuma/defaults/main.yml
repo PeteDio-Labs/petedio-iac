@@ -5,8 +5,10 @@
 # measuring is down, so it cannot live on an LXC guest or on either Proxmox
 # node. Pete-Pi is outside the cluster and dual-homed: eth0 on the .50 homelab
 # LAN (default route, metric 100) and wlan0 on the .86 home LAN (metric 600).
-# That second leg is not incidental: it is where the TVs live, and since PET-334 the
-# `plex-bridge` role serves them from it (socat 192.168.86.46:32400 -> 192.168.50.236).
+# That second leg is not incidental: it is where the TVs live, and it is the only
+# vantage in this inventory that can prove a mesh path is real. The `plex-bridge`
+# proxy served plex to them from it until PET-474 retired it, and pve02's own mesh
+# adapter carries that traffic instead.
 # plex 103 at 192.168.86.140 died with pve01 on 2026-09-03; plex-gpu 236 is probed on .50.
 #
 # WHY v1 AND NOT v2. The study reads raw heartbeats out of SQLite to compute a
