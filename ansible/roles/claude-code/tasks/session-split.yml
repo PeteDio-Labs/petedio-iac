@@ -32,8 +32,9 @@
     msg: >-
       claude_remote_sessions entry '{{ item.name }}' serves
       {{ claude_workspace }}/{{ item.dir }}, which is not a directory. No unit is rendered
-      for it, and the rest of this play converges. Clone it — this role does not clone
-      private repos — or drop the entry.
+      for it, and the rest of this play converges. For petedio-workspace, set
+      claude_workspace_mirror_enable and re-run — never `gh auth login` on this host. For
+      anything else, clone it or drop the entry.
   loop: "{{ claude_sessions_unservable }}"
   loop_control:
     label: "{{ item.name }}"

@@ -20,8 +20,11 @@ closes.
 
 Remote Control requires signing in to a claude.ai account on a Pro, Max, Team or
 Enterprise plan. **API keys and long-lived `claude setup-token` tokens are refused** — the
-feature does not accept them, so there is no unattended path to an eligible login. The same
-is true of `gh`.
+feature does not accept them, so there is no unattended path to an eligible login.
+
+`gh` is a different case. It would accept a token, and that is the reason this host must not
+give it one. For the route a private clone takes instead, see "The private workspace repo"
+below.
 
 So this role installs, configures and renders the units, and starts them only once the
 operator steps are done. `claude_remote_enable` defaults to `false`, so a host nobody has
@@ -84,7 +87,52 @@ on merge; nothing here needs a node-side step, because nothing here runs Docker.
    ⚠ Do not pass `-e claude_remote_enable=true` instead: the next run without the flag stops
    the server, which is how a loop deploy took claude-247's down.
 
-6. **Optional — let it open PRs.** `gh auth login` as the `claude` user.
+6. **Optional — deliver the private workspace repo.** Declare
+   `claude_workspace_mirror_enable: true` in the host's `host_vars` and re-run. The first run
+   generates a deploy key on the host and prints its public half; paste that at
+   `github.com/PeteDio-Labs/petedio-workspace/settings/keys/new` with **Allow write access
+   unchecked**, then re-run. See "The private workspace repo" below.
+
+   > ⚠ **Do not run `gh auth login` on this host.** Step 6 said to, until PET-480.
+   > `vault/Claude/claude-247.md` forbids it by name: the OAuth token it writes to
+   > `~/.config/gh/hosts.yml` carries Pedro's permissions, under the same user every session
+   > runs as. A session here does not push and does not open pull requests — it writes a
+   > branch, and the Mac bundles and pushes it.
+
+## The private workspace repo (PET-480)
+
+`petedio-workspace` is private, so nothing clones it without a credential, and the login that
+would supply one is forbidden here. Pedro chose a **read-only deploy key** on 2026-09-17, as
+an explicit override of the rule that keeps every credential off this host.
+
+**The override is narrow, and the shape is what makes it narrow.** The forbidden act writes a
+token carrying his permissions across every repo he can reach, write included. A deploy key
+scoped read-only to one repository cannot push, cannot read a second repository, and cannot
+act as him. Blast radius was the objection, not the presence of a secret.
+
+**No session holds anything.** Three properties carry that:
+
+| | |
+|---|---|
+| The key is generated on the host | No private half transits the Mac, a transcript, or a session's context. The play prints only the public half. |
+| The key is `0400 root:root` | Sessions run as `claude` with no sudo (PET-408), so a session cannot read it. `/etc/claude-loop` already works this way. |
+| Root fetches into a bare mirror it owns | `/var/lib/claude-workspace-mirror/petedio-workspace.git`, refreshed by `claude-workspace-mirror.timer`. The session's working clone is cloned from that mirror over a local path. |
+
+⚠ **The mirror is the security boundary, not an extra hop.** The obvious shape — point the
+`claude`-owned clone at GitHub and let a root timer fetch it — hands root a `git` process
+running inside a directory the sessions own. `git` honours `core.sshCommand`, `core.hooksPath`
+and `core.fsmonitor` from the repository's own config, so a session that rewrites its clone's
+`.git/config` gets code execution as root on the next fetch. Root must never run `git` inside
+a path a session can write.
+
+**`origin` in the session's clone is the local mirror, not GitHub.** A session can commit and
+cannot push, which is the arrangement `claude-247.md` already describes. Nothing updates that
+clone on a schedule either: a session pulls its own repo, like any developer.
+
+To rotate the key, delete `/etc/claude-workspace-mirror/deploy-key` and its `.pub`, re-run the
+play, and replace the deploy key on GitHub with the new public half. The task is
+`creates:`-guarded on purpose — a run that regenerated the key every converge would break
+delivery quietly.
 
 ## Verify
 
@@ -206,8 +254,11 @@ Be clear about what the host exposes whatever the mode. Claude Code's own guidan
 Postgres. Until the work loop, the role provisioned no
 outbound credential: the only key it placed was your *public* key, authorizing inbound SSH.
 So a session reached what the LAN serves unauthenticated, plus whatever you added by hand
-afterwards — note that `gh auth login` leaves its OAuth token in `~/.config/gh/hosts.yml`,
-under the same user the sessions run as.
+afterwards. ⚠ **`gh auth login` is the one addition that is forbidden outright**
+(`vault/Claude/claude-247.md`): its OAuth token lands in `~/.config/gh/hosts.yml` under the
+same user the sessions run as, and it carries Pedro's permissions across every repo he can
+reach. The deploy key above is the sanctioned counter-example — one repository, read-only,
+`0400 root`, and reachable only by a root timer.
 
 ⚠ **The work loop changes that.** See "What the loop changes about the isolation story"
 below before you set `claude_loop_enable`.
