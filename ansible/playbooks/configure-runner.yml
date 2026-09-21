@@ -150,6 +150,13 @@
       ansible.builtin.file:
         path: "{{ runner_home }}"
         state: directory
+        # ⚠ follow: false is load-bearing (PET-420, same primitive as PET-410). This task
+        # runs as ROOT while the path lives inside a home the `runner` user owns, and
+        # ansible.builtin.file defaults to follow: yes — so a symlink planted at this path
+        # (e.g. `ln -s /etc /home/runner/actions-runner`) gets its TARGET chowned to
+        # runner instead of the link itself. `runner` executes code it did not write, so
+        # planting that link needs no privilege at all.
+        follow: false
         owner: "{{ runner_user }}"
         group: "{{ runner_user }}"
         mode: "0755"
@@ -281,6 +288,9 @@
       ansible.builtin.file:
         path: "{{ runner_home }}/bin/installdependencies.sh.done"
         state: touch
+        # ⚠ follow: false is load-bearing (PET-420, same primitive as PET-410) — see the
+        # install-directory task above.
+        follow: false
         owner: "{{ runner_user }}"
         group: "{{ runner_user }}"
         mode: "0644"
