@@ -222,9 +222,10 @@ cat /home/claude/loop/run/<ITEM>/mcp-list.log   # No MCP servers configured. …
 > Pedro's claude.ai login, and it owns the Claude Code install. A session could use the login
 > from a process of its own, or replace the binary the next tick runs. The tick's unit keeps
 > systemd's default `KillMode=control-group`, so every process the session started ends with
-> the tick, and `claude` has no linger. Cron is the gap: `claude` may install a crontab, and
-> cron runs it after the tick ends (checked on 2026-09-21). PET-488 tracks separating the
-> login from the session, and denying `claude` a crontab.
+> the tick. Without linger, `claude` has a user manager only while someone is logged in as
+> `claude`. Cron is the gap: `claude` may install a crontab, and cron runs it after the tick
+> ends (checked on 2026-09-21). PET-488 tracks separating the login from the session, and
+> denying `claude` a crontab.
 
 Label one small, real work item first. Check the draft pull request has the spec-diff
 comment, that its author is the App and not you, and that the `Merge` button is unavailable.
