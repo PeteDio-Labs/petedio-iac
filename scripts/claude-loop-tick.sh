@@ -112,6 +112,23 @@ MARKER=".git/claude-loop-checkout"
 
 LOOP_USER="${CLAUDE_LOOP_USER:-claude}"
 
+# ⚠ THE SESSION GETS NONE OF PEDRO'S CLAUDE.AI CONNECTORS (PET-487). The loop user is logged in
+# to Pedro's claude.ai account, and a plain `claude -p` loads every connector on it: Gmail,
+# Calendar, Drive and the rest. The prompt carries work-item text, so the session must reach
+# none of them. Three switches do that, measured on 247 with Claude Code 2.1.270:
+#   · NO_CONNECTORS_ENV turns the claude.ai connectors off. It rides on the command, after the
+#     privilege drop. Alone it is not enough: an `env` block in the loop user's own settings
+#     beats it, and a session can write those settings.
+#   · NO_CONNECTORS_SETTINGS passes the same switch as --settings, which beats user settings.
+#   · --strict-mcp-config, on the session only, ignores every MCP server that --mcp-config does
+#     not name, and the tick names none. Never pass --mcp-config: it takes every argument
+#     after it, and on 247 it swallowed the subcommand that followed.
+# Neither switch belongs in ~/.claude/settings.json, which a session can rewrite, or in managed
+# settings, which would also strip the connectors from the Remote Control sessions on 247.
+# Step 7 proves the result before every session.
+NO_CONNECTORS_ENV="ENABLE_CLAUDEAI_MCP_SERVERS=false"
+NO_CONNECTORS_SETTINGS='{"env":{"ENABLE_CLAUDEAI_MCP_SERVERS":"false"}}'
+
 log() { printf '\033[1;34m[claude-loop] %s\033[0m\n' "$*" >&2; }
 
 # Run something as the unprivileged loop user. Everything that reads or writes the working
@@ -355,7 +372,8 @@ fi
 #
 # `claude -p` does NOT need a pre-trusted directory — the workspace trust dialog is skipped
 # in non-interactive mode — so the separate clone costs nothing that the shared one bought.
-# Trust it by hand anyway if you want MCP tools resolving in a tick (see the runbook).
+# Do not trust it by hand to make MCP tools resolve: the session runs with none, on purpose
+# (PET-487).
 [ -d "$CHECKOUT/.git" ] || fail_item "the loop's clone is missing at $CHECKOUT — re-run the play"
 [ -f "$CHECKOUT/$MARKER" ] || fail_item "$CHECKOUT carries no $MARKER — refusing to reset a directory that may not be the loop's"
 
@@ -427,8 +445,42 @@ body = (body
 open(os.environ["OUT"], "w").write(body)
 ' || fail_item "could not render the loop prompt"
 
-log "running claude -p (model ${MODEL}, ceiling ${TIMEOUT_SEC}s, ${MAX_TURNS} turns)"
+# Here, not just before the session: `mcp list` reads the project and local MCP scopes from
+# the working directory, so the proof below must run where the session runs.
 cd "$CHECKOUT" || fail_item "cannot enter $CHECKOUT"
+
+# ⚠ PROVE THE SESSION HAS NO CONNECTORS BEFORE IT STARTS (PET-487). A switch that stops working
+# fails silently: the session just has more tools. So ask Claude Code, as the loop user, in the
+# checkout, with the same two switches, and stop unless its only answer is "No MCP servers
+# configured". Anything else fails closed, including output the tick cannot read and a new
+# wording after a Claude Code upgrade.
+#
+# `mcp list` ignores --strict-mcp-config (measured on 247), so this proves the two claude.ai
+# switches and not the third. It still lists a server that a previous session added to the
+# loop user's own config. --strict-mcp-config would hide that server from the session, but a
+# planted server needs a human's look, so it stops the tick too.
+#
+# `mcp list` starts each server it finds to check its health. That is why it runs dropped,
+# like the session, and before the token exists.
+#
+# Its output stays in the run dir. Each line carries a server's URL or command, which can hold
+# a key, so the detail reports server names only: the detail reaches lab-verify, off the host.
+# The command line goes to the tick log, not the run dir, because the proof needs that file to
+# hold exactly one line. A read-back then shows which switches the proof ran with.
+MCP_LOG="$TICK_DIR/mcp-list.log"
+MCP_RC=0
+log "connector proof: $NO_CONNECTORS_ENV claude --settings '$NO_CONNECTORS_SETTINGS' mcp list, as $LOOP_USER in $CHECKOUT"
+as_loop_user env "$NO_CONNECTORS_ENV" bash -c '
+  timeout --kill-after=10 120 "$1" --settings "$2" mcp list < /dev/null > "$3" 2>&1
+' _ "$CLAUDE_BIN" "$NO_CONNECTORS_SETTINGS" "$MCP_LOG" || MCP_RC=$?
+MCP_LINES="$(as_loop_user grep -v '^[[:space:]]*$' "$MCP_LOG" 2>/dev/null || true)"
+if [ "$MCP_RC" -ne 0 ] || [[ "$MCP_LINES" == *$'\n'* ]] || [[ "$MCP_LINES" != "No MCP servers configured"* ]]; then
+  MCP_NAMES="$(printf '%s\n' "$MCP_LINES" | sed -n 's/^\([^:]*\): .*/\1/p' | paste -sd, - | sed 's/,/, /g' | head -c 300 || true)"
+  fail_item "the connector proof failed: claude mcp list exited $MCP_RC and did not report zero MCP servers (${MCP_NAMES:-no server names in its output}). The session did not run. Read $MCP_LOG as $LOOP_USER"
+fi
+log "connector proof passed: claude mcp list reports no MCP servers for the session"
+
+log "running claude -p (model ${MODEL}, ceiling ${TIMEOUT_SEC}s, ${MAX_TURNS} turns)"
 # `|| SESSION_RC=$?` and not a bare `$?` on the next line: under `set -e` a non-zero timeout
 # aborts before anything reads it, and the tick would then report the generic starting
 # failure instead of "the session hit the ceiling".
@@ -438,11 +490,15 @@ SESSION_RC=0
 # dir — are opened by claude, not by a root shell that a planted symlink there could aim.
 # Values travel in as positional args, so nothing from the environment interpolates into the
 # inner script.
-as_loop_user bash -c '
+#
+# ⚠ NO CONNECTORS AND NO MCP SERVERS (PET-487): NO_CONNECTORS_ENV after the drop, the
+# --settings pin the proof above checked, and --strict-mcp-config. The constants explain each.
+as_loop_user env "$NO_CONNECTORS_ENV" bash -c '
   timeout --signal=TERM --kill-after=60 "$1" \
     "$2" -p --permission-mode bypassPermissions --max-turns "$3" --model "$6" \
+    --settings "$7" --strict-mcp-config \
     < "$4" > "$5" 2>&1
-' _ "$TIMEOUT_SEC" "$CLAUDE_BIN" "$MAX_TURNS" "$TICK_DIR/prompt.txt" "$TICK_DIR/session.log" "$MODEL" || SESSION_RC=$?
+' _ "$TIMEOUT_SEC" "$CLAUDE_BIN" "$MAX_TURNS" "$TICK_DIR/prompt.txt" "$TICK_DIR/session.log" "$MODEL" "$NO_CONNECTORS_SETTINGS" || SESSION_RC=$?
 if [ "$SESSION_RC" -eq 124 ]; then
   fail_item "the session hit the ${TIMEOUT_SEC}s ceiling; see $TICK_DIR/session.log"
 elif [ "$SESSION_RC" -ne 0 ] && as_loop_user grep -q '^Error: Reached max turns' "$TICK_DIR/session.log"; then
@@ -622,11 +678,11 @@ log "opened $PR"
 # matters — but it is recorded, because a PR without this table is the exact artefact this
 # loop is supposed to make impossible.
 if GH_TOKEN="$TOKEN" gh pr comment "$PR" --repo "$REPO" --body-file "$SPEC_DIFF_SAFE" >/dev/null 2>"$STATE_DIR/comment.err"; then
-  record_claim worked "draft PR $PR with the spec diff"
+  record_claim worked "draft PR $PR with the spec diff" "$PR"
   OUTCOME=worked
   DETAIL="$ITEM → $PR (${COMMITTED} files, spec diff posted)"
 else
-  record_claim worked "draft PR $PR, but the spec diff did not post"
+  record_claim worked "draft PR $PR, but the spec diff did not post" "$PR"
   OUTCOME=worked
   DETAIL="$ITEM → $PR (${COMMITTED} files) — ⚠ the spec diff failed to post: $(tr '\n' ' ' < "$STATE_DIR/comment.err" | head -c 200). It is on the host at $SPEC_DIFF."
 fi

@@ -1,12 +1,12 @@
 {{ ansible_managed | comment }}
 # One tick of the ticket-driven work loop (PET-399), triggered by claude-loop.timer.
 #
-# Runs AS {{ claude_user }}, which is not a convenience: the Plane connector and the
-# claude.ai login are bound to that user's interactive session, and a different service
-# user loses both. It is also why the loop's two secrets are NOT handed to this unit
-# through `EnvironmentFile=` — a session in bypassPermissions owns this uid and can read
-# /proc/<pid>/environ while a tick runs. The tick asks a root-owned broker instead, and
-# nothing secret appears below.
+# The session runs AS {{ claude_user }}, which is not a convenience: the claude.ai login is
+# bound to that user's interactive session, and a different user loses it. The session gets
+# none of that login's connectors (PET-487). The uid is also why the loop's two secrets are
+# NOT handed to this unit through `EnvironmentFile=` — a session in bypassPermissions owns
+# this uid and can read /proc/<pid>/environ while a tick runs. The tick asks a root-owned
+# broker instead, and nothing secret appears below.
 #
 # Type=oneshot: a tick does at most one work item and exits. The timer decides when the
 # next one happens; the tick's own flock decides whether it may start at all.

@@ -21,6 +21,15 @@
 # prompt built from work-item text the loop does not control — so when you add a scenario,
 # ask what it assumes the session will not do.
 #
+# ⚠ THE STUB `claude` ANSWERS `mcp list` TOO (PET-487). Before every session the tick asks
+# Claude Code whether the session would load any MCP server, and stops unless the answer is
+# none. The stub records each call's argv and environment beside itself, so scenarios 25-30
+# check what the tick passed, not only what it reported. Scenario 28 is the hostile one: a
+# session that plants a server for the next tick.
+#
+# ⚠ RUN IT ON LINUX. The tick needs flock and GNU timeout, and macOS ships neither, so on the
+# Mac most scenarios fail at `flock: command not found`. Run it on 247 as the loop user.
+#
 # Same posture as scripts/test-palworld-unit-render.py — a static check you run by hand, not
 # a CI job. Nothing in .github/workflows watches it.
 #
@@ -79,12 +88,36 @@ esac
 S
   cat > "$H/claude" <<'S'
 #!/usr/bin/env bash
+D="$(dirname "$0")"
+# The connector proof (PET-487): `claude --settings <json> mcp list`, stdin from /dev/null. It
+# answers the way Claude Code 2.1.270 does on 247: the no-servers line, or a health-check
+# header and one line per server. `mcp-servers` beside this stub stands in for the loop user's
+# own MCP config (~/.claude.json), which a session can write and `git clean` never reaches.
+case " $* " in
+  *" mcp list "*)
+    echo mcp-list >> "$D/calls"
+    printf '%s\n' "$*" > "$D/mcp.args"
+    env > "$D/mcp.env"
+    if [ -n "${STUB_MCP_OUT:-}" ]; then
+      printf '%s\n' "$STUB_MCP_OUT"
+    elif [ -s "$D/mcp-servers" ]; then
+      printf 'Checking MCP server health…\n\n'
+      cat "$D/mcp-servers"
+    else
+      echo 'No MCP servers configured. Use `claude mcp add` to add a server.'
+    fi
+    exit "${STUB_MCP_RC:-0}" ;;
+esac
 PROMPT="$(cat)"
-printf '%s\n' "$*" > "$(dirname "$0")/claude.args"
+echo session >> "$D/calls"
+printf '%s\n' "$*" > "$D/claude.args"
+env > "$D/claude.env"
 case "${STUB_MODE:-good}" in
   good)
     echo hello > newfile.txt
     P="$(printf '%s' "$PROMPT" | grep -o 'diff->[^ ]*' | head -1 | cut -c7-)"
+    # The deployed prompt names the path in a sentence, not in the test template's shorthand.
+    [ -n "$P" ] || P="$(printf '%s' "$PROMPT" | sed -n 's/.*Write a table to `\([^`]*\)`.*/\1/p' | head -1)"
     [ -n "$P" ] || { echo "stub: no spec-diff path in the rendered prompt" >&2; exit 9; }
     mkdir -p "$(dirname "$P")"
     printf '| asked | shipped | status |\n|---|---|---|\n| A | done | done |\n' > "$P"
@@ -106,10 +139,10 @@ case "${STUB_MODE:-good}" in
 
   # --- hostile sessions (PET-409) -------------------------------------------------------
   # Everything above models a session that behaves itself, which is exactly why the
-  # credential-helper hole survived 37 green assertions. These three model a session that
+  # credential-helper hole survived 37 green assertions. These model a session that
   # does not. It runs as the same user, in the same directory, moments before the token
   # exists — so .git/config, .git/hooks and the remote are all its to rewrite.
-  hostile-seturl|hostile-insteadof|hostile-pushinsteadof|hostile-hook)
+  hostile-seturl|hostile-insteadof|hostile-pushinsteadof|hostile-hook|hostile-mcp)
     echo hello > newfile.txt
     P="$(printf '%s' "$PROMPT" | grep -o 'diff->[^ ]*' | head -1 | cut -c7-)"
     mkdir -p "$(dirname "$P")"
@@ -133,6 +166,10 @@ case "${STUB_MODE:-good}" in
         mkdir -p .git/hooks
         printf '#!/bin/sh\nenv > %s/hook-env.txt\n' "$EVIL_DIR" > .git/hooks/pre-push
         chmod +x .git/hooks/pre-push ;;
+      hostile-mcp)
+        # PET-487: the loop user owns ~/.claude.json, so a session can `claude mcp add` a
+        # server that every later session would load. This appends to the stub's stand-in.
+        printf 'planted: /bin/sh -c payload - ✔ Connected\n' >> "$D/mcp-servers" ;;
     esac
     ;;
 esac
@@ -445,6 +482,111 @@ done
 env -i "${UNIT_ENV_NO_MODEL[@]}" "$TICK" >"$CLAUDE_LOOP_HOME/out" 2>&1; RC=$?
 [ "$RC" -ne 0 ] && ok "without the model it exits non-zero" || no "exits non-zero" "rc=$RC"
 hb detail | grep -q "By hand, pass the unit's environment" && ok "the refusal names the by-hand fix" || no "detail" "$(hb detail)"
+
+# The switch and the pin exactly as the tick must pass them (PET-487).
+PIN='{"env":{"ENABLE_CLAUDEAI_MCP_SERVERS":"false"}}'
+
+say "25. the connector proof runs before the session, with the connectors off (PET-487)"
+# The loop user is logged in to Pedro's claude.ai account, so an unguarded session loads his
+# Gmail, Calendar and Drive connectors. The ambient `true` stands in for anything upstream that
+# turns them back on: the tick must set the switch itself, not inherit it.
+setup "$ONE" good
+export ENABLE_CLAUDEAI_MCP_SERVERS=true
+"$TICK" >"$CLAUDE_LOOP_HOME/out" 2>&1; RC=$?
+unset ENABLE_CLAUDEAI_MCP_SERVERS
+[ "$RC" -eq 0 ] && [ "$(hb outcome)" = "worked" ] && ok "the tick works with the proof in place" || no "worked" "rc=$RC · $(hb outcome) / $(hb detail)"
+[ "$(tr '\n' ' ' < "$CLAUDE_LOOP_HOME/calls" 2>/dev/null)" = "mcp-list session " ] \
+  && ok "claude mcp list ran once, before the session" || no "call order" "$(cat "$CLAUDE_LOOP_HOME/calls" 2>/dev/null)"
+grep -qx 'ENABLE_CLAUDEAI_MCP_SERVERS=false' "$CLAUDE_LOOP_HOME/mcp.env" 2>/dev/null \
+  && ok "the proof ran with ENABLE_CLAUDEAI_MCP_SERVERS=false over an ambient true" || no "proof env" "$(grep ENABLE_CLAUDEAI "$CLAUDE_LOOP_HOME/mcp.env" 2>/dev/null)"
+grep -qF -- "--settings $PIN mcp list" "$CLAUDE_LOOP_HOME/mcp.args" 2>/dev/null \
+  && ok "the proof pins the switch with --settings, which beats user settings" || no "proof args" "$(cat "$CLAUDE_LOOP_HOME/mcp.args" 2>/dev/null)"
+grep -q '^No MCP servers configured' "$CLAUDE_LOOP_HOME/run/PET-500/mcp-list.log" 2>/dev/null \
+  && ok "the proof's output stays in the run dir" || no "mcp-list.log" "$(ls "$CLAUDE_LOOP_HOME/run/PET-500" 2>/dev/null)"
+grep -q "connector proof passed" "$CLAUDE_LOOP_HOME/out" && ok "the tick log records the proof" || no "log line" "$(grep -i mcp "$CLAUDE_LOOP_HOME/out")"
+grep -qF -- "connector proof: ENABLE_CLAUDEAI_MCP_SERVERS=false claude --settings '$PIN' mcp list" "$CLAUDE_LOOP_HOME/out" \
+  && ok "the tick log names the proof's command and both switches" || no "command line" "$(grep -i 'connector proof' "$CLAUDE_LOOP_HOME/out")"
+
+say "26. the session runs with the connectors off and loads no MCP server at all (PET-487)"
+setup "$ONE" good
+export ENABLE_CLAUDEAI_MCP_SERVERS=true
+"$TICK" >/dev/null 2>&1
+unset ENABLE_CLAUDEAI_MCP_SERVERS
+grep -qx 'ENABLE_CLAUDEAI_MCP_SERVERS=false' "$CLAUDE_LOOP_HOME/claude.env" 2>/dev/null \
+  && ok "claude -p got ENABLE_CLAUDEAI_MCP_SERVERS=false over an ambient true" || no "session env" "$(grep ENABLE_CLAUDEAI "$CLAUDE_LOOP_HOME/claude.env" 2>/dev/null)"
+grep -qF -- "--settings $PIN" "$CLAUDE_LOOP_HOME/claude.args" 2>/dev/null \
+  && ok "claude -p got the --settings pin" || no "--settings" "$(cat "$CLAUDE_LOOP_HOME/claude.args" 2>/dev/null)"
+grep -qE -- '(^| )--strict-mcp-config( |$)' "$CLAUDE_LOOP_HOME/claude.args" 2>/dev/null \
+  && ok "claude -p got --strict-mcp-config" || no "--strict-mcp-config" "$(cat "$CLAUDE_LOOP_HOME/claude.args" 2>/dev/null)"
+# --mcp-config takes every argument after it, so on 247 it swallowed the arguments that followed.
+! grep -qE -- '(^| )--mcp-config( |$)' "$CLAUDE_LOOP_HOME/claude.args" 2>/dev/null \
+  && ok "claude -p got no --mcp-config" || no "no --mcp-config" "$(cat "$CLAUDE_LOOP_HOME/claude.args")"
+
+say "27. a proof that does not report zero servers stops the tick before the session (PET-487)"
+# A server listed, a non-zero exit, blank output, and new wording after an upgrade. A proof
+# that passes on output it cannot read is the silent failure it exists to catch. `listed` runs
+# last, because the checks after the loop read its heartbeat.
+for CASE in exit blank wording listed; do
+  setup "$ONE" good
+  case "$CASE" in
+    listed) export STUB_MCP_OUT=$'Checking MCP server health…\n\nclaude.ai Gmail: https://gmail.mcp.claude.com/mcp - ✔ Connected'
+            WANT="claude.ai Gmail" ;;
+    exit)   export STUB_MCP_OUT='No MCP servers configured.' STUB_MCP_RC=1
+            WANT="exited 1" ;;
+    blank)  export STUB_MCP_OUT=' '
+            WANT="no server names" ;;
+    wording) export STUB_MCP_OUT='No MCP servers found.'
+            WANT="no server names" ;;
+  esac
+  "$TICK" >/dev/null 2>&1; RC=$?
+  unset STUB_MCP_OUT STUB_MCP_RC
+  [ "$RC" -ne 0 ] && [ "$(hb outcome)" = "failed" ] && ok "$CASE: the tick fails" || no "$CASE: the tick fails" "rc=$RC outcome=$(hb outcome)"
+  hb detail | grep -q "connector proof failed" && hb detail | grep -qF "$WANT" \
+    && ok "$CASE: detail names the proof and '$WANT'" || no "$CASE: detail" "$(hb detail)"
+  [ ! -f "$CLAUDE_LOOP_HOME/claude.args" ] && ok "$CASE: the session never ran" || no "$CASE: the session ran anyway" "$(cat "$CLAUDE_LOOP_HOME/claude.args")"
+  [ ! -s "$GH_LOG" ] && ok "$CASE: no PR was opened" || no "$CASE: no PR" "$(cat "$GH_LOG")"
+done
+[ "$(claim outcome)" = "failed" ] && ok "the failed proof counts against the item" || no "claim outcome" "got $(claim outcome)"
+# The detail reaches lab-verify, off the host. mcp list prints each server's URL or command,
+# which can carry a key, so the detail carries names only.
+hb detail | grep -q "gmail.mcp.claude.com" && no "a server URL reached the heartbeat" "$(hb detail)" || ok "no server URL reaches the heartbeat"
+
+say "28. a server one session plants stops the NEXT tick before its session runs (PET-487)"
+# --strict-mcp-config hides a planted server from the session, so only the proof can see it.
+TWO='{"label":"agent-ready","examined":41,"labelled":2,"eligible":2,"items":[{"key":"PET-500","id":"u1","name":"Give the thing a second copy","description":"Do A. Do B."},{"key":"PET-501","id":"u2","name":"Give the other thing a copy","description":"Do C."}]}'
+setup "$TWO" hostile-mcp
+"$TICK" >/dev/null 2>&1
+[ "$(hb outcome)" = "worked" ] && [ "$(hb item)" = "PET-500" ] && ok "the planting tick still opened its PR" || no "first tick" "$(hb item) $(hb outcome) / $(hb detail)"
+: > "$GH_LOG"
+"$TICK" >/dev/null 2>&1; RC=$?
+[ "$RC" -ne 0 ] && [ "$(hb outcome)" = "failed" ] && [ "$(hb item)" = "PET-501" ] \
+  && ok "the next tick fails on PET-501" || no "second tick" "rc=$RC $(hb item) $(hb outcome) / $(hb detail)"
+hb detail | grep -q "planted" && ok "detail names the planted server" || no "detail" "$(hb detail)"
+[ "$(grep -c '^session$' "$CLAUDE_LOOP_HOME/calls")" = 1 ] && ok "the second session never ran" || no "session count" "$(cat "$CLAUDE_LOOP_HOME/calls")"
+[ ! -s "$GH_LOG" ] && ok "no second PR" || no "no second PR" "$(cat "$GH_LOG")"
+
+say "29. the deployed prompt names no connector, and the spec diff still posts (PET-487)"
+# The prompt the play installs, not the harness's one-line template.
+setup "$ONE" good
+CLAUDE_LOOP_PROMPT="$(cd "$(dirname "$TICK")/.." && pwd)/ansible/roles/claude-code/files/claude-loop-prompt.md"
+export CLAUDE_LOOP_PROMPT
+"$TICK" >/dev/null 2>&1; RC=$?
+RENDERED="$CLAUDE_LOOP_HOME/run/PET-500/prompt.txt"
+[ -s "$RENDERED" ] && grep -q "PET-500" "$RENDERED" && ok "the deployed prompt rendered" || no "rendered prompt" "$(head -3 "$RENDERED" 2>/dev/null)"
+! grep -Eiq 'connector|mcp|gmail|calendar|drive|comment on' "$RENDERED" \
+  && ok "the rendered prompt names no connector and asks for no comment" || no "connector wording" "$(grep -Ein 'connector|mcp|gmail|calendar|drive|comment on' "$RENDERED")"
+[ "$RC" -eq 0 ] && [ "$(hb outcome)" = "worked" ] && ok "the tick works from the deployed prompt" || no "worked" "rc=$RC · $(hb outcome) / $(hb detail)"
+grep -q "pr comment" "$GH_LOG" && ok "the spec diff posts with gh, not through a connector" || no "pr comment" "$(cat "$GH_LOG")"
+
+say "30. the claim record keeps the PR url, whether or not the spec diff posts (PET-487)"
+setup "$ONE" good
+"$TICK" >/dev/null 2>&1
+claim pr | grep -q "pull/999" && ok "spec diff posted: the claim carries the PR url" || no "claim pr" "got $(claim pr)"
+setup "$ONE" good
+export GH_COMMENT_FAILS=1
+"$TICK" >/dev/null 2>&1
+claim pr | grep -q "pull/999" && ok "spec diff failed: the claim still carries the PR url" || no "claim pr" "got $(claim pr)"
+claim detail | grep -q "did not post" && ok "and its detail says the spec diff did not post" || no "claim detail" "$(claim detail)"
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
