@@ -17,7 +17,10 @@ media_storage_pools:
       - ata-SATA_SSD_BB2A07340AF101344771
       - ata-SATA_SSD_2E8D07431A9700001353
       - ata-SATA_SSD_BF330743164401430632
-    dirs: [tv-shows, anime, movies]
+    # No anime directory since PET-482. Sonarr's add dialog reuses the last root
+    # folder chosen, so a second TV root sent two shows to a path the TV Shows
+    # library never scanned. Anime files under tv-shows like any other series.
+    dirs: [tv-shows, movies]
 
   - name: downloads
     # No redundancy on purpose. This holds in-flight torrents, which are
