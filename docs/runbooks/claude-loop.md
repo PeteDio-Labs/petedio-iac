@@ -253,6 +253,39 @@ ssh pedro@192.168.50.247  'sudo rm /var/lib/claude-loop/items/PET-500.json'   # 
 
 Fix the underlying problem first. The claim file records the reason for every attempt.
 
+**Change the model.** Every tick passes `--model` to `claude -p`. The value is
+`claude_loop_model` in `roles/claude-code/defaults/main.yml`, and it ships as `sonnet`. An
+alias (`sonnet`, `opus`, `haiku`) follows its family to each release, and a full model ID
+pins one model. To change it, set the variable in
+`ansible/inventory/host_vars/claude-247.yml`, merge the pull request, and re-run the play:
+
+```sh
+./scripts/deploy-claude-loop.sh
+```
+
+Don't pass it with `-e`. The next play run without the flag puts the default back, and no
+commit records that the loop's cost against the shared Max quota changed. `PET-431` is
+that failure for `claude_remote_enable`.
+
+To confirm what the unit carries and what a tick ran, read three places:
+
+```sh
+ssh pedro@192.168.50.247 'systemctl show claude-loop.service -p Environment' | tr ' ' '\n' | grep MODEL
+ssh pedro@192.168.50.247 'journalctl -u claude-loop.service --no-pager | grep "running claude -p" | tail -3'
+ssh claude@192.168.50.247 'grep \"model\" /var/lib/claude-loop/items/PET-500.json'
+```
+
+The tick has no fallback for this value. With `CLAUDE_LOOP_MODEL` missing or blank, the tick
+fails before it asks the broker for work, and the heartbeat's `detail` names the setting.
+Without that refusal a tick runs the account default model, which changes when Anthropic
+ships a model (`PET-484`).
+
+Claude Code owns the list of valid names, so the tick checks only the value's shape. For a
+name it does not know, `claude -p` exits 1 and prints `There's an issue with the selected
+model` (measured on 2026-09-21, Claude Code 2.1.170). The tick records the item as failed,
+the attempt counts, and `session.log` holds the message. After you correct the name, clear
+the claim as described above.
+
 **Read what a tick actually did.** Session logs stay on the host and are never uploaded:
 
 ```sh

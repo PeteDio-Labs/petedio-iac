@@ -256,6 +256,14 @@ claude_loop_timeout_sec: 3600
 # A stop exits 1 and the tick records the item as failed, naming the ceiling.
 claude_loop_max_turns: 60
 
+# The model one `claude -p` run uses, passed as --model (PET-484). An alias (`sonnet`,
+# `opus`, `haiku`) follows the family to each release; a full id (`claude-sonnet-5`) pins one.
+# Without --model a tick runs the account default, which moves when Anthropic ships a model,
+# so the loop's cost against the shared Max quota would change with no commit to show for it.
+# The tick has no fallback and refuses an empty value. To change the model, set this in
+# host_vars and re-run the play — see docs/runbooks/claude-loop.md, "Change the model".
+claude_loop_model: sonnet
+
 # --- Loop identity (resolved from Vault by scripts/deploy-claude-loop.sh) ---------------
 # NEVER give the secret ones a default. A committed placeholder here would land on the host
 # as a 0400 file that looks provisioned and fails at the first mint, and the assert in

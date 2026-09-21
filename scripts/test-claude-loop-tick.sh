@@ -150,6 +150,9 @@ S
   export CLAUDE_BIN="$H/claude" CLAUDE_LOOP_REPO="PeteDio-Labs/petedio-iac"
   export CLAUDE_LOOP_MAX_ATTEMPTS=2 CLAUDE_LOOP_TIMEOUT_SEC=30 CLAUDE_LOOP_MAX_AGE_SEC=3900
   export CLAUDE_LOOP_MAX_TURNS=7
+  # The tick has no fallback for the model (PET-484), so every scenario declares one. A name
+  # no real model has: an assertion that finds it proves the value came from this variable.
+  export CLAUDE_LOOP_MODEL=stub-model
   export GH_LOG="$H/gh.log"; : > "$GH_LOG"
   export GH_COMMENT_FAILS=0
   export STUB_MODE="${2:-good}"
@@ -376,6 +379,50 @@ setup "$ONE" hostile-pushinsteadof
 [ "$(hb outcome)" = "failed" ] && ok "outcome=failed" || no "outcome=failed" "got $(hb outcome)"
 [ ! -s "$GH_LOG" ] && ok "no PR was opened" || no "no PR" "$(cat "$GH_LOG")"
 hb detail | grep -Eq "pushInsteadOf|push failed|not allowed" && ok "detail names the refusal" || no "detail" "$(hb detail)"
+
+claim() { python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]))" \
+  "$CLAUDE_LOOP_STATE_DIR/items/PET-500.json" "$1" 2>/dev/null; }
+
+say "20. the declared model reaches claude -p, the tick's log line and the claim record (PET-484)"
+setup "$ONE" good
+"$TICK" >"$CLAUDE_LOOP_HOME/out" 2>&1; RC=$?
+[ "$RC" -eq 0 ] && ok "exits 0" || no "exits 0" "rc=$RC · $(hb detail)"
+grep -q -- "--model stub-model" "$CLAUDE_LOOP_HOME/claude.args" && ok "claude -p got --model from CLAUDE_LOOP_MODEL" || no "--model passed" "$(cat "$CLAUDE_LOOP_HOME/claude.args" 2>/dev/null)"
+grep -q "running claude -p (model stub-model," "$CLAUDE_LOOP_HOME/out" && ok "the log line names the model" || no "log names the model" "$(grep 'running claude' "$CLAUDE_LOOP_HOME/out")"
+[ "$(claim outcome)" = "worked" ] && ok "claim outcome=worked" || no "claim outcome" "got $(claim outcome)"
+[ "$(claim model)" = "stub-model" ] && ok "the claim record names the model" || no "claim names the model" "got $(claim model)"
+
+say "21. a failed session still records the model it ran (PET-484)"
+setup "$ONE" boom
+"$TICK" >/dev/null 2>&1
+[ "$(claim outcome)" = "failed" ] && ok "claim outcome=failed" || no "claim outcome" "got $(claim outcome)"
+[ "$(claim model)" = "stub-model" ] && ok "the failed claim names the model" || no "failed claim names the model" "got $(claim model)"
+
+say "22. a tick with no CLAUDE_LOOP_MODEL refuses before any work is claimed (PET-484)"
+# The production shape of this failure is a unit that lost its Environment= line, so the
+# variable is unset, not blank. A fallback in the tick would run the account default here
+# and report a clean tick, which is the defect PET-484 closes.
+setup "$ONE" good
+unset CLAUDE_LOOP_MODEL
+"$TICK" >/dev/null 2>&1; RC=$?
+[ "$RC" -ne 0 ] && ok "exits non-zero" || no "exits non-zero" "rc=$RC"
+[ "$(hb outcome)" = "failed" ] && ok "outcome=failed" || no "outcome=failed" "got $(hb outcome)"
+hb detail | grep -q "CLAUDE_LOOP_MODEL is empty" && ok "detail names the missing setting" || no "detail" "$(hb detail)"
+[ ! -f "$CLAUDE_LOOP_STATE_DIR/items/PET-500.json" ] && ok "no claim was written" || no "the item was claimed anyway" ""
+[ ! -f "$CLAUDE_LOOP_HOME/claude.args" ] && ok "claude -p never ran" || no "claude -p ran anyway" "$(cat "$CLAUDE_LOOP_HOME/claude.args")"
+[ ! -s "$GH_LOG" ] && ok "no PR was opened" || no "no PR" "$(cat "$GH_LOG")"
+
+say "23. a blank or flag-shaped CLAUDE_LOOP_MODEL is refused, never handed to claude -p (PET-484)"
+# Blank is what `-e claude_loop_model=` renders into the unit. The flag shape is the one
+# value that would not reach claude as a model at all.
+for BAD in "" "--dangerously-skip-permissions" "son net"; do
+  setup "$ONE" good
+  export CLAUDE_LOOP_MODEL="$BAD"
+  "$TICK" >/dev/null 2>&1; RC=$?
+  [ "$RC" -ne 0 ] && [ "$(hb outcome)" = "failed" ] && ok "'$BAD' fails the tick" || no "'$BAD' fails the tick" "rc=$RC outcome=$(hb outcome)"
+  hb detail | grep -q "CLAUDE_LOOP_MODEL" && ok "'$BAD': detail names the setting" || no "'$BAD': detail" "$(hb detail)"
+  [ ! -f "$CLAUDE_LOOP_HOME/claude.args" ] && ok "'$BAD': claude -p never ran" || no "'$BAD': claude -p ran anyway" "$(cat "$CLAUDE_LOOP_HOME/claude.args")"
+done
 
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
