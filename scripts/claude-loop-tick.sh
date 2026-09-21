@@ -44,8 +44,10 @@
 # and scripts/lab-verify.sh reads it to tell those apart.
 #
 # Env (the unit sets all of it — roles/claude-code/templates/claude-loop.service.j2):
-#   CLAUDE_LOOP_HOME          state, sentinel, lock, prompt      (~/loop)
-#   CLAUDE_LOOP_CHECKOUT      the loop's OWN clone of this repo  (~/loop/iac)
+#   CLAUDE_LOOP_HOME          the pause sentinel and the per-tick run dir  (~/loop)
+#   CLAUDE_LOOP_STATE_DIR     claim records, heartbeat, lock, scratch      (/var/lib/claude-loop, root-owned)
+#   CLAUDE_LOOP_PROMPT        the prompt template the tick renders         (/usr/local/share/claude-loop/prompt.md, root-owned)
+#   CLAUDE_LOOP_CHECKOUT      the loop's OWN clone of this repo             (~/loop/iac)
 #   CLAUDE_LOOP_BROKER        /usr/local/sbin/claude-loop-broker
 #   CLAUDE_LOOP_REPO          owner/repo
 #   CLAUDE_LOOP_MAX_ATTEMPTS  give up on an item after this many failed ticks
@@ -54,8 +56,9 @@
 #   CLAUDE_LOOP_MAX_AGE_SEC   written into the heartbeat for lab-verify to compare against
 #   CLAUDE_BIN                absolute path to claude (PATH is not to be trusted here)
 #
-# Run it by hand before you ever enable the timer:
-#   ssh claude@192.168.50.247 '~/loop/claude-loop-tick.sh'
+# Run it by hand before you ever enable the timer. It installs to /usr/local/sbin and runs as
+# root (it drops privilege itself), so invoke it with sudo:
+#   ssh claude@192.168.50.247 'sudo /usr/local/sbin/claude-loop-tick'
 #
 # `set -e` is on, and it is what makes the EXIT trap honest: an unchecked failure anywhere
 # below lands in the trap with OUTCOME still `failed`, instead of running on to the next
@@ -72,11 +75,20 @@ MAX_TURNS="${CLAUDE_LOOP_MAX_TURNS:-60}"
 MAX_AGE_SEC="${CLAUDE_LOOP_MAX_AGE_SEC:-3900}"
 CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.npm-global/bin/claude}"
 
-STATE_DIR="$LOOP_HOME/state"
+# State lives OFF the loop user's home (PET-441): the claim records, the heartbeat, the lock
+# and the tick's own scratch sit under a root-owned dir the session can read but not write, so
+# a hostile session cannot rewrite its own claim, forge a heartbeat, or drop the lock. Both
+# paths are overridable ONLY so scripts/test-claude-loop-tick.sh can point them at a tmp dir;
+# the unit passes the absolute locations.
+STATE_DIR="${CLAUDE_LOOP_STATE_DIR:-/var/lib/claude-loop}"
 ITEMS_DIR="$STATE_DIR/items"
+# The pause sentinel STAYS in the loop user's home on purpose: pausing must need no root, and a
+# single empty file grants nothing. It is the kill switch a human sets over plain SSH.
 PAUSE_FILE="$LOOP_HOME/PAUSED"
-LOCK_FILE="$LOOP_HOME/tick.lock"
-PROMPT_FILE="$LOOP_HOME/prompt.md"
+LOCK_FILE="$STATE_DIR/tick.lock"
+# The prompt is a root-owned system file the tick only renders from — never a file the session
+# can rewrite to steer the next tick.
+PROMPT_FILE="${CLAUDE_LOOP_PROMPT:-/usr/local/share/claude-loop/prompt.md}"
 # The marker the role writes. `git clean -ffdx` below is safe ONLY in a directory that
 # belongs to the loop, and this file is how the tick knows it is in one — see step 6.
 #
@@ -184,6 +196,26 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 [ -x "$CLAUDE_BIN" ] || fail "claude is not executable at $CLAUDE_BIN"
 [ -r "$PROMPT_FILE" ] || fail "the loop prompt is missing at $PROMPT_FILE — re-run the play"
+
+# --- refuse if a CLAUDE.md sits above the checkout (PET-441) -----------------------------
+# `claude -p` reads CLAUDE.md from the working directory up to the root, so a CLAUDE.md in any
+# STRICT ancestor of the checkout is instructions this loop does not control. The loop user
+# owns its own home, so ~/.claude/CLAUDE.md is one a session could plant in one tick to steer
+# the next — the exact injection this loop must not run under. Refuse the tick when one exists,
+# before any work is claimed. The checkout's OWN CLAUDE.md is fine and is not checked; it is
+# part of the repo under review.
+assert_no_ancestor_claude_md() {
+  local dir
+  dir="$(dirname "$CHECKOUT")"
+  while : ; do
+    if [ -e "$dir/CLAUDE.md" ] || [ -e "$dir/.claude/CLAUDE.md" ]; then
+      fail "a CLAUDE.md above the checkout would inject instructions into the session (found under $dir) — move it, or the loop user's ~/.claude/CLAUDE.md, out of the checkout's ancestry before enabling the loop"
+    fi
+    [ "$dir" = "/" ] && break
+    dir="$(dirname "$dir")"
+  done
+}
+assert_no_ancestor_claude_md
 
 # --- guard 3: is there work? -------------------------------------------------------------
 # The broker exits non-zero on every structural surprise, so a failure here is a real
@@ -340,7 +372,7 @@ log "branch $BRANCH off origin/main"
 # The prompt goes in on STDIN rather than argv: it carries the whole work item, and argv is
 # readable by anything on the host through /proc/<pid>/cmdline.
 TICK_DIR="$LOOP_HOME/run/$ITEM"
-rm -rf "$TICK_DIR"
+as_loop_user rm -rf "$TICK_DIR"
 # ⚠ CREATED AS THE LOOP USER, NOT AS ROOT (PET-424). The session runs dropped and is asked
 # to write spec-diff.md in here. A root-owned directory meant it could not: on the first
 # live tick the session fell back to writing in the parent, the tick read the path it had
@@ -352,7 +384,9 @@ rm -rf "$TICK_DIR"
 as_loop_user mkdir -p "$TICK_DIR" || fail_item "could not create $TICK_DIR as $LOOP_USER"
 SPEC_DIFF="$TICK_DIR/spec-diff.md"
 
-PICK="$PICK" SPEC_DIFF="$SPEC_DIFF" BRANCH="$BRANCH" REPO="$REPO" \
+# ⚠ RENDERED AS THE LOOP USER (PET-441): root must not open a file inside the claude-owned run
+# dir. It reads the root-owned prompt template and writes prompt.txt, which the session reads.
+as_loop_user env PICK="$PICK" SPEC_DIFF="$SPEC_DIFF" BRANCH="$BRANCH" REPO="$REPO" \
 PROMPT_FILE="$PROMPT_FILE" OUT="$TICK_DIR/prompt.txt" python3 -c '
 import json, os
 item = json.loads(os.environ["PICK"])
@@ -373,12 +407,19 @@ cd "$CHECKOUT" || fail_item "cannot enter $CHECKOUT"
 # aborts before anything reads it, and the tick would then report the generic starting
 # failure instead of "the session hit the ceiling".
 SESSION_RC=0
-as_loop_user timeout --signal=TERM --kill-after=60 "$TIMEOUT_SEC" \
-  "$CLAUDE_BIN" -p --permission-mode bypassPermissions --max-turns "$MAX_TURNS" \
-  < "$TICK_DIR/prompt.txt" > "$TICK_DIR/session.log" 2>&1 || SESSION_RC=$?
+# ⚠ THE REDIRECTS OPEN AS THE LOOP USER (PET-441). Wrapping the whole pipeline in
+# `as_loop_user bash -c` means prompt.txt and session.log — both inside the claude-owned run
+# dir — are opened by claude, not by a root shell that a planted symlink there could aim.
+# Values travel in as positional args, so nothing from the environment interpolates into the
+# inner script.
+as_loop_user bash -c '
+  timeout --signal=TERM --kill-after=60 "$1" \
+    "$2" -p --permission-mode bypassPermissions --max-turns "$3" \
+    < "$4" > "$5" 2>&1
+' _ "$TIMEOUT_SEC" "$CLAUDE_BIN" "$MAX_TURNS" "$TICK_DIR/prompt.txt" "$TICK_DIR/session.log" || SESSION_RC=$?
 if [ "$SESSION_RC" -eq 124 ]; then
   fail_item "the session hit the ${TIMEOUT_SEC}s ceiling; see $TICK_DIR/session.log"
-elif [ "$SESSION_RC" -ne 0 ] && grep -q '^Error: Reached max turns' "$TICK_DIR/session.log"; then
+elif [ "$SESSION_RC" -ne 0 ] && as_loop_user grep -q '^Error: Reached max turns' "$TICK_DIR/session.log"; then
   fail_item "the session hit the ${MAX_TURNS}-turn ceiling (exit $SESSION_RC); see $TICK_DIR/session.log"
 elif [ "$SESSION_RC" -ne 0 ]; then
   fail_item "the session exited $SESSION_RC; see $TICK_DIR/session.log"
@@ -394,7 +435,14 @@ as_loop_user git -C "$CHECKOUT" add -A >/dev/null 2>&1 || fail_item "could not s
 if as_loop_user git -C "$CHECKOUT" diff --cached --quiet origin/main -- 2>/dev/null; then
   fail_item "the session produced no diff against origin/main — nothing to open a PR for"
 fi
-[ -s "$SPEC_DIFF" ] \
+# ⚠ COPY THE SPEC-DIFF OUT AS THE LOOP USER BEFORE ROOT READS IT (PET-441). The session wrote
+# it inside the claude-owned run dir, so root reading it directly — here, or through
+# `gh --body-file` at step 10 — would follow a symlink the session could have planted (into
+# /root, say) and post its contents to the PR. `as_loop_user cat` resolves the path with
+# claude's privileges; the root-owned copy is what root reads from there on.
+SPEC_DIFF_SAFE="$STATE_DIR/spec-diff.md"
+as_loop_user cat "$SPEC_DIFF" > "$SPEC_DIFF_SAFE" 2>/dev/null || true
+[ -s "$SPEC_DIFF_SAFE" ] \
   || fail_item "the session wrote no spec-diff at $SPEC_DIFF — refusing to open a PR that nobody can check against the work item"
 
 # ⚠ THE APP CANNOT PUSH .github/workflows/** AND THAT IS DELIBERATE (PET-425). GitHub gates
@@ -447,6 +495,25 @@ case "$ACTUAL_REMOTE" in
   *) fail_item "origin resolves to '${ACTUAL_REMOTE:-nothing}', not ${EXPECT_REMOTE} — refusing to mint a token for it" ;;
 esac
 
+# ⚠ THE FETCH CHECK ABOVE DOES NOT COVER THE PUSH (PET-441). `ls-remote --get-url` applies
+# `url.<x>.insteadOf` but NOT `url.<x>.pushInsteadOf`; a push applies BOTH. So a session can
+# leave the fetch URL honest, add `[url "ext::sh -c <payload>"] pushInsteadOf = <remote>`, and
+# the push — which stays root — would run <payload> AS ROOT. Ask git the push-direction
+# question directly and refuse anything but the remote already vetted above.
+PUSH_REMOTE="$(as_loop_user git -C "$CHECKOUT" remote get-url --push origin 2>/dev/null || true)"
+case "$PUSH_REMOTE" in
+  "$EXPECT_REMOTE" | "${EXPECT_REMOTE}.git") ;;
+  *) fail_item "origin's push URL resolves to '${PUSH_REMOTE:-nothing}', not ${EXPECT_REMOTE} — a url.*.pushInsteadOf rewrite is live; refusing to mint a token" ;;
+esac
+# `remote get-url --push` applies pushInsteadOf only on a git new enough to, so treat the check
+# above as best-effort and put the guarantee in the transport allow-list on the push itself
+# (step 9): confine it to the ONE protocol the vetted remote uses, derived from its scheme.
+case "$EXPECT_REMOTE" in
+  https://*)    PUSH_PROTO="https" ;;
+  file://*|/*)  PUSH_PROTO="file" ;;
+  *) fail_item "cannot choose a safe push transport for remote '$EXPECT_REMOTE' — refusing to push" ;;
+esac
+
 # The token is minted here and nowhere earlier, so it exists for the shortest time that
 # works. It expires in an hour regardless.
 TOKEN="$("$BROKER" mint-token 2>"$STATE_DIR/mint.err")" \
@@ -484,13 +551,22 @@ TOKEN="$("$BROKER" mint-token 2>"$STATE_DIR/mint.err")" \
 #
 # `safe.directory` is required because the repository is owned by another user and git
 # refuses "dubious ownership" otherwise. Scoped to this one path, not `*`.
-if ! GH_TOKEN="$TOKEN" git -C "$CHECKOUT" \
+#
+# ⚠ `protocol.allow=never` plus `protocol.${PUSH_PROTO}.allow=always` is the transport
+# allow-list that turns the push-direction assertion above into a backstop rather than the
+# only guard (PET-441): even a rewrite that slipped past it makes git speak only the ONE
+# protocol the vetted remote uses, so an `ext::`, `file://` or `ssh` rewrite is refused as
+# "transport not allowed" before it runs a command. `GIT_PROTOCOL_FROM_USER=0` keeps the
+# allow-list authoritative rather than deferring to a "the user typed this URL" exception.
+if ! GIT_PROTOCOL_FROM_USER=0 GH_TOKEN="$TOKEN" git -C "$CHECKOUT" \
+  -c protocol.allow=never \
+  -c "protocol.${PUSH_PROTO}.allow=always" \
   -c "safe.directory=$CHECKOUT" \
   -c core.hooksPath=/dev/null \
   -c credential.helper= \
   -c 'credential.https://github.com.helper=!f(){ echo username=x-access-token; echo "password=$GH_TOKEN"; };f' \
-  push --quiet "$EXPECT_REMOTE" "HEAD:refs/heads/$BRANCH" 2>"$TICK_DIR/push.err"; then
-  fail_item "push failed: $(tr '\n' ' ' < "$TICK_DIR/push.err" | head -c 300)"
+  push --quiet "$EXPECT_REMOTE" "HEAD:refs/heads/$BRANCH" 2>"$STATE_DIR/push.err"; then
+  fail_item "push failed: $(tr '\n' ' ' < "$STATE_DIR/push.err" | head -c 300)"
 fi
 log "pushed $BRANCH to $EXPECT_REMOTE"
 
@@ -498,7 +574,9 @@ log "pushed $BRANCH to $EXPECT_REMOTE"
 # ready, which makes "the bot cannot merge" true through a second, independent mechanism
 # besides branch protection. The prompt forbids the session from marking it ready; it has
 # no token with which to do so either.
-PR_BODY="$TICK_DIR/pr-body.md"
+# Built in the root-owned state dir, not the claude-owned run dir (PET-441): root writes this
+# body, so a session-planted symlink at that path must not be able to aim the write.
+PR_BODY="$STATE_DIR/pr-body.md"
 {
   printf 'Opened by the claude-247 work loop for **%s** — %s\n\n' "$ITEM" "$TITLE"
   printf 'This is a **draft**. The identity that opened it cannot approve or merge it, and the loop never marks a PR ready for review. A human reviews, marks it ready, and merges.\n\n'
@@ -507,8 +585,8 @@ PR_BODY="$TICK_DIR/pr-body.md"
 } > "$PR_BODY"
 
 PR="$(GH_TOKEN="$TOKEN" gh pr create --repo "$REPO" --draft --base main --head "$BRANCH" \
-  --title "${ITEM}: ${TITLE}" --body-file "$PR_BODY" 2>"$TICK_DIR/pr.err")" \
-  || fail_item "gh pr create failed: $(tr '\n' ' ' < "$TICK_DIR/pr.err" | head -c 300)"
+  --title "${ITEM}: ${TITLE}" --body-file "$PR_BODY" 2>"$STATE_DIR/pr.err")" \
+  || fail_item "gh pr create failed: $(tr '\n' ' ' < "$STATE_DIR/pr.err" | head -c 300)"
 log "opened $PR"
 
 # --- step 10: the closing comment ---------------------------------------------------------
@@ -517,13 +595,13 @@ log "opened $PR"
 # itself. A failure here does NOT fail the tick — the PR exists and is the thing that
 # matters — but it is recorded, because a PR without this table is the exact artefact this
 # loop is supposed to make impossible.
-if GH_TOKEN="$TOKEN" gh pr comment "$PR" --repo "$REPO" --body-file "$SPEC_DIFF" >/dev/null 2>"$TICK_DIR/comment.err"; then
+if GH_TOKEN="$TOKEN" gh pr comment "$PR" --repo "$REPO" --body-file "$SPEC_DIFF_SAFE" >/dev/null 2>"$STATE_DIR/comment.err"; then
   record_claim worked "draft PR $PR with the spec diff"
   OUTCOME=worked
   DETAIL="$ITEM → $PR (${COMMITTED} files, spec diff posted)"
 else
   record_claim worked "draft PR $PR, but the spec diff did not post"
   OUTCOME=worked
-  DETAIL="$ITEM → $PR (${COMMITTED} files) — ⚠ the spec diff failed to post: $(tr '\n' ' ' < "$TICK_DIR/comment.err" | head -c 200). It is on the host at $SPEC_DIFF."
+  DETAIL="$ITEM → $PR (${COMMITTED} files) — ⚠ the spec diff failed to post: $(tr '\n' ' ' < "$STATE_DIR/comment.err" | head -c 200). It is on the host at $SPEC_DIFF."
 fi
 exit 0

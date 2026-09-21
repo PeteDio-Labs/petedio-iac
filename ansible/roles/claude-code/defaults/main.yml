@@ -210,10 +210,24 @@ claude_loop_max_age_sec: 3900
 # when this was written, so creating it is a step, not a lookup — see the runbook.
 claude_loop_label: agent-ready
 
-# Where the loop keeps its sentinel, its lock, its prompt and its state. NOT in the
-# workspace: a session working in {{ claude_workspace }}/iac must not be one `rm -rf` away
-# from the loop's own claim records.
+# Where the loop keeps its pause sentinel and its per-tick run dir. NOT in the workspace: a
+# session working in {{ claude_workspace }}/iac must not be one `rm -rf` away from the loop's
+# own files. The claim records, the lock, the prompt and the heartbeat are NOT here — they
+# moved to root-owned locations (PET-441) so the session cannot forge a claim or drop the
+# lock. The three vars below name those locations.
 claude_loop_home: "{{ claude_home }}/loop"
+
+# Root-owned loop state (PET-441): claim records under items/, the flock, the heartbeat and
+# the tick's scratch files. The session reads this dir (0755) but cannot write it.
+claude_loop_state_dir: /var/lib/claude-loop
+
+# The tick's prompt, rendered by root into the per-tick dir. Root-owned so the session cannot
+# rewrite the instructions root feeds the next `claude -p`.
+claude_loop_prompt: /usr/local/share/claude-loop/prompt.md
+
+# The tick script itself, installed as a root-owned system binary off the loop user's home so
+# systemd's ExecStart never runs a path the session can rewrite between ticks.
+claude_loop_tick_bin: /usr/local/sbin/claude-loop-tick
 
 # Root-owned 0400 secrets, and the root-owned broker that is the only path to them. See
 # templates/claude-loop-broker.j2 for why an EnvironmentFile is not enough here.

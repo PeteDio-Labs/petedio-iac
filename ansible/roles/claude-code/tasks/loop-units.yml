@@ -7,7 +7,7 @@
 # who does not hold the credentials, and a play that installs half a loop is worse than one
 # that installs all of it and leaves it off.
 
-- name: Create the loop home and its state directories
+- name: Create the loop home and its per-tick run dir
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -23,9 +23,76 @@
     mode: "0750"
   loop:
     - "{{ claude_loop_home }}"
-    - "{{ claude_loop_home }}/state"
-    - "{{ claude_loop_home }}/state/items"
     - "{{ claude_loop_home }}/run"
+
+# The state dir and the prompt's parent are ROOT-OWNED (PET-441). The claim records under
+# items/, the heartbeat, the lock and the tick's scratch live in the state dir; the session
+# reads them (the dir is 0755, the files land 0644) but cannot write them, so it cannot forge
+# a claim or drop the lock. These paths sit outside any tree the session owns, so they need
+# no `follow: false` the way the claude-owned home above does.
+- name: Create the root-owned loop state dir and the prompt dir
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ claude_loop_state_dir }}"
+    - "{{ claude_loop_state_dir }}/items"
+    - "{{ claude_loop_prompt | dirname }}"
+
+# ⚠ ONE-TIME MIGRATION (PET-441): the loop may already have written claim records in its old
+# ~/loop/state/items. Move them into the root-owned items dir once, then remove the old,
+# claude-owned state tree — its heartbeat and lock regenerate at the new location. On a fresh
+# host the old dir never existed and all of this no-ops. `force: false` keeps a re-run from
+# clobbering a claim the loop has since rewritten at the new location. Remove this block once
+# 247 has converged past it.
+- name: Check for an old claude-owned state dir to migrate
+  ansible.builtin.stat:
+    path: "{{ claude_loop_home }}/state"
+  register: claude_loop_old_state
+
+- name: Find any claim records the loop left in its old state dir
+  ansible.builtin.find:
+    paths: "{{ claude_loop_home }}/state/items"
+    patterns: "*.json"
+    file_type: file
+  register: claude_loop_old_claims
+  when: claude_loop_old_state.stat.exists
+
+- name: Move those claim records into the root-owned items dir
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "{{ claude_loop_state_dir }}/items/{{ item.path | basename }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+  loop: "{{ claude_loop_old_claims.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: claude_loop_old_state.stat.exists
+
+- name: Remove the emptied old state dir once its claims are migrated
+  ansible.builtin.file:
+    path: "{{ claude_loop_home }}/state"
+    state: absent
+
+# The tick, the prompt and the lock moved to root-owned locations (PET-441); their old copies
+# under the loop home are claude-adjacent and must not linger. A stale, still-executable
+# ~/loop/claude-loop-tick.sh run by hand would use the old ~/loop/state paths and re-open the
+# hole this closes. Remove all three. state=absent no-ops on a fresh host. Drop this task with
+# the migration block above once 247 has converged.
+- name: Remove the loop files that moved to root-owned locations
+  ansible.builtin.file:
+    path: "{{ claude_loop_home }}/{{ item }}"
+    state: absent
+  loop:
+    - claude-loop-tick.sh
+    - prompt.md
+    - tick.lock
 
 # ⚠ THE LOOP GETS ITS OWN CLONE, NOT {{ claude_workspace }}/{{ claude_loop_project_dir }}.
 # A tick runs `git reset --hard` and `git clean -ffdx` on this directory before branching,
@@ -79,9 +146,9 @@
 - name: Install the loop prompt
   ansible.builtin.copy:
     src: claude-loop-prompt.md
-    dest: "{{ claude_loop_home }}/prompt.md"
-    owner: "{{ claude_user }}"
-    group: "{{ claude_user }}"
+    dest: "{{ claude_loop_prompt }}"
+    owner: root
+    group: root
     mode: "0644"
 
 # Kept in scripts/ rather than this role's files/, because it is an operational script: an
@@ -104,16 +171,17 @@
       ansible/ for it on purpose — if the repo layout moved, fix the path here rather than
       copying the script into the role.
 
-# root-owned 0555: the loop runs it, nobody rewrites it by accident. This is a guard
-# against a stray edit, NOT a boundary — a session on this host already reaches the broker,
-# so treat it as tidiness rather than security.
+# Installed as a root-owned system binary OFF the loop user's home (PET-441). This IS a
+# boundary, not tidiness: systemd's ExecStart runs this path as root every tick, so it must
+# be one the session cannot rewrite between ticks. The old ~/loop location made the 0555 a
+# guard against a stray edit only; here root owns the dir and the file.
 - name: Install the tick script
   ansible.builtin.copy:
     src: "{{ role_path }}/../../../scripts/claude-loop-tick.sh"
-    dest: "{{ claude_loop_home }}/claude-loop-tick.sh"
+    dest: "{{ claude_loop_tick_bin }}"
     owner: root
     group: root
-    mode: "0555"
+    mode: "0755"
 
 - name: Install the loop units
   ansible.builtin.template:
@@ -150,4 +218,4 @@
                               if claude_loop_enable | bool
                               else 'installed and STOPPED. Run one tick by hand before you enable it' }}.
       Schedule {{ claude_loop_oncalendar }}, label '{{ claude_loop_label }}',
-      heartbeat {{ claude_loop_home }}/state/last-tick.json.
+      heartbeat {{ claude_loop_state_dir }}/last-tick.json.

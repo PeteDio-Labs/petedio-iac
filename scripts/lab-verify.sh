@@ -624,8 +624,10 @@ else
   # max_age_sec its unit was given) rather than guessed from an OnCalendar
   # expression this script would have to parse and would eventually parse wrong.
   #
-  # Paths are hardcoded to claude_loop_home's default, like the claude binary
-  # above. If you move it in the role, move it here.
+  # Paths are hardcoded to their role defaults, like the claude binary above. The
+  # heartbeat moved to the root-owned claude_loop_state_dir (PET-441); pct exec
+  # reads it as root, so its 0644 mode needs no privilege here. If you move either
+  # in the role, move it here.
   LOOPTIMER=$(pct_on "$CNODE" 247 "sh -c 'ls -1 /etc/systemd/system/claude-loop.timer 2>/dev/null'" | tr -d '\r')
   if [ -z "$LOOPTIMER" ]; then
     # The loop is a separate opt-in from the remote-control servers, so its
@@ -633,7 +635,7 @@ else
     skip "work loop" "claude-loop.timer is not on the host — not installed"
   else
     LOOPEN=$(pct_on "$CNODE" 247 "systemctl is-enabled claude-loop.timer" | tr -d '\r')
-    LOOPHB=$(pct_on "$CNODE" 247 "sh -c 'cat /home/claude/loop/state/last-tick.json 2>/dev/null'" | tr -d '\r')
+    LOOPHB=$(pct_on "$CNODE" 247 "sh -c 'cat /var/lib/claude-loop/last-tick.json 2>/dev/null'" | tr -d '\r')
     LOOPINFO=$(HB="$LOOPHB" python3 -c '
 import datetime, json, os
 raw = os.environ["HB"].strip()

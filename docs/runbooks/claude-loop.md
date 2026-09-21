@@ -17,11 +17,14 @@ draining, no parallelism, and nothing here ever merges.
 | Host | `claude-247` — `192.168.50.247`, VMID 247, pve03 |
 | Role | `ansible/roles/claude-code` (`tasks/loop.yml`, `tasks/loop-units.yml`) |
 | Deploy | `scripts/deploy-claude-loop.sh` |
-| Tick | `scripts/claude-loop-tick.sh` → `~/loop/claude-loop-tick.sh` on the host |
+| Tick | `scripts/claude-loop-tick.sh` → `/usr/local/sbin/claude-loop-tick` on the host, root `0755` |
 | Units | `claude-loop.timer` → `claude-loop.service` |
-| Heartbeat | `~/loop/state/last-tick.json`, read by `scripts/lab-verify.sh` |
+| Heartbeat | `/var/lib/claude-loop/last-tick.json`, root `0644`, read by `scripts/lab-verify.sh` |
 | Secrets | `/etc/claude-loop/{plane.env,github.env,app.pem}`, root `0400` |
 | Broker | `/usr/local/sbin/claude-loop-broker`, root `0500` |
+| State | `/var/lib/claude-loop/`, root `0755` — claim records under `items/`, the lock, and the tick's scratch (PET-441) |
+| Prompt | `/usr/local/share/claude-loop/prompt.md`, root `0644` — root renders it into the per-tick dir (PET-441) |
+| Loop home | `~/loop`, `claude`-owned — holds only the `PAUSED` sentinel and the per-tick `run/` dir now (PET-441) |
 
 ---
 
@@ -180,8 +183,8 @@ The tick runs as root and drops to `claude` itself, so run it as root:
 ```sh
 ssh pedro@192.168.50.247
 sudo /usr/local/sbin/claude-loop-broker next-item   # {"examined":41,"labelled":1,…}
-sudo /home/claude/loop/claude-loop-tick.sh          # one tick, in the foreground
-cat /home/claude/loop/state/last-tick.json
+sudo /usr/local/sbin/claude-loop-tick               # one tick, in the foreground
+cat /var/lib/claude-loop/last-tick.json
 ```
 
 **Then check the boundary holds, rather than assuming it.** This must fail:
@@ -244,8 +247,8 @@ ssh pedro@192.168.50.247 'sudo systemctl stop claude-loop.service'   # the claud
 loop stops picking an item up. Clear its claim to put it back in the queue:
 
 ```sh
-ssh claude@192.168.50.247 'cat  ~/loop/state/items/PET-500.json'   # read why first
-ssh claude@192.168.50.247 'rm   ~/loop/state/items/PET-500.json'
+ssh claude@192.168.50.247 'cat /var/lib/claude-loop/items/PET-500.json'   # read why first — 0644, unprivileged
+ssh pedro@192.168.50.247  'sudo rm /var/lib/claude-loop/items/PET-500.json'   # claude cannot; root owns it (PET-441)
 ```
 
 Fix the underlying problem first. The claim file records the reason for every attempt.
@@ -300,10 +303,18 @@ not produce the table, so no pull request was opened. Read
 this loop exists to make impossible, so do not relax this check — replace it if you must,
 but do not remove it.
 
+**A tick fails at `a CLAUDE.md above the checkout`.** The tick refuses to start when a
+`CLAUDE.md` or `.claude/CLAUDE.md` sits in any strict ancestor of the checkout `~/loop/iac`,
+because `claude -p` reads `CLAUDE.md` from the working directory up to the root — a file the
+session could plant in one tick to steer the next (PET-441). The checkout's own `CLAUDE.md`
+is expected and is not checked. The usual culprit is the loop user's `~/.claude/CLAUDE.md`;
+move it, or whatever the detail names, out of the checkout's ancestry. The tick names the
+directory it found, claims no item, and runs no session.
+
 **Two pull requests for one work item.** Should not happen: the broker only returns `Todo`
 items, `plane-sync.yml` moves an item to In Progress when its draft PR opens, the tick keeps
 its own claim record, and it refuses to push a branch that already exists on `origin`. If it
-happens anyway, the claim records in `~/loop/state/items/` are the place to start.
+happens anyway, the claim records in `/var/lib/claude-loop/items/` are the place to start.
 
 ---
 
