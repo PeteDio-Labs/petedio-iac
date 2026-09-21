@@ -53,12 +53,17 @@
 #   CLAUDE_LOOP_MAX_ATTEMPTS  give up on an item after this many failed ticks
 #   CLAUDE_LOOP_TIMEOUT_SEC   hard ceiling on one `claude -p`
 #   CLAUDE_LOOP_MAX_TURNS     turn ceiling on one `claude -p`, passed as --max-turns
+#   CLAUDE_LOOP_MODEL         the model one `claude -p` runs, passed as --model. It has no default
 #   CLAUDE_LOOP_MAX_AGE_SEC   written into the heartbeat for lab-verify to compare against
 #   CLAUDE_BIN                absolute path to claude (PATH is not to be trusted here)
 #
 # Run it by hand before you ever enable the timer. It installs to /usr/local/sbin and runs as
-# root (it drops privilege itself), so invoke it with sudo:
-#   ssh claude@192.168.50.247 'sudo /usr/local/sbin/claude-loop-tick'
+# root (it drops privilege itself). 247 has no sudo and no operator account, so log in as root
+# with the key the inventory uses. Every value above comes from the unit's Environment= lines,
+# a root shell holds none of them, and CLAUDE_LOOP_MODEL has no default. So pass the unit's
+# environment to the tick:
+#   ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.247
+#   env -i $(systemctl show claude-loop.service -p Environment --value) /usr/local/sbin/claude-loop-tick
 #
 # `set -e` is on, and it is what makes the EXIT trap honest: an unchecked failure anywhere
 # below lands in the trap with OUTCOME still `failed`, instead of running on to the next
@@ -74,6 +79,13 @@ TIMEOUT_SEC="${CLAUDE_LOOP_TIMEOUT_SEC:-3600}"
 MAX_TURNS="${CLAUDE_LOOP_MAX_TURNS:-60}"
 MAX_AGE_SEC="${CLAUDE_LOOP_MAX_AGE_SEC:-3900}"
 CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.npm-global/bin/claude}"
+# ⚠ NO FALLBACK, ON PURPOSE (PET-484). Every other value here has one; this one must not.
+# Without --model, `claude -p` runs the account default, and that default moves when
+# Anthropic ships a model: a tick would change what it spends against the one shared Max
+# quota with no commit anywhere. A fallback here would hide a unit that lost its
+# Environment= line in the same way. The role declares the model (claude_loop_model), and
+# the tick refuses to run without one — see the guard after the tool checks.
+MODEL="${CLAUDE_LOOP_MODEL:-}"
 
 # State lives OFF the loop user's home (PET-441): the claim records, the heartbeat, the lock
 # and the tick's own scratch sit under a root-owned dir the session can read but not write, so
@@ -197,6 +209,19 @@ fi
 [ -x "$CLAUDE_BIN" ] || fail "claude is not executable at $CLAUDE_BIN"
 [ -r "$PROMPT_FILE" ] || fail "the loop prompt is missing at $PROMPT_FILE — re-run the play"
 
+# --- refuse to run on the account default model (PET-484) --------------------------------
+# Here, before the broker is asked for work, so a unit without the setting fails on its first
+# tick instead of on the first tick that finds an item. The shape check is not a list of
+# models: Claude Code owns that list and rejects a name it does not know, which the tick
+# records as a failed session. It stops the one value that would not reach `claude` as a
+# model at all — a string that starts with `-` reads as another flag.
+[ -n "$MODEL" ] \
+  || fail "CLAUDE_LOOP_MODEL is empty — the tick will not run claude -p on the account default model. Under the unit, set claude_loop_model and re-run the play. By hand, pass the unit's environment (docs/runbooks/claude-loop.md)"
+# An alias (`sonnet`), a full id (`claude-sonnet-5`), or either with a `[1m]`-style suffix.
+MODEL_RE='^[A-Za-z0-9][A-Za-z0-9._:-]*(\[[A-Za-z0-9]+\])?$'
+[[ "$MODEL" =~ $MODEL_RE ]] \
+  || fail "CLAUDE_LOOP_MODEL '$MODEL' is not a model alias or id"
+
 # --- refuse if a CLAUDE.md sits above the checkout (PET-441) -----------------------------
 # `claude -p` reads CLAUDE.md from the working directory up to the root, so a CLAUDE.md in any
 # STRICT ancestor of the checkout is instructions this loop does not control. The loop user
@@ -285,7 +310,7 @@ print(n + 1)
 ')"
 record_claim() {
   CLAIM="$CLAIM" C_ITEM="$ITEM" C_ATT="$ATTEMPTS" C_OUT="$1" C_DETAIL="$2" C_PR="${3:-}" \
-  C_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  C_MODEL="$MODEL" C_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   python3 -c '
 import json, os
 json.dump({
@@ -294,6 +319,7 @@ json.dump({
     "outcome": os.environ["C_OUT"],
     "detail": os.environ["C_DETAIL"],
     "pr": os.environ["C_PR"] or None,
+    "model": os.environ["C_MODEL"],
     "ts": os.environ["C_TS"],
 }, open(os.environ["CLAIM"], "w"), indent=2)
 '
@@ -401,7 +427,7 @@ body = (body
 open(os.environ["OUT"], "w").write(body)
 ' || fail_item "could not render the loop prompt"
 
-log "running claude -p (ceiling ${TIMEOUT_SEC}s, ${MAX_TURNS} turns)"
+log "running claude -p (model ${MODEL}, ceiling ${TIMEOUT_SEC}s, ${MAX_TURNS} turns)"
 cd "$CHECKOUT" || fail_item "cannot enter $CHECKOUT"
 # `|| SESSION_RC=$?` and not a bare `$?` on the next line: under `set -e` a non-zero timeout
 # aborts before anything reads it, and the tick would then report the generic starting
@@ -414,9 +440,9 @@ SESSION_RC=0
 # inner script.
 as_loop_user bash -c '
   timeout --signal=TERM --kill-after=60 "$1" \
-    "$2" -p --permission-mode bypassPermissions --max-turns "$3" \
+    "$2" -p --permission-mode bypassPermissions --max-turns "$3" --model "$6" \
     < "$4" > "$5" 2>&1
-' _ "$TIMEOUT_SEC" "$CLAUDE_BIN" "$MAX_TURNS" "$TICK_DIR/prompt.txt" "$TICK_DIR/session.log" || SESSION_RC=$?
+' _ "$TIMEOUT_SEC" "$CLAUDE_BIN" "$MAX_TURNS" "$TICK_DIR/prompt.txt" "$TICK_DIR/session.log" "$MODEL" || SESSION_RC=$?
 if [ "$SESSION_RC" -eq 124 ]; then
   fail_item "the session hit the ${TIMEOUT_SEC}s ceiling; see $TICK_DIR/session.log"
 elif [ "$SESSION_RC" -ne 0 ] && as_loop_user grep -q '^Error: Reached max turns' "$TICK_DIR/session.log"; then

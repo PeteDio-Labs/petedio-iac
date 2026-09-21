@@ -60,6 +60,9 @@ Environment=CLAUDE_LOOP_REMOTE=https://github.com/{{ claude_loop_repo }}
 Environment=CLAUDE_LOOP_MAX_ATTEMPTS={{ claude_loop_max_attempts }}
 Environment=CLAUDE_LOOP_TIMEOUT_SEC={{ claude_loop_timeout_sec }}
 Environment=CLAUDE_LOOP_MAX_TURNS={{ claude_loop_max_turns }}
+# The model every tick runs, passed to `claude -p` as --model (PET-484). The tick has no
+# fallback for this one: an empty value fails the tick instead of running the account default.
+Environment=CLAUDE_LOOP_MODEL={{ claude_loop_model }}
 Environment=CLAUDE_LOOP_MAX_AGE_SEC={{ claude_loop_max_age_sec }}
 
 # The tick is a root-owned system binary now (PET-441), not a script under the loop user's
