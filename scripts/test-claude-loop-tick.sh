@@ -504,6 +504,8 @@ grep -qF -- "--settings $PIN mcp list" "$CLAUDE_LOOP_HOME/mcp.args" 2>/dev/null 
 grep -q '^No MCP servers configured' "$CLAUDE_LOOP_HOME/run/PET-500/mcp-list.log" 2>/dev/null \
   && ok "the proof's output stays in the run dir" || no "mcp-list.log" "$(ls "$CLAUDE_LOOP_HOME/run/PET-500" 2>/dev/null)"
 grep -q "connector proof passed" "$CLAUDE_LOOP_HOME/out" && ok "the tick log records the proof" || no "log line" "$(grep -i mcp "$CLAUDE_LOOP_HOME/out")"
+grep -qF -- "connector proof: ENABLE_CLAUDEAI_MCP_SERVERS=false claude --settings '$PIN' mcp list" "$CLAUDE_LOOP_HOME/out" \
+  && ok "the tick log names the proof's command and both switches" || no "command line" "$(grep -i 'connector proof' "$CLAUDE_LOOP_HOME/out")"
 
 say "26. the session runs with the connectors off and loads no MCP server at all (PET-487)"
 setup "$ONE" good

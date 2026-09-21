@@ -210,7 +210,8 @@ claude.ai account, and a plain `claude -p` loads every connector on it: Gmail, C
 Drive and the rest. So the tick starts the session with three switches that turn them off,
 and it proves the result first. It runs `claude mcp list` as `claude`, in the checkout, with
 the session's two claude.ai switches, and stops unless the list is empty (PET-487). A tick you
-run by hand prints `connector proof passed`, and the full list stays on the host:
+run by hand logs that command line with its switches, then `connector proof passed`. The full
+list stays on the host:
 
 ```sh
 cat /home/claude/loop/run/<ITEM>/mcp-list.log   # No MCP servers configured. …

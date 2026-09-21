@@ -465,8 +465,11 @@ cd "$CHECKOUT" || fail_item "cannot enter $CHECKOUT"
 #
 # Its output stays in the run dir. Each line carries a server's URL or command, which can hold
 # a key, so the detail reports server names only: the detail reaches lab-verify, off the host.
+# The command line goes to the tick log, not the run dir, because the proof needs that file to
+# hold exactly one line. A read-back then shows which switches the proof ran with.
 MCP_LOG="$TICK_DIR/mcp-list.log"
 MCP_RC=0
+log "connector proof: $NO_CONNECTORS_ENV claude --settings '$NO_CONNECTORS_SETTINGS' mcp list, as $LOOP_USER in $CHECKOUT"
 as_loop_user env "$NO_CONNECTORS_ENV" bash -c '
   timeout --kill-after=10 120 "$1" --settings "$2" mcp list < /dev/null > "$3" 2>&1
 ' _ "$CLAUDE_BIN" "$NO_CONNECTORS_SETTINGS" "$MCP_LOG" || MCP_RC=$?
