@@ -267,13 +267,17 @@ Don't pass it with `-e`. The next play run without the flag puts the default bac
 commit records that the loop's cost against the shared Max quota changed. `PET-431` is
 that failure for `claude_remote_enable`.
 
-To confirm what the unit carries and what a tick ran, read three places:
+To confirm what the unit carries and what a tick ran, read the unit and the claim record.
+Both reads work as the `claude` user:
 
 ```sh
-ssh pedro@192.168.50.247 'systemctl show claude-loop.service -p Environment' | tr ' ' '\n' | grep MODEL
-ssh pedro@192.168.50.247 'journalctl -u claude-loop.service --no-pager | grep "running claude -p" | tail -3'
-ssh claude@192.168.50.247 'grep \"model\" /var/lib/claude-loop/items/PET-500.json'
+ssh claude@192.168.50.247 'systemctl show claude-loop.service -p Environment' | tr ' ' '\n' | grep MODEL
+ssh claude@192.168.50.247 'cat /var/lib/claude-loop/items/PET-500.json'   # carries "model"
 ```
+
+The tick also logs `running claude -p (model sonnet, …)`. A tick you run by hand prints
+that line to your terminal. A timer-run tick writes it to the unit's journal, which only
+root reads on this host.
 
 The tick has no fallback for this value. With `CLAUDE_LOOP_MODEL` missing or blank, the tick
 fails before it asks the broker for work, and the heartbeat's `detail` names the setting.
