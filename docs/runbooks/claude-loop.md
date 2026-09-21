@@ -178,14 +178,24 @@ Everything before step 4 is one-time.
 **Run one tick by hand and read what it did.** The timer stays off until a draft pull
 request from the bot has been looked at by a person.
 
-The tick runs as root and drops to `claude` itself, so run it as root:
+The tick runs as root and drops to `claude` itself, so run it as root. claude-247 has no
+`sudo` and no operator account, so log in as root with the key the inventory uses.
+
+The tick reads its settings from the unit's `Environment=` lines: `HOME`, `PATH`, `CLAUDE_BIN`
+and every `CLAUDE_LOOP_*` value. A root shell holds none of them, and the model has no
+fallback (`PET-484`). So pass the unit's environment to the tick you run by hand:
 
 ```sh
-ssh pedro@192.168.50.247
-sudo /usr/local/sbin/claude-loop-broker next-item   # {"examined":41,"labelled":1,…}
-sudo /usr/local/sbin/claude-loop-tick               # one tick, in the foreground
+ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.247
+/usr/local/sbin/claude-loop-broker next-item   # {"examined":41,"labelled":1,…}
+env -i $(systemctl show claude-loop.service -p Environment --value) \
+  /usr/local/sbin/claude-loop-tick             # one tick, in the foreground
 cat /var/lib/claude-loop/last-tick.json
 ```
+
+`env -i` starts from an empty environment, so nothing in the root shell reaches the session.
+The tick then runs with the values a timer-run tick gets. A tick that refuses with
+`CLAUDE_LOOP_MODEL is empty` ran without them.
 
 **Then check the boundary holds, rather than assuming it.** This must fail:
 
@@ -253,6 +263,43 @@ ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.247 'rm /var/lib/claude-loop/it
 ```
 
 Fix the underlying problem first. The claim file records the reason for every attempt.
+
+**Change the model.** Every tick passes `--model` to `claude -p`. The value is
+`claude_loop_model` in `roles/claude-code/defaults/main.yml`, and it ships as `sonnet`. An
+alias (`sonnet`, `opus`, `haiku`) follows its family to each release, and a full model ID
+pins one model. To change it, set the variable in
+`ansible/inventory/host_vars/claude-247.yml`, merge the pull request, and re-run the play:
+
+```sh
+./scripts/deploy-claude-loop.sh
+```
+
+Don't pass it with `-e`. The next play run without the flag puts the default back, and no
+commit records that the loop's cost against the shared Max quota changed. `PET-431` is
+that failure for `claude_remote_enable`.
+
+To confirm what the unit carries and what a tick ran, read the unit and the claim record.
+Both reads work as the `claude` user:
+
+```sh
+ssh claude@192.168.50.247 'systemctl show claude-loop.service -p Environment' | tr ' ' '\n' | grep MODEL
+ssh claude@192.168.50.247 'cat /var/lib/claude-loop/items/PET-500.json'   # carries "model"
+```
+
+The tick also logs `running claude -p (model sonnet, …)`. A tick you run by hand prints
+that line to your terminal. A timer-run tick writes it to the unit's journal, which only
+root reads on this host.
+
+The tick has no fallback for this value. With `CLAUDE_LOOP_MODEL` missing or blank, the tick
+fails before it asks the broker for work, and the heartbeat's `detail` names the setting.
+Without that refusal a tick runs the account default model, which changes when Anthropic
+ships a model (`PET-484`).
+
+Claude Code owns the list of valid names, so the tick checks only the value's shape. For a
+name it does not know, `claude -p` exits 1 and prints `There's an issue with the selected
+model` (measured on 2026-09-21: Claude Code 2.1.270 on 247, and 2.1.170 on the Mac). The
+tick records the item as failed, the attempt counts, and `session.log` holds the message.
+After you correct the name, clear the claim as described above.
 
 **Read what a tick actually did.** Session logs stay on the host and are never uploaded:
 
