@@ -424,5 +424,27 @@ for BAD in "" "--dangerously-skip-permissions" "son net"; do
   [ ! -f "$CLAUDE_LOOP_HOME/claude.args" ] && ok "'$BAD': claude -p never ran" || no "'$BAD': claude -p ran anyway" "$(cat "$CLAUDE_LOOP_HOME/claude.args")"
 done
 
+say "24. a tick run by hand needs the unit's values and nothing else (PET-484)"
+# The runbook's hand-run is `env -i $(systemctl show claude-loop.service -p Environment
+# --value) claude-loop-tick`: HOME, PATH, CLAUDE_BIN and the CLAUDE_LOOP_* values, from an
+# empty environment. This proves those names are enough. A tick that starts to read some other
+# ambient variable fails here before it fails an operator's proof tick.
+setup "$NONE" good
+UNIT_ENV=()
+while IFS= read -r KV; do UNIT_ENV+=("$KV"); done \
+  < <(env | grep -E '^(HOME|PATH|CLAUDE_BIN|CLAUDE_LOOP_[A-Z_]+)=')
+env -i "${UNIT_ENV[@]}" "$TICK" >"$CLAUDE_LOOP_HOME/out" 2>&1; RC=$?
+[ "$RC" -eq 0 ] && ok "exits 0 from an empty environment" || no "exits 0" "rc=$RC: $(tail -2 "$CLAUDE_LOOP_HOME/out")"
+[ "$(hb outcome)" = "no-work" ] && ok "outcome=no-work" || no "outcome=no-work" "got $(hb outcome)"
+# The same run without the model is what an operator sees when the environment is missing. The
+# refusal must name the by-hand fix, because "re-run the play" is wrong advice for a root shell.
+UNIT_ENV_NO_MODEL=()
+for KV in "${UNIT_ENV[@]}"; do
+  case "$KV" in CLAUDE_LOOP_MODEL=*) ;; *) UNIT_ENV_NO_MODEL+=("$KV") ;; esac
+done
+env -i "${UNIT_ENV_NO_MODEL[@]}" "$TICK" >"$CLAUDE_LOOP_HOME/out" 2>&1; RC=$?
+[ "$RC" -ne 0 ] && ok "without the model it exits non-zero" || no "exits non-zero" "rc=$RC"
+hb detail | grep -q "By hand, pass the unit's environment" && ok "the refusal names the by-hand fix" || no "detail" "$(hb detail)"
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

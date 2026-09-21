@@ -178,14 +178,24 @@ Everything before step 4 is one-time.
 **Run one tick by hand and read what it did.** The timer stays off until a draft pull
 request from the bot has been looked at by a person.
 
-The tick runs as root and drops to `claude` itself, so run it as root:
+The tick runs as root and drops to `claude` itself, so run it as root. claude-247 has no
+`sudo` and no operator account, so log in as root with the key the inventory uses.
+
+The tick reads its settings from the unit's `Environment=` lines: `HOME`, `PATH`, `CLAUDE_BIN`
+and every `CLAUDE_LOOP_*` value. A root shell holds none of them, and the model has no
+fallback (`PET-484`). So pass the unit's environment to the tick you run by hand:
 
 ```sh
-ssh pedro@192.168.50.247
-sudo /usr/local/sbin/claude-loop-broker next-item   # {"examined":41,"labelled":1,…}
-sudo /usr/local/sbin/claude-loop-tick               # one tick, in the foreground
+ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.247
+/usr/local/sbin/claude-loop-broker next-item   # {"examined":41,"labelled":1,…}
+env -i $(systemctl show claude-loop.service -p Environment --value) \
+  /usr/local/sbin/claude-loop-tick             # one tick, in the foreground
 cat /var/lib/claude-loop/last-tick.json
 ```
+
+`env -i` starts from an empty environment, so nothing in the root shell reaches the session.
+The tick then runs with the values a timer-run tick gets. A tick that refuses with
+`CLAUDE_LOOP_MODEL is empty` ran without them.
 
 **Then check the boundary holds, rather than assuming it.** This must fail:
 

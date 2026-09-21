@@ -58,8 +58,12 @@
 #   CLAUDE_BIN                absolute path to claude (PATH is not to be trusted here)
 #
 # Run it by hand before you ever enable the timer. It installs to /usr/local/sbin and runs as
-# root (it drops privilege itself), so invoke it with sudo:
-#   ssh claude@192.168.50.247 'sudo /usr/local/sbin/claude-loop-tick'
+# root (it drops privilege itself). 247 has no sudo and no operator account, so log in as root
+# with the key the inventory uses. Every value above comes from the unit's Environment= lines,
+# a root shell holds none of them, and CLAUDE_LOOP_MODEL has no default. So pass the unit's
+# environment to the tick:
+#   ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.247
+#   env -i $(systemctl show claude-loop.service -p Environment --value) /usr/local/sbin/claude-loop-tick
 #
 # `set -e` is on, and it is what makes the EXIT trap honest: an unchecked failure anywhere
 # below lands in the trap with OUTCOME still `failed`, instead of running on to the next
@@ -212,7 +216,7 @@ fi
 # records as a failed session. It stops the one value that would not reach `claude` as a
 # model at all — a string that starts with `-` reads as another flag.
 [ -n "$MODEL" ] \
-  || fail "CLAUDE_LOOP_MODEL is empty — the tick will not run claude -p on the account default model. Set claude_loop_model and re-run the play"
+  || fail "CLAUDE_LOOP_MODEL is empty — the tick will not run claude -p on the account default model. Under the unit, set claude_loop_model and re-run the play. By hand, pass the unit's environment (docs/runbooks/claude-loop.md)"
 # An alias (`sonnet`), a full id (`claude-sonnet-5`), or either with a `[1m]`-style suffix.
 MODEL_RE='^[A-Za-z0-9][A-Za-z0-9._:-]*(\[[A-Za-z0-9]+\])?$'
 [[ "$MODEL" =~ $MODEL_RE ]] \
