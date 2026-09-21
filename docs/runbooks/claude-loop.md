@@ -286,9 +286,9 @@ ships a model (`PET-484`).
 
 Claude Code owns the list of valid names, so the tick checks only the value's shape. For a
 name it does not know, `claude -p` exits 1 and prints `There's an issue with the selected
-model` (measured on 2026-09-21, Claude Code 2.1.170). The tick records the item as failed,
-the attempt counts, and `session.log` holds the message. After you correct the name, clear
-the claim as described above.
+model` (measured on 2026-09-21: Claude Code 2.1.270 on 247, and 2.1.170 on the Mac). The
+tick records the item as failed, the attempt counts, and `session.log` holds the message.
+After you correct the name, clear the claim as described above.
 
 **Read what a tick actually did.** Session logs stay on the host and are never uploaded:
 
