@@ -523,9 +523,10 @@ grep -qE -- '(^| )--strict-mcp-config( |$)' "$CLAUDE_LOOP_HOME/claude.args" 2>/d
   && ok "claude -p got no --mcp-config" || no "no --mcp-config" "$(cat "$CLAUDE_LOOP_HOME/claude.args")"
 
 say "27. a proof that does not report zero servers stops the tick before the session (PET-487)"
-# A server listed, a non-zero exit, and blank output. A proof that passes on output it cannot
-# read is the silent failure it exists to catch.
-for CASE in exit blank listed; do
+# A server listed, a non-zero exit, blank output, and new wording after an upgrade. A proof
+# that passes on output it cannot read is the silent failure it exists to catch. `listed` runs
+# last, because the checks after the loop read its heartbeat.
+for CASE in exit blank wording listed; do
   setup "$ONE" good
   case "$CASE" in
     listed) export STUB_MCP_OUT=$'Checking MCP server health…\n\nclaude.ai Gmail: https://gmail.mcp.claude.com/mcp - ✔ Connected'
@@ -533,6 +534,8 @@ for CASE in exit blank listed; do
     exit)   export STUB_MCP_OUT='No MCP servers configured.' STUB_MCP_RC=1
             WANT="exited 1" ;;
     blank)  export STUB_MCP_OUT=' '
+            WANT="no server names" ;;
+    wording) export STUB_MCP_OUT='No MCP servers found.'
             WANT="no server names" ;;
   esac
   "$TICK" >/dev/null 2>&1; RC=$?
