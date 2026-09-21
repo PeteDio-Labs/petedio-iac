@@ -217,6 +217,21 @@ list stays on the host:
 cat /home/claude/loop/run/<ITEM>/mcp-list.log   # No MCP servers configured. …
 ```
 
+The proof shows that the session had no MCP server. To show that it called no MCP tool, count
+those tool names in its transcript. `session.log` cannot show this, because it holds only the
+session's final message. The newest transcript for the checkout is the tick's session, so run
+this right after the tick:
+
+```sh
+F=$(ls -1t /home/claude/.claude/projects/-home-claude-loop-iac/*.jsonl | head -1)
+date -u -r "$F"                                       # a time during the tick
+grep -c '"type":"tool_use"' "$F"                      # above 0: the session called tools
+grep -o '"name":"mcp__[^"]*"' "$F" | sort | uniq -c   # prints nothing
+```
+
+The last command is a check that can fail. On the PET-420 session of 2026-09-21, before
+PET-487, it printed three Plane tools.
+
 > [!WARNING]
 > **The switches stop Claude Code from loading the connectors. They do not stop a hostile
 > session.** The loop user can read its own `~/.claude/.credentials.json`, which holds
@@ -395,7 +410,9 @@ heartbeat carries names only, because a server's URL or command can carry a key.
   change the tick and the harness together.
 - **Any other name** comes from an MCP scope Claude Code reads for the checkout: the loop
   user's `~/.claude.json`, or an `.mcp.json` in the checkout. A previous session may have
-  written it. Remove it, and read that tick's `session.log` to learn how it got there.
+  written it. Remove it. To find the session that wrote it, list the transcripts that name it:
+  `grep -l '<name>' /home/claude/.claude/projects/-home-claude-loop-iac/*.jsonl`. A
+  `session.log` holds only its session's final message.
 - **No names** means `claude mcp list` failed, or printed something the tick does not
   recognize, such as new wording after an upgrade. The log shows which.
 
