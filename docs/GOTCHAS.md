@@ -880,7 +880,10 @@ one for the syntax while the text lived only in `CLAUDE.md`.
   ways. It means the PET-399 work loop can run in a directory nobody ever trusted by hand,
   which is what lets it keep its own clone instead of sharing the one a human drives. It
   also means a piped `claude` in a directory you did not mean to trust does not stop to
-  ask. Trust the directory anyway if you want MCP tools resolving in that session.
+  ask. Trust does not gate the claude.ai connectors either: the loop's clone on 247 has no
+  trust recorded, and a `claude -p` there still loaded all seven (PET-487, 2026-09-21). Its
+  `init` message lists them as `pending` with zero `mcp__` tools, because they are still
+  connecting. Do not read that as "no MCP tools".
 
 - **`--max-turns` works in Claude Code 2.1.270, although `claude --help` does not list it
   (PET-435).** This bullet used to say the flag did not exist, from reading `--help` alone.
@@ -890,6 +893,27 @@ one for the syntax while the text lived only in `CLAUDE.md`.
   Reached max turns (N)` and exits 1. The loop passes `--max-turns` and keeps `timeout`
   around the process, with a `TimeoutStartSec` above it in the unit, so the inner bound
   reports first and says why. **Test a flag, don't infer its absence from `--help`.**
+
+- **Four switches decide which MCP servers a `claude -p` session loads, and the environment
+  variable loses to a file the session can write (PET-487).** Measured on 247 on 2026-09-21
+  with Claude Code 2.1.270, as the loop user, in its clone:
+  - `ENABLE_CLAUDEAI_MCP_SERVERS=false` in the process environment turns the claude.ai
+    connectors off. An `env` block in `~/.claude/settings.json` that sets it to `"true"`
+    beats the process environment, and all seven connectors come back.
+  - `--settings '{"env":{"ENABLE_CLAUDEAI_MCP_SERVERS":"false"}}'` beats user settings. It
+    held against that hostile file, for `mcp list` and for a session.
+  - `--strict-mcp-config` with no `--mcp-config` loads zero MCP servers and zero `mcp__`
+    tools, against the hostile file too.
+  - `claude mcp list` ignores `--strict-mcp-config`: with it, the list still named all seven.
+    It does follow the environment and `--settings`. It connects to every server it lists to
+    check its health, so treat it as starting them.
+  - `--mcp-config` is variadic and takes every argument after it. Placed before `mcp list`,
+    it read `mcp` and `list` as config files and failed with `MCP config file not found`.
+
+  The loop passes the first three to the session and proves the result with `mcp list`
+  before every session. Keep the switch out of `~/.claude/settings.json`, which a session can
+  rewrite, and out of managed settings, which would also strip the connectors from the
+  Remote Control sessions on the host.
 
 - **Nothing about this host needs `features{}`** — no Docker, so no nesting, no keyctl, and
   no `scripts/lxc-features-<id>.sh` step on the node. Worth stating because the reflex on

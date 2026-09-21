@@ -102,8 +102,8 @@
 #
 # This costs nothing that the shared clone bought: `claude -p` skips the workspace trust
 # dialog entirely (`claude --help`, under -p), so the loop does not need a pre-trusted
-# directory the way an interactive session does. Trust it by hand anyway if you want MCP
-# tools resolving inside a tick — docs/runbooks/claude-loop.md.
+# directory the way an interactive session does. Do not trust it by hand to make MCP tools
+# resolve: the session runs with none, on purpose (PET-487, docs/runbooks/claude-loop.md).
 #
 # SEEDED, NEVER UPDATED, like the workspace clones: `creates:` guards it, and each tick
 # fetches and re-branches for itself. runuser rather than become_user, for the reason given

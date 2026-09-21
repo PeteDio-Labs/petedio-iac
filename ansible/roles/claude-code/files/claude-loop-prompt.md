@@ -98,9 +98,3 @@ Four rules for the table, and they are the point of it:
    `grep -rn` across `ansible/` and `scripts/`" and "no other callers" are different claims.
 4. **Keep the cells short enough to read on a phone.** A cell that runs to a paragraph
    belongs in *Shortfalls* or *How this was verified*, with the row pointing at it.
-
-## Optional: comment on the work item
-
-If the Plane connector is available to you, post the same table as a comment on
-{{ITEM_KEY}}. If it is not, skip it without retrying — the table in the file is what the
-pull request is built from, and it is the copy that matters.

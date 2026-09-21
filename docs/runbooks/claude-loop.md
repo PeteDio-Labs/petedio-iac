@@ -163,13 +163,8 @@ Everything before step 4 is one-time.
    into `~/loop/iac`, and **leaves the timer stopped**. It finishes by minting a token as
    root, so a broken key fails here rather than at 03:00 in a tick nobody is watching.
 
-5. **Optional — trust the loop's clone.** `claude -p` skips the workspace trust dialog
-   entirely, so the loop runs without this. Do it anyway if you want MCP tools resolving
-   inside a tick:
-
-   ```sh
-   ssh claude@192.168.50.247 'cd ~/loop/iac && claude'   # accept trust, then /exit
-   ```
+The loop's clone needs no trust step. `claude -p` skips the workspace trust dialog, and the
+session runs with no MCP server, on purpose (PET-487).
 
 ---
 
@@ -193,6 +188,9 @@ env -i $(systemctl show claude-loop.service -p Environment --value) \
 cat /var/lib/claude-loop/last-tick.json
 ```
 
+The item must carry `agent-ready` and sit in `Todo`, or `next-item` reports
+`"labelled":1,"eligible":0` and the tick finds nothing to take.
+
 `env -i` starts from an empty environment, so nothing in the root shell reaches the session.
 The tick then runs with the values a timer-run tick gets. A tick that refuses with
 `CLAUDE_LOOP_MODEL is empty` ran without them.
@@ -206,6 +204,27 @@ ssh claude@192.168.50.247 'sudo -n true'                                    # no
 
 If either succeeds, stop: the `claude -p` session runs as that user, its instructions come
 from a work item, and PET-408 is back.
+
+**Then check the session got no connectors.** The loop user is logged in to Pedro's
+claude.ai account, and a plain `claude -p` loads every connector on it: Gmail, Calendar,
+Drive and the rest. So the tick starts the session with three switches that turn them off,
+and it proves the result first. It runs `claude mcp list` as `claude`, in the checkout, with
+the session's two claude.ai switches, and stops unless the list is empty (PET-487). A tick you
+run by hand prints `connector proof passed`, and the full list stays on the host:
+
+```sh
+cat /home/claude/loop/run/<ITEM>/mcp-list.log   # No MCP servers configured. …
+```
+
+> [!WARNING]
+> **The switches stop Claude Code from loading the connectors. They do not stop a hostile
+> session.** The loop user can read its own `~/.claude/.credentials.json`, which holds
+> Pedro's claude.ai login, and it owns the Claude Code install. A session could use the login
+> from a process of its own, or replace the binary the next tick runs. The tick's unit keeps
+> systemd's default `KillMode=control-group`, so every process the session started ends with
+> the tick, and `claude` has no linger. Cron is the gap: `claude` may install a crontab, and
+> cron runs it after the tick ends (checked on 2026-09-21). PET-488 tracks separating the
+> login from the session, and denying `claude` a crontab.
 
 Label one small, real work item first. Check the draft pull request has the spec-diff
 comment, that its author is the App and not you, and that the `Merge` button is unavailable.
@@ -362,6 +381,25 @@ is expected and is not checked. The usual culprit is the loop user's `~/.claude/
 move it, or whatever the detail names, out of the checkout's ancestry. The tick names the
 directory it found, claims no item, and runs no session.
 
+**A tick fails at `the connector proof failed`.** Working as intended: before the session,
+the tick asked Claude Code which MCP servers the session would load, and the answer was not
+"none" (PET-487). No session ran, no pull request opened, and the failure counts against the
+item's attempts. The detail gives the exit code of `claude mcp list` and the server names, or
+`no server names in its output`. The full output is in `~/loop/run/<ITEM>/mcp-list.log`. The
+heartbeat carries names only, because a server's URL or command can carry a key.
+
+- **A `claude.ai` name** means Claude Code ignored `ENABLE_CLAUDEAI_MCP_SERVERS=false`. An
+  upgrade can rename or drop that switch. Find its replacement in the release notes, then
+  change the tick and the harness together.
+- **Any other name** comes from an MCP scope Claude Code reads for the checkout: the loop
+  user's `~/.claude.json`, or an `.mcp.json` in the checkout. A previous session may have
+  written it. Remove it, and read that tick's `session.log` to learn how it got there.
+- **No names** means `claude mcp list` failed, or printed something the tick does not
+  recognize, such as new wording after an upgrade. The log shows which.
+
+Do not relax the check. It is the only part of the tick that notices when an upgrade changes
+what the switches do, or when a session plants a server for the next tick.
+
 **Two pull requests for one work item.** Should not happen: the broker only returns `Todo`
 items, `plane-sync.yml` moves an item to In Progress when its draft PR opens, the tick keeps
 its own claim record, and it refuses to push a branch that already exists on `origin`. If it
@@ -379,6 +417,9 @@ the broker, `claude` and `gh`. It needs no credential and touches no network:
 ./scripts/test-claude-loop-tick.sh
 ```
 
+Run it on Linux, such as on 247 as `claude`. The tick needs `flock` and GNU `timeout`, which
+macOS lacks, so on a Mac most scenarios fail (`docs/GOTCHAS.md`).
+
 Run it before and after you touch `claude-loop-tick.sh`. It found two real defects while it
 was being written, both of which passed the first tick and failed the second.
 
@@ -389,3 +430,9 @@ that behaves itself, and 37 assertions passed green over a credential helper tha
 have handed the GitHub token to whatever remote the session chose. The session runs as this
 user, in this directory, driven by work-item text the loop does not control. Assume it is
 hostile, and when you add a scenario ask what it assumes the session will not do.
+
+Scenarios 25-30 cover the connector switches (PET-487). The stub `claude` answers `claude
+mcp list` and records each call's arguments and environment, so these scenarios check what
+the tick passed, not only what it logged. Scenario 28 is the hostile one: a session plants
+an MCP server for the next tick. `--strict-mcp-config` hides that server from the session,
+so only the proof can see it.

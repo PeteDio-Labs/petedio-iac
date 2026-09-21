@@ -4,8 +4,8 @@
 #
 # WHY A BROKER AND NOT AN ENVIRONMENT FILE. Sessions on 247 run in `bypassPermissions` as
 # `{{ claude_user }}` (roles/claude-code/README.md, "The permission mode, on the record"),
-# and the loop has to run as that same user because the Plane connector is bound to its
-# interactive login. So anything the loop can read, a session can read. The repo's usual
+# and the loop has to run as that same user because the claude.ai login `claude -p` uses is
+# bound to it. So anything the loop can read, a session can read. The repo's usual
 # landing pattern — a root-owned 0600 file handed to a unit through `EnvironmentFile=` —
 # does not hold here: systemd reads the file as root, but the values then sit in the
 # process environment of a process owned by `{{ claude_user }}`, and a session can read

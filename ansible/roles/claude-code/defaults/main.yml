@@ -234,9 +234,9 @@ claude_loop_tick_bin: /usr/local/sbin/claude-loop-tick
 claude_loop_conf_dir: /etc/claude-loop
 claude_loop_broker: /usr/local/sbin/claude-loop-broker
 
-# The repo the loop works in. `dir` is relative to claude_workspace and MUST be a trusted
-# project directory — Claude Code resolves MCP tools to zero from an untrusted path, and
-# the startup trust dialog never saves trust for a home directory (docs/GOTCHAS.md).
+# The repo the loop works in, and the name of its clone under claude_loop_home. The clone
+# needs no trust: `claude -p` skips the trust dialog, and the session loads no MCP server,
+# on purpose (PET-487).
 claude_loop_repo: PeteDio-Labs/petedio-iac
 claude_loop_project_dir: iac
 
