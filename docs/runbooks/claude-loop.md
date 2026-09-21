@@ -247,10 +247,11 @@ nobody remembers setting cannot masquerade as a quiet queue.
 Both branches converge — this stops *and* disables the timer, rather than leaving a running
 one behind. Most gated timers in this tree do not do that; this role does.
 
-**Kill a tick that is running:**
+**Kill a tick that is running.** claude-247 has no `sudo` and no operator account, so log in
+as root with the key the inventory uses:
 
 ```sh
-ssh pedro@192.168.50.247 'sudo systemctl stop claude-loop.service'   # the claude user has no sudo
+ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.247 'systemctl stop claude-loop.service'
 ```
 
 **Retry an item the loop gave up on.** After `claude_loop_max_attempts` failed ticks the
@@ -258,7 +259,7 @@ loop stops picking an item up. Clear its claim to put it back in the queue:
 
 ```sh
 ssh claude@192.168.50.247 'cat /var/lib/claude-loop/items/PET-500.json'   # read why first — 0644, unprivileged
-ssh pedro@192.168.50.247  'sudo rm /var/lib/claude-loop/items/PET-500.json'   # claude cannot; root owns it (PET-441)
+ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.247 'rm /var/lib/claude-loop/items/PET-500.json'   # claude cannot; root owns it (PET-441)
 ```
 
 Fix the underlying problem first. The claim file records the reason for every attempt.
@@ -305,8 +306,11 @@ After you correct the name, clear the claim as described above.
 ```sh
 ssh claude@192.168.50.247 'ls ~/loop/run/'
 ssh claude@192.168.50.247 'cat ~/loop/run/PET-500/session.log'
-journalctl -u claude-loop.service -n 100 --no-pager
+ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.247 'journalctl -u claude-loop.service -n 100 --no-pager'
 ```
+
+Read the journal as root. The `claude` user is in neither `adm` nor `systemd-journal`, so as
+`claude` the same command prints `-- No entries --` and exits 0, whatever the unit logged.
 
 ---
 
