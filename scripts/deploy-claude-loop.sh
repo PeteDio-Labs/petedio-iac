@@ -183,9 +183,9 @@ cat <<'TXT'
   The timer is OFF unless you passed -e claude_loop_enable=true. Before you turn it on,
   run one tick by hand and read what it did:
 
-    ssh claude@192.168.50.247 'sudo -n /usr/local/sbin/claude-loop-broker next-item'
-    ssh claude@192.168.50.247 '~/loop/claude-loop-tick.sh'
-    ssh claude@192.168.50.247 'cat ~/loop/state/last-tick.json'
+    ssh pedro@192.168.50.247 'sudo /usr/local/sbin/claude-loop-broker next-item'
+    ssh pedro@192.168.50.247 'sudo /usr/local/sbin/claude-loop-tick'
+    ssh pedro@192.168.50.247 'cat /var/lib/claude-loop/last-tick.json'
 
   Then, once a draft PR from the bot looks right:
 
