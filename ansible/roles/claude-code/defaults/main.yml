@@ -124,6 +124,89 @@ claude_workspace_mirror_oncalendar: "*:15/30"
 #   claude_workspace_mirror_installation_id
 #   claude_workspace_mirror_app_pem
 
+# --- The vault (PET-498) ----------------------------------------------------------------
+# petedio-vault is private, and a session on this host has to CLONE it and PUSH to its
+# `main`. Pedro approved the direct push explicitly. Vault `main` carries no branch
+# protection, and the Obsidian Git plugin already auto-pushes to it every 10 minutes from the
+# Mac, so a session committing a note joins a branch that already has a second writer.
+#
+# ⚠ THIS IS THE FIRST CREDENTIAL ON 247 THE SESSION USER CAN READ, AND THE SHAPE IS INVERTED
+# FROM THE WORKSPACE MIRROR ABOVE ON PURPOSE. The mirror keeps its App key 0400 root behind a
+# 0500 root broker because ROOT fetches into a bare mirror and the session only clones from a
+# local path. That does not transfer here: the SESSION pushes, so the session has to reach the
+# credential. The key and the broker live under the session user's own home, owned
+# claude:claude, 0400 on the files and 0700 on the directory.
+#
+# ⚠ SO EVERY PROCESS RUNNING AS `claude` CAN PUSH TO THE VAULT — every Remote Control session,
+# and the work loop's `claude -p` too if claude_loop_enable is ever set. The modes keep other
+# users out. They cannot keep this user out, because this user is the one the design hands the
+# credential to. Read that as the price of the feature, not as a gap to close with a mode.
+#
+# WHAT KEEPS THE BLAST RADIUS NARROW IS THE APP, NOT THE FILE MODES: one installed
+# repository, contents:write and metadata:read and nothing else. It cannot open a pull
+# request, cannot read a second repository, and cannot act as Pedro. That holds while both
+# halves hold, and either one changes in the GitHub UI, where nothing in this repo notices.
+#
+# ⚠ NOT THE LOOP'S APP AND NOT THE MIRROR'S. Three Apps, three Vault paths, three
+# directories, three brokers. The loop's pushes to petedio-iac and opens PRs, the mirror's is
+# read-only, and this one reaches petedio-vault alone. Pointing any of them at another's
+# credentials widens all three.
+#
+# DEFAULT FALSE, like every other delivery in this role. `true` belongs in host_vars, next to
+# claude_remote_enable.
+claude_vault_enable: false
+
+claude_vault_repo: PeteDio-Labs/petedio-vault
+
+# HTTPS, not ssh: the App authenticates over the git credential protocol, and there is no key
+# for ssh to offer. Same reason as the mirror's URL above.
+claude_vault_url: "https://github.com/{{ claude_vault_repo }}.git"
+
+# Where the session's clone lands, RELATIVE to claude_workspace. Must match the `dir` of the
+# claude_remote_sessions entry that serves it, or the entry stays unservable. `vault` is the
+# path petedio-workspace gitignores the vault at, so the layout matches the Mac.
+claude_vault_dest: vault
+
+# Owned by the session user, 0700 on the directory and 0400 on the two files in it. Read the
+# warning above before you "fix" that to root: a root-owned key here leaves the session unable
+# to push, which is the one thing this delivery exists to do.
+claude_vault_conf_dir: "{{ claude_home }}/.config/claude-vault"
+
+# 0500 claude:claude, under the session user's own bin directory. The only thing that reads
+# the App key, and the git credential helper every push authenticates through. Read its header
+# before changing any of the three settings below.
+claude_vault_broker: "{{ claude_home }}/.local/bin/claude-vault-broker"
+
+# The git options every vault command carries — the probe and the clone alike. Three settings,
+# and each one is load-bearing, for the reasons the mirror measured:
+#
+#   · The empty `credential.helper` FIRST resets the helper list. The key is multi-valued, so
+#     a later `-c credential.helper=<x>` appends rather than replaces. Measured on git 2.50.1:
+#     without the reset, a machine that already had a stored credential answered first and the
+#     broker was never run — which silently disables the host and path checks inside it.
+#   · The helper is an ABSOLUTE path, so git runs it directly instead of prefixing
+#     `git-credential-`, appending `get`, `store` or `erase` as its one argument.
+#   · useHttpPath makes git send the repository path to the helper. The broker refuses any
+#     path but this repository's, so the helper cannot be turned on a second one.
+#
+# tasks/vault.yml writes the same three settings into the clone's own config, because a
+# session pushes with a plain `git push` and carries no flags of its own.
+claude_vault_git_opts: >-
+  -c credential.helper=
+  -c credential.useHttpPath=true
+  -c credential.helper={{ claude_vault_broker }}
+
+# --- Vault identity (resolved from Vault by scripts/deploy-claude-247.sh) -----------------
+# NEVER give these a default, for the reason written over the loop's identity below: a
+# committed placeholder would land on the host as a 0400 file that looks provisioned and fail
+# at the first push, inside a session that reports the failure to nobody.
+#
+# Vault kv/services/claude-vault-push — fields app_id, installation_id, app_pem.
+#
+#   claude_vault_app_id
+#   claude_vault_installation_id
+#   claude_vault_app_pem
+
 # --- Toolchain ------------------------------------------------------------------------
 # Node.js LTS major (NodeSource). 22 = active LTS ("jod").
 claude_nodejs_major: 22
@@ -204,9 +287,24 @@ claude_permission_mode: auto
 # for `scripts/pet-log`, the skills and the lessons files; it is not the one for an IaC
 # change, which belongs in the `iac` entry above. Its `dir: workspace` also nests a second
 # workspace root inside {{ claude_workspace }}, which already mirrors that layout.
+# ⚠ THE `vault` ENTRY IS `same-dir`, AND THE THREE OTHERS ARE NOT (PET-498). A vault session
+# commits to `main` and pushes it, so it has to work in the clone itself, on `main`. A git
+# worktree cannot check out a branch another worktree already holds — measured on git 2.50.1:
+#
+#     git worktree add ../wt main
+#     fatal: 'main' is already used by worktree at '…'
+#
+# So `spawn: worktree` would hand every vault session a side branch, and a note written there
+# reaches `main` only by a push nobody asked for. `same-dir` shares one working tree, which is
+# the collision the comment above warns about: two concurrent vault sessions fight over one
+# index. That is the accepted trade, because the vault has a second writer already — Obsidian
+# Git auto-pushes from the Mac every 10 minutes — and one tree on `main` is what both the push
+# and the rebase pull below are built for. For stricter serialization, `session` serves
+# exactly one session and gives up on-demand spawning.
 claude_remote_sessions:
   - { name: iac, dir: iac, spawn: worktree }
   - { name: workspace, dir: workspace, spawn: worktree }
+  - { name: vault, dir: vault, spawn: same-dir }
 
 # Whether the units are enabled and started. DEFAULT FALSE, so a host that has never been
 # bootstrapped gets stopped units rather than a server with no login behind it.

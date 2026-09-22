@@ -264,6 +264,18 @@
   ansible.builtin.include_tasks: workspace-mirror.yml
   when: claude_workspace_mirror_enable | bool
 
+# --- The vault (PET-498) --------------------------------------------------------------------
+# petedio-vault is private AND is pushed to, so unlike the mirror above it hands the SESSION a
+# credential: a GitHub App key the session user can read, behind a broker the session user can
+# run, scoped to that one repository with contents:write and metadata:read. Read
+# tasks/vault.yml and templates/claude-vault-broker.j2 before you change any of it: between
+# them they carry why the mirror's root-owned shape cannot be copied here, and what the
+# session gains by reading a credential. Runs BEFORE the session directory check below, since
+# the clone it creates is what makes the `vault` entry servable.
+- name: Deliver the vault clone the session pushes from
+  ansible.builtin.include_tasks: vault.yml
+  when: claude_vault_enable | bool
+
 # --- Claude Code settings ------------------------------------------------------------------
 # SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles
 # and one-time prompts land here — so an Ansible-owned copy would silently revert choices
