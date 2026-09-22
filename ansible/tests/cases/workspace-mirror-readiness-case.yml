@@ -1,0 +1,47 @@
+# One case for tests/workspace-mirror-readiness.yml. Included once per recorded result set.
+---
+# Reset both outputs. set_fact persists for the whole play, so a case whose expression threw
+# would otherwise inherit the previous case's answer and pass while measuring the case
+# before it.
+- name: "Load the recorded results — {{ readiness_case.name }}"
+  ansible.builtin.set_fact:
+    claude_workspace_mirror_creds_on_disk: "{{ readiness_case.creds_on_disk }}"
+    claude_workspace_mirror_mint: "{{ readiness_case.mint }}"
+    claude_workspace_mirror_probe: "{{ readiness_case.probe }}"
+    claude_workspace_mirror_ready: null
+    claude_workspace_mirror_blocked_at: null
+
+- name: "Decide — {{ readiness_case.name }}"
+  ansible.builtin.include_tasks: ../../roles/claude-code/tasks/workspace-mirror-readiness.yml
+
+- name: "Assert the verdict — {{ readiness_case.name }}"
+  ansible.builtin.assert:
+    that:
+      - (claude_workspace_mirror_ready | bool) == (readiness_case.want_ready | bool)
+      - claude_workspace_mirror_blocked_at == (readiness_case.want_blocked_at | trim)
+    fail_msg: >-
+      {{ readiness_case.name }}:
+      ready={{ claude_workspace_mirror_ready }},
+      blocked_at={{ claude_workspace_mirror_blocked_at | to_json }};
+      want ready={{ readiness_case.want_ready }},
+      blocked_at={{ readiness_case.want_blocked_at | trim | to_json }}.
+    success_msg: >-
+      {{ readiness_case.name }}:
+      creds={{ readiness_case.creds_on_disk }},
+      mint rc={{ readiness_case.mint.rc | default('skipped') }},
+      ls-remote rc={{ readiness_case.probe.rc | default('skipped') }} ->
+      ready={{ readiness_case.want_ready }}, "{{ claude_workspace_mirror_blocked_at }}".
+
+# The folded-scalar check, on every case rather than one. A newline here does not fail the
+# expression, it disfigures the sentence the operator reads, so nothing else would notice.
+- name: "Assert the message survives the fold — {{ readiness_case.name }}"
+  ansible.builtin.assert:
+    that:
+      - "'\n' not in claude_workspace_mirror_blocked_at"
+      - claude_workspace_mirror_blocked_at == claude_workspace_mirror_blocked_at | trim
+      - "'  ' not in claude_workspace_mirror_blocked_at"
+    fail_msg: >-
+      {{ readiness_case.name }}: the message kept a line break or doubled space from the
+      `>-` scalar and would reach the operator broken —
+      {{ claude_workspace_mirror_blocked_at | to_json }}.
+    success_msg: "{{ readiness_case.name }}: one clean line, {{ claude_workspace_mirror_blocked_at | length }} chars."

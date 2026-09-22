@@ -27,7 +27,7 @@
       claude_loop_enable is true but the loop identity is missing. Resolve it from Vault
       (kv/services/claude-loop fields app_id / installation_id / app_pem, and
       kv/services/plane field api_key) and pass it as no_log extra-vars from a 0600 JSON
-      @file — scripts/deploy-claude-loop.sh does exactly that. Do NOT put these in
+      @file — scripts/deploy-claude-247.sh does exactly that. Do NOT put these in
       defaults or host_vars.
   no_log: true
   when: claude_loop_enable | bool
@@ -51,7 +51,7 @@
       No loop identity in this run — {{ claude_loop_conf_dir }} and the broker are left as
       they are, and the timer converges to
       {{ 'enabled' if claude_loop_enable | bool else 'disabled' }}. Run
-      scripts/deploy-claude-loop.sh to land or rotate the credentials.
+      scripts/deploy-claude-247.sh to land or rotate the credentials.
   when: not claude_loop_identity_present | bool
 
 # ⚠ NO sudo IS INSTALLED, AND NO SUDOERS FILE IS WRITTEN (PET-408). An earlier version of

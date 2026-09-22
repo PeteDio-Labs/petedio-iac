@@ -10,7 +10,7 @@
 #
 # WHAT THIS DOES NOT DO. It does not create the App, generate the key, or install it —
 # those are browser steps. It does not deploy anything to 247; that is
-# scripts/deploy-claude-loop.sh, which reads this path.
+# scripts/deploy-claude-247.sh, which reads this path.
 #
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM, else prompt
 #
@@ -135,6 +135,6 @@ fi
 step "Next"
 cat <<TXT
   1. Confirm the App is installed on $REPO ONLY (App settings -> Install App).
-  2. On claude-247: ./scripts/deploy-claude-loop.sh   # reads $VAULT_PATH, lands the key root-owned
+  2. On claude-247: ./scripts/deploy-claude-247.sh   # reads $VAULT_PATH, lands the key root-owned
   3. The loop timer stays OFF until it is enabled deliberately — see PET-399.
 TXT

@@ -832,7 +832,8 @@ one for the syntax while the text lived only in `CLAUDE.md`.
 - **A host that serves Remote Control must declare `claude_remote_enable: true`, never pass
   it with `-e` (PET-431).** The role's `false` stops and disables the units. The bootstrap
   once passed `-e claude_remote_enable=true` a single time, so the next run without the flag
-  — `deploy-claude-loop.sh`, on 2026-09-12 — stopped claude-247's server with nobody asking
+  — `deploy-claude-loop.sh`, renamed `deploy-claude-247.sh` in PET-493, on 2026-09-12 —
+  stopped claude-247's server with nobody asking
   it to. `inventory/host_vars/claude-247.yml` holds the declaration.
 
 - **`SendMessage` delivers only within one permission-mode class, and reports `success`

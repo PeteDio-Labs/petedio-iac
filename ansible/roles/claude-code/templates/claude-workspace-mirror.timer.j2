@@ -1,12 +1,12 @@
 {{ ansible_managed | comment }}
-# When the {{ claude_workspace_mirror_repo }} mirror refreshes (PET-480).
+# When the {{ claude_workspace_mirror_repo }} mirror refreshes (PET-493).
 #
 # Half-hourly, offset from claude-loop.timer's `*:0/30` so the two are never fetching in the
 # same minute. A miss costs nothing: the clone a session works in is behind by design, and
 # the session pulls when it needs to.
 
 [Unit]
-Description=Periodic refresh of the {{ claude_workspace_mirror_repo }} mirror (PET-480)
+Description=Periodic refresh of the {{ claude_workspace_mirror_repo }} mirror (PET-493)
 
 [Timer]
 OnCalendar={{ claude_workspace_mirror_oncalendar }}

@@ -16,10 +16,11 @@
 # not. The ticket-driven work loop needs a GitHub App key and the Plane PAT, so run the play
 # through its wrapper when you mean to land or rotate them:
 #
-#   ./scripts/deploy-claude-loop.sh
+#   ./scripts/deploy-claude-247.sh
 #
-# Run bare, the play still converges everything else and leaves the loop's secrets alone —
-# see the "Decide whether this run carries the loop identity" task in roles/claude-code.
+# Run bare, the play still converges everything else and leaves the secrets alone — see the
+# "Decide whether this run carries the loop identity" task in roles/claude-code, and its
+# counterpart for the workspace mirror's GitHub App (PET-493).
 #
 # TWO-PHASE BY DESIGN, DECLARED ONCE. claude-247 declares `claude_remote_enable: true` in
 # inventory/host_vars/claude-247.yml, and the role starts the units only once the operator
@@ -77,10 +78,17 @@
                     | map(attribute='dir')
                     | map('regex_replace', '^', claude_workspace ~ '/') | list)
                  + ['Everything else in this play converged. To finish:',
-                    '1. For petedio-workspace, declare claude_workspace_mirror_enable: true in inventory/host_vars/' ~ inventory_hostname ~ '.yml and re-run.',
-                    '   Run 1 prints a deploy key to paste at',
-                    '   github.com/PeteDio-Labs/petedio-workspace/settings/keys/new, with write access UNCHECKED.',
-                    '   Run 2 clones.',
+                    '1. For petedio-workspace, the mirror did not deliver. What stopped it: '
+                    ~ claude_workspace_mirror_blocked_at | default('claude_workspace_mirror_enable is not true on this host'),
+                    '   It arrives over a GitHub App, Contents and Metadata read-only, installed on that',
+                    '   one repository (PET-493). To seed or rotate its credentials, run',
+                    '   ./scripts/seed-workspace-mirror-vault.sh and then ./scripts/deploy-claude-247.sh.',
+                    '   One run clones; there is no second pass.',
+                    '   Then trust it once, as the session user, or Remote Control still refuses to serve it:',
+                    '     cd ~/work/petedio/workspace && claude   # accept the dialog, then /exit',
+                    '   ⚠ A DEPLOY KEY CANNOT REPLACE IT, and this message told you to paste one until PET-493.',
+                    '   PeteDio-Labs disallows deploy keys for every repository it owns:',
+                    '   `gh api orgs/PeteDio-Labs --jq .deploy_keys_enabled_for_repositories` is false.',
                     '2. For any other private repo, it needs the same treatment: roles/claude-code/tasks/workspace-mirror.yml.',
                     'To stop serving one instead, drop its entry from claude_remote_sessions.',
                     '⚠ DO NOT run `gh auth login` on this host to make this go away. This message said to, until PET-480.',

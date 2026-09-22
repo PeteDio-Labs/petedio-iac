@@ -254,11 +254,12 @@
   loop_control:
     label: "{{ item.name }}"
 
-# --- The private workspace repo (PET-480) --------------------------------------------------
-# Delivered by a root-owned mirror and a read-only deploy key, because no HTTPS clone reaches
-# a private repo without a credential and this host forbids the login that would supply one.
-# Runs BEFORE the session directory check below, since the clone it creates is what makes the
-# `workspace` entry servable.
+# --- The private workspace repo (PET-480, re-routed by PET-493) -----------------------------
+# Delivered by a root-owned mirror that fetches over a read-only GitHub App token, because no
+# clone reaches a private repo without a credential and this host forbids the login that would
+# supply one. PET-480 chose a deploy key; PeteDio-Labs disallows deploy keys org-wide, so the
+# key it generated was one GitHub would never accept. Runs BEFORE the session directory check
+# below, since the clone it creates is what makes the `workspace` entry servable.
 - name: Deliver the private workspace repo
   ansible.builtin.include_tasks: workspace-mirror.yml
   when: claude_workspace_mirror_enable | bool

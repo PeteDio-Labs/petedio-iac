@@ -32,9 +32,12 @@
     msg: >-
       claude_remote_sessions entry '{{ item.name }}' serves
       {{ claude_workspace }}/{{ item.dir }}, which is not a directory. No unit is rendered
-      for it, and the rest of this play converges. For petedio-workspace, set
-      claude_workspace_mirror_enable and re-run — never `gh auth login` on this host. For
-      anything else, clone it or drop the entry.
+      for it, and the rest of this play converges. For petedio-workspace, the mirror did not
+      deliver: {{ claude_workspace_mirror_blocked_at | default('claude_workspace_mirror_enable is not true on this host') }}.
+      Seed its GitHub App with scripts/seed-workspace-mirror-vault.sh and run
+      scripts/deploy-claude-247.sh — never `gh auth login` on this host, and never a deploy
+      key, which PeteDio-Labs disallows org-wide (PET-493). For anything else, clone it or
+      drop the entry.
   loop: "{{ claude_sessions_unservable }}"
   loop_control:
     label: "{{ item.name }}"

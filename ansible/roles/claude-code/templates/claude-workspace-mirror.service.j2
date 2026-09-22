@@ -1,8 +1,9 @@
 {{ ansible_managed | comment }}
-# Refresh the root-owned bare mirror of {{ claude_workspace_mirror_repo }} (PET-480).
+# Refresh the root-owned bare mirror of {{ claude_workspace_mirror_repo }} (PET-480,
+# re-routed to a GitHub App by PET-493).
 #
-# ⚠ RUNS AS ROOT, AND ONLY INSIDE /var/lib. Root is the only user that can read the deploy
-# key, so root is the only user that can fetch. It must never run git inside
+# ⚠ RUNS AS ROOT, AND ONLY INSIDE /var/lib. Root is the only user that can run the broker
+# that mints the token, so root is the only user that can fetch. It must never run git inside
 # {{ claude_workspace }}, which the session user owns: git honours core.sshCommand,
 # core.hooksPath and core.fsmonitor from the repository's own config, so a session that
 # rewrites its clone's .git/config would get code execution as root on the next fetch.
@@ -13,7 +14,7 @@
 # that moved a branch under a session mid-task is the outcome the role avoids everywhere.
 
 [Unit]
-Description=Refresh the {{ claude_workspace_mirror_repo }} mirror (PET-480)
+Description=Refresh the {{ claude_workspace_mirror_repo }} mirror (PET-493)
 # Fetching needs the network, and a boot-time firing before it is up fails noisily for no
 # reason. Persistent=true on the timer retries after this.
 Wants=network-online.target
@@ -24,15 +25,27 @@ Type=oneshot
 User=root
 Group=root
 
-# IdentitiesOnly=yes stops ssh offering root's other keys and authorizing by way of one this
-# unit did not arrange. GIT_TERMINAL_PROMPT=0 makes a credential failure exit instead of
-# blocking a systemd job on a prompt nobody can answer.
-Environment=GIT_SSH_COMMAND={{ claude_workspace_mirror_ssh }}
+# GIT_TERMINAL_PROMPT=0 makes a credential failure exit instead of blocking a systemd job on
+# a prompt nobody can answer. It is also the second half of the helper reset below: if the
+# broker declines, nothing may fall back to asking a human.
 Environment=GIT_TERMINAL_PROMPT=0
 
-ExecStart=/usr/bin/git --git-dir={{ claude_workspace_mirror_path }} remote update --prune
+# ⚠ THE CREDENTIAL IS MINTED HERE, PER FETCH, AND IS WRITTEN NOWHERE. The options in
+# claude_workspace_mirror_git_opts name the broker as a git credential helper, so git asks it
+# for a username and password over a pipe. No token reaches this file, the mirror's config or
+# any command line. The options are repeated on this line rather than baked into the mirror's
+# config on purpose — see the clone task in roles/claude-code/tasks/workspace-mirror.yml.
+#
+# ⚠ THE LEADING EMPTY `-c credential.helper=` IS LOAD-BEARING. `credential.helper` is
+# multi-valued, so a later `-c credential.helper=<broker>` APPENDS to whatever /etc/gitconfig
+# and root's ~/.gitconfig already configure; an empty value resets the list. Measured on git
+# 2.50.1: without the reset, a machine with a stored credential answered first and the broker
+# was never run, so its host and path checks silently stopped applying.
+ExecStart=/usr/bin/git {{ claude_workspace_mirror_git_opts }} --git-dir={{ claude_workspace_mirror_path }} remote update --prune
 
-# The mirror is a cache of a remote, so nothing here is worth writing outside it.
+# The mirror is a cache of a remote, so nothing here is worth writing outside it. The broker
+# reads {{ claude_workspace_mirror_conf_dir }}, which ProtectSystem=strict leaves readable;
+# it needs no write anywhere.
 ProtectSystem=strict
 ReadWritePaths={{ claude_workspace_mirror_state_dir }}
 ProtectHome=true

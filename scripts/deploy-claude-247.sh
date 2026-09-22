@@ -1,27 +1,43 @@
 #!/usr/bin/env bash
-# deploy-claude-loop.sh — resolve the work loop's identity from Vault and run
-# configure-claude-code.yml against LXC 247 (PET-399).
+# deploy-claude-247.sh — resolve LXC 247's identities from Vault and run
+# configure-claude-code.yml against it (PET-399, PET-493).
+#
+# ⚠ THIS WAS deploy-claude-loop.sh UNTIL PET-493. It carried one identity then. It now
+# carries two, and neither name fits the other, so the script is named for the HOST:
+#
+#   kv/services/claude-loop              -> app_id, installation_id, app_pem   (REQUIRED)
+#     The work loop's bot identity. contents:write and pull_requests:write, because it
+#     opens draft PRs.
+#   kv/services/plane                    -> api_key                            (REQUIRED)
+#     The PAT CI already uses.
+#   kv/services/claude-workspace-mirror  -> app_id, installation_id, app_pem   (optional)
+#     The petedio-workspace delivery identity. Contents and Metadata READ-ONLY, installed on
+#     that one repository. Absent, this script warns and the play delivers the mirror from
+#     whatever is already on 247.
+#
+#   AppRole creds: $SECRETS_DIR/ansible.{role_id,secret_id} (gitignored .secrets/)
+#
+# ⚠ TWO APPS, AND THEY MUST STAY TWO. The loop's App can push; the mirror's cannot. Seeding
+# one App into both paths would hand a half-hourly root timer a push credential for
+# petedio-iac. The check below refuses it by App id.
 #
 # Operator run, from YOUR machine. This is the wrapper that keeps 247 free of a Vault
 # credential: the AppRole login happens here, the fields are resolved here, and the host
-# receives only the two secrets it needs, as root-owned 0400 files. There is no role_id or
+# receives only the secrets it needs, as root-owned 0400 files. There is no role_id or
 # secret_id on 247, and there is no Vault Agent — that was the retired fleet's shape and it
 # put a renewable Vault token on a box whose sessions run in bypassPermissions.
-#
-#   kv/services/claude-loop -> app_id, installation_id, app_pem   (the bot identity)
-#   kv/services/plane       -> api_key                            (the PAT CI already uses)
-#   AppRole creds: $SECRETS_DIR/ansible.{role_id,secret_id} (gitignored .secrets/)
 #
 # The `ansible` policy already grants read on kv/data/services/* — see
 # environments/homelab/vault-config/policies.tf. NO vault-config change is needed for this,
 # and a plan that proposes one is repointing something else.
 #
-#   ./scripts/deploy-claude-loop.sh                            # land the identity, timer off
-#   ./scripts/deploy-claude-loop.sh -e claude_loop_enable=true # ... and start the timer
+#   ./scripts/deploy-claude-247.sh                            # land the identities, timer off
+#   ./scripts/deploy-claude-247.sh -e claude_loop_enable=true # ... and start the loop timer
 #
-# ⚠ TURNING THE TIMER ON IS A SEPARATE DECISION FROM LANDING THE CREDENTIAL, which is why
-# it is a flag you type and not the default. Run the tick by hand once first —
-# docs/runbooks/claude-loop.md, "Before you enable it".
+# ⚠ TURNING THE LOOP TIMER ON IS A SEPARATE DECISION FROM LANDING THE CREDENTIAL, which is
+# why it is a flag you type and not the default. Run the tick by hand once first —
+# docs/runbooks/claude-loop.md, "Before you enable it". The mirror's timer is not gated that
+# way: it fetches a read-only repository into /var/lib and changes nothing off the host.
 #
 # Manual-validation-first (standing convention, PET-266): this script IS the manual-deploy
 # proof step. Nothing in .github/workflows watches configure-claude-code.yml.
@@ -41,6 +57,7 @@ PLANE_WORKSPACE="${PLANE_WORKSPACE:-petedio}"
 PLANE_IDENTIFIER="${PLANE_IDENTIFIER:-PET}"
 
 step() { printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
+warn() { printf '\033[1;33mWARNING: %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
 
 for t in vault ansible-playbook python3 curl; do command -v "$t" >/dev/null || die "$t not in PATH"; done
@@ -89,6 +106,16 @@ applogin() {
     || die "AppRole login failed for '$1'."
 }
 
+# A PEM that survived a copy-paste as one line signs nothing, and openssl's complaint about
+# it points at the signature, not the field. Check the shape here, where the fix is obvious.
+check_pem() {
+  local pem="$1" where="$2"
+  printf '%s' "$pem" | grep -q -- "-----BEGIN .*PRIVATE KEY-----" \
+    || die "app_pem in $where does not look like a PEM private key. Re-seed it with the .pem file GitHub gave you, newlines intact."
+  [ "$(printf '%s' "$pem" | wc -l)" -ge 3 ] \
+    || die "app_pem in $where is a single line — its newlines were lost on the way into Vault. Re-seed it."
+}
+
 step "Resolving the loop identity (ansible AppRole)"
 AN_TOKEN="$(applogin ansible)"
 kvget() { VAULT_TOKEN="$AN_TOKEN" vault kv get -field="$2" "$1" 2>/dev/null || true; }
@@ -106,18 +133,76 @@ PLANE_KEY="$(kvget kv/services/plane api_key)"
 [ -n "$APP_PEM" ] || die "app_pem missing from kv/services/claude-loop."
 [ -n "$PLANE_KEY" ] || die "api_key missing from kv/services/plane — the same PAT CI uses."
 
-# A PEM that survived a copy-paste as one line signs nothing, and openssl's complaint about
-# it points at the signature, not the field. Check the shape here, where the fix is obvious.
-printf '%s' "$APP_PEM" | grep -q -- "-----BEGIN .*PRIVATE KEY-----" \
-  || die "app_pem does not look like a PEM private key. Re-seed it with the .pem file GitHub gave you, newlines intact."
-[ "$(printf '%s' "$APP_PEM" | wc -l)" -ge 3 ] \
-  || die "app_pem is a single line — its newlines were lost on the way into Vault. Re-seed it."
+check_pem "$APP_PEM" "kv/services/claude-loop"
 
 # ⚠ These two MUST be different Apps' worth of care even though there is only one App here:
 # app_id identifies the App, installation_id identifies its install on ONE repo. Swapping
 # them mints nothing and reports a 404 that reads like a missing App.
-printf 'app %s, installation %s, pem %s bytes, plane PAT %s bytes\n' \
+printf 'loop: app %s, installation %s, pem %s bytes, plane PAT %s bytes\n' \
   "$APP_ID" "$INSTALL_ID" "${#APP_PEM}" "${#PLANE_KEY}"
+
+step "Resolving the workspace mirror identity (PET-493)"
+# OPTIONAL, and the asymmetry with the loop above is deliberate. 247 declares
+# claude_workspace_mirror_enable permanently in host_vars, so this script has to stay
+# runnable on a host whose mirror is already seeded and whose Vault path has not been
+# written yet. All three fields absent is a supported state; SOME of them is not, because a
+# half-written Vault path is the shape a failed seed leaves behind.
+MIRROR_APP_ID="$(kvget kv/services/claude-workspace-mirror app_id)"
+MIRROR_INSTALL_ID="$(kvget kv/services/claude-workspace-mirror installation_id)"
+MIRROR_APP_PEM="$(kvget kv/services/claude-workspace-mirror app_pem)"
+
+MIRROR_PRESENT=0
+MIRROR_FOUND=0
+for v in "$MIRROR_APP_ID" "$MIRROR_INSTALL_ID" "$MIRROR_APP_PEM"; do
+  [ -n "$v" ] && MIRROR_FOUND=$((MIRROR_FOUND + 1))
+done
+
+if [ "$MIRROR_FOUND" -eq 3 ]; then
+  MIRROR_PRESENT=1
+elif [ "$MIRROR_FOUND" -gt 0 ]; then
+  die "kv/services/claude-workspace-mirror is half-written: $MIRROR_FOUND of app_id, installation_id, app_pem are set.
+
+  A partial path is what a failed seed leaves behind, and landing it would put a 0400 file on
+  247 that looks provisioned and mints nothing. Re-run ./scripts/seed-workspace-mirror-vault.sh."
+else
+  warn "kv/services/claude-workspace-mirror is empty, so the mirror App is NOT being landed.
+
+  Everything else in this run converges, and the play delivers petedio-workspace from
+  whatever credentials are already on 247. If that repo has never been delivered, the play
+  will converge and then FAIL at the end naming this as the step. To fix it, run
+  ./scripts/seed-workspace-mirror-vault.sh and then this script again."
+fi
+
+if [ "$MIRROR_PRESENT" -eq 1 ]; then
+  # ⚠ THE SAME APP IN BOTH PATHS IS THE ONE FAILURE THIS CANNOT BE ALLOWED TO PASS. The loop's
+  # App carries contents:write and pull_requests:write. The mirror's broker runs as root from a
+  # half-hourly timer. Pointing the second at the first would hand that timer a push credential
+  # for petedio-iac — a strictly worse arrangement than the deploy key PET-493 replaced.
+  [ "$MIRROR_APP_ID" != "$APP_ID" ] \
+    || die "kv/services/claude-workspace-mirror and kv/services/claude-loop name the SAME App (id $APP_ID).
+
+  They must be two Apps. The loop's can push and open PRs; the mirror's must be Contents and
+  Metadata read-only on petedio-workspace alone. Seeding one into both paths gives a root
+  timer a push credential. Create the second App and re-seed."
+
+  # Same consumer-presence rule as the loop's above, applied to the mirror's half. A tree
+  # without these files would take the App key and install nothing that reads it.
+  for f in ansible/roles/claude-code/tasks/workspace-mirror.yml \
+           ansible/roles/claude-code/templates/claude-workspace-mirror-broker.j2 \
+           ansible/roles/claude-code/templates/claude-workspace-mirror-github.env.j2 \
+           ansible/roles/claude-code/templates/claude-workspace-mirror.service.j2 \
+           ansible/roles/claude-code/templates/claude-workspace-mirror.timer.j2; do
+    [ -f "$REPO_ROOT/$f" ] || die "$f is missing from this checkout.
+
+  This tree has the mirror's CREDENTIALS but not the mirror. Landing the App key now would
+  put a private key on 247 with nothing that reads it. Merge the branch carrying the mirror
+  role first, then re-run. See PET-414 and PET-493."
+  done
+
+  check_pem "$MIRROR_APP_PEM" "kv/services/claude-workspace-mirror"
+  printf 'mirror: app %s, installation %s, pem %s bytes\n' \
+    "$MIRROR_APP_ID" "$MIRROR_INSTALL_ID" "${#MIRROR_APP_PEM}"
+fi
 
 step "Resolving the Plane project id for '$PLANE_IDENTIFIER'"
 # Looked up rather than pinned. A project UUID would have to be re-pinned every time the
@@ -143,7 +228,7 @@ for p in rows:
 [ -n "$PROJECT_ID" ] || die "no project with identifier '$PLANE_IDENTIFIER' in workspace '$PLANE_WORKSPACE'."
 printf 'project %s\n' "$PROJECT_ID"
 
-step "Running configure-claude-code.yml (the loop identity on claude-247)"
+step "Running configure-claude-code.yml (247's identities)"
 cd "$ANSIBLE_DIR"
 # umask BEFORE the temp file exists, so the extra-vars never sit world-readable. mktemp -d
 # gives a 0700 parent, but the file inside it inherits the process umask.
@@ -155,14 +240,21 @@ trap 'rm -rf "$TMP"' EXIT
 # characters that are a valid private key and an invalid bare YAML scalar.
 #
 # Every value travels in the ENVIRONMENT, never in argv — `ps` on a shared machine reads
-# argv, and one of these is an App private key.
+# argv, and two of these are App private keys.
+#
+# The mirror's three keys are OMITTED, not blanked, when its Vault path is empty. The role
+# decides whether this run carries the mirror identity by testing them for length, and an
+# empty string and an undefined variable read the same there — but omitting them keeps a
+# `-e` on the command line able to supply them, which a blank would silently override.
 OUT="$TMP/extra.json" \
 APP_ID="$APP_ID" INSTALL_ID="$INSTALL_ID" APP_PEM="$APP_PEM" \
+MIRROR_PRESENT="$MIRROR_PRESENT" MIRROR_APP_ID="$MIRROR_APP_ID" \
+MIRROR_INSTALL_ID="$MIRROR_INSTALL_ID" MIRROR_APP_PEM="$MIRROR_APP_PEM" \
 PLANE_KEY="$PLANE_KEY" PLANE_BASE_URL="$PLANE_BASE_URL" \
 PLANE_WORKSPACE="$PLANE_WORKSPACE" PROJECT_ID="$PROJECT_ID" \
 python3 -c '
 import json, os
-json.dump({
+v = {
     "claude_loop_github_app_id": os.environ["APP_ID"],
     "claude_loop_github_installation_id": os.environ["INSTALL_ID"],
     "claude_loop_github_app_pem": os.environ["APP_PEM"],
@@ -170,9 +262,16 @@ json.dump({
     "claude_loop_plane_base_url": os.environ["PLANE_BASE_URL"],
     "claude_loop_plane_workspace": os.environ["PLANE_WORKSPACE"],
     "claude_loop_plane_project_id": os.environ["PROJECT_ID"],
-}, open(os.environ["OUT"], "w"))
+}
+if os.environ["MIRROR_PRESENT"] == "1":
+    v.update({
+        "claude_workspace_mirror_app_id": os.environ["MIRROR_APP_ID"],
+        "claude_workspace_mirror_installation_id": os.environ["MIRROR_INSTALL_ID"],
+        "claude_workspace_mirror_app_pem": os.environ["MIRROR_APP_PEM"],
+    })
+json.dump(v, open(os.environ["OUT"], "w"))
 ' || die "could not write the extra-vars file."
-unset APP_PEM PLANE_KEY
+unset APP_PEM PLANE_KEY MIRROR_APP_PEM
 
 ansible-playbook playbooks/configure-claude-code.yml -e "@$TMP/extra.json" "$@"
 
@@ -180,7 +279,7 @@ step "Done"
 cat <<'TXT'
   Re-run this script to confirm idempotence — a converged host must report changed=0.
 
-  The timer is OFF unless you passed -e claude_loop_enable=true. Before you turn it on,
+  THE LOOP TIMER is OFF unless you passed -e claude_loop_enable=true. Before you turn it on,
   run one tick by hand and read what it did. The commands are in
   docs/runbooks/claude-loop.md, under "Before you enable it". They run as root on
   claude-247, which has no sudo and no operator account. This text does not repeat them,
@@ -188,9 +287,18 @@ cat <<'TXT'
 
   Then, once a draft PR from the bot looks right:
 
-    ./scripts/deploy-claude-loop.sh -e claude_loop_enable=true
+    ./scripts/deploy-claude-247.sh -e claude_loop_enable=true
     ./scripts/lab-verify.sh | grep -i loop
 
-  Full sequence, including how to pause and how to rotate the App key:
-  docs/runbooks/claude-loop.md
+  THE WORKSPACE MIRROR needs one step no play can take, because the dialog is interactive:
+
+    ssh claude@192.168.50.247
+    cd ~/work/petedio/workspace && claude      # accept the trust dialog, then /exit
+
+  Until then a session started in that directory waits at the prompt while systemd reports
+  its unit active — the same failure PET-431 documents for the Remote Control consent.
+
+  Full sequences, including how to pause and how to rotate each App key:
+    the loop    docs/runbooks/claude-loop.md
+    the mirror  ansible/roles/claude-code/README.md, "The private workspace repo"
 TXT
