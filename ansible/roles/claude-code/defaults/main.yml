@@ -34,24 +34,42 @@ claude_repos:
   - { name: co-latro-backend, dest: co-latro/backend }
   - { name: co-latro-frontend, dest: co-latro/frontend }
 
-# --- The private workspace repo (PET-480) ---------------------------------------------
-# petedio-workspace is private, so no HTTPS clone reaches it without a credential. Pedro
+# --- The private workspace repo (PET-480, re-routed by PET-493) -------------------------
+# petedio-workspace is private, so no HTTPS clone reaches it without a credential. PET-480
 # chose a read-only deploy key on 2026-09-17, as an explicit override of the rule in
 # vault/Claude/claude-247.md that keeps every credential off this host.
 #
-# ⚠ THE OVERRIDE IS NARROW, AND THE SHAPE IS WHAT MAKES IT SO. Read tasks/workspace-mirror.yml
-# before changing anything here. The key is generated on the host, is 0400 root:root, and is
-# used only by a root timer fetching into a bare mirror under /var/lib. The session user gets
-# a working clone of that mirror and no credential at all. Do not "simplify" this by pointing
-# the session's clone at GitHub with the key: root would then run git inside a directory the
-# sessions own, which is code execution as root.
+# ⚠ THAT ROUTE CANNOT WORK, AND THE REASON IS ORGANIZATION POLICY, NOT THIS ROLE:
+#
+#     gh api orgs/PeteDio-Labs --jq .deploy_keys_enabled_for_repositories   # false
+#
+# PeteDio-Labs disallows deploy keys for every repository it owns, and the repository's own
+# key page reads "Disabled by PeteDio-Labs". PET-481 ran the old flow to completion and
+# generated a key on 247 that GitHub would never have accepted. PET-493 replaced the key with
+# a GitHub App installed on this ONE repository, Contents and Metadata read-only. Root mints
+# a one-hour installation token per fetch through claude-workspace-mirror-broker and hands it
+# to git over a pipe, so no token is written to disk, to a config, or to a command line.
+#
+# ⚠ THE OVERRIDE IS STILL NARROW, AND THE SHAPE IS WHAT MAKES IT SO. Read
+# tasks/workspace-mirror.yml before changing anything here. The App key is 0400 root:root and
+# is used only by a root timer fetching into a bare mirror under /var/lib. The session user
+# gets a working clone of that mirror and no credential at all. Do not "simplify" this by
+# pointing the session's clone at GitHub with the helper: root would then run git inside a
+# directory the sessions own, which is code execution as root.
+#
+# The narrowness is a property of the App, not of this file. It holds while the App keeps
+# read-only permissions and one installed repository, and stops holding the moment either
+# changes — in the GitHub UI, where nothing in this repo would notice.
 #
 # DEFAULT FALSE, like every other delivery in this role. `true` belongs in host_vars, next to
 # claude_remote_enable.
 claude_workspace_mirror_enable: false
 
 claude_workspace_mirror_repo: PeteDio-Labs/petedio-workspace
-claude_workspace_mirror_url: "git@github.com:{{ claude_workspace_mirror_repo }}.git"
+
+# HTTPS, not ssh: the App authenticates over the git credential protocol, and there is no key
+# for ssh to offer. It was git@github.com until PET-493.
+claude_workspace_mirror_url: "https://github.com/{{ claude_workspace_mirror_repo }}.git"
 
 # Where the session's working clone lands, RELATIVE to claude_workspace. Must match the
 # `dir` of the claude_remote_sessions entry that serves it, or the entry stays unservable.
@@ -60,7 +78,32 @@ claude_workspace_mirror_dest: workspace
 # Root-owned, 0400. Sessions run as {{ claude_user }} with no sudo, so this is unreadable to
 # them — the same arrangement claude_loop_conf_dir uses for the loop's GitHub App key.
 claude_workspace_mirror_conf_dir: /etc/claude-workspace-mirror
+
+# 0500 root:root. The only path to the App key, and the git credential helper every fetch
+# authenticates through. Read its header before changing any of the three settings below.
+claude_workspace_mirror_broker: /usr/local/sbin/claude-workspace-mirror-broker
+
+# ⚠ THE DEPLOY KEY PET-480 GENERATED, KEPT ONLY SO THE PLAY CAN DECLARE IT ABSENT. Nothing
+# creates this any more. It exists on 247 from PET-481's run 1, and a file nobody deletes by
+# hand is a file that stays; tasks/workspace-mirror.yml removes both halves on every converge.
+# Delete this variable once no host has run the old flow.
 claude_workspace_mirror_key: "{{ claude_workspace_mirror_conf_dir }}/deploy-key"
+
+# The git options EVERY fetch of this mirror carries — the probe, the clone and the systemd
+# unit alike. Three settings, and each one is load-bearing:
+#
+#   · The empty `credential.helper` FIRST resets the helper list. The key is multi-valued, so
+#     a later `-c credential.helper=<x>` appends rather than replaces. Measured on git 2.50.1:
+#     without the reset, a machine that already had a stored credential answered first and the
+#     broker was never run — which silently disables the host and path checks inside it.
+#   · The helper is an ABSOLUTE path, so git runs it directly instead of prefixing
+#     `git-credential-`, appending `get`, `store` or `erase` as its one argument.
+#   · useHttpPath makes git send the repository path to the helper. The broker refuses any
+#     path but this repository's, so the helper cannot be turned on a second one.
+claude_workspace_mirror_git_opts: >-
+  -c credential.helper=
+  -c credential.useHttpPath=true
+  -c credential.helper={{ claude_workspace_mirror_broker }}
 
 # The bare mirror root fetches into, and the only path root runs git in.
 claude_workspace_mirror_state_dir: /var/lib/claude-workspace-mirror
@@ -70,13 +113,16 @@ claude_workspace_mirror_path: "{{ claude_workspace_mirror_state_dir }}/petedio-w
 # minute.
 claude_workspace_mirror_oncalendar: "*:15/30"
 
-# IdentitiesOnly=yes stops ssh offering root's other keys and authorizing by way of one this
-# role did not arrange — without it the probe in tasks/workspace-mirror.yml can pass for a
-# reason that has nothing to do with the deploy key. accept-new writes GitHub's host key on
-# first use and still refuses a CHANGED one, unlike `no`.
-claude_workspace_mirror_ssh: >-
-  ssh -i {{ claude_workspace_mirror_key }} -o IdentitiesOnly=yes
-  -o StrictHostKeyChecking=accept-new -o PasswordAuthentication=no
+# --- Mirror identity (resolved from Vault by scripts/deploy-claude-247.sh) ---------------
+# NEVER give these a default, for the reason written over the loop's identity below: a
+# committed placeholder would land on the host as a 0400 file that looks provisioned and fail
+# at the first fetch, in a timer nobody is watching.
+#
+# Vault kv/services/claude-workspace-mirror — fields app_id, installation_id, app_pem.
+#
+#   claude_workspace_mirror_app_id
+#   claude_workspace_mirror_installation_id
+#   claude_workspace_mirror_app_pem
 
 # --- Toolchain ------------------------------------------------------------------------
 # Node.js LTS major (NodeSource). 22 = active LTS ("jod").
@@ -264,7 +310,7 @@ claude_loop_max_turns: 60
 # host_vars and re-run the play — see docs/runbooks/claude-loop.md, "Change the model".
 claude_loop_model: sonnet
 
-# --- Loop identity (resolved from Vault by scripts/deploy-claude-loop.sh) ---------------
+# --- Loop identity (resolved from Vault by scripts/deploy-claude-247.sh) ---------------
 # NEVER give the secret ones a default. A committed placeholder here would land on the host
 # as a 0400 file that looks provisioned and fails at the first mint, and the assert in
 # tasks/loop.yml exists precisely to refuse that.

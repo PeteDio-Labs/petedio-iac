@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+{{ ansible_managed | comment }}
+# claude-workspace-mirror-broker — the only thing on this host that reads the mirror App's
+# private key, and the only thing that ever holds a token for {{ claude_workspace_mirror_repo }}.
+#
+# WHY AN APP AND NOT A DEPLOY KEY (PET-493). PET-480 built this route on a read-only deploy
+# key generated on this host. That route cannot work, for a reason outside this role:
+#
+#   gh api orgs/PeteDio-Labs --jq .deploy_keys_enabled_for_repositories   # false
+#
+# PeteDio-Labs disallows deploy keys for every repository it owns, so the key PET-481
+# generated here is one GitHub would never accept. A GitHub App installed on
+# {{ claude_workspace_mirror_repo }} ALONE, Contents and Metadata read-only, keeps every
+# property the deploy key was chosen for: it cannot push, cannot read a second repository,
+# and cannot act as Pedro. That argument holds only while both halves stay true — one
+# installed repository, and read-only permissions. Widen either and re-read
+# roles/claude-code/README.md before you do.
+#
+# ⚠ THIS IS NOT THE LOOP'S APP, AND MUST NOT BECOME IT. The loop's App carries
+# contents:write and pull_requests:write, because it opens draft PRs. Pointing this at
+# {{ claude_loop_conf_dir }} would give a half-hourly root timer a push credential for
+# petedio-iac. Two Apps, two directories, two brokers.
+#
+# WHY A BROKER AND NOT A TOKEN ON DISK. The token is minted per fetch and exists only in this
+# process and the pipe to git. Nothing writes it to {{ claude_workspace_mirror_conf_dir }},
+# to the mirror's git config, or to a command line. Sessions run as {{ claude_user }} with no
+# sudo (PET-408), so they can read neither the App key (0400 root) nor this script (0500
+# root) — the same arrangement {{ claude_loop_conf_dir }} already uses.
+#
+# Two subcommands, one argument, nothing else:
+#
+#   mint-token  prints ONE installation access token, good for an hour. The play uses it to
+#               verify the identity landed, and a human uses it to debug delivery.
+#   get         speaks git's credential-helper protocol on stdin and stdout, so
+#               `git -c credential.helper={{ claude_workspace_mirror_broker }}` authenticates
+#               a fetch with no token in argv and none in any config file. `store` and
+#               `erase` are accepted and do nothing, which is all a read-only helper owes git.
+set -euo pipefail
+umask 077
+
+CONF_DIR={{ claude_workspace_mirror_conf_dir }}
+WANT_HOST=github.com
+WANT_PATH={{ claude_workspace_mirror_repo }}.git
+
+die() { printf 'claude-workspace-mirror-broker: %s\n' "$*" >&2; exit 1; }
+
+# Callable only by root, like the loop's broker. The mode on this file already says so; this
+# says it again where the reason is written down, because a mode is easy to change by hand.
+[ "$(id -u)" -eq 0 ] || die "must run as root. Sessions run as {{ claude_user }}, which cannot read $CONF_DIR."
+[ $# -eq 1 ] || die "usage: $(basename "$0") mint-token|get|store|erase"
+
+# ---------------------------------------------------------------------------------- mint
+#
+# Body carried over from claude-loop-broker, which carried it from scripts/agent-mint-token.sh.
+# Three things in it are load-bearing and were paid for once already:
+#
+#   · The JWT window is 540s (iat back-dated 60s, exp 480s out) under GitHub's HARD 600s
+#     exp-iat ceiling. It was exactly 600 once — zero margin, and a latent mint failure the
+#     first time a clock drifted.
+#   · The JWT goes to curl through STDIN (`-H @-`), never argv. For its lifetime the JWT is
+#     App-bearer-equivalent, and anything on this host could read it out of
+#     /proc/<pid>/cmdline. printf is a bash builtin, so the value never reaches an external
+#     process's command line. The token-exchange POST has no body, so stdin is free.
+#   · The PEM reaches openssl as a PATH, not as content. A path is not a secret; the 0400
+#     mode on the file it names is what protects the key. claude-loop-broker's comment claims
+#     a process substitution here and has never done one — corrected in PET-493 rather than
+#     copied forward.
+mint() {
+  # shellcheck source=/dev/null
+  . "$CONF_DIR/github.env"
+  for v in GITHUB_APP_ID GITHUB_INSTALLATION_ID; do
+    [ -n "${!v:-}" ] || die "$v is missing from $CONF_DIR/github.env"
+  done
+  PEM_FILE="$CONF_DIR/app.pem"
+  [ -r "$PEM_FILE" ] || die "$PEM_FILE is missing or unreadable."
+  for t in openssl curl python3; do command -v "$t" >/dev/null || die "$t is not in PATH."; done
+
+  b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+  now="$(date +%s)"
+  h="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
+  p="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 480))" "$GITHUB_APP_ID" | b64url)"
+  sig="$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -sign "$PEM_FILE" -binary | b64url)"
+  jwt="${h}.${p}.${sig}"
+
+  resp="$(printf 'Authorization: Bearer %s\n' "$jwt" | curl -sS --max-time 20 -X POST \
+    -H @- \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "https://api.github.com/app/installations/${GITHUB_INSTALLATION_ID}/access_tokens")"
+
+  token="$(printf '%s' "$resp" | python3 -c 'import sys,json
+try:
+    print(json.load(sys.stdin).get("token") or "")
+except Exception:
+    print("")')"
+  [ -n "$token" ] || die "mint failed. GitHub said: $(printf '%s' "$resp" | head -c 200)"
+  printf '%s\n' "$token"
+}
+
+case "$1" in
+
+mint-token)
+  mint
+  ;;
+
+# ----------------------------------------------------------------------------------- get
+#
+# git's credential-helper protocol: it writes `key=value` lines on stdin, ends them with a
+# blank line, and reads `username=` and `password=` back. A helper that prints nothing, or
+# exits non-zero, tells git it has no credential — with GIT_TERMINAL_PROMPT=0 the fetch then
+# fails instead of blocking a systemd job on a prompt nobody can answer.
+#
+# ⚠ THE HOST AND PATH CHECKS ARE THE REACH LIMIT, and they are cheap. `credential.helper` is
+# not URL-scoped in the commands that set it, so without this a git command that touched a
+# second remote would be handed a token for it. git sends `path=` only when
+# credential.useHttpPath is true, which every caller here sets, so the check is live; the
+# host check stands on its own if a caller ever drops that option.
+#
+# ⚠ EVERY CALLER MUST RESET THE HELPER LIST FIRST, and the reset is not decoration:
+#
+#     git -c credential.helper= -c credential.helper=<this script> ...
+#
+# `credential.helper` is MULTI-VALUED, so `-c credential.helper=<x>` APPENDS to whatever
+# /etc/gitconfig and the caller's ~/.gitconfig already configure. An empty value resets the
+# list. Measured on git 2.50.1: without the reset a machine with a stored credential answered
+# first and git never ran this script at all — so the checks above silently stopped applying.
+# 247's root has no configured helper today, which is exactly the kind of fact that changes
+# without anyone deciding to change it. claude_workspace_mirror_git_opts carries the reset;
+# use that variable rather than writing the flags out again.
+get)
+  proto='' host='' path=''
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || break
+    case "$line" in
+      protocol=*) proto="${line#protocol=}" ;;
+      host=*) host="${line#host=}" ;;
+      path=*) path="${line#path=}" ;;
+    esac
+  done
+  [ "$proto" = https ] || die "refusing: protocol '$proto' is not https."
+  [ "$host" = "$WANT_HOST" ] || die "refusing: host '$host' is not $WANT_HOST."
+  [ -z "$path" ] || [ "$path" = "$WANT_PATH" ] || die "refusing: path '$path' is not $WANT_PATH."
+
+  token="$(mint)" || die "could not mint a token for $WANT_PATH."
+  # x-access-token is GitHub's fixed username for an installation token. The token is the
+  # password, and this pipe is the only place it is written.
+  printf 'username=x-access-token\npassword=%s\n' "$token"
+  ;;
+
+# Nothing to store and nothing to forget: the credential is minted fresh every time and is
+# never cached. Exiting 0 silently is the protocol's "handled"; exiting non-zero here would
+# make git report a helper failure after a fetch that had already succeeded.
+store | erase)
+  ;;
+
+*)
+  die "unknown subcommand '$1'. Expected mint-token, get, store or erase."
+  ;;
+esac

@@ -1,0 +1,82 @@
+# workspace-mirror-readiness.yml — roles/claude-code/tasks/workspace-mirror-readiness.yml,
+# on recorded command results.
+#
+# Runs on localhost, touches nothing, needs no credential and reaches no network. Run it
+# from `ansible/`:
+#
+#   ansible-playbook tests/workspace-mirror-readiness.yml
+#
+# WHAT THIS EXISTS TO CATCH. claude_workspace_mirror_blocked_at is the sentence an operator
+# reads when the deploy fails, and it is the only thing that tells them WHICH half of the
+# route is broken. PET-480 shipped a message that named the wrong cause: it told you to set
+# claude_workspace_mirror_enable, which claude-247 already set, so a run that failed for any
+# reason blamed the one thing that was right. The fix is only worth having if each branch
+# actually fires on the state it describes, so each one is asserted here.
+#
+# A skipped task is not an absent one. When the credentials are missing, the mint and the
+# ls-remote never run, and Ansible registers each as a dict with `skipped: true` and NO `rc`
+# key. The rows below record that shape rather than leaving the variable undefined, because
+# leaving it undefined would test a situation that cannot happen on a host.
+#
+# The last case is not about a branch. The expression lives in a `>-` folded scalar, where a
+# continuation line indented past the line above it keeps its newline — and a newline inside
+# a Jinja string literal reaches the operator's message with its leading spaces attached.
+# That bug was live in this expression when the test was written.
+---
+- name: Decide whether the workspace mirror can be delivered, roles/claude-code
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # The role gets this from defaults; the message interpolates it.
+    claude_workspace_mirror_repo: PeteDio-Labs/petedio-workspace
+
+    # Command results as Ansible registers them. Only the keys the expression reads.
+    ok_row: { rc: 0, changed: false }
+    failed_row: { rc: 1, changed: false }
+    skipped_row: { skipped: true, changed: false }
+
+    readiness_cases:
+      # The only state in which anything gets fetched.
+      - name: seeded host, App installed on the repository
+        creds_on_disk: true
+        mint: "{{ ok_row }}"
+        probe: "{{ ok_row }}"
+        want_ready: true
+        want_blocked_at: nothing; the mirror converged
+
+      # claude-247 before Pedro runs the seed script. Both probes are skipped.
+      - name: no credentials on the host yet
+        creds_on_disk: false
+        mint: "{{ skipped_row }}"
+        probe: "{{ skipped_row }}"
+        want_ready: false
+        want_blocked_at: no App credentials on this host yet, so nothing was fetched
+
+      # A wrong app id, a wrong installation id, or a key that does not match the App.
+      - name: credentials present, the mint fails
+        creds_on_disk: true
+        mint: "{{ failed_row }}"
+        probe: "{{ failed_row }}"
+        want_ready: false
+        want_blocked_at: >-
+          the credentials are on the host but the broker could not mint a token, so the App
+          id, the installation id or the key is wrong
+
+      # The case worth separating: a valid App that was never installed on petedio-workspace
+      # mints a token happily and then reads nothing. Same rc from git, different cause.
+      - name: the mint works, the repository is unreadable
+        creds_on_disk: true
+        mint: "{{ ok_row }}"
+        probe: "{{ failed_row }}"
+        want_ready: false
+        want_blocked_at: >-
+          the App minted a token but cannot read PeteDio-Labs/petedio-workspace, so it is
+          probably not installed on that repository
+
+  tasks:
+    - name: Run every case
+      ansible.builtin.include_tasks: cases/workspace-mirror-readiness-case.yml
+      loop: "{{ readiness_cases }}"
+      loop_control:
+        loop_var: readiness_case
+        label: "{{ readiness_case.name }}"

@@ -88,10 +88,30 @@ on merge; nothing here needs a node-side step, because nothing here runs Docker.
    the server, which is how a loop deploy took claude-247's down.
 
 6. **Optional — deliver the private workspace repo.** Declare
-   `claude_workspace_mirror_enable: true` in the host's `host_vars` and re-run. The first run
-   generates a deploy key on the host and prints its public half; paste that at
-   `github.com/PeteDio-Labs/petedio-workspace/settings/keys/new` with **Allow write access
-   unchecked**, then re-run. See "The private workspace repo" below.
+   `claude_workspace_mirror_enable: true` in the host's `host_vars`, then:
+
+   ```sh
+   ./scripts/seed-workspace-mirror-vault.sh ~/Downloads/petedio-workspace-mirror.*.pem
+   ./scripts/deploy-claude-247.sh
+   ```
+
+   One run mirrors the repo and clones the session's copy; there is no second pass. Then take
+   the one step no play can take, because the dialog is interactive:
+
+   ```sh
+   ssh claude@192.168.50.247
+   cd ~/work/petedio/workspace && claude    # accept the trust dialog, then /exit
+   ```
+
+   Until that dialog is accepted, a session started in that directory waits at the prompt
+   while systemd reports its unit active — the same failure mode as the consent in step 5
+   (PET-431). PET-481 confirmed the sequence on the machine. See "The private workspace repo"
+   below.
+
+   > ⚠ **Do not paste a deploy key.** Step 6 said to, until PET-493. PeteDio-Labs disallows
+   > deploy keys for every repository it owns — `gh api orgs/PeteDio-Labs --jq
+   > .deploy_keys_enabled_for_repositories` is `false`, and the repository's key page reads
+   > "Disabled by PeteDio-Labs". A key generated here is one GitHub will refuse.
 
    > ⚠ **Do not run `gh auth login` on this host.** Step 6 said to, until PET-480.
    > `vault/Claude/claude-247.md` forbids it by name: the OAuth token it writes to
@@ -99,24 +119,51 @@ on merge; nothing here needs a node-side step, because nothing here runs Docker.
    > runs as. A session here does not push and does not open pull requests — it writes a
    > branch, and the Mac bundles and pushes it.
 
-## The private workspace repo (PET-480)
+## The private workspace repo (PET-480, re-routed by PET-493)
 
 `petedio-workspace` is private, so nothing clones it without a credential, and the login that
 would supply one is forbidden here. Pedro chose a **read-only deploy key** on 2026-09-17, as
 an explicit override of the rule that keeps every credential off this host.
 
-**The override is narrow, and the shape is what makes it narrow.** The forbidden act writes a
-token carrying his permissions across every repo he can reach, write included. A deploy key
-scoped read-only to one repository cannot push, cannot read a second repository, and cannot
-act as him. Blast radius was the objection, not the presence of a secret.
+**That route could never have worked, and the reason is outside this role.** PeteDio-Labs
+disallows deploy keys for every repository it owns:
 
-**No session holds anything.** Three properties carry that:
+```sh
+gh api orgs/PeteDio-Labs --jq .deploy_keys_enabled_for_repositories   # false
+```
+
+The repository's key page reads "Disabled by PeteDio-Labs". PET-481 ran the two-step flow to
+completion and generated a key on 247 that GitHub would have refused, which is why the
+delivery never started. PET-493 replaced the key with a **GitHub App**, `petedio-workspace-mirror`,
+Contents and Metadata read-only, installed on that one repository. Do not go back to a key to
+make a red run green.
+
+**The override stays narrow, and the shape is what makes it narrow.** The forbidden act writes
+a token carrying Pedro's permissions across every repo he can reach, write included. An App
+installed on one repository, read-only, cannot push, cannot read a second repository, and
+cannot act as him — the same three properties the deploy key was chosen for. Blast radius was
+the objection, not the presence of a secret.
+
+⚠ **Both halves of that argument are checked, not assumed.**
+`scripts/seed-workspace-mirror-vault.sh` refuses to write the credential unless GitHub reports
+`repository_selection: selected`, permissions of exactly `contents=read,metadata=read`, and —
+asked with the App's own key — exactly one reachable repository. Widen the App and the next
+seed fails.
+
+⚠ **This is not the loop's App, and must not become it.** The loop's App carries
+`contents:write` and `pull_requests:write`, because it opens draft PRs. Pointing the mirror at
+`kv/services/claude-loop` would hand a half-hourly root timer a push credential for
+`petedio-iac`. Two Apps, two Vault paths, two directories, two brokers —
+`scripts/deploy-claude-247.sh` and the seed script both refuse by App id.
+
+**No session holds anything.** Four properties carry that:
 
 | | |
 |---|---|
-| The key is generated on the host | No private half transits the Mac, a transcript, or a session's context. The play prints only the public half. |
-| The key is `0400 root:root` | Sessions run as `claude` with no sudo (PET-408), so a session cannot read it. `/etc/claude-loop` already works this way. |
+| The key is `0400 root:root` and the broker is `0500 root:root` | Sessions run as `claude` with no sudo (PET-408), so a session can neither read the key nor mint a token. `/etc/claude-loop` already works this way. |
+| No token is ever written down | `claude-workspace-mirror-broker` mints one per fetch and hands it to `git` as a credential helper, over a pipe. It reaches no file, no git config and no command line. |
 | Root fetches into a bare mirror it owns | `/var/lib/claude-workspace-mirror/petedio-workspace.git`, refreshed by `claude-workspace-mirror.timer`. The session's working clone is cloned from that mirror over a local path. |
+| The clone uses `git -c … clone`, never `git clone -c …` | The second form persists the helper into the new repository's config; the first does not. Measured on git 2.50.1. The mirror's config names no helper at all. |
 
 ⚠ **The mirror is the security boundary, not an extra hop.** The obvious shape — point the
 `claude`-owned clone at GitHub and let a root timer fetch it — hands root a `git` process
@@ -125,14 +172,42 @@ and `core.fsmonitor` from the repository's own config, so a session that rewrite
 `.git/config` gets code execution as root on the next fetch. Root must never run `git` inside
 a path a session can write.
 
+⚠ **Every git command that uses the broker resets the helper list first.**
+`claude_workspace_mirror_git_opts` leads with an empty `-c credential.helper=`, and the empty
+value is load-bearing: `credential.helper` is multi-valued, so a later `-c
+credential.helper=<broker>` *appends* to whatever `/etc/gitconfig` and root's `~/.gitconfig`
+already configure. Measured on git 2.50.1, a machine with a stored credential answered first
+and the broker was never run — so its host and path checks silently stopped applying. Use the
+variable rather than writing the flags out again.
+
 **`origin` in the session's clone is the local mirror, not GitHub.** A session can commit and
 cannot push, which is the arrangement `claude-247.md` already describes. Nothing updates that
 clone on a schedule either: a session pulls its own repo, like any developer.
 
-To rotate the key, delete `/etc/claude-workspace-mirror/deploy-key` and its `.pub`, re-run the
-play, and replace the deploy key on GitHub with the new public half. The task is
-`creates:`-guarded on purpose — a run that regenerated the key every converge would break
-delivery quietly.
+**One step is interactive and no play can take it.** Claude Code refuses to work in a
+directory nobody has trusted, so after the first delivery: `ssh claude@192.168.50.247`, then
+`cd ~/work/petedio/workspace && claude`, accept the dialog, `/exit`.
+
+### Rotating the App key
+
+Generate a new private key on the App's settings page, then re-seed and re-deploy:
+
+```sh
+./scripts/seed-workspace-mirror-vault.sh --shred ~/Downloads/petedio-workspace-mirror.*.pem
+./scripts/deploy-claude-247.sh
+```
+
+Delete the old key on the settings page afterwards. Nothing on 247 caches a token, so the
+next timer firing uses the new key with no further step. To check a delivery that has started
+failing, run the broker by hand as root on the host — it prints a token, so read the exit
+status and not the output:
+
+```sh
+/usr/local/sbin/claude-workspace-mirror-broker mint-token >/dev/null && echo "mint ok"
+systemctl start claude-workspace-mirror.service && systemctl status claude-workspace-mirror.service
+```
+
+A mint that works and a fetch that does not means the App lost access to the repository.
 
 ## Verify
 
@@ -257,8 +332,9 @@ So a session reached what the LAN serves unauthenticated, plus whatever you adde
 afterwards. ⚠ **`gh auth login` is the one addition that is forbidden outright**
 (`vault/Claude/claude-247.md`): its OAuth token lands in `~/.config/gh/hosts.yml` under the
 same user the sessions run as, and it carries Pedro's permissions across every repo he can
-reach. The deploy key above is the sanctioned counter-example — one repository, read-only,
-`0400 root`, and reachable only by a root timer.
+reach. The workspace mirror's App above is the sanctioned counter-example — one repository,
+read-only, a `0400 root` key reachable only through a `0500 root` broker, and no token written
+down anywhere.
 
 ⚠ **The work loop changes that.** See "What the loop changes about the isolation story"
 below before you set `claude_loop_enable`.

@@ -6,7 +6,7 @@
 # ⚠ REMOTE CONTROL IS DECLARED HERE, NEVER PASSED WITH -e (PET-431). The role's default is
 # `false`, and `false` stops AND disables the servers. The bootstrap used to pass
 # `-e claude_remote_enable=true` once, so the next run without the flag — a
-# deploy-claude-loop.sh run on 2026-09-12 — stopped this host's server.
+# deploy-claude-247.sh run on 2026-09-12 — stopped this host's server.
 #
 # Declaring it does not start a server before one can serve. The role first checks for the
 # one-time consent that `claude remote-control` asks for; without it, the play leaves the
@@ -14,10 +14,18 @@
 # the full bootstrap.
 claude_remote_enable: true
 
-# petedio-workspace is private. The play delivers it through a root-owned bare mirror and a
-# read-only deploy key generated on this host (PET-480, PET-481). Run 1 creates the key,
-# prints its public half, and fails at the end naming the step. Pedro adds that half at
-# github.com/PeteDio-Labs/petedio-workspace/settings/keys/new with write access unchecked,
-# and run 2 mirrors the repo and clones the session's copy. roles/claude-code/README.md has
-# the design and the key rotation.
+# petedio-workspace is private. The play delivers it through a root-owned bare mirror that
+# fetches over a GitHub App token, Contents and Metadata read-only, installed on that one
+# repository (PET-480, PET-481, re-routed by PET-493).
+#
+# ⚠ THIS WAS A DEPLOY KEY AND THE KEY COULD NEVER HAVE WORKED. PeteDio-Labs disallows deploy
+# keys for every repository it owns — `gh api orgs/PeteDio-Labs --jq
+# .deploy_keys_enabled_for_repositories` is false — so the key PET-481's run generated on this
+# host is one GitHub would have refused. Do not go back to a key to make a red run green.
+#
+# ONE RUN, NOT TWO. The App is authorized before Ansible starts, so the run that carries the
+# identity mirrors the repo and clones the session's copy. Run scripts/deploy-claude-247.sh,
+# which reads kv/services/claude-workspace-mirror from Vault; a bare play run leaves the
+# credentials alone and delivers from what is already on disk. roles/claude-code/README.md
+# has the design, the trust step and the rotation.
 claude_workspace_mirror_enable: true

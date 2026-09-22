@@ -1,0 +1,45 @@
+# workspace-mirror-readiness.yml — did the mirror's delivery route come up in this run?
+#
+# Split out of workspace-mirror.yml so tests/workspace-mirror-readiness.yml can include the
+# real expression instead of a copy of it, the same way session-split.yml is split out for
+# tests/remote-session-split.yml. A copy in a test drifts silently; this cannot.
+#
+# Inputs, all set by workspace-mirror.yml before it includes this file:
+#
+#   claude_workspace_mirror_creds_on_disk  bool, both credential files present
+#   claude_workspace_mirror_mint           the broker's mint-token result, or a skipped one
+#   claude_workspace_mirror_probe          the `git ls-remote` result, or a skipped one
+#
+# Both registers can be SKIPPED rather than absent, and a skipped result is a dict with no
+# `rc` key at all. `.rc | default(1)` reads that as a failure, which is the answer wanted:
+# an unseeded host never got far enough to prove anything works.
+#
+# blocked_at is read by playbooks/configure-claude-code.yml, which fails at the end of the
+# play naming this step, and by session-split.yml's report. Before PET-493 that message
+# opened by telling you to declare claude_workspace_mirror_enable — which 247 already
+# declares — so it never said what had actually stopped.
+#
+# It carries NO command output. The detail belongs in the debug that follows the include,
+# where an operator reading `-v` finds it, and a token must never reach a fail message.
+#
+# ⚠ Keep every quoted message on ONE line. This is a `>-` folded scalar: a continuation
+# line indented further than the line above it keeps its newline, and a newline inside a
+# Jinja string literal lands in the operator's message with its leading spaces. That is the
+# trap configure-claude-code.yml warns about, and it was live here until the test below
+# caught it.
+---
+- name: Record whether delivery can proceed in this run
+  ansible.builtin.set_fact:
+    claude_workspace_mirror_ready: >-
+      {{ (claude_workspace_mirror_creds_on_disk | bool)
+         and (claude_workspace_mirror_probe.rc | default(1)) == 0 }}
+    claude_workspace_mirror_blocked_at: >-
+      {{ 'nothing; the mirror converged'
+         if ((claude_workspace_mirror_creds_on_disk | bool)
+             and (claude_workspace_mirror_probe.rc | default(1)) == 0)
+         else ('no App credentials on this host yet, so nothing was fetched'
+               if not (claude_workspace_mirror_creds_on_disk | bool)
+               else ('the credentials are on the host but the broker could not mint a token, so the App id, the installation id or the key is wrong'
+                     if (claude_workspace_mirror_mint.rc | default(1)) != 0
+                     else 'the App minted a token but cannot read ' ~ claude_workspace_mirror_repo
+                          ~ ', so it is probably not installed on that repository')) }}
