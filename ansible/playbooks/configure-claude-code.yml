@@ -84,6 +84,8 @@
                     '   one repository (PET-493). To seed or rotate its credentials, run',
                     '   ./scripts/seed-workspace-mirror-vault.sh and then ./scripts/deploy-claude-247.sh.',
                     '   One run clones; there is no second pass.',
+                    '   Then trust it once, as the session user, or Remote Control still refuses to serve it:',
+                    '     cd ~/work/petedio/workspace && claude   # accept the dialog, then /exit',
                     '   ⚠ A DEPLOY KEY CANNOT REPLACE IT, and this message told you to paste one until PET-493.',
                     '   PeteDio-Labs disallows deploy keys for every repository it owns:',
                     '   `gh api orgs/PeteDio-Labs --jq .deploy_keys_enabled_for_repositories` is false.',
