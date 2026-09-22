@@ -29,3 +29,24 @@ claude_remote_enable: true
 # credentials alone and delivers from what is already on disk. roles/claude-code/README.md
 # has the design, the trust step and the rotation.
 claude_workspace_mirror_enable: true
+
+# petedio-vault is private, and a session here CLONES it and PUSHES notes to its `main`
+# (PET-498). Pedro approved the direct push: vault `main` carries no branch protection, and
+# the Obsidian Git plugin already auto-pushes to it every 10 minutes from the Mac.
+#
+# ⚠ DECLARED HERE FOR THE SAME REASON claude_remote_enable IS. The role's default is `false`,
+# so a deploy run without this line would stop delivering the clone.
+#
+# ⚠ THIS IS THE ONLY OUTBOUND WRITE CREDENTIAL ON THIS HOST A SESSION CAN READ, AND ITS SHAPE
+# IS INVERTED FROM THE MIRROR ABOVE ON PURPOSE. The mirror's key is 0400 root behind a 0500
+# root broker because ROOT fetches. Here the SESSION pushes, so the key is 0400 claude in the
+# session user's home — and every process running as `claude` on this host can therefore push
+# to petedio-vault, the work loop's `claude -p` included if claude_loop_enable is ever set.
+# File modes cannot narrow that; they would be keeping out the user the design hands the key
+# to. What bounds it is the App: one installed repository, contents:write and metadata:read,
+# no pull-request rights, so it cannot reach petedio-iac and cannot act as Pedro.
+#
+# Run scripts/deploy-claude-247.sh, which reads kv/services/claude-vault-push from Vault; a
+# bare play run leaves the clone as it found it. roles/claude-code/README.md has the design,
+# the trust step and the rotation.
+claude_vault_enable: true

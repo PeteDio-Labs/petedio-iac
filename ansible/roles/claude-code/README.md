@@ -116,8 +116,30 @@ on merge; nothing here needs a node-side step, because nothing here runs Docker.
    > ⚠ **Do not run `gh auth login` on this host.** Step 6 said to, until PET-480.
    > `vault/Claude/claude-247.md` forbids it by name: the OAuth token it writes to
    > `~/.config/gh/hosts.yml` carries Pedro's permissions, under the same user every session
-   > runs as. A session here does not push and does not open pull requests — it writes a
-   > branch, and the Mac bundles and pushes it.
+   > runs as. For `petedio-iac` and `petedio-workspace`, a session here does not push and does
+   > not open pull requests — it writes a branch, and the Mac bundles and pushes it. Step 7
+   > below is the single exception, and it is one repository wide.
+
+7. **Optional — deliver the vault, which a session can push to.** Declare
+   `claude_vault_enable: true` in the host's `host_vars`, then seed a **third** App and
+   deploy:
+
+   ```sh
+   ./scripts/seed-claude-vault-app.sh --app-id <id> --installation-id <id> --shred ~/Downloads/petedio-vault-247.*.pem
+   ./scripts/deploy-claude-247.sh
+   ```
+
+   Then accept the trust dialog in that directory too:
+
+   ```sh
+   ssh claude@192.168.50.247
+   cd ~/work/petedio/vault && claude        # accept the trust dialog, then /exit
+   ```
+
+   ⚠ **This is the one outbound write credential on the host a session can read**, and the
+   shape is deliberately inverted from step 6 — root fetches the mirror, but the *session* is
+   what pushes a vault note. Read "The vault, and the one writable key" below before you run
+   it. Creating the App and generating its key are Pedro's steps, not a session's.
 
 ## The private workspace repo (PET-480, re-routed by PET-493)
 
@@ -208,6 +230,86 @@ systemctl start claude-workspace-mirror.service && systemctl status claude-works
 ```
 
 A mint that works and a fetch that does not means the App lost access to the repository.
+
+## The vault, and the one writable key (PET-498)
+
+`petedio-vault` is private, and a session here does something no other delivery in this role
+does: it **pushes**. Pedro approved writing to `main` directly. That branch carries no
+protection, and the Obsidian Git plugin already auto-commits and pushes to it every 10 minutes
+from the Mac, so a session committing a note joins a branch that has a second writer.
+
+**Set `claude_vault_enable: true` in host_vars, never with `-e`.** Same reason as
+`claude_remote_enable`: the default is `false`, so the next run without the flag would stop
+delivering. `inventory/host_vars/claude-247.yml` declares it.
+
+**Read the shape before you copy it from the mirror above, because it is inverted.**
+
+| | the workspace mirror | the vault |
+|---|---|---|
+| Who uses the credential | root, on a timer | the session |
+| Key | `0400 root` in `/etc/claude-workspace-mirror/` | `0400 claude` in `~/.config/claude-vault/` |
+| Broker | `0500 root` | `0500 claude:claude` |
+| Session's `origin` | a local bare path — pushing is impossible | `https://github.com/PeteDio-Labs/petedio-vault.git` |
+| App permissions | Contents and Metadata **read** | `contents:write`, `metadata:read` |
+
+The mirror can keep its key away from the session because root is what fetches. Here the
+session is what pushes, so the session has to reach the key. ⚠ **Every process running as
+`claude` on this host can therefore push to the vault**, the work loop's `claude -p` included
+if `claude_loop_enable` is ever set. Read that as the price of the feature. A stricter file
+mode would be locking out the user the design hands the key to.
+
+**What bounds it is the App.** One installed repository, `contents:write` and `metadata:read`,
+nothing else. It cannot open a pull request, cannot read a second repository, and cannot act
+as Pedro. That holds while the installation stays as seeded, and the installation is changed
+in the GitHub UI, where nothing in this repo notices.
+
+### Seeding it
+
+⚠ **A third App, not the loop's and not the mirror's.** Three Apps, three Vault paths, three
+directories, three brokers. Creating a GitHub App and generating its key are Pedro's steps,
+not a session's (`vault/Claude/README.md`).
+
+1. Create the App under `PeteDio-Labs`, named `petedio-vault-247`, with `contents: write` and
+   `metadata: read`, webhook off, private to the org.
+2. Install it on **`PeteDio-Labs/petedio-vault` alone** — not "All repositories".
+3. Generate a private key, and note the App ID and the Installation ID.
+4. Seed and deploy:
+
+```sh
+./scripts/seed-claude-vault-app.sh --app-id <id> --installation-id <id> --shred ~/Downloads/petedio-vault-247.*.pem
+./scripts/deploy-claude-247.sh
+```
+
+`seed-claude-vault-app.sh` refuses to write the credential unless GitHub itself reports
+`repository_selection: selected`, exactly one reachable repository and it is `petedio-vault`,
+permissions equal to `contents=write,metadata=read`, and an App id matching neither of the
+other two. It checks with a JWT signed by the App's own key, so a `gh` token that happens to
+be more privileged cannot make a wrong App look right.
+
+**One step is interactive and no play can take it**, the same one the workspace repo needs,
+in its own directory: `ssh claude@192.168.50.247`, then `cd ~/work/petedio/vault && claude`,
+accept the dialog, `/exit`.
+
+**The session entry is `spawn: same-dir`, not `worktree`.** `git worktree add` refuses a
+branch that is already checked out — `fatal: 'main' is already used by worktree at ...` — and
+this clone sits on `main` because pushing a note to `main` is the point. Concurrent sessions
+in that directory can collide; that is the documented trade for `same-dir`.
+
+### Rotating the vault App key
+
+Generate a new private key on the App's settings page, then re-seed and re-deploy with the
+commands above. Delete the old key on the settings page afterwards. Nothing on 247 caches a
+token. To check a delivery that has started failing, run the broker by hand **as the session
+user** — it prints a token, so read the exit status and not the output:
+
+```sh
+runuser -u claude -- /home/claude/.local/bin/claude-vault-broker mint-token >/dev/null && echo "mint ok"
+runuser -u claude -- git -C /home/claude/work/petedio/vault ls-remote origin >/dev/null && echo "reaches the repo"
+```
+
+A mint that works and an `ls-remote` that does not means the App is not installed on
+`petedio-vault`. ⚠ **To revoke this access, uninstall the App or delete its key on GitHub.**
+Removing the clone from 247 does not revoke anything.
 
 ## Verify
 
@@ -332,12 +434,36 @@ So a session reached what the LAN serves unauthenticated, plus whatever you adde
 afterwards. ⚠ **`gh auth login` is the one addition that is forbidden outright**
 (`vault/Claude/claude-247.md`): its OAuth token lands in `~/.config/gh/hosts.yml` under the
 same user the sessions run as, and it carries Pedro's permissions across every repo he can
-reach. The workspace mirror's App above is the sanctioned counter-example — one repository,
-read-only, a `0400 root` key reachable only through a `0500 root` broker, and no token written
-down anywhere.
+reach.
 
-⚠ **The work loop changes that.** See "What the loop changes about the isolation story"
-below before you set `claude_loop_enable`.
+> ⚠ **Corrected 2026-09-22 (PET-498).** This section used to say the role provisioned no
+> outbound credential for the sessions, and named the workspace mirror's App as the
+> sanctioned counter-example precisely because a session could not read it. That is no longer
+> the whole picture. Three sanctioned Apps now land here, and one of them is session-readable
+> by design.
+
+| App | Reaches | Key lives | A session can read it |
+|---|---|---|---|
+| the loop's | `petedio-iac`, push and pull requests | `/etc/claude-loop/`, `0400 root` | no — `0500 root` broker |
+| the mirror's | `petedio-workspace`, read-only | `/etc/claude-workspace-mirror/`, `0400 root` | no — `0500 root` broker |
+| the vault's | `petedio-vault`, `contents:write` | the session user's home, `0400 claude` | **yes, on purpose** |
+
+The first two are read or used by **root**, so root can hold them. The vault's cannot work
+that way: the thing that pushes a note **is** the session, so the session has to reach the
+credential. Its broker is `0500 claude:claude` rather than `0500 root`, which keeps other
+users out and cannot keep this user out — that user is the one the design hands the key to.
+
+**So state the exposure plainly rather than implying a mode closes it.** Every process running
+as `claude` on this host can push to `petedio-vault`, the loop's `claude -p` included if
+`claude_loop_enable` is ever set. What bounds the damage is the App, not the file modes: one
+installed repository, `contents:write` and `metadata:read`, no pull-request rights. It cannot
+reach `petedio-iac`, cannot read a second repository, and cannot act as Pedro. Both halves of
+that hold only while the installation stays as seeded, and it is changed in the GitHub UI,
+where nothing in this repo notices. `scripts/seed-claude-vault-app.sh` re-checks the shape
+against GitHub every time you run it.
+
+⚠ **The work loop changes the picture again.** See "What the loop changes about the isolation
+story" below before you set `claude_loop_enable`.
 
 Deny rules apply in every mode. ⚠ But those deny rules live in
 `~/.claude/settings.json`, which is owned by `claude` — the user the sessions run as — so a

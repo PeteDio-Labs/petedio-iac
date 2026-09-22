@@ -1,0 +1,427 @@
+# vault.yml — give a session on this host a petedio-vault clone it can PUSH from (PET-498).
+#
+# ⚠ THIS IS THE FIRST CREDENTIAL ON 247 THE SESSION USER CAN READ, AND THE INVERSION IS THE
+# DESIGN. tasks/workspace-mirror.yml keeps its App key 0400 root behind a 0500 root broker,
+# because ROOT fetches into a bare mirror and the session only clones from a local path. That
+# shape cannot carry here: the vault is PUSHED TO, and the process that pushes is the session.
+# So the key, the identity file and the broker all belong to {{ claude_user }} — 0700 on the
+# directory, 0400 on the two files, 0500 on the broker — and every process running as
+# {{ claude_user }} can mint a token for {{ claude_vault_repo }}. The work loop's `claude -p`
+# is one of those processes if claude_loop_enable is ever set.
+#
+# WHAT KEEPS THE BLAST RADIUS NARROW IS THE APP, NOT THE MODES. One installed repository,
+# contents:write and metadata:read, nothing else. It cannot open a pull request, cannot read a
+# second repository, and cannot act as Pedro. Pedro approved the direct push on those terms:
+# vault `main` carries no branch protection and the Obsidian Git plugin already auto-pushes to
+# it from the Mac every 10 minutes, so a session is a second writer on a branch that has one.
+# templates/claude-vault-broker.j2 carries the full argument. Read it before widening anything.
+#
+# ⚠ THE CLONE PERSISTS THE HELPER, WHICH IS THE OPPOSITE OF WHAT THE MIRROR DOES. The mirror
+# clones with `git -c … clone` precisely so the helper stays OUT of the new repository's
+# config. Here the session pushes with a plain `git push` and carries no flags of its own, so
+# the three settings have to live in the clone's config. They are written by their own tasks
+# rather than by `git clone -c …`, for two reasons: the clone carries a `creates:` guard, so a
+# host that already has the clone would never get the settings that way, and a setting written
+# deliberately can be read back and converged.
+#
+# ⚠ ROOT NEVER RUNS git IN THIS CLONE. Every git command below drops to {{ claude_user }}
+# first. git honours core.sshCommand, core.hooksPath and core.fsmonitor from a repository's
+# own config, so root running git inside a directory the sessions own is code execution as
+# root — the hazard roles/claude-code/README.md states for the mirror, and it applies here
+# whichever way the credential points.
+#
+# ⚠ runuser, NOT become_user, for the reason written at the npm install in tasks/main.yml:
+# `become_user` defaults to sudo, this host has no sudo at all (PET-408), and the task would
+# die with `sudo: not found` and rc=127.
+#
+# ONE RUN, NOT TWO, like the mirror. The App is authorized before Ansible starts, so the run
+# that carries the identity also clones and configures. A run that carries no identity leaves
+# the credentials alone and converges from what is on disk, which keeps a bare
+# `ansible-playbook playbooks/configure-claude-code.yml` runnable on a seeded host.
+---
+# ⚠ follow: false is load-bearing (PET-410), the same as every other directory this role
+# creates inside the session user's home. ansible.builtin.file defaults to follow: yes, and
+# this task runs as ROOT inside a home {{ claude_user }} owns. Replace one of these paths with
+# a symlink and root chowns the TARGET, which is the one move that reaches
+# {{ claude_loop_conf_dir }}/app.pem.
+#
+# The parents are created explicitly rather than left to the leaf task: a parent Ansible
+# creates on the way to a deeper path gets root:root, and ~/.config and ~/.local belong to the
+# session user.
+- name: Create the session user's per-user config and bin directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0755"
+  loop:
+    - "{{ claude_home }}/.config"
+    - "{{ claude_home }}/.local"
+    - "{{ claude_home }}/.local/bin"
+
+# 0700 and owned by {{ claude_user }}. Read the header before you "fix" that to root: a
+# root-owned key here leaves the session unable to push, which is the one thing this file
+# exists to arrange.
+- name: Create the vault credential directory
+  ansible.builtin.file:
+    path: "{{ claude_vault_conf_dir }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0700"
+
+# Gated on presence, not on the enable flag — the same shape as the mirror, and for the same
+# reason. A host that declares claude_vault_enable keeps declaring it, so asserting on the
+# identity would fail every bare run of the play. The report below names what stopped instead.
+- name: Decide whether this run carries the vault App identity
+  ansible.builtin.set_fact:
+    claude_vault_identity_present: >-
+      {{ claude_vault_app_id | default('') | length > 0
+         and claude_vault_installation_id | default('') | length > 0
+         and claude_vault_app_pem | default('') | length > 0 }}
+  no_log: true
+
+- name: Report that the vault identity was not passed, so the credentials are left alone
+  ansible.builtin.debug:
+    msg: >-
+      No vault App identity in this run — {{ claude_vault_conf_dir }} is left as it is. If this
+      host has already been seeded, delivery continues with what is on disk. Run
+      scripts/deploy-claude-247.sh to land or rotate the credentials.
+  when: not claude_vault_identity_present | bool
+
+# 0400 {{ claude_user }}:{{ claude_user }}. The mode keeps OTHER users out; it does not keep
+# this one out, and it is not meant to.
+#
+# follow: false for the PET-410 reason above. Root writes these into a home the session owns,
+# so a symlink planted at either path would otherwise take the write and the chown with it.
+- name: Land the vault App identity the broker reads
+  ansible.builtin.template:
+    src: claude-vault-github.env.j2
+    dest: "{{ claude_vault_conf_dir }}/github.env"
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0400"
+  no_log: true
+  when: claude_vault_identity_present | bool
+
+# A trailing newline is added if the Vault field lost one, because openssl rejects a PEM
+# without it. Same treatment as the loop's and the mirror's app.pem, for the same reason.
+- name: Land the vault App private key
+  ansible.builtin.copy:
+    content: "{{ claude_vault_app_pem | trim }}\n"
+    dest: "{{ claude_vault_conf_dir }}/app.pem"
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0400"
+  no_log: true
+  when: claude_vault_identity_present | bool
+
+# Unconditional: the broker holds no secret, so a run without the identity should still bring
+# it up to date. 0500 means read-and-execute for {{ claude_user }} and nothing for anyone else.
+#
+# Its directory is not on the units' PATH, which does not matter: git runs a credential helper
+# by the absolute path the config names, and every caller here names one.
+- name: Install the vault credential broker
+  ansible.builtin.template:
+    src: claude-vault-broker.j2
+    dest: "{{ claude_vault_broker }}"
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0500"
+
+# What is ON DISK, not what this run carried. A seeded host converges from a bare run, and
+# these two files are the whole credential.
+- name: Check whether the vault App credentials are on this host
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: claude_vault_creds
+  loop:
+    - "{{ claude_vault_conf_dir }}/github.env"
+    - "{{ claude_vault_conf_dir }}/app.pem"
+
+- name: Record whether the vault credentials are complete
+  ansible.builtin.set_fact:
+    claude_vault_creds_on_disk: >-
+      {{ (claude_vault_creds.results
+          | map(attribute='stat.exists') | select | list | length) == 2 }}
+
+# Two probes rather than one, because they fail for different reasons and the operator needs
+# to know which. A bad key or installation id fails the mint; an App that is not installed on
+# the repository mints a token fine and then cannot read anything.
+#
+# Run AS {{ claude_user }}, which is itself half the proof: the broker refuses root, and the
+# session user is the identity that has to reach the credential for a push to work.
+#
+# no_log because stdout IS an installation token. failed_when false because a first run on an
+# unseeded host is expected to reach here and fail.
+- name: Mint an installation token through the broker, as the session user
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      {{ claude_vault_broker }} mint-token
+  environment:
+    HOME: "{{ claude_home }}"
+  register: claude_vault_mint
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: claude_vault_creds_on_disk | bool
+
+# noqa reason: `ansible.builtin.git` has no ls-remote. Its cheapest operation is a clone,
+# which is the thing this task exists to avoid attempting.
+- name: Check whether the vault App can read the repository  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git {{ claude_vault_git_opts }}
+      ls-remote --heads {{ claude_vault_url }} HEAD
+  environment:
+    HOME: "{{ claude_home }}"
+    GIT_TERMINAL_PROMPT: "0"
+  register: claude_vault_probe
+  changed_when: false
+  failed_when: false
+  when: claude_vault_creds_on_disk | bool
+
+# Inline rather than split into its own file, unlike workspace-mirror-readiness.yml. That one
+# is a file because tests/workspace-mirror-readiness.yml includes the real expression instead
+# of a copy; no test includes this one, so a second file would add a hop and prove nothing.
+#
+# Both registers can be SKIPPED rather than absent, and a skipped result is a dict with no
+# `rc` key at all. `.rc | default(1)` reads that as a failure, which is the answer wanted: an
+# unseeded host never got far enough to prove anything works.
+#
+# ⚠ Keep every quoted message on ONE line. This is a `>-` folded scalar: a continuation line
+# indented further than the line above it keeps its newline, and a newline inside a Jinja
+# string literal lands in the operator's message with its leading spaces.
+- name: Record whether the vault delivery can proceed in this run
+  ansible.builtin.set_fact:
+    claude_vault_ready: >-
+      {{ (claude_vault_creds_on_disk | bool)
+         and (claude_vault_probe.rc | default(1)) == 0 }}
+    claude_vault_blocked_at: >-
+      {{ 'nothing; the vault clone converged'
+         if ((claude_vault_creds_on_disk | bool)
+             and (claude_vault_probe.rc | default(1)) == 0)
+         else ('no vault App credentials on this host yet, so nothing was cloned'
+               if not (claude_vault_creds_on_disk | bool)
+               else ('the credentials are on the host but the broker could not mint a token, so the App id, the installation id or the key is wrong'
+                     if (claude_vault_mint.rc | default(1)) != 0
+                     else 'the App minted a token but cannot read ' ~ claude_vault_repo
+                          ~ ', so it is probably not installed on that repository')) }}
+
+- name: Report why the vault cannot be delivered in this run
+  ansible.builtin.debug:
+    msg:
+      - "The {{ claude_vault_repo }} clone did not converge: {{ claude_vault_blocked_at }}."
+      - "The {{ claude_vault_dest }} clone is left alone; everything else in this play converges."
+      - "broker mint-token rc={{ claude_vault_mint.rc | default('not run') }}"
+      - "git ls-remote rc={{ claude_vault_probe.rc | default('not run') }} {{ claude_vault_probe.stderr | default('') | trim }}"
+  when: not claude_vault_ready | bool
+
+# SEEDED, NEVER UPDATED — `creates:` says so, for the reason every other clone in this role
+# carries it: a re-run that fast-forwarded this would move `main` out from under a session
+# mid-task, and one that reset it would delete an unpushed note.
+#
+# `git -c … clone`, NOT `git clone -c …`. The second form persists the options into the new
+# repository's config, which sounds like what this delivery wants and is not: it would bake
+# claude_vault_git_opts in as a side effect, where the tasks below write the same settings on
+# purpose and converge them on every run. Measured on git 2.50.1.
+#
+# ⚠ ONE MORE STEP AFTER THIS, AND NO PLAY CAN TAKE IT. Claude Code refuses to work in a
+# directory nobody has trusted, and the trust dialog is interactive: ssh claude@<host>, then
+# `cd ~/work/petedio/{{ claude_vault_dest }} && claude`, accept the dialog, `/exit`. Until
+# then a session started here waits at the prompt while systemd reports the unit active — the
+# failure PET-431 documents for the Remote Control consent.
+#
+# noqa reason: `ansible.builtin.git` would run as the connection user, which is root, inside a
+# directory {{ claude_user }} owns. That is the code-execution hazard named in the header.
+- name: Clone the vault, as the session user  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git {{ claude_vault_git_opts }}
+      clone {{ claude_vault_url }}
+      {{ claude_workspace }}/{{ claude_vault_dest }}
+    creates: "{{ claude_workspace }}/{{ claude_vault_dest }}/.git"
+  environment:
+    HOME: "{{ claude_home }}"
+    GIT_TERMINAL_PROMPT: "0"
+  when: claude_vault_ready | bool
+
+# The helper has to live in the clone's own config, because a session pushes with a plain
+# `git push` and passes no flags. `--get-all` is the idempotence guard: the two tasks below
+# are idempotent in their outcome, but they always report `changed`, so skipping them when the
+# list already reads empty-then-broker keeps a converged run quiet.
+#
+# `--get-all` exits 1 when the key is unset, which is the normal first run.
+- name: Read the vault clone's credential helper list
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git -C {{ claude_workspace }}/{{ claude_vault_dest }}
+      config --local --get-all credential.helper
+  environment:
+    HOME: "{{ claude_home }}"
+  register: claude_vault_helper_existing
+  changed_when: false
+  failed_when: false
+  when: claude_vault_ready | bool
+
+# ⚠ TWO COMMANDS, AND THE ORDER OF THE TWO LINES THEY WRITE IS THE WHOLE POINT.
+# `credential.helper` is MULTI-VALUED, so the broker line alone would APPEND to whatever
+# /etc/gitconfig and the session user's ~/.gitconfig already configure, and a stored
+# credential configured there would answer first — which silently disables the host and path
+# checks inside the broker. An empty value resets the list, so the empty line has to come
+# FIRST. Measured on git 2.50.1, three passes: `--replace-all <key> '' '^$'` rewrites the
+# empty line in place and `--replace-all <key> <broker> '.'` rewrites the non-empty one, so
+# neither command ever appends a duplicate and the order survives a re-run.
+#
+# argv, not a folded `cmd`, because one of the arguments IS the empty string and whitespace
+# splitting cannot express one.
+- name: Reset the vault clone's credential helper list
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_user }}"
+      - --
+      - git
+      - -C
+      - "{{ claude_workspace }}/{{ claude_vault_dest }}"
+      - config
+      - --local
+      - --replace-all
+      - credential.helper
+      - ""
+      - "^$"
+  environment:
+    HOME: "{{ claude_home }}"
+  changed_when: true
+  when:
+    - claude_vault_ready | bool
+    - claude_vault_helper_existing.stdout_lines | default([]) != ['', claude_vault_broker]
+
+- name: Point the vault clone's credential helper at the broker
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_user }}"
+      - --
+      - git
+      - -C
+      - "{{ claude_workspace }}/{{ claude_vault_dest }}"
+      - config
+      - --local
+      - --replace-all
+      - credential.helper
+      - "{{ claude_vault_broker }}"
+      - "."
+  environment:
+    HOME: "{{ claude_home }}"
+  changed_when: true
+  when:
+    - claude_vault_ready | bool
+    - claude_vault_helper_existing.stdout_lines | default([]) != ['', claude_vault_broker]
+
+# The other four settings the clone needs, read first so a converged run reports no change.
+# `--get` exits 1 when the key is unset, which is the normal first run.
+#
+#   credential.useHttpPath  makes git send the repository path to the broker, so the broker's
+#                           path check is live rather than skipped.
+#   pull.rebase             a session PULLS a branch a second writer is already pushing to:
+#                           Obsidian Git auto-pushes the vault from the Mac every 10 minutes.
+#                           Without this, every pull that crosses one of those pushes writes a
+#                           merge commit into the vault's history for nothing.
+#   user.name, user.email   so a commit from this host is attributable to the HOST rather than
+#                           to Pedro. Without them git falls back to the host and user it can
+#                           infer, and a note written by a session would read as his. The
+#                           address is on GitHub's noreply domain, which accepts no mail, and
+#                           its local part names the container rather than any account.
+- name: Read the vault clone's remaining git settings
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git -C {{ claude_workspace }}/{{ claude_vault_dest }}
+      config --local --get {{ item.key }}
+  environment:
+    HOME: "{{ claude_home }}"
+  register: claude_vault_settings
+  changed_when: false
+  failed_when: false
+  loop:
+    - { key: credential.useHttpPath, value: "true" }
+    - { key: pull.rebase, value: "true" }
+    - { key: user.name, value: claude-247 }
+    - { key: user.email, value: claude-247@users.noreply.github.com }
+  loop_control:
+    label: "{{ item.key }}"
+  when: claude_vault_ready | bool
+
+- name: Set the vault clone's remaining git settings
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git -C {{ claude_workspace }}/{{ claude_vault_dest }}
+      config --local {{ item.item.key }} {{ item.item.value }}
+  environment:
+    HOME: "{{ claude_home }}"
+  changed_when: true
+  loop: "{{ claude_vault_settings.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - claude_vault_ready | bool
+    - (item.stdout | default('') | trim) != item.item.value
+
+# THE PROOF, AND IT IS THE SESSION'S OWN git THAT HAS TO PASS IT. Everything above could
+# converge while a session still cannot push: the probe used claude_vault_git_opts on the
+# command line, and the clone's config is what a bare `git push` reads. So run a bare git in
+# the clone, as {{ claude_user }}, with no options at all, and let the persisted helper do the
+# work. ls-remote reaches the remote over git-upload-pack; a `push --dry-run` would prove the
+# WRITE half too, and is rejected here because a clone whose `main` has drifted fails it for a
+# reason that is not the route, turning a converge red over a session's working state.
+- name: Prove the session user's own git reaches the vault through the broker
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git -C {{ claude_workspace }}/{{ claude_vault_dest }}
+      ls-remote --heads origin HEAD
+  environment:
+    HOME: "{{ claude_home }}"
+    GIT_TERMINAL_PROMPT: "0"
+  register: claude_vault_route
+  changed_when: false
+  failed_when: false
+  when: claude_vault_ready | bool
+
+# ⚠ THIS ASSERT IS ALLOWED TO STOP THE PLAY, AND THE ONE PET-466 REMOVED WAS NOT. That one
+# fired on a MISSING directory, a state a bare first run reaches, so it stopped every later
+# task on a host that was merely unseeded. This one runs only when claude_vault_ready is
+# already true — the credentials are on disk AND the App has read the repository in this same
+# run — so reaching it with a broken route means the clone's own config is wrong, which no
+# later task fixes and no operator would otherwise see.
+#
+# It carries rc values and no output: `claude_vault_mint` registered a TOKEN on stdout.
+- name: Assert a session can reach the vault through its own clone
+  ansible.builtin.assert:
+    that:
+      - (claude_vault_mint.rc | default(1)) == 0
+      - (claude_vault_route.rc | default(1)) == 0
+    fail_msg: >-
+      The {{ claude_vault_dest }} clone exists but a bare git in it cannot reach
+      {{ claude_vault_repo }}: broker mint-token rc={{ claude_vault_mint.rc | default('not run') }},
+      ls-remote rc={{ claude_vault_route.rc | default('not run') }}. Check that
+      {{ claude_vault_broker }} is 0500 {{ claude_user }} and that the clone's local
+      credential.helper reads an empty value followed by that path.
+    success_msg: >-
+      {{ claude_user }} can mint a vault token and reach {{ claude_vault_repo }} from
+      {{ claude_workspace }}/{{ claude_vault_dest }} with no options on the command line.
+  when: claude_vault_ready | bool
