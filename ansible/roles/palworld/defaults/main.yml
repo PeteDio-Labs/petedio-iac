@@ -133,6 +133,50 @@ palworld_baremetal: false
 # (a container has no logind sleep targets to mask anyway).
 palworld_inhibit_sleep: "{{ palworld_baremetal }}"
 
+# --- Nightly world backup (PET-382) -----------------------------------------------
+# Flushes the live world to disk (POST /v1/api/save), tars Pal/Saved, and uploads it to
+# MinIO. vzdump alone does not cover this: it backs up the container, not a flushed
+# world, and the restore position that PET-381 needed came from two archives someone
+# happened to take by hand the night of the PET-266 cutover — nothing had run since.
+#
+# Unlike vault-snapshot (a live Vault Agent identity on the SAME host) and like
+# resume-mongo-backup (no Vault identity on THIS host either), the MinIO creds are
+# resolved ONCE at playbook-run time and written to a root-only env file — same
+# no-committed-secret, no-Terraform-Vault-role pattern already used for
+# palworld_admin_password itself (the apply-on-merge runner's Vault role grants only
+# lxc-ssh + Nexus creds, so it can supply neither). See tasks/main.yml for the
+# preservation logic that keeps a CI merge-apply from blanking creds an operator seeded
+# by hand, and docs/runbooks/palworld-backup.md for the seeding + restore-drill steps.
+palworld_backup_enabled: true
+palworld_backup_script_path: /usr/local/sbin/palworld-backup.sh
+palworld_backup_env_path: /etc/palworld-backup.env
+# Off the hours anyone is likely to be playing, and clear of the other nightly timers
+# this fleet already runs (vault-snapshot 02:30, resume-mongo-backup 03:15).
+palworld_backup_oncalendar: "*-*-* 04:10:00"
+palworld_backup_mc_path: /usr/local/bin/mc
+palworld_backup_mc_alias: palbackup
+palworld_backup_minio_scheme: http
+palworld_backup_minio_hostport: "192.168.50.221:9000"
+# Bucket the two PET-266 hand-taken archives already live in — created out-of-band by
+# the operator, same as vault-snapshots and resume-mongo-backups on this same host. The
+# script ASSERTS it exists rather than creating it (mirrors vault-snapshot.sh.j2); see
+# docs/GOTCHAS.md "Declare it, don't run it" for why bucket creation on .221 stays a
+# hand step rather than a role task.
+palworld_backup_bucket: palworld-backups
+# Rolling retention: how many of THIS script's own archives to keep. 30 days of a
+# ~46 MiB save is ~1.4 GiB against "17 GB a year on a bucket nobody watches" (PET-382) —
+# enough runway to notice a stuck timer long before it costs anything. Bucket versioning
+# (docs/GOTCHAS.md: "MinIO S3 state backend") is a second net for anything pruned early.
+# NB this also ages out the two original PET-266 archives once 30 nightly runs have
+# landed — expected, not a special case; they are superseded by a live rolling backup.
+palworld_backup_retain: 30
+# palworld_backup_minio_access_key / palworld_backup_minio_secret_key: intentionally
+# undefined here — optional extra-vars, same convention as palworld_admin_password just
+# above. Resolve from Vault kv/services/palworld-backups (fields mc_access_key /
+# mc_secret_key) — a scoped svcacct for the palworld-backups bucket only, never a root
+# credential. Left unseeded, the units still install; the timer fails loudly until an
+# operator runs the playbook once with these set (tasks/main.yml warns, doesn't fail).
+
 # Public half of the control panel's start-hook SSH key. The panel authenticates to
 # root with the private half (Vault kv/services/palworld-panel -> panel_ssh_private_key)
 # and lands on the palctl-remote forced command, which allow-lists start/status/
