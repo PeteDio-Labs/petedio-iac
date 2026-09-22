@@ -13,3 +13,11 @@
 # units alone and fails at the end with the step to take. roles/claude-code/README.md has
 # the full bootstrap.
 claude_remote_enable: true
+
+# petedio-workspace is private. The play delivers it through a root-owned bare mirror and a
+# read-only deploy key generated on this host (PET-480, PET-481). Run 1 creates the key,
+# prints its public half, and fails at the end naming the step. Pedro adds that half at
+# github.com/PeteDio-Labs/petedio-workspace/settings/keys/new with write access unchecked,
+# and run 2 mirrors the repo and clones the session's copy. roles/claude-code/README.md has
+# the design and the key rotation.
+claude_workspace_mirror_enable: true
