@@ -215,8 +215,8 @@ ssh -i ~/.ssh/id_ed25519_ansible root@192.168.86.234 'shutdown -h now'  # palwor
 ```
 
 Then pull Uptime Kuma's database one last time, so the recording of the cluster going down
-survives off the SD card. Its six-hourly copy goes to `/mnt/pve02-backups`, which lives on
-`pve02` — already off by this point, so this pull is the only fresh copy.
+survives off the SD card. Its six-hourly copy goes to `/mnt/ollama-backups`, which lives on
+ollama-host (`.12`) — already off by this point, so this pull is the only fresh copy.
 
 ```bash
 ssh -i ~/.ssh/id_ed25519_pete_pi_2 pedro@192.168.50.4 \
@@ -392,9 +392,10 @@ reaches the cluster; `wlan0` at `192.168.86.46` is the only route to Plex on
 monitor and you will chase Plex instead of the Pi.
 
 **The SD card is the only disk**, holding roughly 343,000 heartbeats. A six-hourly timer
-copies the database to `/mnt/pve02-backups` — an automount with `soft,timeo=50`, so a
-dead `pve02` makes the backup skip and retry rather than wedge the instrument. That also
-means no backup runs at all while `pve02` is packed, which is why the shutdown sequence
+copies the database to `/mnt/ollama-backups` on ollama-host (`.12`) — an automount with
+`soft,timeo=50`, so a dead store makes the backup fail loudly (exit 1) and retry at the next
+tick rather than wedge the instrument. That also means no backup runs at all while
+ollama-host is packed, which is why the shutdown sequence
 pulls a final copy to the Mac.
 
 ```bash
