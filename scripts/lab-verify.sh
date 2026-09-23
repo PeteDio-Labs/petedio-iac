@@ -343,13 +343,39 @@ STALE=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select c
 # and pve03 also holds Vault and the Terraform state, so the repair path would have
 # gone down with the thing needing repair. `Placement matches intent` above pins
 # which node each guest is on; this pins that they are not the same one.
+#
+# ⚠ A REFUSED READ IS NOT A DEAD RUNNER (PET-500). Listing the org's runners needs the
+# admin:org scope, and a gh token without it gets HTTP 403. This loop used to discard
+# stderr and print "not registered" for every runner on that path: three healthy hosts
+# reported dead, and the one real fault, the token, hidden. So read the org once and say
+# when it refused, then fall back to each runner's unit on its host, labelled as the host
+# view. An active unit is not proof of registration, so the fallback skips rather than
+# passes, and an inactive unit fails whichever view produced it.
 sec "Runners"
+on_root() { ssh -n -o ConnectTimeout=8 -o BatchMode=yes -i "$HOME/.ssh/id_ed25519_ansible" "root@$1" "$2" 2>/dev/null; }
+RUNNERS_ERR=$(mktemp)
+RUNNERS_JSON=$(gh api orgs/PeteDio-Labs/actions/runners 2>"$RUNNERS_ERR") || RUNNERS_JSON=""
+if [ -z "$RUNNERS_JSON" ]; then
+  bad "org runners API" "refused ($(grep -m1 -oE 'HTTP [0-9]+' "$RUNNERS_ERR" || echo 'no answer')); the token needs admin:org: gh auth refresh -h github.com -s admin:org"
+fi
+rm -f "$RUNNERS_ERR"
 for r in runner-232 runner-233 pete-pi-1; do
-  s=$(gh api orgs/PeteDio-Labs/actions/runners 2>/dev/null | python3 -c "
+  if [ -n "$RUNNERS_JSON" ]; then
+    s=$(printf '%s' "$RUNNERS_JSON" | python3 -c "
 import sys,json
 for x in json.load(sys.stdin).get('runners',[]):
     if x['name']=='$r': print(x['status'])" 2>/dev/null)
-  [ "$s" = "online" ] && ok "$r" "online" || bad "$r" "${s:-not registered}"
+    [ "$s" = "online" ] && ok "$r" "online" || bad "$r" "${s:-not registered}"
+    continue
+  fi
+  unit="actions.runner.PeteDio-Labs.$r.service"
+  case $r in
+    runner-232) u=$(on_root 192.168.50.232 "systemctl is-active $unit") ;;
+    runner-233) u=$(on_root 192.168.50.233 "systemctl is-active $unit") ;;
+    pete-pi-1)  u=$(on $PI "systemctl is-active $unit") ;;
+  esac
+  if [ "$u" = "active" ]; then skip "$r" "unit active on the host; GitHub's view unread"
+  else bad "$r" "unit ${u:-unread} on the host"; fi
 done
 R232=$(node_for 232); R233=$(node_for 233)
 if [ -z "$R232" ] || [ -z "$R233" ]; then

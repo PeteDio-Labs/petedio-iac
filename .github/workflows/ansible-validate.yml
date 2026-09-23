@@ -188,4 +188,23 @@ jobs:
             echo "::error title=lint examined too little::ansible-lint processed ${PROCESSED:-0} files, below the floor of ${FLOOR} implied by ${{ steps.scope.outputs.roles }} roles + ${{ steps.scope.outputs.plays }} playbooks + ${{ steps.scope.outputs.testfiles }} test files. That is a green check over a collapsed glob, not a clean repo. Refusing."
             exit 1
           fi
+          # ⚠ A RULE THAT CRASHES IS A RULE THAT DID NOT RUN. ansible-lint logs the crash as
+          # "WARNING Ignored exception from <rule> while processing <file>", counts the file
+          # as processed, and prints a summary that is indistinguishable from a pass. That
+          # is how one line in roles/pi-health lint-passed for as long as it existed
+          # (PET-472): on one Python the rule crashed and the summary read 'production';
+          # on another it ran, reported a warning, and the summary read 'min'. Neither
+          # number this step used to read moved. So refuse on the crash line, and refuse
+          # unless the summary names the profile the repo claims.
+          if grep -aq 'Ignored exception' /tmp/lint.log; then
+            echo "::error title=a lint rule crashed::ansible-lint skipped a rule on at least one file (grep 'Ignored exception' in the log above). A skipped rule is a rule that did not run, and nothing else in this step can tell that from a pass. Refusing."
+            exit 1
+          fi
+          [ "$RC" -eq 0 ] || exit "$RC"
+          PROFILE=$(grep -aoE "Last profile that met the validation criteria was '[a-z]+'" /tmp/lint.log | grep -aoE "'[a-z]+'" | tr -d "'" || true)
+          echo "ansible-lint met profile '${PROFILE:-none}'"
+          if [ "${PROFILE:-none}" != "production" ]; then
+            echo "::error title=lint below production::ansible-lint met profile '${PROFILE:-none}', not 'production'. A warning is enough to drop the profile, and this repo carries no backlog: fix the finding or suppress it at its own site with a reason (see the header of this file)."
+            exit 1
+          fi
           exit "$RC"
