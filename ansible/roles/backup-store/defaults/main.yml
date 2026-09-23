@@ -49,6 +49,26 @@ backup_store_root_target: 200G
 backup_store_min_free_after: 150
 
 backup_store_export_options: rw,sync,no_subtree_check,no_root_squash
+
+# ---------------------------------------------------------- pete-pi export ----
+# A second, separate export for Uptime Kuma's kuma.db backups on pete-pi (PET-386).
+# The Pi does NOT join backup_store_clients: that list gets no_root_squash on the
+# whole store, and the Pi runs the arm64 runner, docker and a tailnet-exposed UI.
+# Root there must not gain root-level write over the only copies of every guest.
+#
+# So the Pi gets its own subdirectory, exported to it alone, with every uid squashed
+# to one unprivileged account that owns only that directory. subtree_check matters:
+# this shares a filesystem with the vzdump archives, and without it a crafted
+# filehandle can reach outside the subtree. all_squash makes such a reach
+# unprivileged; subtree_check closes it.
+backup_store_pi_client: 192.168.50.4   # pete-pi
+backup_store_pi_path: "{{ backup_store_path }}/pete-pi"
+backup_store_pi_user: kuma-backup
+# Fixed, so the export's anonuid and the directory owner cannot drift apart.
+backup_store_pi_uid: 2386
+backup_store_pi_export_options: >-
+  rw,sync,subtree_check,root_squash,all_squash,anonuid={{ backup_store_pi_uid }},anongid={{ backup_store_pi_uid }}
+
 backup_store_mount_options: defaults,_netdev,nofail,x-systemd.mount-timeout=60
 
 # Client side

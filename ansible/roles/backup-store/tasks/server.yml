@@ -142,6 +142,55 @@
   loop_control:
     label: "{{ item.0 }} {{ item.1 }}/{{ item.2 }}"
 
+# The pete-pi export. See backup_store_pi_* in defaults for why it is separate and
+# squashed. Its own managed block, so the Proxmox block above is never rewritten.
+- name: Create the account the Pi's writes are squashed to
+  ansible.builtin.group:
+    name: "{{ backup_store_pi_user }}"
+    gid: "{{ backup_store_pi_uid }}"
+    system: true
+
+- name: Create the squash user
+  ansible.builtin.user:
+    name: "{{ backup_store_pi_user }}"
+    uid: "{{ backup_store_pi_uid }}"
+    group: "{{ backup_store_pi_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    home: /nonexistent
+
+- name: Create the Pi's directory in the store
+  ansible.builtin.file:
+    path: "{{ backup_store_pi_path }}"
+    state: directory
+    owner: "{{ backup_store_pi_uid }}"
+    group: "{{ backup_store_pi_uid }}"
+    mode: "0750"
+  when: not (ansible_check_mode and not backup_lv_dev.stat.exists)
+
+- name: Export the Pi's directory to the Pi only
+  ansible.builtin.blockinfile:
+    path: /etc/exports
+    marker: "# {mark} ANSIBLE MANAGED BLOCK — backup-store pete-pi"
+    block: |
+      {{ backup_store_pi_path }} {{ backup_store_pi_client }}({{ backup_store_pi_export_options }})
+    create: true
+    mode: "0644"
+  notify: reload nfs exports
+
+- name: Open NFS to the Pi only
+  when: "'Status: active' in (backup_ufw.stdout | default(''))"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.0 }}"
+    proto: "{{ item.1 }}"
+    src: "{{ backup_store_pi_client }}"
+    comment: "NFS backup store - {{ backup_store_pi_client }} (PET-386)"
+  loop: "{{ [2049, 111] | product(['tcp', 'udp']) | list }}"
+  loop_control:
+    label: "{{ backup_store_pi_client }} {{ item.0 }}/{{ item.1 }}"
+
 - name: Flush handlers so the exports are live before any client mounts
   ansible.builtin.meta: flush_handlers
 

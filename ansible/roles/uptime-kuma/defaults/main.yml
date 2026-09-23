@@ -252,12 +252,8 @@ uptime_kuma_monitors:
 # no USB device is attached. At 17 monitors x 20s that is ~73k row writes a day,
 # and an SD card that fails mid-study takes the baseline with it.
 #
-# pve02 exports /mnt/backups (295G, 1% used) to the whole 192.168.50.0/24
-# already, so the Pi can mount it with NO change to pve02.
-#
-# ⚠ THE BACKUP TARGET IS ALSO A FAULT TARGET. pve02 and its NFS export are two of
-# the things this study deliberately breaks, so the mount must never be able to
-# hang the instrument: `soft` with a short timeo turns an NFS outage into a fast
+# ⚠ THE MOUNT MUST NEVER HANG THE INSTRUMENT. NFS is one of the things this study
+# deliberately breaks, so: `soft` with a short timeo turns an NFS outage into a fast
 # I/O error, and x-systemd.automount means the mount is only live while a backup
 # is actually running. A failed backup during an injected fault is correct
 # behaviour — it retries on the next tick.
@@ -266,17 +262,23 @@ uptime_kuma_monitors:
 # this NFS share would stop the instrument recording during exactly the NFS and
 # pve02 faults it exists to measure. Backups go to the HDD; the working database
 # does not.
-# ⚠ THIS EXPORT NO LONGER EXISTS (PET-386). pve02 was rebuilt after the 2026-09-03 rack loss
-# and exports only /mnt/media and /mnt/downloads, to 192.168.50.10. The backup script
-# refuses to write to the SD card when the mount is absent and exits 1, so the unit fails
-# and lab-verify reports the last run's message. Until 2026-09-22 it exited 0, and every run
-# since the loss went green having written nothing. The store is still to choose, and that
-# choice is PET-386's: ollama-backups (192.168.50.12:/srv/backups, which the Pi could not
-# mount on 2026-09-22; the export or a firewall admits pve03 and not the Pi) or a new pve02
-# export. Point uptime_kuma_backup_nfs_export at it once it admits the Pi.
+#
+# The store is ollama-backups on ollama-host, outside the cluster Kuma measures
+# (PET-386). The Pi mounts its own subdirectory, not the whole store: that export
+# squashes every uid to one account that owns only this directory, so root on the
+# Pi gains nothing over the vzdump archives beside it. The server side is
+# backup_store_pi_* in roles/backup-store; run configure-backup-store.yml first.
+#
+# The first store was pve02's /mnt/backups, which the 2026-09-03 rack loss took
+# with it. From then until 2026-09-22 the script exited 0 when the mount was
+# absent, so every run went green having written nothing. It exits 1 since.
 uptime_kuma_backup_enabled: true
-uptime_kuma_backup_nfs_export: "192.168.50.11:/mnt/backups"
-uptime_kuma_backup_mount: /mnt/pve02-backups
+uptime_kuma_backup_nfs_export: "192.168.50.12:/srv/backups/pete-pi"
+uptime_kuma_backup_mount: /mnt/ollama-backups
+# Mount points this role used before and must remove, so a dead automount and its
+# failed mount unit leave `systemctl --failed`.
+uptime_kuma_backup_retired_mounts:
+  - /mnt/pve02-backups
 uptime_kuma_backup_subdir: uptime-kuma
 # Every 6 hours. The backup is disaster recovery for an SD failure, not an
 # archive — kuma.db itself holds the 45 days the study reads.
