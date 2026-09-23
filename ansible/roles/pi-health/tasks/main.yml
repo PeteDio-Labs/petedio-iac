@@ -14,7 +14,12 @@
     fail_msg: >-
       pi-health reads vcgencmd and the Pi's thermal zone; this board reports
       "{{ pi_health_model.content | b64decode | trim }}".
-    success_msg: "{{ pi_health_model.content | b64decode | replace('\u0000','') | trim }}"
+    # /proc/device-tree/model ends in a NUL, and the strip keeps it out of the message.
+    # This is a character class and not an escape of code point zero on purpose: YAML
+    # decodes that escape at parse time, so the linter's jinja rule received a string
+    # holding a real NUL, crashed on it, and was skipped as a warning (PET-472). Measured
+    # through ansible-core 2.20.4: the model string plus a NUL comes out as the model string.
+    success_msg: "{{ pi_health_model.content | b64decode | regex_replace('[^ -~]', '') | trim }}"
 
 - name: Check vcgencmd is present
   ansible.builtin.command: vcgencmd get_throttled
