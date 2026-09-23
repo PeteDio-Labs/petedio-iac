@@ -86,6 +86,13 @@ jobs:
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
+          # ⚠ PINNED, AND THE PIN IS THE FLOOR FOR EVERY CLI THAT TOUCHES THE STATE (PET-362).
+          # Without this the action resolves 'latest', so CI ran whatever HashiCorp shipped
+          # that morning, and a minor bump landed on a merge nobody watched. Terraform writes
+          # its version into the state, and an older CLI refuses a state a newer one wrote,
+          # so the version pinned here is the oldest that can plan locally: bump this line
+          # in every job of this file and the operator's CLI in the same change.
+          terraform_version: 1.16.3
           terraform_wrapper: false
 
       # Runs from the repo ROOT, overriding the job's environments/homelab default, so the
@@ -166,6 +173,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
+          terraform_version: 1.16.3 # same pin as the first job (PET-362); bump all of them together
           terraform_wrapper: false
 
       - name: Encode Vault CA
@@ -284,6 +292,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
+          terraform_version: 1.16.3 # same pin as the first job (PET-362); bump all of them together
           terraform_wrapper: false
 
       # vault-action's `caCertificate` input wants BASE64-encoded PEM content, and a `with:`
