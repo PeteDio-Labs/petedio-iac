@@ -105,11 +105,35 @@
         state: directory
         mode: "0755"
 
+    - name: Remove retired backup mounts
+      ansible.posix.mount:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ uptime_kuma_backup_retired_mounts }}"
+
+    # A failed unit whose fstab line is gone still shows in `systemctl --failed`
+    # until its failed state is cleared.
+    - name: Clear the retired mounts' failed units
+      ansible.builtin.shell: |
+        set -o pipefail
+        for p in {{ uptime_kuma_backup_retired_mounts | join(' ') }}; do
+          for s in mount automount; do
+            u="$(systemd-escape --path --suffix=$s "$p")"
+            if systemctl is-failed --quiet "$u"; then
+              systemctl reset-failed "$u" && echo "reset $u"
+            fi
+          done
+        done
+      args:
+        executable: /bin/bash
+      register: kuma_retired_reset
+      changed_when: "'reset ' in kuma_retired_reset.stdout"
+
     # noauto + x-systemd.automount: mounted only while a backup runs, so a dead
-    # pve02 cannot wedge boot. soft + timeo=50 (5s) + retrans=2: an NFS outage
+    # store cannot wedge boot. soft + timeo=50 (5s) + retrans=2: an NFS outage
     # returns EIO in ~10s instead of blocking in D state forever, which matters
     # because this study breaks that export on purpose.
-    - name: Mount the pve02 backup export on demand
+    - name: Mount the backup export on demand
       ansible.posix.mount:
         path: "{{ uptime_kuma_backup_mount }}"
         src: "{{ uptime_kuma_backup_nfs_export }}"

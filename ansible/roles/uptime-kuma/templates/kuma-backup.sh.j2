@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Managed by Ansible — roles/uptime-kuma/templates/kuma-backup.sh.j2 (petedio-iac).
 #
-# Backs kuma.db up to the HDD-backed NFS export on pve02, so an SD-card failure
+# Backs kuma.db up to its NFS export on ollama-host (PET-386), so an SD-card failure
 # cannot take the study's baseline with it.
 #
 # Writes STRAIGHT to the share. That is deliberate: staging a copy on the SD card
