@@ -242,9 +242,16 @@
   ansible.builtin.command:
     cmd: "{{ uptime_kuma_dir }}/venv/bin/python {{ uptime_kuma_dir }}/provision_kuma.py /root/.kuma-provision.json"
   register: kuma_provision
+  # provision_kuma.py reports five lists that mean the instance changed: created and
+  # updated for monitors, and notifications_created, notifications_updated and
+  # notifications_attached for the notification channels. Until PET-486 this read the
+  # first two only, so a run that changed nothing but a notification reported ok.
   changed_when: >-
     (kuma_provision.stdout | from_json).created | length > 0
     or (kuma_provision.stdout | from_json).updated | length > 0
+    or (kuma_provision.stdout | from_json).notifications_created | length > 0
+    or (kuma_provision.stdout | from_json).notifications_updated | length > 0
+    or (kuma_provision.stdout | from_json).notifications_attached | length > 0
 
 - name: Remove the provisioning config
   ansible.builtin.file:
