@@ -80,28 +80,70 @@ if [ -z "$STATE_ID" ]; then
 fi
 
 # --- find the work item by its sequence id ---------------------------------------
-ITEM=$("${CURL[@]}" "${API}/work-items/?per_page=100&fields=id,sequence_id,name,state" 2>/dev/null) || {
-  warn "could not list work items — PET-$SEQ left as-is"; exit 0; }
+# The list is paged, and the board outgrew one page: with 213 items, a single GET
+# of 100 missed PET-386 and warned that the branch named an item that did not
+# exist (PET-502). Walk the pages with Plane's own cursor, `per_page:page:is_prev`,
+# until the sequence id matches or `next_page_results` turns false. The list is
+# newest first, so a live item resolves on page one and only an old one pays for
+# the walk. scripts/weekly-audit/plane-pull.sh in the workspace pages the same way.
+#
+# The cursor is an offset, so an item created mid-walk repeats one row and an item
+# deleted mid-walk can hide one. Both are rare, and the nightly reconciler runs
+# this script again, so neither is worth a sort key here.
+PER_PAGE=100
+MAX_PAGES=50            # 5000 items: a bound against a list that never ends
+CURSOR="${PER_PAGE}:0:0"
+SCANNED=0
+PAGES=0
+TOTAL="?"
+ITEM_ID=""
+CUR_STATE=""
+while :; do
+  PAGE=$("${CURL[@]}" "${API}/work-items/?per_page=${PER_PAGE}&cursor=${CURSOR}&fields=id,sequence_id,name,state" 2>/dev/null) || {
+    warn "could not list work items (page $((PAGES + 1)), $SCANNED scanned so far) — PET-$SEQ left as-is"; exit 0; }
+  PAGES=$((PAGES + 1))
 
-read -r ITEM_ID CUR_STATE <<<"$(printf '%s' "$ITEM" | python3 -c "
+  # One line per page: rows total next_cursor more [id state]. A blank line means
+  # the body was not the list this script expects.
+  read -r ROWS TOTAL NEXT MORE FOUND_ID FOUND_STATE <<<"$(printf '%s' "$PAGE" | python3 -c "
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
-rows = d.get('results', d if isinstance(d, list) else [])
+if not isinstance(d, dict): d = {'results': d}
+rows = d.get('results') or []
 seq = int(sys.argv[1])
-for w in rows:
-    if w.get('sequence_id') == seq:
-        print(w['id'], w.get('state') or '-'); break
+hit = next((w for w in rows if w.get('sequence_id') == seq), None)
+print(len(rows), d.get('total_count', '?'), d.get('next_cursor') or '-',
+      1 if d.get('next_page_results') else 0,
+      hit['id'] if hit else '', (hit.get('state') or '-') if hit else '')
 " "$SEQ" 2>/dev/null)"
 
-if [ -z "${ITEM_ID:-}" ]; then
-  warn "PET-$SEQ not found in project ${PLANE_PROJECT_ID} — branch names a work item that does not exist"
+  if [ -z "${ROWS:-}" ]; then
+    warn "could not parse the work-item list (page $PAGES) — PET-$SEQ left as-is"; exit 0
+  fi
+  SCANNED=$((SCANNED + ROWS))
+  if [ -n "${FOUND_ID:-}" ]; then
+    ITEM_ID="$FOUND_ID"; CUR_STATE="$FOUND_STATE"; break
+  fi
+  # Stop on the last page, on an empty page, and on a cursor that does not advance.
+  if [ "$MORE" != "1" ] || [ "$ROWS" -eq 0 ] || [ "$NEXT" = "-" ] || [ "$NEXT" = "$CURSOR" ]; then
+    break
+  fi
+  if [ "$PAGES" -ge "$MAX_PAGES" ]; then
+    warn "gave up after $PAGES pages ($SCANNED of $TOTAL work items) without finding PET-$SEQ — left as-is"; exit 0
+  fi
+  CURSOR="$NEXT"
+done
+
+if [ -z "$ITEM_ID" ]; then
+  warn "PET-$SEQ not found in project ${PLANE_PROJECT_ID} after scanning $SCANNED of $TOTAL work items over $PAGES page(s) — the branch names a work item that does not exist"
   exit 0
 fi
+info "PET-$SEQ found on page $PAGES ($SCANNED of $TOTAL work items scanned)"
 
 # --- idempotent: only PATCH when the state actually differs ----------------------
 if [ "$CUR_STATE" = "$STATE_ID" ]; then
-  info "PET-$SEQ is already '$WANT' — no change"
+  info "PET-$SEQ already $WANT — no change"
   exit 0
 fi
 
