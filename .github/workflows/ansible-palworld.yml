@@ -23,7 +23,12 @@ on:
       # that role must re-apply. inventory/pve03.yml is deliberately NOT here:
       # editing the node inventory should not redeploy a game server.
       - ansible/roles/palworld-mesh-nat/**
-      - .github/workflows/ansible-palworld.yml
+      # This file is deliberately NOT in its own path list (PET-421). It was, and merging
+      # #301, whose whole content was deleting a CI job, ran the deploy this file performs:
+      # SteamCMD pulled whatever game build had shipped since the last run, at merge time,
+      # with nobody watching. A change to a trigger or a comment is not a change to the
+      # host. The cost is that a trigger edit is exercised by the next real change instead
+      # of at once; ansible-validate.yml still lints this file on every pull request.
 
 # Serialize runs of this workflow so two fast merges can't race two ansible applies
 # against host 234. Separate group from terraform.yml's tf-homelab and ansible-openfaas —
