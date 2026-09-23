@@ -267,11 +267,13 @@ uptime_kuma_monitors:
 # pve02 faults it exists to measure. Backups go to the HDD; the working database
 # does not.
 # ⚠ THIS EXPORT NO LONGER EXISTS (PET-386). pve02 was rebuilt after the 2026-09-03 rack loss
-# and exports only /mnt/media and /mnt/downloads, to 192.168.50.10. The guard below refuses
-# to write to the SD card when the mount is absent — correctly — and then exits 0, so every
-# run since the loss has logged "Skipping." under a green timer. Verified 2026-09-10. The
-# fix is a store that exists (ollama-backups, or a new pve02 ZFS export) and a non-zero exit
-# on skip; it is PET-386's to make, not a hand edit here.
+# and exports only /mnt/media and /mnt/downloads, to 192.168.50.10. The backup script
+# refuses to write to the SD card when the mount is absent and exits 1, so the unit fails
+# and lab-verify reports the last run's message. Until 2026-09-22 it exited 0, and every run
+# since the loss went green having written nothing. The store is still to choose, and that
+# choice is PET-386's: ollama-backups (192.168.50.12:/srv/backups, which the Pi could not
+# mount on 2026-09-22; the export or a firewall admits pve03 and not the Pi) or a new pve02
+# export. Point uptime_kuma_backup_nfs_export at it once it admits the Pi.
 uptime_kuma_backup_enabled: true
 uptime_kuma_backup_nfs_export: "192.168.50.11:/mnt/backups"
 uptime_kuma_backup_mount: /mnt/pve02-backups
