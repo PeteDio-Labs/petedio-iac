@@ -22,10 +22,16 @@ OUT="$DEST/kuma-$STAMP.db"
 # writes there, reports success, and quietly does the opposite of its job — it
 # ADDS SD writes and stores the only copy on the disk it was protecting against.
 # That is not hypothetical: it is what this script did before the check existed.
+#
+# And FAIL when the share is absent. Until PET-386 this branch exited 0, so from the
+# 2026-09-03 rack loss, which took the export with it, the timer reported success four
+# times a day over a script that wrote nothing. A timer's state says it fired, not that
+# it worked; the exit code is the only thing that turns a missing store into a failed
+# unit that `systemctl --failed` and lab-verify can see.
 ls "$MOUNT" >/dev/null 2>&1 || true
 if ! findmnt --types nfs,nfs4 --target "$MOUNT" >/dev/null 2>&1; then
-  echo "$MOUNT is not an NFS mount — refusing to write to the SD card. Skipping." >&2
-  exit 0
+  echo "$MOUNT is not an NFS mount — refusing to write to the SD card, and failing so the timer shows it. No backup was taken." >&2
+  exit 1
 fi
 
 mkdir -p "$DEST"

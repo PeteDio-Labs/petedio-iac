@@ -328,6 +328,16 @@ UP=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select coun
 # A monitor named for a host that no longer exists is worse than no monitor.
 STALE=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select count(*) from monitor where active=1 and (name like \"%pve01%\" or url like \"%86.140%\" or url like \"%50.111%\")"')
 [ "${STALE:-0}" -eq 0 ] && ok "no monitors for dead hosts" || bad "stale monitors" "$STALE point at hosts that are gone"
+# ⚠ A TIMER'S STATE SAYS IT FIRED, NOT THAT IT WORKED. kuma-backup.timer reported success
+# four times a day for nineteen days while the script wrote nothing: its guard refused the
+# missing export and exited 0 (PET-386). Read what the last run said, not whether it ran.
+# The script prints its `ok` line only after the integrity and emptiness checks pass, and
+# it may print `pruned` lines after it, so look for the `ok` line rather than the last line.
+LASTBK=$(on $PI 'sudo journalctl -o cat --no-pager _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value kuma-backup.service) 2>/dev/null')
+BKOK=$(printf '%s\n' "$LASTBK" | grep -m1 '^ok ' || true)
+if [ -n "$BKOK" ]; then ok "kuma backup wrote" "${BKOK#ok }"
+elif [ -z "$LASTBK" ]; then bad "kuma backup" "no run recorded on the Pi"
+else bad "kuma backup" "$(printf '%s\n' "$LASTBK" | tail -1)"; fi
 
 # ⚠ CHECK EVERY RUNNER, AND CHECK THE SPREAD.
 #
