@@ -23,8 +23,10 @@ PASS=0; FAIL=0
 # ---- the shim -------------------------------------------------------------------
 # The states route always answers. The by-identifier route answers by ITEM_MODE:
 # `found` serves item-<n> in project ITEM_PROJECT with state ITEM_STATE, `missing`
-# answers 404, `down` fails the way curl fails on a refused connection (exit 7,
-# http_code 000), and `foreign` serves the item in another project.
+# answers 404 for an item, `noroute` answers 404 with the body the lab's Plane gives
+# a route it does not have, `down` fails the way curl fails on a refused connection
+# (exit 7, http_code 000), `foreign` serves the item in another project, `garbage`
+# answers 200 with a body that is not JSON, and `error` answers 500.
 mkdir -p "$TMP/bin"
 cat >"$TMP/bin/curl" <<'SHIM'
 #!/usr/bin/env bash
@@ -54,7 +56,10 @@ case "$method $url" in
     case "$ITEM_MODE" in
       found)   emit 200 "{\"id\": \"item-$n\", \"sequence_id\": $n, \"project\": \"$ITEM_PROJECT\", \"state\": \"$ITEM_STATE\"}" ;;
       foreign) emit 200 "{\"id\": \"item-$n\", \"sequence_id\": $n, \"project\": \"other-proj\", \"state\": \"st-prog\"}" ;;
-      missing) emit 404 '{"error": "Page not found."}' ;;
+      missing) emit 404 '{"error": "Work item not found."}' ;;
+      noroute) emit 404 '{"error": "Page not found."}' ;;
+      garbage) emit 200 '<html>not json</html>' ;;
+      error)   emit 500 '{"error": "Internal Server Error"}' ;;
       down)    [ -z "$fmt" ] || printf '000'
                echo "curl: (7) Failed to connect to plane.test port 80: Connection refused" >&2
                exit 7 ;;
@@ -102,6 +107,15 @@ case_ "PET-500 In Review: found, then one PATCH to Done" pet-500-fixture 'done' 
 printf "\n\033[1mA lookup that fails leaves the item as-is\033[0m\n"
 case_ "PET-999 answers 404: the branch names an item that does not exist" pet-999-fixture 'done' missing - \
   'PET-999 not found in workspace ws — the branch names a work item that does not exist' 1 0
+
+case_ "a 404 with the lab's unknown-route body: the route is missing, not the item" pet-386-fixture 'done' noroute - \
+  'the by-identifier route is not available on this Plane \(http://plane\.test\) — nothing synced for PET-386' 1 0
+
+case_ "a 200 body that is not a work item" pet-386-fixture 'done' garbage - \
+  'could not parse the work item returned for PET-386 — left as-is' 1 0
+
+case_ "an HTTP 500" pet-386-fixture 'done' error - \
+  'resolving PET-386 returned HTTP 500 — left as-is' 1 0
 
 case_ "Plane unreachable at the lookup" pet-386-fixture 'done' down - \
   'Plane unreachable at http://plane\.test while resolving PET-386' 1 0
