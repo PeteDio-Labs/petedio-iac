@@ -95,24 +95,13 @@ LOOKUP_RC=$?
 if [ "$LOOKUP_RC" -ne 0 ] || [ "$LOOKUP_CODE" = "000" ]; then
   warn "Plane unreachable at ${PLANE_BASE_URL} while resolving PET-$SEQ — left as-is (reconciler will catch it)"; exit 0
 fi
-# A 404 means one of two things. The lab's Plane (192.168.50.235:8080) answers a
-# route it does not have with exactly {"error": "Page not found."}, read live for
-# PET-503. On a Plane without the by-identifier route every lookup gets that body,
-# so it warns about the route rather than blaming the item. Any other 404 is a
-# missing item.
+# A 404 has two causes the script cannot tell apart: a missing work item, or a
+# Plane without the by-identifier route. The lab's Plane (192.168.50.235:8080)
+# answers an unknown route with {"error": "Page not found."}, read live for
+# PET-503, and a missing item may carry the same body, so one warning names both.
 case "$LOOKUP_CODE" in
   200) ;;
-  404)
-    if python3 -c "
-import sys, json
-try: sys.exit(0 if json.load(open(sys.argv[1])) == {'error': 'Page not found.'} else 1)
-except Exception: sys.exit(1)
-" "$LOOKUP_BODY" 2>/dev/null; then
-      warn "the by-identifier route is not available on this Plane (${PLANE_BASE_URL}) — nothing synced for PET-$SEQ"
-    else
-      warn "PET-$SEQ not found in workspace ${PLANE_WORKSPACE} — the branch names a work item that does not exist"
-    fi
-    exit 0 ;;
+  404) warn "PET-$SEQ answered 404: the branch names a work item that does not exist, or this Plane has no by-identifier route (/api/v1/workspaces/${PLANE_WORKSPACE}/work-items/PET-$SEQ/)"; exit 0 ;;
   *)   warn "resolving PET-$SEQ returned HTTP $LOOKUP_CODE — left as-is: $(head -c 200 "$LOOKUP_BODY" 2>/dev/null)"; exit 0 ;;
 esac
 

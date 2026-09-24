@@ -105,11 +105,12 @@ case_ "PET-500 In Review: found, then one PATCH to Done" pet-500-fixture 'done' 
   '^PATCH http://plane\.test/api/v1/workspaces/ws/projects/proj/work-items/item-500/ \{"state": "st-done"\}$'
 
 printf "\n\033[1mA lookup that fails leaves the item as-is\033[0m\n"
-case_ "PET-999 answers 404: the branch names an item that does not exist" pet-999-fixture 'done' missing - \
-  'PET-999 not found in workspace ws — the branch names a work item that does not exist' 1 0
+# The two 404 bodies get the same warning: the script does not tell them apart.
+case_ "PET-999 answers 404 for a missing item" pet-999-fixture 'done' missing - \
+  'PET-999 answered 404: the branch names a work item that does not exist, or this Plane has no by-identifier route \(/api/v1/workspaces/ws/work-items/PET-999/\)' 1 0
 
-case_ "a 404 with the lab's unknown-route body: the route is missing, not the item" pet-386-fixture 'done' noroute - \
-  'the by-identifier route is not available on this Plane \(http://plane\.test\) — nothing synced for PET-386' 1 0
+case_ "PET-999 answers 404 with the lab's unknown-route body" pet-999-fixture 'done' noroute - \
+  'PET-999 answered 404: the branch names a work item that does not exist, or this Plane has no by-identifier route \(/api/v1/workspaces/ws/work-items/PET-999/\)' 1 0
 
 case_ "a 200 body that is not a work item" pet-386-fixture 'done' garbage - \
   'could not parse the work item returned for PET-386 — left as-is' 1 0
