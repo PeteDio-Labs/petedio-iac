@@ -430,6 +430,33 @@ claude_ansible_lint_version: "26.4.0"
 # `apt-cache policy shellcheck` on the host before you change it.
 claude_shellcheck_version: "0.10.0-1"
 
+# --- The read-only Proxmox token (PET-510) ------------------------------------------------
+# claude-247@pve!audit, PVEAuditor on / with privilege separation, so a session here reads the
+# cluster's state through the API instead of asking the Mac. tasks/pve.yml lands it, and
+# templates/claude-pve-get.j2 is the only client this role installs.
+#
+# DEFAULT FALSE, like every other delivery in this role. `true` belongs in host_vars.
+# `false` removes nothing: revoke the token on pve02 with `pveum user token remove`, because a
+# deleted file on this host revokes nothing.
+claude_pve_audit_enable: false
+
+# 0700 claude:claude on the directory, 0400 on token.env and 0444 on ca.pem.
+claude_pve_conf_dir: "{{ claude_home }}/.config/claude-pve"
+
+# 0500 claude:claude. GET only, and pinned to ca.pem. Not on the units' PATH, like claude-gh.
+claude_pve_get: "{{ claude_home }}/.local/bin/pve-get"
+
+# --- Proxmox token identity (resolved from Vault by scripts/deploy-claude-247.sh) ----------
+# NEVER give these a default, for the reason written over the vault identity above.
+#
+# Vault kv/services/claude-247-pve — fields token_id, secret, endpoint, ca_pem. Written once by
+# playbooks/mint-claude-247-pve.yml.
+#
+#   claude_pve_token_id
+#   claude_pve_token_secret
+#   claude_pve_endpoint
+#   claude_pve_ca_pem
+
 # --- The ticket-driven work loop (PET-399) ---------------------------------------------
 # A systemd timer picks up ONE Plane work item carrying a label, runs `claude -p` against
 # it, and opens a DRAFT pull request. It revives the shape of the agent fleet retired in

@@ -365,6 +365,72 @@ if [ "$CODE_PRESENT" -eq 1 ]; then
     "$CODE_APP_ID" "$CODE_INSTALL_ID" "${#CODE_APP_PEM}"
 fi
 
+step "Resolving the read-only Proxmox token (PET-510)"
+# OPTIONAL, for the reason the vault block above gives: 247 declares claude_pve_audit_enable
+# permanently in host_vars. Four fields or none; some of them is a failed mint, not a state.
+#
+# ⚠ THE SESSION USER CAN READ THIS TOKEN. What bounds it is Proxmox: PVEAuditor on / for the
+# user and for the token, with privilege separation, so it reads the cluster and changes
+# nothing. ansible/playbooks/mint-claude-247-pve.yml writes this entry, once, from the Mac.
+PVE_TOKEN_ID="$(kvget kv/services/claude-247-pve token_id)"
+PVE_TOKEN_SECRET="$(kvget kv/services/claude-247-pve secret)"
+PVE_ENDPOINT="$(kvget kv/services/claude-247-pve endpoint)"
+PVE_CA_PEM="$(kvget kv/services/claude-247-pve ca_pem)"
+
+PVE_PRESENT=0
+PVE_FOUND=0
+for v in "$PVE_TOKEN_ID" "$PVE_TOKEN_SECRET" "$PVE_ENDPOINT" "$PVE_CA_PEM"; do
+  [ -n "$v" ] && PVE_FOUND=$((PVE_FOUND + 1))
+done
+
+if [ "$PVE_FOUND" -eq 4 ]; then
+  PVE_PRESENT=1
+elif [ "$PVE_FOUND" -gt 0 ]; then
+  die "kv/services/claude-247-pve is half-written: $PVE_FOUND of token_id, secret, endpoint, ca_pem are set.
+
+  The mint playbook writes all four in one request, so this entry was written some other way.
+  Remove the token on pve02 with 'pveum user token remove claude-247@pve audit', then run
+  ansible/playbooks/mint-claude-247-pve.yml again."
+else
+  warn "kv/services/claude-247-pve is empty, so the Proxmox token is NOT being landed.
+
+  Everything else in this run converges. To fix it, run
+  ansible/playbooks/mint-claude-247-pve.yml from the Mac, and then this script again."
+fi
+
+if [ "$PVE_PRESENT" -eq 1 ]; then
+  # The role grants PVEAuditor to this one token. Any other id in the entry is a token this
+  # script cannot vouch for, and it might hold more than PVEAuditor.
+  [ "$PVE_TOKEN_ID" = "claude-247@pve!audit" ] \
+    || die "kv/services/claude-247-pve names the token '$PVE_TOKEN_ID', not claude-247@pve!audit.
+
+  Only claude-247@pve!audit is bounded to PVEAuditor. Re-mint with
+  ansible/playbooks/mint-claude-247-pve.yml."
+
+  case "$PVE_ENDPOINT" in
+    https://*) ;;
+    *) die "endpoint in kv/services/claude-247-pve is '$PVE_ENDPOINT', not an https URL." ;;
+  esac
+
+  printf '%s' "$PVE_CA_PEM" | grep -q -- "-----BEGIN CERTIFICATE-----" \
+    || die "ca_pem in kv/services/claude-247-pve does not look like a PEM certificate."
+  printf '%s\n' "$PVE_CA_PEM" | openssl x509 -noout 2>/dev/null \
+    || die "ca_pem in kv/services/claude-247-pve does not parse as an X.509 certificate. Re-mint it."
+
+  for f in ansible/roles/claude-code/tasks/pve.yml \
+           ansible/roles/claude-code/templates/claude-pve-get.j2 \
+           ansible/roles/claude-code/templates/claude-pve-token.env.j2; do
+    [ -f "$REPO_ROOT/$f" ] || die "$f is missing from this checkout.
+
+  This tree has the Proxmox TOKEN but not the consumer. Landing it now would put a credential
+  in the session user's home with nothing that reads it. Merge the branch carrying
+  roles/claude-code's pve tasks first, then re-run. See PET-510."
+  done
+
+  printf 'pve: token %s, endpoint %s, secret %s bytes\n' \
+    "$PVE_TOKEN_ID" "$PVE_ENDPOINT" "${#PVE_TOKEN_SECRET}"
+fi
+
 step "Resolving the Plane project id for '$PLANE_IDENTIFIER'"
 # Looked up rather than pinned. A project UUID would have to be re-pinned every time the
 # project is recreated, which plane-bootstrap.sh already learned once. The PAT goes to curl
@@ -416,6 +482,8 @@ VAULT_PRESENT="$VAULT_PRESENT" VAULT_APP_ID="$VAULT_APP_ID" \
 VAULT_INSTALL_ID="$VAULT_INSTALL_ID" VAULT_APP_PEM="$VAULT_APP_PEM" \
 CODE_PRESENT="$CODE_PRESENT" CODE_APP_ID="$CODE_APP_ID" \
 CODE_INSTALL_ID="$CODE_INSTALL_ID" CODE_APP_PEM="$CODE_APP_PEM" \
+PVE_PRESENT="$PVE_PRESENT" PVE_TOKEN_ID="$PVE_TOKEN_ID" \
+PVE_TOKEN_SECRET="$PVE_TOKEN_SECRET" PVE_ENDPOINT="$PVE_ENDPOINT" PVE_CA_PEM="$PVE_CA_PEM" \
 PLANE_KEY="$PLANE_KEY" PLANE_BASE_URL="$PLANE_BASE_URL" \
 PLANE_WORKSPACE="$PLANE_WORKSPACE" PROJECT_ID="$PROJECT_ID" \
 python3 -c '
@@ -447,9 +515,16 @@ if os.environ["CODE_PRESENT"] == "1":
         "claude_code_push_installation_id": os.environ["CODE_INSTALL_ID"],
         "claude_code_push_app_pem": os.environ["CODE_APP_PEM"],
     })
+if os.environ["PVE_PRESENT"] == "1":
+    v.update({
+        "claude_pve_token_id": os.environ["PVE_TOKEN_ID"],
+        "claude_pve_token_secret": os.environ["PVE_TOKEN_SECRET"],
+        "claude_pve_endpoint": os.environ["PVE_ENDPOINT"],
+        "claude_pve_ca_pem": os.environ["PVE_CA_PEM"],
+    })
 json.dump(v, open(os.environ["OUT"], "w"))
 ' || die "could not write the extra-vars file."
-unset APP_PEM PLANE_KEY MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM
+unset APP_PEM PLANE_KEY MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM PVE_TOKEN_SECRET PVE_CA_PEM
 
 ansible-playbook playbooks/configure-claude-code.yml -e "@$TMP/extra.json" "$@"
 
@@ -490,4 +565,5 @@ cat <<'TXT'
     the loop    docs/runbooks/claude-loop.md
     the mirror  ansible/roles/claude-code/README.md, "The private workspace repo"
     the vault   ansible/roles/claude-code/README.md, "The vault, and the one writable key"
+    the token   ansible/roles/claude-code/README.md, "The read-only Proxmox token (PET-510)"
 TXT

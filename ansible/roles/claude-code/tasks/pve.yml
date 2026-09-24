@@ -1,0 +1,90 @@
+# pve.yml — give a session on this host read-only access to the Proxmox API (PET-510).
+#
+# THE PET-498 SHAPE, READ-ONLY. The token claude-247@pve!audit carries PVEAuditor on /, and
+# its privilege separation holds it to the intersection of its own ACL and its user's, both
+# PVEAuditor. The token file and the wrapper belong to {{ claude_user }}, so every process
+# running as {{ claude_user }} can read the whole cluster's configuration and change nothing.
+#
+# WHAT BOUNDS IT IS THE ROLE, NOT THE WRAPPER. pve-get refuses every method except GET, but a
+# session that reads token.env can send a POST with curl. Proxmox answers that POST with a 403,
+# because PVEAuditor holds no privilege that modifies anything. README.md, "The read-only
+# Proxmox token (PET-510)", has the proofs.
+#
+# THE TOKEN IS MINTED ON THE MAC, NOT HERE. playbooks/mint-claude-247-pve.yml creates the user,
+# the token and both ACLs on pve02 and writes kv/services/claude-247-pve.
+# scripts/deploy-claude-247.sh reads that entry and passes it to this file.
+#
+# ONE RUN, NOT TWO. A run that carries no identity leaves the credentials alone.
+---
+# follow: false for the PET-410 reason tasks/vault.yml gives. The parents are listed so a
+# first run without the other deliveries still gives them to the session user.
+- name: Create the session user's per-user config and bin directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0755"
+  loop:
+    - "{{ claude_home }}/.config"
+    - "{{ claude_home }}/.local"
+    - "{{ claude_home }}/.local/bin"
+
+- name: Create the Proxmox credential directory
+  ansible.builtin.file:
+    path: "{{ claude_pve_conf_dir }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0700"
+
+# Gated on presence, not on the enable flag, for the reason tasks/vault.yml gives.
+- name: Decide whether this run carries the Proxmox token
+  ansible.builtin.set_fact:
+    claude_pve_identity_present: >-
+      {{ claude_pve_token_id | default('') | length > 0
+         and claude_pve_token_secret | default('') | length > 0
+         and claude_pve_endpoint | default('') | length > 0
+         and claude_pve_ca_pem | default('') | length > 0 }}
+  no_log: true
+
+- name: Report that the Proxmox token was not passed, so the credentials are left alone
+  ansible.builtin.debug:
+    msg: >-
+      No Proxmox token in this run — {{ claude_pve_conf_dir }} is left as it is. Run
+      scripts/deploy-claude-247.sh to land or rotate it.
+  when: not claude_pve_identity_present | bool
+
+- name: Land the Proxmox token the wrapper reads
+  ansible.builtin.template:
+    src: claude-pve-token.env.j2
+    dest: "{{ claude_pve_conf_dir }}/token.env"
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0400"
+  no_log: true
+  when: claude_pve_identity_present | bool
+
+# 0444: the CA is public. A trailing newline is added if the Vault field lost one.
+- name: Land the Proxmox cluster CA the wrapper pins
+  ansible.builtin.copy:
+    content: "{{ claude_pve_ca_pem | trim }}\n"
+    dest: "{{ claude_pve_conf_dir }}/ca.pem"
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0444"
+  when: claude_pve_identity_present | bool
+
+# Unconditional: the wrapper holds no secret.
+- name: Install the read-only Proxmox API wrapper
+  ansible.builtin.template:
+    src: claude-pve-get.j2
+    dest: "{{ claude_pve_get }}"
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0500"

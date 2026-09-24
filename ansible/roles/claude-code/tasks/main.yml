@@ -293,6 +293,13 @@
   ansible.builtin.include_tasks: iac-tools.yml
   when: claude_iac_tools_enable | bool
 
+# --- The read-only Proxmox token (PET-510) --------------------------------------------------
+# claude-247@pve!audit, PVEAuditor on /, readable by the session user, and a GET-only wrapper
+# pinned to the cluster CA. tasks/pve.yml carries the design.
+- name: Let the session read the Proxmox API
+  ansible.builtin.include_tasks: pve.yml
+  when: claude_pve_audit_enable | bool
+
 # --- Claude Code settings ------------------------------------------------------------------
 # SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles
 # and one-time prompts land here — so an Ansible-owned copy would silently revert choices

@@ -71,3 +71,11 @@ claude_code_push_enable: true
 # here verifies the IaC it writes instead of handing it to the Mac. The role's default is
 # `false`; declared here so every deploy run keeps the toolchain converged.
 claude_iac_tools_enable: true
+
+# A session here reads the Proxmox API as claude-247@pve!audit, PVEAuditor on / (PET-510), so
+# it checks the cluster's state itself instead of asking the Mac. The role's default is
+# `false`; declared here so every deploy run keeps the token converged.
+#
+# Run scripts/deploy-claude-247.sh, which reads kv/services/claude-247-pve from Vault; a bare
+# play run lands no token. playbooks/mint-claude-247-pve.yml mints it, once, from the Mac.
+claude_pve_audit_enable: true
