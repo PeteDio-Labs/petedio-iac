@@ -202,9 +202,11 @@ already configure. Measured on git 2.50.1, a machine with a stored credential an
 and the broker was never run — so its host and path checks silently stopped applying. Use the
 variable rather than writing the flags out again.
 
-**`origin` in the session's clone is the local mirror, not GitHub.** A session can commit and
-cannot push, which is the arrangement `claude-247.md` already describes. Nothing updates that
-clone on a schedule either: a session pulls its own repo, like any developer.
+**`origin` in the session's clone is the local mirror, not GitHub.** A session fetches from the
+mirror. With `claude_code_push_enable`, it pushes to GitHub through `remote.origin.pushurl` and
+the code-push broker. See "Code push and pull requests (PET-507)". Before PET-507, this paragraph
+said a session "can commit and cannot push". Nothing updates that clone on a schedule either: a
+session pulls its own repo, like any developer.
 
 **One step is interactive and no play can take it.** Claude Code refuses to work in a
 directory nobody has trusted, so after the first delivery: `ssh claude@192.168.50.247`, then
