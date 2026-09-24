@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+{{ ansible_managed | comment }}
+# claude-code-push-broker — the only thing on this host that reads the code-push App's
+# private key, and the only thing that mints a token for the three code repositories
+# (PET-507).
+#
+# ⚠ BUILT FROM claude-vault-broker, AND IT CARRIES THE SAME TRADE. The key is readable by
+# {{ claude_user }}, because the session is what pushes. So every process running as
+# {{ claude_user }} can run this script: every Remote Control session, and the work loop's
+# `claude -p` too if claude_loop_enable is ever set. The 0400 on the key and the 0500 on this
+# file keep OTHER users out. They cannot keep {{ claude_user }} out, and they are not meant to.
+#
+# ⚠ WHAT KEEPS THE BLAST RADIUS NARROW IS THE APP AND BRANCH PROTECTION, NOT THE MODES:
+#
+#   · The App is installed on {{ claude_code_push_repos | map(attribute='name') | join(', ') }}
+#     alone, with contents:write, pull_requests:write and metadata:read.
+#   · It holds no `workflows` permission, so GitHub refuses a push that touches
+#     .github/workflows/** (the PET-425 property).
+#   · `main` requires a review the App cannot give, so it cannot merge what it pushes.
+#
+# Each of those holds in the GitHub UI, where nothing in this repo notices it changing.
+# scripts/seed-claude-code-app.sh checks the first two before it seeds. Nothing checks the third.
+#
+# ⚠ NOT THE LOOP'S APP, NOT THE MIRROR'S, NOT THE VAULT'S. Four Apps, four Vault paths, four
+# directories, four brokers. Pointing this at {{ claude_loop_conf_dir }} or at
+# {{ claude_workspace_mirror_conf_dir }} would put a root-owned key behind a script the session
+# can rewrite.
+#
+# WHAT THIS BROKER ADDS OVER THE VAULT'S. Two things, both because it answers for three
+# repositories instead of one:
+#
+#   · `get` REQUIRES a path. The vault's broker accepts an empty one, because its App reaches
+#     one repository anyway. Here an empty path would be a request for any of three, so it is
+#     refused. git sends the path only when credential.useHttpPath is true, which every clone
+#     this role configures sets.
+#   · Every token `get` mints is NARROWED to the one repository git asked for, through the
+#     `repositories` field of the token request. A token that leaks out of a push to
+#     petedio-iac cannot write to petedio-workspace.
+#
+# Four subcommands:
+#
+#   mint-token [repo]  prints ONE installation token, good for an hour. With a repository
+#                      name from the allow-list, the token reaches that repository alone, and
+#                      the mint fails if the App is not installed there. Without one, it
+#                      reaches every repository the installation lists. The play and
+#                      claude-gh use it.
+#   get                speaks git's credential-helper protocol on stdin and stdout.
+#   store, erase       accepted and ignored, which is all a mint-per-call helper owes git.
+set -euo pipefail
+umask 077
+
+CONF_DIR={{ claude_code_push_conf_dir }}
+WANT_HOST=github.com
+ORG={{ claude_code_push_org }}
+# The allow-list. A repository missing here is refused whatever the App's install lists.
+ALLOWED=({% for r in claude_code_push_repos %}{{ r.name }}{{ ' ' if not loop.last else '' }}{% endfor %})
+
+die() { printf 'claude-code-push-broker: %s\n' "$*" >&2; exit 1; }
+
+allowed() {
+  local want="$1" r
+  for r in "${ALLOWED[@]}"; do [ "$r" = "$want" ] && return 0; done
+  return 1
+}
+
+# ⚠ Refuses root for the reason claude-vault-broker gives: root running git inside a clone
+# the sessions own is code execution as root, through core.hooksPath and its siblings.
+[ "$(id -u)" -ne 0 ] || die "refusing to run as root. $CONF_DIR belongs to {{ claude_user }}, and root running git in the session's clone is code execution as root."
+[ "$(id -un)" = "{{ claude_user }}" ] || die "must run as {{ claude_user }}, not $(id -un). Only {{ claude_user }} can read $CONF_DIR."
+[ $# -ge 1 ] && [ $# -le 2 ] || die "usage: $(basename "$0") mint-token [repo] | get | store | erase"
+
+# ---------------------------------------------------------------------------------- mint
+#
+# Body carried over from claude-vault-broker. The three load-bearing details it names hold
+# here unchanged: a 540s JWT window under GitHub's 600s ceiling, the JWT to curl on STDIN
+# and never in argv, and the PEM passed to openssl as a path.
+#
+# The request body carries only a repository NAME, which is not a secret, so it travels in
+# argv. Stdin is taken by the JWT header.
+mint() {
+  local repo="${1:-}" body='{}'
+  if [ -n "$repo" ]; then
+    allowed "$repo" || die "refusing: '$repo' is not one of: ${ALLOWED[*]}."
+    body="$(printf '{"repositories":["%s"]}' "$repo")"
+  fi
+
+  # shellcheck source=/dev/null
+  . "$CONF_DIR/github.env"
+  for v in GITHUB_APP_ID GITHUB_INSTALLATION_ID; do
+    [ -n "${!v:-}" ] || die "$v is missing from $CONF_DIR/github.env"
+  done
+  PEM_FILE="$CONF_DIR/app.pem"
+  [ -r "$PEM_FILE" ] || die "$PEM_FILE is missing or unreadable."
+  for t in openssl curl python3; do command -v "$t" >/dev/null || die "$t is not in PATH."; done
+
+  b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+  now="$(date +%s)"
+  h="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
+  p="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 480))" "$GITHUB_APP_ID" | b64url)"
+  sig="$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -sign "$PEM_FILE" -binary | b64url)"
+  jwt="${h}.${p}.${sig}"
+
+  resp="$(printf 'Authorization: Bearer %s\n' "$jwt" | curl -sS --max-time 20 -X POST \
+    -H @- \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    --data-binary "$body" \
+    "https://api.github.com/app/installations/${GITHUB_INSTALLATION_ID}/access_tokens")"
+
+  token="$(printf '%s' "$resp" | python3 -c 'import sys,json
+try:
+    print(json.load(sys.stdin).get("token") or "")
+except Exception:
+    print("")')"
+  [ -n "$token" ] || die "mint failed${repo:+ for $repo}. GitHub said: $(printf '%s' "$resp" | head -c 200)"
+  printf '%s\n' "$token"
+}
+
+case "$1" in
+
+mint-token)
+  mint "${2:-}"
+  ;;
+
+# ----------------------------------------------------------------------------------- get
+#
+# git's credential-helper protocol, as in claude-vault-broker. With GIT_TERMINAL_PROMPT=0 a
+# refusal here fails the push instead of blocking on a prompt nobody can answer.
+#
+# ⚠ THE HOST, PATH AND ALLOW-LIST CHECKS ARE THE REACH LIMIT. `credential.helper` is not
+# URL-scoped in the config that sets it, so without them a git command pointed at a second
+# remote would be handed a token for it.
+#
+# ⚠ EVERY CALLER RESETS THE HELPER LIST FIRST, for the reason claude-vault-broker measured on
+# git 2.50.1: `credential.helper` is multi-valued, and without the reset a stored credential
+# configured elsewhere answers first and this script never runs.
+get)
+  [ $# -eq 1 ] || die "usage: $(basename "$0") get"
+  proto='' host='' path=''
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || break
+    case "$line" in
+      protocol=*) proto="${line#protocol=}" ;;
+      host=*) host="${line#host=}" ;;
+      path=*) path="${line#path=}" ;;
+    esac
+  done
+  [ "$proto" = https ] || die "refusing: protocol '$proto' is not https."
+  [ "$host" = "$WANT_HOST" ] || die "refusing: host '$host' is not $WANT_HOST."
+  [ -n "$path" ] || die "refusing: git sent no path. Set credential.useHttpPath=true in this clone; this broker answers for one named repository at a time."
+
+  # git sends the path with or without the .git suffix, depending on the remote URL.
+  repo_path="${path%.git}"
+  case "$repo_path" in
+    "$ORG"/*) repo="${repo_path#"$ORG"/}" ;;
+    *) die "refusing: path '$path' is not under $ORG." ;;
+  esac
+  case "$repo" in */*|'') die "refusing: path '$path' does not name one repository." ;; esac
+  allowed "$repo" || die "refusing: '$repo' is not one of: ${ALLOWED[*]}."
+
+  token="$(mint "$repo")" || die "could not mint a token for $ORG/$repo."
+  # x-access-token is GitHub's fixed username for an installation token.
+  printf 'username=x-access-token\npassword=%s\n' "$token"
+  ;;
+
+store | erase)
+  ;;
+
+*)
+  die "unknown subcommand '$1'. Expected mint-token, get, store or erase."
+  ;;
+esac

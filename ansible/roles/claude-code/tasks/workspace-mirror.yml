@@ -281,10 +281,10 @@
 # SEEDED, NEVER UPDATED, for the same reason as the public clones above: a re-run that
 # fast-forwarded this would move the branch under a session mid-task.
 #
-# `origin` is the LOCAL MIRROR, not GitHub. That is deliberate and it is the design: a
-# session in this clone can commit and cannot push anywhere, which is the arrangement
-# claude-247.md already describes — 247 writes a branch, the Mac bundles and pushes it. It is
-# also why no credential helper is set here: the session user has nothing to authenticate to.
+# `origin` is the LOCAL MIRROR, not GitHub, and this file sets no credential helper: fetching
+# from the mirror needs none. Pushing is code-push.yml's job (PET-507). With
+# claude_code_push_enable, it adds remote.origin.pushurl and the code-push broker to this
+# clone. Before PET-507, this comment said a session here "can commit and cannot push anywhere".
 #
 # ⚠ ONE MORE STEP AFTER THIS, AND NO PLAY CAN DO IT. Claude Code refuses to work in a
 # directory nobody has trusted, and the trust dialog is interactive. PET-481 confirmed the

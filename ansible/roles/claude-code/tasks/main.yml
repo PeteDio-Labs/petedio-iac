@@ -276,6 +276,16 @@
   ansible.builtin.include_tasks: vault.yml
   when: claude_vault_enable | bool
 
+# --- Code push (PET-507) --------------------------------------------------------------------
+# A fourth GitHub App, readable by the session user like the vault's, installed on
+# petedio-iac, petedio-media-iac and petedio-workspace with contents:write and
+# pull_requests:write. Runs AFTER the public clones and the workspace mirror, because it
+# configures the clones they create. tasks/code-push.yml and
+# templates/claude-code-push-broker.j2 carry the design.
+- name: Let the session push code and open pull requests
+  ansible.builtin.include_tasks: code-push.yml
+  when: claude_code_push_enable | bool
+
 # --- The IaC toolchain (PET-508) --------------------------------------------------------------
 # terraform, ansible-core, ansible-lint and shellcheck at the CI pins, root-owned, so a session
 # here can verify what it writes. tasks/iac-tools.yml carries the design.

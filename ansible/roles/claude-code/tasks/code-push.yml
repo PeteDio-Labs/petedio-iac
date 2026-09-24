@@ -1,0 +1,365 @@
+# code-push.yml — let a session on this host push branches to three code repositories and
+# open pull requests on them (PET-507).
+#
+# THE PET-498 SHAPE, WIDENED. tasks/vault.yml gave the session a credential it can read,
+# because the session is what pushes. This file does the same for a fourth App, installed on
+# {{ claude_code_push_repos | map(attribute='name') | join(', ') }} with contents:write,
+# pull_requests:write and metadata:read. The key, the identity file, the broker and the gh
+# wrapper all belong to {{ claude_user }}, so every process running as {{ claude_user }} can
+# push to those three repositories and open pull requests on them.
+#
+# WHAT BOUNDS IT IS THE APP AND BRANCH PROTECTION. No `workflows` permission, so GitHub refuses
+# a push that touches .github/workflows/**. `main` requires a review the App cannot give, so
+# Pedro decides every merge. templates/claude-code-push-broker.j2 carries the full argument.
+#
+# THE CLONES KEEP THEIR ORIGINS. iac and media-iac fetch from GitHub over anonymous HTTPS, as
+# they always have, and now push through the broker. The workspace clone fetches from the
+# root-owned mirror, as PET-493 arranged, and gets a GitHub PUSH URL. Its fetches stay on the
+# mirror, so a session there sees GitHub's state up to one mirror interval late.
+#
+# ⚠ ROOT NEVER RUNS git IN THESE CLONES, and runuser rather than become_user, for the reasons
+# tasks/vault.yml gives.
+#
+# ONE RUN, NOT TWO. A run that carries no identity leaves the credentials alone and converges
+# from what is on disk.
+---
+# follow: false for the PET-410 reason tasks/vault.yml gives. The parents are listed so a
+# first run without the vault delivery still gives them to the session user.
+- name: Create the session user's per-user config and bin directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0755"
+  loop:
+    - "{{ claude_home }}/.config"
+    - "{{ claude_home }}/.local"
+    - "{{ claude_home }}/.local/bin"
+
+- name: Create the code-push credential directory
+  ansible.builtin.file:
+    path: "{{ claude_code_push_conf_dir }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0700"
+
+# Gated on presence, not on the enable flag, for the reason tasks/vault.yml gives.
+- name: Decide whether this run carries the code-push App identity
+  ansible.builtin.set_fact:
+    claude_code_push_identity_present: >-
+      {{ claude_code_push_app_id | default('') | length > 0
+         and claude_code_push_installation_id | default('') | length > 0
+         and claude_code_push_app_pem | default('') | length > 0 }}
+  no_log: true
+
+- name: Report that the code-push identity was not passed, so the credentials are left alone
+  ansible.builtin.debug:
+    msg: >-
+      No code-push App identity in this run — {{ claude_code_push_conf_dir }} is left as it is.
+      If this host has already been seeded, delivery continues with what is on disk. Run
+      scripts/deploy-claude-247.sh to land or rotate the credentials.
+  when: not claude_code_push_identity_present | bool
+
+- name: Land the code-push App identity the broker reads
+  ansible.builtin.template:
+    src: claude-code-push-github.env.j2
+    dest: "{{ claude_code_push_conf_dir }}/github.env"
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0400"
+  no_log: true
+  when: claude_code_push_identity_present | bool
+
+# A trailing newline is added if the Vault field lost one, because openssl rejects a PEM
+# without it.
+- name: Land the code-push App private key
+  ansible.builtin.copy:
+    content: "{{ claude_code_push_app_pem | trim }}\n"
+    dest: "{{ claude_code_push_conf_dir }}/app.pem"
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0400"
+  no_log: true
+  when: claude_code_push_identity_present | bool
+
+# Unconditional: neither script holds a secret.
+- name: Install the code-push broker and the gh wrapper
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    follow: false
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0500"
+  loop:
+    - { src: claude-code-push-broker.j2, dest: "{{ claude_code_push_broker }}" }
+    - { src: claude-gh.j2, dest: "{{ claude_code_push_gh }}" }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Check whether the code-push App credentials are on this host
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: claude_code_push_creds
+  loop:
+    - "{{ claude_code_push_conf_dir }}/github.env"
+    - "{{ claude_code_push_conf_dir }}/app.pem"
+
+- name: Record whether the code-push credentials are complete
+  ansible.builtin.set_fact:
+    claude_code_push_creds_on_disk: >-
+      {{ (claude_code_push_creds.results
+          | map(attribute='stat.exists') | select | list | length) == 2 }}
+
+# ONE MINT PER REPOSITORY, EACH NARROWED TO THAT REPOSITORY. GitHub refuses a narrowed token
+# for a repository the installation does not list, so each result proves the install covers
+# that repository. A `git ls-remote` cannot prove that for iac and media-iac: they are public,
+# and git reads them without asking for a credential at all.
+#
+# no_log because stdout IS an installation token.
+- name: Mint a token narrowed to each repository, as the session user
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      {{ claude_code_push_broker }} mint-token {{ item.name }}
+  environment:
+    HOME: "{{ claude_home }}"
+  register: claude_code_push_mint
+  changed_when: false
+  failed_when: false
+  no_log: true
+  loop: "{{ claude_code_push_repos }}"
+  when: claude_code_push_creds_on_disk | bool
+
+- name: Check which session clones exist
+  ansible.builtin.stat:
+    path: "{{ claude_workspace }}/{{ item.dest }}/.git"
+  register: claude_code_push_clones
+  loop: "{{ claude_code_push_repos }}"
+  loop_control:
+    label: "{{ item.dest }}"
+
+# Both lists are aligned with claude_code_push_repos. A skipped mint has no `rc`, and
+# `default(1)` reads that as a failure, which is the answer wanted.
+- name: Record whether the code-push delivery can proceed in this run
+  ansible.builtin.set_fact:
+    claude_code_push_mint_failed: >-
+      {{ claude_code_push_repos | map(attribute='name')
+         | zip(claude_code_push_mint.results | default([]) | map(attribute='rc', default=1))
+         | rejectattr('1', 'equalto', 0) | map(attribute='0') | list }}
+    claude_code_push_missing_clones: >-
+      {{ claude_code_push_clones.results | rejectattr('stat.exists')
+         | map(attribute='item.dest') | list }}
+
+- name: Record whether the code-push delivery is ready
+  ansible.builtin.set_fact:
+    claude_code_push_ready: >-
+      {{ (claude_code_push_creds_on_disk | bool)
+         and claude_code_push_mint_failed | length == 0
+         and claude_code_push_missing_clones | length == 0 }}
+
+# The first blocking reason, in the order the steps above run.
+- name: Record the blocking reason, if any
+  ansible.builtin.set_fact:
+    claude_code_push_blocked_at: >-
+      {{ 'nothing; the code-push delivery converged' if claude_code_push_ready | bool
+         else 'no code-push App credentials on this host yet, so no clone was configured'
+         if not claude_code_push_creds_on_disk | bool
+         else claude_code_push_mint_msg
+         if claude_code_push_mint_failed | length > 0
+         else 'these session clones do not exist yet: '
+              ~ claude_code_push_missing_clones | join(', ') }}
+  vars:
+    claude_code_push_mint_msg: >-
+      the broker could not mint a token for {{ claude_code_push_mint_failed | join(', ') }}.
+      The App id, the installation id or the key is wrong, or the App is not installed there
+
+- name: Report why the code-push delivery cannot converge in this run
+  ansible.builtin.debug:
+    msg:
+      - "Code push did not converge: {{ claude_code_push_blocked_at }}."
+      - "The clones' git config is left alone; everything else in this play converges."
+  when: not claude_code_push_ready | bool
+
+# The helper list, read first so a converged run reports no change. See tasks/vault.yml for
+# why the empty line has to come first and why `--replace-all` keeps the order on a re-run.
+- name: Read each clone's credential helper list
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git -C {{ claude_workspace }}/{{ item.dest }}
+      config --local --get-all credential.helper
+  environment:
+    HOME: "{{ claude_home }}"
+  register: claude_code_push_helpers
+  changed_when: false
+  failed_when: false
+  loop: "{{ claude_code_push_repos }}"
+  loop_control:
+    label: "{{ item.dest }}"
+  when: claude_code_push_ready | bool
+
+# argv, because one argument IS the empty string.
+- name: Reset each clone's credential helper list
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_user }}"
+      - --
+      - git
+      - -C
+      - "{{ claude_workspace }}/{{ item.item.dest }}"
+      - config
+      - --local
+      - --replace-all
+      - credential.helper
+      - ""
+      - "^$"
+  environment:
+    HOME: "{{ claude_home }}"
+  changed_when: true
+  loop: "{{ claude_code_push_helpers.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.dest }}"
+  when:
+    - claude_code_push_ready | bool
+    - item.stdout_lines | default([]) != ['', claude_code_push_broker]
+
+- name: Point each clone's credential helper at the broker
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_user }}"
+      - --
+      - git
+      - -C
+      - "{{ claude_workspace }}/{{ item.item.dest }}"
+      - config
+      - --local
+      - --replace-all
+      - credential.helper
+      - "{{ claude_code_push_broker }}"
+      - "."
+  environment:
+    HOME: "{{ claude_home }}"
+  changed_when: true
+  loop: "{{ claude_code_push_helpers.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.dest }}"
+  when:
+    - claude_code_push_ready | bool
+    - item.stdout_lines | default([]) != ['', claude_code_push_broker]
+
+# The remaining settings, one row per clone and key:
+#
+#   credential.useHttpPath  makes git send the repository path, which the broker REQUIRES.
+#   user.name, user.email   attribute a commit to the HOST, not to Pedro, as the vault clone
+#                           does. The address is on GitHub's noreply domain.
+#   remote.origin.pushurl   the workspace clone only. Its fetch URL is the local mirror, which
+#                           takes no pushes.
+- name: Read each clone's remaining git settings
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git -C {{ claude_workspace }}/{{ item.0.dest }}
+      config --local --get {{ item.1.key }}
+  environment:
+    HOME: "{{ claude_home }}"
+  register: claude_code_push_settings
+  changed_when: false
+  failed_when: false
+  loop: >-
+    {{ claude_code_push_repos | product([
+         {'key': 'credential.useHttpPath', 'value': 'true'},
+         {'key': 'user.name', 'value': 'claude-247'},
+         {'key': 'user.email', 'value': 'claude-247@users.noreply.github.com'},
+         {'key': 'remote.origin.pushurl', 'value': 'MIRRORED_ONLY'}]) | list }}
+  loop_control:
+    label: "{{ item.0.dest }} {{ item.1.key }}"
+  when:
+    - claude_code_push_ready | bool
+    - item.1.key != 'remote.origin.pushurl' or item.0.mirrored | bool
+
+# MIRRORED_ONLY is a placeholder the loop above never writes: the push URL row is skipped for a
+# clone that fetches from GitHub, and its real value is computed here from the repository name.
+- name: Set each clone's remaining git settings
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_user }}"
+      - --
+      - git
+      - -C
+      - "{{ claude_workspace }}/{{ item.item.0.dest }}"
+      - config
+      - --local
+      - "{{ item.item.1.key }}"
+      - "{{ claude_code_push_want }}"
+  environment:
+    HOME: "{{ claude_home }}"
+  vars:
+    claude_code_push_want: >-
+      {{ ('https://github.com/' ~ claude_code_push_org ~ '/' ~ item.item.0.name ~ '.git')
+         if item.item.1.key == 'remote.origin.pushurl' else item.item.1.value }}
+  changed_when: true
+  loop: "{{ claude_code_push_settings.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.0.dest }} {{ item.item.1.key }}"
+  when:
+    - claude_code_push_ready | bool
+    - item is not skipped
+    - (item.stdout | default('') | trim) != claude_code_push_want
+
+# THE PROOF, THROUGH EACH CLONE'S OWN CONFIG. `git credential fill` asks the helper chain the
+# clone's config sets up, exactly as a push would, with no options on the command line. It
+# fails if the helper list is wrong, and it fails if useHttpPath is off, because git then drops
+# the path and the broker refuses a request without one. It sends nothing to the remote.
+#
+# no_log because stdout carries the token git would push with.
+- name: Ask each clone's own credential chain for a push credential
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_user }} --
+      git -C {{ claude_workspace }}/{{ item.dest }} credential fill
+    stdin: "protocol=https\nhost=github.com\npath={{ claude_code_push_org }}/{{ item.name }}.git\n"
+  environment:
+    HOME: "{{ claude_home }}"
+    GIT_TERMINAL_PROMPT: "0"
+  register: claude_code_push_route
+  changed_when: false
+  failed_when: false
+  no_log: true
+  loop: "{{ claude_code_push_repos }}"
+  when: claude_code_push_ready | bool
+
+# Allowed to stop the play, for the reason tasks/vault.yml gives its own assert: it runs only
+# when the credentials are on disk and every mint passed in this run, so a failure here means
+# a clone's own config is wrong. It carries rc values and repository names, never output.
+- name: Assert a session can push from each clone through the broker
+  ansible.builtin.assert:
+    that:
+      - claude_code_push_route_failed | length == 0
+    fail_msg: >-
+      git credential fill failed in {{ claude_code_push_route_failed | join(', ') }}. Check
+      that {{ claude_code_push_broker }} is 0500 {{ claude_user }}, and that each clone's local
+      credential.helper reads an empty value followed by that path, with
+      credential.useHttpPath=true.
+    success_msg: >-
+      {{ claude_user }} gets a narrowed push credential from each of
+      {{ claude_code_push_repos | map(attribute='dest') | join(', ') }} with no options on the
+      command line.
+  vars:
+    claude_code_push_route_failed: >-
+      {{ claude_code_push_route.results | default([])
+         | rejectattr('rc', 'equalto', 0)
+         | map(attribute='item.dest') | list }}
+  when: claude_code_push_ready | bool

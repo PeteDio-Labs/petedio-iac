@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+{{ ansible_managed | comment }}
+# claude-gh — run gh as the code-push App, for one command (PET-507).
+#
+#   {{ claude_code_push_gh }} pr create --draft --fill
+#   {{ claude_code_push_gh }} pr view 123
+#
+# The wrapper mints an installation token through {{ claude_code_push_broker }} and runs gh
+# with GH_TOKEN set in that one process's environment. Nothing logs gh in, and nothing writes a
+# token to ~/.config/gh/hosts.yml, to a file or to argv. The token lives an hour and dies with
+# the command that used it.
+#
+# ⚠ THE APP DECIDES WHAT gh CAN DO, NOT THIS SCRIPT. The token reaches
+# {{ claude_code_push_repos | map(attribute='name') | join(', ') }} with contents:write,
+# pull_requests:write and metadata:read. Anything outside that fails at GitHub with a 403 or a
+# 404: another repository, a workflow file, a merge into a protected `main`, or an Actions log
+# on a private repository.
+#
+# ⚠ ~/.local/bin IS NOT ON THE REMOTE CONTROL UNITS' PATH. Call this by its full path.
+#
+# WHICH REPOSITORY. gh picks a repository from the clone's remotes, and it cannot read one from
+# the workspace clone: that clone's origin fetches from a local mirror. So when GH_REPO is unset
+# and no -R or --repo is passed, the wrapper reads the clone's push URL and sets GH_REPO from
+# it, when it names a repository on the allow-list.
+set -euo pipefail
+
+ORG={{ claude_code_push_org }}
+ALLOWED=({% for r in claude_code_push_repos %}{{ r.name }}{{ ' ' if not loop.last else '' }}{% endfor %})
+
+die() { printf 'claude-gh: %s\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" -ne 0 ] || die "refusing to run as root."
+[ "$(id -un)" = "{{ claude_user }}" ] || die "must run as {{ claude_user }}, not $(id -un)."
+command -v gh >/dev/null || die "gh is not in PATH."
+
+# `gh auth login` and `gh auth setup-git` would write a credential to disk, and `gh auth token`
+# prints one. Only `gh auth status` is harmless, and it is useful to see which identity answers.
+if [ "${1:-}" = auth ] && [ "${2:-}" != status ]; then
+  die "refusing 'gh auth ${2:-}'. This wrapper supplies a token per command; nothing logs in."
+fi
+
+if [ -z "${GH_REPO:-}" ]; then
+  explicit=0
+  for a in "$@"; do
+    case "$a" in -R|--repo|--repo=*|-R?*) explicit=1 ;; esac
+  done
+  if [ "$explicit" -eq 0 ]; then
+    push_url="$(git remote get-url --push origin 2>/dev/null || true)"
+    case "$push_url" in
+      https://github.com/"$ORG"/*|git@github.com:"$ORG"/*)
+        name="${push_url##*/}"
+        name="${name%.git}"
+        for r in "${ALLOWED[@]}"; do
+          if [ "$r" = "$name" ]; then
+            export GH_REPO="$ORG/$name"
+            break
+          fi
+        done
+        ;;
+    esac
+  fi
+fi
+
+# THE HEAD BRANCH, FOR THE SAME REASON. In a clone whose origin fetches from a local path, a
+# plain `gh pr create` stops with "could not resolve remote origin", even after
+# `git push -u origin <branch>`: gh maps the branch's upstream to a repository through the
+# remote's fetch URL. With `--head <branch>` it creates the PR. Measured with gh 2.90.0 on
+# 2026-09-24. So the wrapper adds `--head` to `pr create` when origin's fetch URL is not on
+# GitHub and the caller passed none. `pr view` and `pr checks` in that clone take a PR number.
+args=("$@")
+if [ "${1:-}" = pr ] && [ "${2:-}" = create ]; then
+  has_head=0
+  for a in "$@"; do
+    case "$a" in -H|--head|--head=*|-H?*) has_head=1 ;; esac
+  done
+  fetch_url="$(git remote get-url origin 2>/dev/null || true)"
+  branch="$(git branch --show-current 2>/dev/null || true)"
+  case "$fetch_url" in
+    https://github.com/*|git@github.com:*) ;;
+    *)
+      if [ "$has_head" -eq 0 ] && [ -n "$fetch_url" ] && [ -n "$branch" ]; then
+        args+=(--head "$branch")
+      fi
+      ;;
+  esac
+fi
+
+token="$({{ claude_code_push_broker }} mint-token)" || die "the broker could not mint a token."
+GH_TOKEN="$token" GH_HOST=github.com GH_PROMPT_DISABLED=1 exec gh "${args[@]}"
