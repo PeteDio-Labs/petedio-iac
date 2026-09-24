@@ -1,0 +1,119 @@
+# iac-tools.yml (PET-508): terraform, ansible-core, ansible-lint and shellcheck at the CI pins,
+# so a session on this host can verify the IaC it writes. Included from main.yml behind
+# claude_iac_tools_enable.
+#
+# EVERYTHING HERE IS ROOT-OWNED AND READ-ONLY TO THE SESSION USER. The session runs the tools;
+# it cannot replace them. A per-user install (pipx, ~/.local) would let a session swap the
+# linter that is supposed to check its own work.
+#
+# ONE VENV FOR THE ANSIBLE PAIR, NOT pipx. CI installs ansible-lint and ansible-core with one
+# `pip install` into one environment, and ansible-lint imports the ansible-core beside it.
+# pipx would give ansible-lint its own private ansible-core, and `ansible --version` would
+# then report a different copy from the one the linter uses.
+
+- name: Install shellcheck and the venv module
+  ansible.builtin.apt:
+    name:
+      - "shellcheck={{ claude_shellcheck_version }}"
+      - python3-venv
+    state: present
+    update_cache: true
+
+- name: Create the IaC tools directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ claude_iac_tools_dir }}"
+    - "{{ claude_iac_tools_dir }}/terraform-{{ claude_terraform_version }}"
+
+# --- terraform ------------------------------------------------------------------------------
+# The release zip, checked against the pinned sha256. get_url refuses a download whose
+# checksum differs, so a tampered or truncated zip never reaches unarchive.
+
+- name: Download the pinned terraform release
+  ansible.builtin.get_url:
+    url: >-
+      https://releases.hashicorp.com/terraform/{{ claude_terraform_version }}/terraform_{{
+      claude_terraform_version }}_linux_amd64.zip
+    dest: "{{ claude_iac_tools_dir }}/terraform_{{ claude_terraform_version }}_linux_amd64.zip"
+    checksum: "sha256:{{ claude_terraform_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Unpack terraform
+  ansible.builtin.unarchive:
+    src: "{{ claude_iac_tools_dir }}/terraform_{{ claude_terraform_version }}_linux_amd64.zip"
+    dest: "{{ claude_iac_tools_dir }}/terraform-{{ claude_terraform_version }}"
+    remote_src: true
+    owner: root
+    group: root
+    creates: "{{ claude_iac_tools_dir }}/terraform-{{ claude_terraform_version }}/terraform"
+
+# --- ansible-core and ansible-lint ------------------------------------------------------------
+
+- name: Install the pinned ansible-core and ansible-lint into their venv
+  ansible.builtin.pip:
+    name:
+      - "ansible-core=={{ claude_ansible_core_version }}"
+      - "ansible-lint=={{ claude_ansible_lint_version }}"
+    virtualenv: "{{ claude_iac_tools_dir }}/ansible"
+    virtualenv_command: python3 -m venv
+
+# --- PATH -----------------------------------------------------------------------------------
+
+- name: Link the tools into /usr/local/bin
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "/usr/local/bin/{{ item.name }}"
+    state: link
+    force: true
+  loop:
+    - { name: terraform, src: "{{ claude_iac_tools_dir }}/terraform-{{ claude_terraform_version }}/terraform" }
+    - { name: ansible, src: "{{ claude_iac_tools_dir }}/ansible/bin/ansible" }
+    - { name: ansible-playbook, src: "{{ claude_iac_tools_dir }}/ansible/bin/ansible-playbook" }
+    - { name: ansible-galaxy, src: "{{ claude_iac_tools_dir }}/ansible/bin/ansible-galaxy" }
+    - { name: ansible-config, src: "{{ claude_iac_tools_dir }}/ansible/bin/ansible-config" }
+    - { name: ansible-doc, src: "{{ claude_iac_tools_dir }}/ansible/bin/ansible-doc" }
+    - { name: ansible-inventory, src: "{{ claude_iac_tools_dir }}/ansible/bin/ansible-inventory" }
+    - { name: ansible-lint, src: "{{ claude_iac_tools_dir }}/ansible/bin/ansible-lint" }
+  loop_control:
+    label: "{{ item.name }}"
+
+# --- Prove the pins ---------------------------------------------------------------------------
+# A module reporting ok is not a version on PATH. Read each tool back through the link the
+# session will use, as the session user, and refuse a run where any of them differs.
+
+- name: Read the installed versions as the session user
+  ansible.builtin.command:
+    cmd: runuser -u {{ claude_user }} -- {{ item.cmd }}
+  environment:
+    HOME: "{{ claude_home }}"
+    # terraform otherwise calls checkpoint.hashicorp.com to look for a newer release.
+    CHECKPOINT_DISABLE: "1"
+  loop:
+    - { name: terraform, cmd: /usr/local/bin/terraform version -json }
+    - { name: ansible-lint, cmd: /usr/local/bin/ansible-lint --version }
+    - { name: shellcheck, cmd: /usr/bin/shellcheck --version }
+  loop_control:
+    label: "{{ item.name }}"
+  register: claude_iac_tools_versions
+  changed_when: false
+  # Read-only, so it runs under --check as well.
+  check_mode: false
+
+- name: Refuse a toolchain that differs from the pins
+  ansible.builtin.assert:
+    that:
+      - (claude_iac_tools_versions.results[0].stdout | from_json).terraform_version == claude_terraform_version
+      - claude_iac_tools_versions.results[1].stdout is search('ansible-lint ' ~ claude_ansible_lint_version ~ ' ')
+      - claude_iac_tools_versions.results[1].stdout is search('ansible-core:' ~ claude_ansible_core_version ~ ' ')
+      - claude_iac_tools_versions.results[2].stdout is search('version. ' ~ claude_shellcheck_version.split('-') | first ~ '$', multiline=True)
+    fail_msg: >-
+      The IaC toolchain on {{ inventory_hostname }} does not match the pins in
+      roles/claude-code/defaults/main.yml. Read the output above.
+    quiet: true

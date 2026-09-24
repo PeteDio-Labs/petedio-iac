@@ -50,3 +50,8 @@ claude_workspace_mirror_enable: true
 # bare play run leaves the clone as it found it. roles/claude-code/README.md has the design,
 # the trust step and the rotation.
 claude_vault_enable: true
+
+# terraform, ansible-core, ansible-lint and shellcheck at the CI pins (PET-508), so a session
+# here verifies the IaC it writes instead of handing it to the Mac. The role's default is
+# `false`; declared here so every deploy run keeps the toolchain converged.
+claude_iac_tools_enable: true

@@ -1,0 +1,46 @@
+# claude-iac-tools-pins.yml — the claude-code role's IaC toolchain pins against the CI
+# workflows' pins (PET-508).
+#
+# Runs on localhost, touches nothing, needs no credential and reaches no network. Run it
+# from `ansible/`:
+#
+#   ansible-playbook tests/claude-iac-tools-pins.yml
+#
+# WHAT THIS EXISTS TO CATCH. claude-247 installs terraform, ansible-core and ansible-lint so a
+# session there can verify what it writes before CI does. That is worth something only while
+# the versions are CI's. A workflow bump that leaves the role behind would give 247 a
+# linter that passes what CI fails, and nothing on the host would say so.
+---
+- name: Compare the claude-code toolchain pins with the CI workflows
+  hosts: localhost
+  gather_facts: false
+  vars:
+    repo_root: "{{ playbook_dir }}/../.."
+    validate_yml: "{{ lookup('ansible.builtin.file', repo_root ~ '/.github/workflows/ansible-validate.yml') }}"
+    terraform_yml: "{{ lookup('ansible.builtin.file', repo_root ~ '/.github/workflows/terraform.yml') }}"
+    ci_ansible_lint: "{{ validate_yml | regex_search('\"ansible-lint==([^\"]+)\"', '\\1') | first }}"
+    ci_ansible_core: "{{ validate_yml | regex_search('\"ansible-core==([^\"]+)\"', '\\1') | first }}"
+    # Every terraform_version pin in the workflow, so a partial bump fails here too.
+    ci_terraform: "{{ terraform_yml | regex_findall('terraform_version:\\s*([0-9.]+)') | unique }}"
+
+  tasks:
+    - name: Load the role's pins
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/claude-code/defaults/main.yml"
+
+    - name: Refuse a role pin that differs from CI
+      ansible.builtin.assert:
+        that:
+          - ci_terraform | length == 1
+          - ci_terraform[0] == claude_terraform_version
+          - ci_ansible_lint == claude_ansible_lint_version
+          - ci_ansible_core == claude_ansible_core_version
+        fail_msg: >-
+          CI pins terraform {{ ci_terraform | join(', ') }}, ansible-lint {{ ci_ansible_lint }}
+          and ansible-core {{ ci_ansible_core }}. roles/claude-code/defaults/main.yml pins
+          {{ claude_terraform_version }}, {{ claude_ansible_lint_version }} and
+          {{ claude_ansible_core_version }}. Bump them together, and change
+          claude_terraform_sha256 with the terraform version.
+        success_msg: >-
+          terraform {{ claude_terraform_version }}, ansible-lint {{ claude_ansible_lint_version }}
+          and ansible-core {{ claude_ansible_core_version }} match CI.

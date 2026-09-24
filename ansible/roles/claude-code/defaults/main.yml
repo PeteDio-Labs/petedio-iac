@@ -323,6 +323,37 @@ claude_remote_sessions:
 # string "false" is truthy.
 claude_remote_enable: false
 
+# --- The IaC toolchain (PET-508) --------------------------------------------------------
+# terraform, ansible-core, ansible-lint and shellcheck, so a session here can verify the IaC
+# it writes instead of handing it to the Mac. tasks/iac-tools.yml installs them root-owned
+# under claude_iac_tools_dir and links them into /usr/local/bin.
+#
+# DEFAULT FALSE, like every other delivery in this role. `true` belongs in host_vars.
+# `false` installs nothing and removes nothing: a tool left on disk grants no access.
+#
+# Not `vault`: a CLI without a token verifies nothing, and a token here is PET-509's question.
+# Not `sudo`: its absence is part of this host's permission model.
+claude_iac_tools_enable: false
+
+claude_iac_tools_dir: /opt/claude-iac-tools
+
+# ⚠ THESE PINS COPY THE CI WORKFLOWS, AND tests/claude-iac-tools-pins.yml FAILS CI WHEN THEY
+# DIFFER. terraform comes from .github/workflows/terraform.yml, and the ansible pair from the
+# `pip install` line in .github/workflows/ansible-validate.yml. Bump them in the same PR.
+# A pin that matches CI is not a verdict that matches CI: collections and Python can still
+# differ, so compare a lint run here with CI's own `Passed:` line for the same commit.
+claude_terraform_version: "1.16.3"
+# The linux_amd64 row of
+# https://releases.hashicorp.com/terraform/<version>/terraform_<version>_SHA256SUMS.
+# Change it together with the version.
+claude_terraform_sha256: 093b6ae9a2228af5029c41606bc96eb583553528aad1bfe7e0b4d62fc91e25d8
+claude_ansible_core_version: "2.20.4"
+claude_ansible_lint_version: "26.4.0"
+
+# CI pins no shellcheck, so this pins the Debian trixie package. Read the candidate with
+# `apt-cache policy shellcheck` on the host before you change it.
+claude_shellcheck_version: "0.10.0-1"
+
 # --- The ticket-driven work loop (PET-399) ---------------------------------------------
 # A systemd timer picks up ONE Plane work item carrying a label, runs `claude -p` against
 # it, and opens a DRAFT pull request. It revives the shape of the agent fleet retired in
