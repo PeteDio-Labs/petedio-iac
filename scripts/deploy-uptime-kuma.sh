@@ -37,17 +37,24 @@ done
 [ -f "$SECRETS/ansible.role_id" ] && [ -f "$SECRETS/ansible.secret_id" ] \
   || die "ansible AppRole creds not in $SECRETS."
 
-step "Vault: check whether the admin secret exists yet"
-ROOT_TOKEN="$(security find-generic-password -s vault-root-token -a vault-223 -w 2>/dev/null)" \
-  || die "Vault root token not in the Keychain (service vault-root-token, account vault-223)."
+step "Vault: log in as the ansible AppRole"
+RID="$(cat "$SECRETS/ansible.role_id")"; SID="$(cat "$SECRETS/ansible.secret_id")"
+AN_TOKEN="$(vault write -field=token auth/approle/login \
+  role_id="$RID" secret_id="$SID" 2>/dev/null)" || die "AppRole login failed."
 
-if ! VAULT_TOKEN="$ROOT_TOKEN" vault kv get "$KUMA_PATH" >/dev/null 2>&1; then
+# The AppRole reads the secret on every run. Only the first run, which seeds it,
+# needs the Keychain root token, because the AppRole cannot write kv/services/*.
+step "Vault: check whether the admin secret exists yet"
+if ! VAULT_TOKEN="$AN_TOKEN" vault kv get "$KUMA_PATH" >/dev/null 2>&1; then
   step "Vault: seeding $KUMA_PATH (first run)"
+  ROOT_TOKEN="$(security find-generic-password -s vault-root-token -a vault-223 -w 2>/dev/null)" \
+    || die "first run needs the Vault root token in the Keychain (service vault-root-token, account vault-223)."
   # 32 URL-safe chars. Generated here and never printed.
   NEW_PW="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
   VAULT_TOKEN="$ROOT_TOKEN" vault kv put "$KUMA_PATH" \
     admin_user="pedro" admin_password="$NEW_PW" >/dev/null \
     || die "could not write $KUMA_PATH"
+  unset ROOT_TOKEN
   security add-generic-password -U -s "$KC_SERVICE" -a "$KC_ACCOUNT" -w "$NEW_PW" \
     || die "could not mirror the password into the Keychain"
   unset NEW_PW
@@ -55,11 +62,6 @@ if ! VAULT_TOKEN="$ROOT_TOKEN" vault kv get "$KUMA_PATH" >/dev/null 2>&1; then
 else
   echo "  already present — reusing it."
 fi
-
-step "Vault: log in as the ansible AppRole"
-RID="$(cat "$SECRETS/ansible.role_id")"; SID="$(cat "$SECRETS/ansible.secret_id")"
-AN_TOKEN="$(VAULT_TOKEN="$ROOT_TOKEN" vault write -field=token auth/approle/login \
-  role_id="$RID" secret_id="$SID" 2>/dev/null)" || die "AppRole login failed."
 
 step "Vault: resolve the admin credentials"
 KUMA_USER="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=admin_user "$KUMA_PATH")" \
