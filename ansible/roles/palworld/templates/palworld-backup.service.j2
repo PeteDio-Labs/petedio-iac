@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+# One-shot Palworld world backup -> MinIO (PET-382). Triggered by palworld-backup.timer.
+[Unit]
+Description=Palworld world backup to MinIO (PET-382)
+After=network-online.target palworld.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ palworld_backup_script_path }}
+# Runs as root: reads the 0600 env file and needs AdminPassword out of
+# PalWorldSettings.ini to call the REST API. ProtectHome=read-only (NOT true) — the
+# save tree it must read lives under /home/steam; the plain "true" value vault-snapshot
+# and resume-mongo-backup use would hide it entirely and fail every run.
+ProtectHome=read-only
+NoNewPrivileges=true
