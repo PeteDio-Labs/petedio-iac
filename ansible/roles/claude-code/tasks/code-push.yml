@@ -188,7 +188,8 @@
   when: not claude_code_push_ready | bool
 
 # The helper list, read first so a converged run reports no change. See tasks/vault.yml for
-# why the empty line has to come first and why `--replace-all` keeps the order on a re-run.
+# why the empty line has to come first. The order here comes from the three tasks below, which
+# clear the list and add its two values back, not from `--replace-all`.
 - name: Read each clone's credential helper list
   ansible.builtin.command:
     cmd: >-
