@@ -418,6 +418,104 @@ ansible-galaxy collection install -r requirements.yml
 Matching pins are not a matching verdict. To trust a lint run here, compare its `Passed:`
 line with the `ansible-validate` run on the same commit.
 
+## The read-only Proxmox token (PET-510)
+
+A session here reads the Proxmox API as `claude-247@pve!audit`. So 247 checks guest state,
+storage and task logs itself instead of asking the Mac. The token changes nothing: Proxmox
+refuses every write it sends.
+
+**Set `claude_pve_audit_enable: true` in host_vars, never with `-e`**, for the reason the vault
+section gives. `inventory/host_vars/claude-247.yml` declares it.
+
+**The shape is the vault's, read-only.** The token is `0400 claude` in `~/.config/claude-pve/`,
+beside the cluster CA at `0444`. Every process running as `claude` can therefore read the
+whole cluster's configuration through it, including the work loop's `claude -p` if
+`claude_loop_enable` is ever set.
+
+**What bounds it is Proxmox, not the wrapper:**
+
+- The user `claude-247@pve` holds `PVEAuditor` on `/`. It has no password, so it cannot log in
+  to the web UI.
+- The token has privilege separation on and its own `PVEAuditor` ACL on `/`. Its privileges are
+  the intersection of its ACL and its user's, so a grant to either one alone widens nothing.
+- `PVEAuditor` holds only `.Audit` privileges. It reads configuration and status, and it
+  cannot start, stop, create, change or delete anything.
+
+**`pve-get` is GET only.** It refuses `-X` with any other method, pins `ca.pem`, and prints the
+response body. It connects to `192.168.50.11` and checks the leaf certificate against that IP,
+because 247 resolves neither `pve02` nor `pve02.lab`. It clears Python's `VERIFY_X509_STRICT`
+flag, because the PVE root CA has no key-usage extension and Python 3.13 refuses it otherwise.
+The wrapper protects against a typo, not
+against a session: a process that reads `token.env` can send a POST, and Proxmox answers 403.
+
+### Reading the API
+
+Call the wrapper by its full path, because `~/.local/bin` is not on the Remote Control units'
+`PATH`. The path is relative to `/api2/json`:
+
+```sh
+~/.local/bin/pve-get /cluster/resources
+~/.local/bin/pve-get /nodes/pve02/qemu
+~/.local/bin/pve-get '/nodes/pve02/tasks?limit=20'
+```
+
+### Minting it
+
+Terraform declares none of this. The CI token cannot create a user or an ACL, and widening it
+to do so is refused. `playbooks/mint-claude-247-pve.yml` does it instead, once, from the Mac,
+as `root@pam` over the `pve02` SSH alias. It needs a Vault token, which it reads from
+`VAULT_TOKEN`, then the Keychain item `vault-root-token`, then a prompt.
+
+Minting is Pedro's step. Pedro runs the playbook, or a Mac session runs it after Pedro types
+his authorization in that session's own chat. A peer's relay is not that authorization. From
+`~/petedio/iac/ansible`, then from `~/petedio/iac`:
+
+```sh
+ansible-playbook playbooks/mint-claude-247-pve.yml
+./scripts/deploy-claude-247.sh
+```
+
+The playbook creates the user and its ACL, mints the token with privilege separation, grants
+the token's ACL, and writes `kv/services/claude-247-pve` with `token_id`, `secret`, `endpoint`
+and `ca_pem`. Proxmox shows the secret once, so the play never logs it and never mints twice:
+
+| The token on pve02 | The Vault entry | The play |
+|---|---|---|
+| absent | any | mints it and writes the entry |
+| present | holds `token_id` and `secret` | changes nothing |
+| present | lacks either field | refuses, and names the repair |
+
+### Proving it
+
+Run the first two as `claude` on 247, and the third on the Mac.
+
+1. `~/.local/bin/pve-get /access/permissions` lists `/` with `.Audit` privileges only, such as
+   `Sys.Audit`, `VM.Audit` and `Datastore.Audit`.
+2. A POST with the token returns `403`. `pve-get` cannot send one, so this reads `token.env`
+   in Python without printing it:
+
+   ```sh
+   python3 -c 'import http.client,ssl;d="/home/claude/.config/claude-pve/";e=dict(l.strip().split("=",1) for l in open(d+"token.env") if "=" in l and not l.startswith("#"));x=ssl.create_default_context(cafile=d+"ca.pem");x.verify_flags&=~ssl.VERIFY_X509_STRICT;c=http.client.HTTPSConnection("192.168.50.11",8006,context=x);c.request("POST","/api2/json/nodes/pve02/apt/update",headers={"Authorization":"PVEAPIToken=%s=%s"%(e["PVE_TOKEN_ID"],e["PVE_TOKEN_SECRET"])});print(c.getresponse().status)'
+   ```
+
+3. `ssh pve02 pveum user token permissions claude-247@pve audit` lists `.Audit` privileges on
+   `/` and nothing else.
+
+### Rotating the token
+
+To rotate it, remove the token on pve02, then mint and deploy again with the commands above:
+
+```sh
+ssh pve02 pveum user token remove claude-247@pve audit
+```
+
+The play writes a new version of `kv/services/claude-247-pve`. KV v2 keeps the old version,
+which names a token that no longer exists.
+
+⚠ **To revoke this access, remove the token on pve02** with the command above. To remove the
+user as well, run `ssh pve02 pveum user delete claude-247@pve`. Deleting
+`~/.config/claude-pve/` on 247 revokes nothing, and the next deploy lands it again.
+
 ## Verify
 
 A unit that is `active` is not a server that registered: one waiting at the consent prompt is

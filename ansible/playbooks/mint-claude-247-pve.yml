@@ -1,0 +1,347 @@
+---
+# mint-claude-247-pve.yml — a read-only Proxmox API token for claude-247 (PET-510).
+#
+#   ansible-playbook playbooks/mint-claude-247-pve.yml
+#
+# Run it from the Mac, in ansible/. It creates the PVE user claude-247@pve, grants it
+# PVEAuditor on /, mints the token claude-247@pve!audit with privilege separation on, grants
+# the token PVEAuditor on /, and writes kv/services/claude-247-pve. Then
+# scripts/deploy-claude-247.sh lands the token on 247 (roles/claude-code, tasks/pve.yml).
+#
+# ⚠ TERRAFORM DECLARES NONE OF THIS, ON PURPOSE. The CI token petedio@pam!iac holds none of
+# Realm.AllocateUser, User.Modify or Permissions.Modify, so a Terraform user or ACL would 403
+# on create and on every refresh. Granting Permissions.Modify on / to CI would let any merged
+# PR assign any role, its own token included. This play runs as root@pam from the Mac instead.
+#
+# ⚠ THE TOKEN VALUE EXISTS ONCE. pveum prints the secret at the mint and never again, so the
+# mint and the Vault write carry `no_log: true`, and nothing here prints either. The play
+# authenticates to Vault and reads the existing entry BEFORE it touches the node, so a Vault
+# that is sealed or refuses the token stops the run before anything is minted.
+#
+# IDEMPOTENT, AND IT NEVER RE-MINTS. A re-run with the user, both ACLs, the token and the
+# Vault entry present changes nothing. The three cases for the token:
+#
+#   token absent                  → mint, grant the token's ACL, write Vault (a new KV version)
+#   token present, Vault entry    → nothing
+#   token present, no Vault entry → REFUSE. The secret cannot be read back, so the only
+#                                    repair is `pveum user token remove claude-247@pve audit`
+#                                    at a node, then a re-run.
+#
+# To rotate, remove the token at a node and re-run: the first row applies, and KV v2 keeps the
+# previous version. roles/claude-code/README.md, "The read-only Proxmox token", has the rest.
+#
+# Vault auth matches scripts/seed-claude-code-app.sh: $VAULT_TOKEN, else the macOS Keychain
+# item $VAULT_TOKEN_KEYCHAIN_ITEM (default vault-root-token), else a hidden prompt.
+
+- name: Authenticate to Vault and read the existing entry
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    pve_vault_addr: "{{ lookup('ansible.builtin.env', 'VAULT_ADDR') | default('https://192.168.50.223:8200', true) }}"
+    pve_vault_cacert: >-
+      {{ lookup('ansible.builtin.env', 'VAULT_CACERT')
+         | default(playbook_dir ~ '/../../environments/homelab/vault-ca.crt', true) }}
+    pve_vault_keychain_item: >-
+      {{ lookup('ansible.builtin.env', 'VAULT_TOKEN_KEYCHAIN_ITEM') | default('vault-root-token', true) }}
+  tasks:
+    - name: Take the Vault token from VAULT_TOKEN, else the Keychain
+      ansible.builtin.set_fact:
+        pve_vault_token: >-
+          {{ lookup('ansible.builtin.env', 'VAULT_TOKEN')
+             or lookup('ansible.builtin.pipe',
+                       'security find-generic-password -s ' ~ (pve_vault_keychain_item | trim | quote)
+                       ~ ' -w 2>/dev/null || true') }}
+      no_log: true
+
+    - name: Ask for the Vault token when neither holds one
+      ansible.builtin.pause:
+        prompt: "Vault token"
+        echo: false
+      register: pve_vault_prompt
+      no_log: true
+      when: pve_vault_token | trim | length == 0
+
+    - name: Use the prompted token
+      ansible.builtin.set_fact:
+        pve_vault_token: "{{ pve_vault_prompt.user_input }}"
+      no_log: true
+      when: pve_vault_token | trim | length == 0
+
+    - name: Record where Vault is, for the plays below
+      ansible.builtin.set_fact:
+        pve_vault_url: "{{ pve_vault_addr | trim }}/v1/kv/data/services/claude-247-pve"
+        pve_vault_ca: "{{ pve_vault_cacert | trim }}"
+
+    # A token Vault refuses, or a sealed Vault, stops the run here: before the node is touched.
+    - name: Check Vault accepts the token
+      ansible.builtin.uri:
+        url: "{{ pve_vault_addr | trim }}/v1/auth/token/lookup-self"
+        headers:
+          X-Vault-Token: "{{ pve_vault_token | trim }}"
+        ca_path: "{{ pve_vault_ca }}"
+        status_code: 200
+      no_log: true
+      register: pve_vault_lookup
+      failed_when: false
+
+    - name: Refuse to go on without a working Vault token
+      ansible.builtin.assert:
+        that:
+          - pve_vault_lookup.status | default(0) == 200
+        fail_msg: >-
+          Vault answered HTTP {{ pve_vault_lookup.status | default('nothing') }} at
+          {{ pve_vault_addr | trim }}. Nothing was changed on the node. Run
+          ./scripts/pet-secrets doctor to see whether Vault is sealed or the Keychain token is
+          stale, then re-run.
+        quiet: true
+
+    - name: Read the existing Vault entry
+      ansible.builtin.uri:
+        url: "{{ pve_vault_url }}"
+        headers:
+          X-Vault-Token: "{{ pve_vault_token | trim }}"
+        ca_path: "{{ pve_vault_ca }}"
+        status_code: [200, 404]
+      no_log: true
+      register: pve_vault_read
+
+    # Only the non-secret fields leave this task. The secret's presence is a boolean.
+    - name: Record what the Vault entry holds
+      ansible.builtin.set_fact:
+        pve_vault_has_entry: >-
+          {{ pve_vault_read.status == 200
+             and (pve_vault_read.json.data.data.token_id | default('') | length > 0)
+             and (pve_vault_read.json.data.data.secret | default('') | length > 0) }}
+        pve_vault_token_id: "{{ pve_vault_read.json.data.data.token_id | default('') if pve_vault_read.status == 200 else '' }}"
+      no_log: true
+
+    - name: Report the Vault entry
+      ansible.builtin.debug:
+        msg: >-
+          kv/services/claude-247-pve
+          {{ ('holds token ' ~ pve_vault_token_id) if pve_vault_has_entry | bool else 'holds no token' }}.
+
+- name: Create the user and its ACL, and mint the token once
+  hosts: pve02
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    # ⚠ THE SSH ALIAS, NOT THE ADDRESS. Inventory names pve02 by 192.168.50.11, which no
+    # ~/.ssh/config entry matches. The Mac's `Host pve02` entry carries root and the Proxmox
+    # key, so this play connects through the alias.
+    ansible_host: pve02
+    pve_user: claude-247@pve
+    pve_token_name: audit
+    pve_token_id: "{{ pve_user }}!{{ pve_token_name }}"
+    pve_role: PVEAuditor
+    pve_endpoint: https://192.168.50.11:8006
+    # The CA that signs pve02's certificate: the leaf's Authority Key Identifier, read from 247
+    # on 2026-09-24, and the CA's subject. A mismatch means the file is not the CA 247 meets,
+    # so pinning it would break pve-get or trust the wrong issuer. The subject is in RFC 2253
+    # form because the read passes -nameopt RFC2253: OpenSSL 3.0 and 3.5 print the default
+    # form differently, with and without spaces around each "=".
+    pve_ca_path: /etc/pve/pve-root-ca.pem
+    pve_ca_ski: "61:F1:E5:10:48:47:84:DC:AB:8C:8E:2C:7C:30:9D:46:02:75:FA:71"
+    pve_ca_subject: "O=PVE Cluster Manager CA,OU=5a3e6852-0b37-437d-8bf3-7a20ee15d520,CN=Proxmox Virtual Environment"
+    # A different name from the localhost fact it reads, so a lookup cannot resolve to itself.
+    pve_have_vault_entry: "{{ hostvars['localhost']['pve_vault_has_entry'] | bool }}"
+  tasks:
+    - name: Read the CA's Subject Key Identifier and subject
+      ansible.builtin.command:
+        cmd: openssl x509 -in {{ pve_ca_path }} -noout -ext subjectKeyIdentifier -subject -nameopt RFC2253
+      register: pve_ca_info
+      changed_when: false
+
+    - name: Refuse a CA that is not the one pve02's certificate names
+      ansible.builtin.assert:
+        that:
+          - pve_ca_ski in pve_ca_info.stdout
+          - ('subject=' ~ pve_ca_subject) in pve_ca_info.stdout_lines
+        fail_msg: >-
+          {{ pve_ca_path }} does not match the issuer of pve02's certificate. Expected SKI
+          {{ pve_ca_ski }} and subject {{ pve_ca_subject }}; openssl said
+          {{ pve_ca_info.stdout_lines }}. Nothing was changed. Re-read the chain from 247
+          (PET-510's 06:21 comment shows how) before you change the expected values.
+        quiet: true
+
+    - name: Read the CA certificate
+      ansible.builtin.slurp:
+        src: "{{ pve_ca_path }}"
+      register: pve_ca_file
+
+    - name: List the PVE users
+      ansible.builtin.command:
+        cmd: pveum user list --output-format json
+      register: pve_users
+      changed_when: false
+
+    - name: Create the user, with no password
+      ansible.builtin.command:
+        argv:
+          - pveum
+          - user
+          - add
+          - "{{ pve_user }}"
+          - --comment
+          - "PET-510: read-only API access for claude-247. Token {{ pve_token_name }} only; no password."
+      when: pve_user not in (pve_users.stdout | from_json | map(attribute='userid') | list)
+      changed_when: true
+
+    - name: List the ACLs
+      ansible.builtin.command:
+        cmd: pveum acl list --output-format json
+      register: pve_acls
+      changed_when: false
+
+    # A privsep token's privileges are the intersection of its own ACLs and its user's, so
+    # the user needs the role as well as the token.
+    - name: Grant the user PVEAuditor on /
+      ansible.builtin.command:
+        argv: [pveum, acl, modify, /, --users, "{{ pve_user }}", --roles, "{{ pve_role }}", --propagate, "1"]
+      when: >-
+        pve_acls.stdout | from_json
+        | selectattr('path', 'equalto', '/') | selectattr('type', 'equalto', 'user')
+        | selectattr('ugid', 'equalto', pve_user) | selectattr('roleid', 'equalto', pve_role)
+        | selectattr('propagate', 'equalto', 1) | list | length == 0
+      changed_when: true
+
+    - name: List the user's tokens
+      ansible.builtin.command:
+        argv: [pveum, user, token, list, "{{ pve_user }}", --output-format, json]
+      register: pve_tokens
+      changed_when: false
+
+    - name: Record whether the token exists
+      ansible.builtin.set_fact:
+        pve_token_exists: "{{ pve_token_name in (pve_tokens.stdout | from_json | map(attribute='tokenid') | list) }}"
+
+    - name: Refuse a token that exists without a Vault entry
+      ansible.builtin.assert:
+        that:
+          - not (pve_token_exists | bool) or pve_have_vault_entry | bool
+        fail_msg: >-
+          {{ pve_token_id }} exists on the cluster, and kv/services/claude-247-pve holds no
+          token. Proxmox never shows a token's secret twice, so this play cannot recover it,
+          and it does not re-mint over a live token. To start again, run
+          `pveum user token remove {{ pve_user }} {{ pve_token_name }}` at a node, then re-run
+          this play. The user and its ACL stay as they are.
+        quiet: true
+
+    - name: Report a converged token
+      ansible.builtin.debug:
+        msg: "{{ pve_token_id }} exists and Vault holds it. Nothing to mint."
+      when: pve_token_exists | bool
+
+    # ⚠ no_log IS THE ONLY THING BETWEEN THE SECRET AND THE TERMINAL. Do not add a debug task
+    # that reads pve_mint, and do not run this play with -vvv to "see what happened".
+    - name: Mint the token, with privilege separation on
+      ansible.builtin.command:
+        argv:
+          - pveum
+          - user
+          - token
+          - add
+          - "{{ pve_user }}"
+          - "{{ pve_token_name }}"
+          - --privsep
+          - "1"
+          - --comment
+          - "PET-510: PVEAuditor on / for claude-247. Revoke with pveum user token remove."
+          - --output-format
+          - json
+      register: pve_mint
+      no_log: true
+      changed_when: true
+      when: not pve_token_exists | bool
+
+    - name: Check the mint returned the token id and a secret
+      ansible.builtin.assert:
+        that:
+          - (pve_mint.stdout | from_json)['full-tokenid'] == pve_token_id
+          - (pve_mint.stdout | from_json)['value'] | length > 0
+        fail_msg: >-
+          The mint did not return {{ pve_token_id }} with a value. The token may exist
+          without a Vault entry now: run `pveum user token list {{ pve_user }}` at a node,
+          remove it if it is there, and re-run.
+        quiet: true
+      # No no_log: a failed assert reports the expression's text and the message, never a value.
+      when: not pve_token_exists | bool
+
+    # After the mint, because PUT /access/acl checks that the token exists.
+    - name: Grant the token PVEAuditor on /
+      ansible.builtin.command:
+        argv: [pveum, acl, modify, /, --tokens, "{{ pve_token_id }}", --roles, "{{ pve_role }}", --propagate, "1"]
+      when: >-
+        not (pve_token_exists | bool)
+        or pve_acls.stdout | from_json
+        | selectattr('path', 'equalto', '/') | selectattr('type', 'equalto', 'token')
+        | selectattr('ugid', 'equalto', pve_token_id) | selectattr('roleid', 'equalto', pve_role)
+        | selectattr('propagate', 'equalto', 1) | list | length == 0
+      changed_when: true
+
+    - name: Hold the new entry for the Vault write
+      ansible.builtin.set_fact:
+        pve_new_entry:
+          token_id: "{{ pve_token_id }}"
+          secret: "{{ (pve_mint.stdout | from_json)['value'] }}"
+          endpoint: "{{ pve_endpoint }}"
+          ca_pem: "{{ pve_ca_file.content | b64decode }}"
+      no_log: true
+      when: not pve_token_exists | bool
+
+- name: Write the token to Vault
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    # A different name from the pve02 fact it reads, so a lookup cannot resolve to itself.
+    pve_entry: "{{ hostvars['pve02']['pve_new_entry'] | default({}) }}"
+  tasks:
+    - name: Write kv/services/claude-247-pve
+      ansible.builtin.uri:
+        url: "{{ pve_vault_url }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ pve_vault_token | trim }}"
+        ca_path: "{{ pve_vault_ca }}"
+        body_format: json
+        body:
+          data: "{{ pve_entry }}"
+        status_code: [200, 204]
+      no_log: true
+      when: pve_entry | length > 0
+
+    - name: Read the entry back
+      ansible.builtin.uri:
+        url: "{{ pve_vault_url }}"
+        headers:
+          X-Vault-Token: "{{ pve_vault_token | trim }}"
+        ca_path: "{{ pve_vault_ca }}"
+      no_log: true
+      register: pve_vault_back
+      when: pve_entry | length > 0
+
+    - name: Check the read-back matches what was minted
+      ansible.builtin.assert:
+        that:
+          - pve_vault_back.json.data.data.token_id == pve_entry.token_id
+          - pve_vault_back.json.data.data.secret == pve_entry.secret
+          - pve_vault_back.json.data.data.ca_pem == pve_entry.ca_pem
+        fail_msg: >-
+          kv/services/claude-247-pve does not read back as written. The token exists on the
+          cluster, so remove it at a node with `pveum user token remove claude-247@pve audit`
+          and re-run.
+        quiet: true
+      # No no_log: a failed assert reports the expression's text and the message, never a value.
+      when: pve_entry | length > 0
+
+    - name: Report the outcome
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Minted claude-247@pve!audit and wrote kv/services/claude-247-pve. Run
+          ../scripts/deploy-claude-247.sh to land it on 247.'
+          if pve_entry | length > 0
+          else 'No mint and no Vault write; the token and its entry were already in place.' }}

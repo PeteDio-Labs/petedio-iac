@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+{{ ansible_managed | comment }}
+# pve-get — read the Proxmox API as claude-247@pve!audit, GET only (PET-510).
+#
+#   {{ claude_pve_get }} /access/permissions
+#   {{ claude_pve_get }} /cluster/resources?type=vm
+#   {{ claude_pve_get }} /nodes/pve02/status
+#
+# The path is relative to /api2/json. The wrapper prints the response body and exits non-zero
+# on any status other than 2xx.
+#
+# ⚠ THE ROLE BOUNDS THE TOKEN, NOT THIS SCRIPT. The wrapper refuses every method but GET, so a
+# typo cannot change the cluster. A process that reads token.env can still send a POST, and
+# Proxmox refuses it with a 403: the token holds PVEAuditor on / and nothing else.
+#
+# ⚠ THE CA IS PINNED, AND THE HOST IS AN IP. claude-247 resolves neither pve02 nor pve02.lab,
+# so the wrapper connects to the endpoint's IP and checks the leaf against that IP. The leaf's
+# SAN lists it. Only {{ claude_pve_conf_dir }}/ca.pem is trusted, never the system store.
+#
+# ⚠ ~/.local/bin IS NOT ON THE REMOTE CONTROL UNITS' PATH. Call this by its full path.
+#
+# token.env is parsed, never sourced, and the secret never reaches argv, stdout or a log.
+import http.client
+import json
+import ssl
+import sys
+import urllib.parse
+
+CONF_DIR = "{{ claude_pve_conf_dir }}"
+TOKEN_FILE = CONF_DIR + "/token.env"
+CA_FILE = CONF_DIR + "/ca.pem"
+USAGE = "usage: pve-get [-X GET] /api/path  (relative to /api2/json)"
+
+
+def die(msg, code=1):
+    print("pve-get: " + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def parse_args(argv):
+    path = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-h", "--help"):
+            print(USAGE)
+            sys.exit(0)
+        if arg in ("-X", "--request"):
+            if i + 1 >= len(argv):
+                die(USAGE, 2)
+            if argv[i + 1].upper() != "GET":
+                die("refused: only GET is allowed, not " + argv[i + 1], 2)
+            i += 2
+            continue
+        if arg.startswith("-X") and len(arg) > 2:
+            if arg[2:].upper() != "GET":
+                die("refused: only GET is allowed, not " + arg[2:], 2)
+            i += 1
+            continue
+        if arg.startswith("-"):
+            die("unknown option " + arg + "\n" + USAGE, 2)
+        if path is not None:
+            die("one path only\n" + USAGE, 2)
+        path = arg
+        i += 1
+    if path is None or not path.startswith("/"):
+        die(USAGE, 2)
+    if any(c in path for c in "\r\n ") or ".." in path.split("?", 1)[0].split("/"):
+        die("refused: the path holds whitespace or a .. segment", 2)
+    return path
+
+
+def read_token():
+    env = {}
+    try:
+        with open(TOKEN_FILE, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                env[key.strip()] = value.strip()
+    except OSError as exc:
+        die("cannot read " + TOKEN_FILE + ": " + exc.strerror)
+    for key in ("PVE_TOKEN_ID", "PVE_TOKEN_SECRET", "PVE_ENDPOINT"):
+        if not env.get(key):
+            die(TOKEN_FILE + " has no " + key + ". Run scripts/deploy-claude-247.sh.")
+    return env
+
+
+def main():
+    path = parse_args(sys.argv[1:])
+    env = read_token()
+
+    endpoint = urllib.parse.urlsplit(env["PVE_ENDPOINT"])
+    if endpoint.scheme != "https" or not endpoint.hostname:
+        die("PVE_ENDPOINT must be an https URL")
+    host = endpoint.hostname
+    port = endpoint.port or 8006
+
+    try:
+        ctx = ssl.create_default_context(cafile=CA_FILE)
+    except (OSError, ssl.SSLError) as exc:
+        die("cannot load " + CA_FILE + ": " + str(exc))
+    # create_default_context sets both, and this states them: verify the chain against the
+    # pinned CA, and match the leaf to the host the wrapper connects to.
+    ctx.check_hostname = True
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    # ⚠ PYTHON 3.13 TURNED ON VERIFY_X509_STRICT, AND THE PVE ROOT CA FAILS IT. The CA that
+    # `pvecm` generates carries no keyUsage extension, so a strict context refuses it with "CA
+    # cert does not include key usage extension". Clearing that one flag keeps the chain check
+    # against ca.pem and the hostname check; it relaxes only RFC 5280 profile checks.
+    ctx.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
+
+    auth = "PVEAPIToken=" + env["PVE_TOKEN_ID"] + "=" + env["PVE_TOKEN_SECRET"]
+    conn = http.client.HTTPSConnection(host, port, context=ctx, timeout=30)
+    try:
+        conn.request("GET", "/api2/json" + path, headers={"Authorization": auth})
+        resp = conn.getresponse()
+        body = resp.read().decode("utf-8", "replace")
+    except ssl.SSLCertVerificationError as exc:
+        die("TLS verification failed against " + CA_FILE + ": " + exc.verify_message)
+    except (OSError, http.client.HTTPException) as exc:
+        die("request to " + host + ":" + str(port) + " failed: " + str(exc))
+    finally:
+        conn.close()
+
+    try:
+        print(json.dumps(json.loads(body), indent=2, sort_keys=True))
+    except ValueError:
+        print(body)
+    if not 200 <= resp.status < 300:
+        die("HTTP " + str(resp.status) + " " + resp.reason)
+
+
+if __name__ == "__main__":
+    main()

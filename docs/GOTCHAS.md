@@ -1494,3 +1494,24 @@ every declared bridge-port is a real member of its bridge.
 **Both nodes carry this failure mode** — pve02 gained a USB NIC on 2026-09-15 for
 the mesh leg, and it is also the node holding the disks and the QDevice-backed
 quorum anchor.
+
+## Python 3.13 refuses the Proxmox root CA under `VERIFY_X509_STRICT` (PET-510)
+
+**Symptom.** A Python 3.13 client that pins `/etc/pve/pve-root-ca.pem` fails the handshake
+with `CA cert does not include key usage extension`. `curl --cacert` with the same file
+succeeds, so the CA looks fine.
+
+**Cause.** Python 3.13 sets `ssl.VERIFY_X509_STRICT` in `ssl.create_default_context()`. The
+root CA that `pvecm` generates carries no `keyUsage` extension, and the strict RFC 5280
+profile requires one on a CA.
+
+**Fix.** Clear that one flag and keep the rest of the verification:
+
+```python
+ctx = ssl.create_default_context(cafile=CA_FILE)
+ctx.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
+```
+
+The chain still verifies against the pinned CA, and the hostname check still runs. Never
+reach for `CERT_NONE` or `check_hostname = False` instead. `roles/claude-code`'s `pve-get`
+does this, and it was tested against pve02: a wrong CA and a wrong hostname are both refused.
