@@ -79,67 +79,49 @@ if [ -z "$STATE_ID" ]; then
   exit 0
 fi
 
-# --- find the work item by its sequence id ---------------------------------------
-# The list is paged, and the board outgrew one page: with 213 items, a single GET
-# of 100 missed PET-386 and warned that the branch named an item that did not
-# exist (PET-502). Walk the pages with Plane's own cursor, `per_page:page:is_prev`,
-# until the sequence id matches or `next_page_results` turns false. The list is
-# newest first, so a live item resolves on page one and only an old one pays for
-# the walk. scripts/weekly-audit/plane-pull.sh in the workspace pages the same way.
-#
-# The cursor is an offset, so an item created mid-walk repeats one row and an item
-# deleted mid-walk can hide one. Both are rare, and the nightly reconciler runs
-# this script again, so neither is worth a sort key here.
-PER_PAGE=100
-MAX_PAGES=50            # 5000 items: a bound against a list that never ends
-CURSOR="${PER_PAGE}:0:0"
-SCANNED=0
-PAGES=0
-TOTAL="?"
-ITEM_ID=""
-CUR_STATE=""
-while :; do
-  PAGE=$("${CURL[@]}" "${API}/work-items/?per_page=${PER_PAGE}&cursor=${CURSOR}&fields=id,sequence_id,name,state" 2>/dev/null) || {
-    warn "could not list work items (page $((PAGES + 1)), $SCANNED scanned so far) — PET-$SEQ left as-is"; exit 0; }
-  PAGES=$((PAGES + 1))
+# --- resolve the work item by its identifier -------------------------------------
+# One GET to the workspace-level route `work-items/PET-<n>/` returns the item at
+# any board size (PET-503). It replaces a cursor walk over the project's list
+# (PET-502), which cost a request per 100 items and could repeat or hide a row
+# when an item was created or deleted mid-walk. The route is workspace-wide, so the
+# returned `project` must equal PLANE_PROJECT_ID before its `id` and `state` are
+# used; an item from another project is warned about and left alone.
+LOOKUP_URL="${PLANE_BASE_URL%/}/api/v1/workspaces/${PLANE_WORKSPACE}/work-items/PET-${SEQ}/"
+LOOKUP_BODY=$(mktemp) || { warn "mktemp failed — PET-$SEQ left as-is"; exit 0; }
+trap 'rm -f "$LOOKUP_BODY"' EXIT
 
-  # One line per page: rows total next_cursor more [id state]. A blank line means
-  # the body was not the list this script expects.
-  read -r ROWS TOTAL NEXT MORE FOUND_ID FOUND_STATE <<<"$(printf '%s' "$PAGE" | python3 -c "
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-if not isinstance(d, dict): d = {'results': d}
-rows = d.get('results') or []
-seq = int(sys.argv[1])
-hit = next((w for w in rows if w.get('sequence_id') == seq), None)
-print(len(rows), d.get('total_count', '?'), d.get('next_cursor') or '-',
-      1 if d.get('next_page_results') else 0,
-      hit['id'] if hit else '', (hit.get('state') or '-') if hit else '')
-" "$SEQ" 2>/dev/null)"
-
-  if [ -z "${ROWS:-}" ]; then
-    warn "could not parse the work-item list (page $PAGES) — PET-$SEQ left as-is"; exit 0
-  fi
-  SCANNED=$((SCANNED + ROWS))
-  if [ -n "${FOUND_ID:-}" ]; then
-    ITEM_ID="$FOUND_ID"; CUR_STATE="$FOUND_STATE"; break
-  fi
-  # Stop on the last page, on an empty page, and on a cursor that does not advance.
-  if [ "$MORE" != "1" ] || [ "$ROWS" -eq 0 ] || [ "$NEXT" = "-" ] || [ "$NEXT" = "$CURSOR" ]; then
-    break
-  fi
-  if [ "$PAGES" -ge "$MAX_PAGES" ]; then
-    warn "gave up after $PAGES pages ($SCANNED of $TOTAL work items) without finding PET-$SEQ — left as-is"; exit 0
-  fi
-  CURSOR="$NEXT"
-done
-
-if [ -z "$ITEM_ID" ]; then
-  warn "PET-$SEQ not found in project ${PLANE_PROJECT_ID} after scanning $SCANNED of $TOTAL work items over $PAGES page(s) — the branch names a work item that does not exist"
-  exit 0
+LOOKUP_CODE=$("${CURL[@]}" -o "$LOOKUP_BODY" -w '%{http_code}' "$LOOKUP_URL" 2>/dev/null)
+LOOKUP_RC=$?
+if [ "$LOOKUP_RC" -ne 0 ] || [ "$LOOKUP_CODE" = "000" ]; then
+  warn "Plane unreachable at ${PLANE_BASE_URL} while resolving PET-$SEQ — left as-is (reconciler will catch it)"; exit 0
 fi
-info "PET-$SEQ found on page $PAGES ($SCANNED of $TOTAL work items scanned)"
+# A 404 has two causes the script cannot tell apart: a missing work item, or a
+# Plane without the by-identifier route. The lab's Plane (192.168.50.235:8080)
+# answers an unknown route with {"error": "Page not found."}, read live for
+# PET-503, and a missing item may carry the same body, so one warning names both.
+case "$LOOKUP_CODE" in
+  200) ;;
+  404) warn "PET-$SEQ answered 404: the branch names a work item that does not exist, or this Plane has no by-identifier route (/api/v1/workspaces/${PLANE_WORKSPACE}/work-items/PET-$SEQ/)"; exit 0 ;;
+  *)   warn "resolving PET-$SEQ returned HTTP $LOOKUP_CODE — left as-is: $(head -c 200 "$LOOKUP_BODY" 2>/dev/null)"; exit 0 ;;
+esac
+
+# One line: project id state. A blank line means the body was not a work item.
+read -r ITEM_PROJECT ITEM_ID CUR_STATE <<<"$(python3 -c "
+import sys, json
+try: w = json.load(open(sys.argv[1]))
+except Exception: sys.exit(0)
+if not isinstance(w, dict) or not w.get('id'): sys.exit(0)
+def ref(v): return (v.get('id') if isinstance(v, dict) else v) or '-'
+print(ref(w.get('project')), w['id'], ref(w.get('state')))
+" "$LOOKUP_BODY" 2>/dev/null)"
+
+if [ -z "${ITEM_ID:-}" ]; then
+  warn "could not parse the work item returned for PET-$SEQ — left as-is"; exit 0
+fi
+if [ "$ITEM_PROJECT" != "$PLANE_PROJECT_ID" ]; then
+  warn "PET-$SEQ resolved to project $ITEM_PROJECT, not ${PLANE_PROJECT_ID} — left as-is"; exit 0
+fi
+info "PET-$SEQ resolved by identifier in one GET"
 
 # --- idempotent: only PATCH when the state actually differs ----------------------
 if [ "$CUR_STATE" = "$STATE_ID" ]; then
