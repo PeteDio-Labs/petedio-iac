@@ -46,4 +46,4 @@ all:
         # ⚠ plex-gpu (236), NOT the dead plex 103 at .140. 103 died with pve01 on
         # 2026-09-03 and was never rebuilt; a probe pointed at .140 for three days and
         # scored a hard NO on every Plex check.
-        plex-gpu: { ansible_host: 192.168.50.236 }    # 236, pve02
+        plex-gpu: { ansible_host: 192.168.86.236 }    # 236, pve02, .86 only (PET-504)

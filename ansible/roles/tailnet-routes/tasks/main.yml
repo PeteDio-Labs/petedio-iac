@@ -1,0 +1,43 @@
+---
+- name: Tailnet routes — read the routes Tailscale advertises
+  ansible.builtin.command: tailscale debug prefs
+  register: tailnet_routes_prefs
+  changed_when: false
+  check_mode: false
+
+- name: Tailnet routes — compare them with the declared list
+  ansible.builtin.set_fact:
+    tailnet_routes_now: >-
+      {{ (tailnet_routes_prefs.stdout | from_json).AdvertiseRoutes | default([], true)
+         | sort | join(',') }}
+    tailnet_routes_want: "{{ tailnet_routes_advertise.split(',') | sort | join(',') }}"
+
+- name: Tailnet routes — report what is in force, and what changes
+  ansible.builtin.debug:
+    msg: >-
+      Advertised "{{ tailnet_routes_now }}"
+      {{ '-> "' ~ tailnet_routes_want ~ '"' if tailnet_routes_now != tailnet_routes_want
+         else '(already converged)' }}
+
+# `tailscale set` changes only the flags it names. `tailscale up` resets every flag
+# it is not given, which would drop --accept-routes and the rest.
+- name: Tailnet routes — advertise the declared list
+  when: tailnet_routes_now != tailnet_routes_want
+  ansible.builtin.command:
+    argv: [tailscale, set, "--advertise-routes={{ tailnet_routes_advertise }}"]
+  changed_when: true
+
+- name: Tailnet routes — read the routes back
+  when: not ansible_check_mode
+  ansible.builtin.command: tailscale debug prefs
+  register: tailnet_routes_after
+  changed_when: false
+
+- name: Tailnet routes — assert the declared list stuck
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: >-
+      ((tailnet_routes_after.stdout | from_json).AdvertiseRoutes | default([], true)
+       | sort | join(',')) == tailnet_routes_want
+    fail_msg: "Tailscale still advertises {{ (tailnet_routes_after.stdout | from_json).AdvertiseRoutes }}."
+    success_msg: "Advertised routes: {{ tailnet_routes_want }}"

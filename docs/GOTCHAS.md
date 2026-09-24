@@ -262,10 +262,10 @@ section heading. History sections for systems that are gone get no rule.
   The reply's MAC gives it away — it is the `.50` interface's. Always arping the **gateway**,
   which exists on one segment only.
 
-  Consequence: pve02 has one physical NIC, on `.50`, so nothing there can serve the mesh clients
-  directly. The live answer is not a second NIC: `roles/plex-bridge` runs a socat proxy on
-  pete-pi-1 (`192.168.86.46:32400` → `.50.236`), the tailnet reaches 236 at `100.97.96.88`,
-  and pve03's own `wlo1` carries the Palworld NAT. See `vault/Systems/plex-on-the-mesh.md`.
+  Consequence: a node needs a wired port on the mesh to serve mesh clients directly. pve02 has
+  one, a USB-Ethernet adapter bridged as `vmbr2` (`roles/mesh-usb-bridge`), and plex-gpu 236
+  holds its only NIC there at `192.168.86.236` (PET-504). pve03 has only `wlo1`, so it carries
+  the Palworld NAT instead. See `vault/Systems/plex-on-the-mesh.md`.
 
 - **`pct migrate` refuses a container that has a snapshot**, with
   `can't migrate local volume '...': non-migratable snapshot exists`. It aborts in about two
@@ -276,8 +276,8 @@ section heading. History sections for systems that are gone get no rule.
   finding out the slow way is an outage of everything.
 
 - **History — the VXLAN anchored on pve01 and died with it (2026-09-03).**
-  `configure-mesh-vxlan.yml` and `roles/mesh-vxlan` are superseded by `roles/plex-bridge`; the
-  mesh leg was removed from 236 in PET-332. The mechanism is kept because it worked and the MTU
+  `configure-mesh-vxlan.yml` and `roles/mesh-vxlan` are superseded by pve02's wired mesh adapter
+  (`roles/mesh-usb-bridge`); the VXLAN leg was removed from 236 in PET-332. The mechanism is kept because it worked and the MTU
   and gateway traps are general. **A node with one NIC can still hold an address on a network
   it has no cable to.** pve02 has a single port, on `.50`, and the TVs live on the `.86` mesh — which `.50` cannot be reached from,
   since `.50` is NATed behind `.86`. The fix needed no hardware: a **VXLAN** wraps mesh Ethernet

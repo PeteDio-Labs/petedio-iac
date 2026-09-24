@@ -1,0 +1,14 @@
+---
+# tailnet-routes — declare the subnets pete-pi-1 advertises into the tailnet (PET-504).
+#
+# The .50 LAN only. The Pi stays on the .86 Google mesh over wlan0 as a test
+# vantage, but it carries no mesh traffic for anyone else. Mesh clients reach Plex
+# at 192.168.86.236, through pve02's USB-Ethernet adapter, and nothing else puts
+# .86 on the tailnet.
+#
+# The routes were set by hand with `tailscale up`. This role declares them, so a
+# hand-run that adds a subnet back gets undone on the next converge.
+#
+# Removing a route needs no step in the Tailscale admin console. Adding one does:
+# approve it there, or the tailnet ignores it.
+tailnet_routes_advertise: 192.168.50.0/24
