@@ -94,6 +94,8 @@
 - name: Read the installed versions as the session user
   ansible.builtin.command:
     cmd: runuser -u {{ claude_user }} -- {{ item.cmd }}
+    # runuser keeps the caller's working directory, /root, which the session user cannot stat.
+    chdir: "{{ claude_home }}"
   environment:
     HOME: "{{ claude_home }}"
     # terraform otherwise calls checkpoint.hashicorp.com to look for a newer release.
