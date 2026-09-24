@@ -311,6 +311,93 @@ A mint that works and an `ls-remote` that does not means the App is not installe
 `petedio-vault`. ⚠ **To revoke this access, uninstall the App or delete its key on GitHub.**
 Removing the clone from 247 does not revoke anything.
 
+## Code push and pull requests (PET-507)
+
+A session here pushes branches to `petedio-iac`, `petedio-media-iac` and `petedio-workspace`,
+and opens pull requests on them. So 247 implements work itself instead of handing a bundle to
+the Mac. It never merges: each `main` requires a review the App cannot give.
+
+**Set `claude_code_push_enable: true` in host_vars, never with `-e`**, for the reason the vault
+section gives. `inventory/host_vars/claude-247.yml` declares it.
+
+**The shape is the vault's, widened to three repositories.** The key is `0400 claude` in
+`~/.config/claude-code-push/`, behind a `0500 claude:claude` broker that refuses root. Every
+process running as `claude` can therefore push to those three repositories and open pull
+requests on them. The vault section's "the one writable key" no longer holds: this is a second.
+
+**What bounds it is the App and branch protection:**
+
+- `contents:write`, `pull_requests:write` and `metadata:read`, installed on the three
+  repositories alone.
+- No `workflows` permission, so GitHub refuses a push that touches `.github/workflows/**`.
+- Each `main` requires a review, so Pedro decides every merge.
+
+**The broker narrows every git credential to one repository.** git asks with the repository
+path, because the play sets `credential.useHttpPath=true` in each clone. The broker refuses a
+request without a path, checks the name against its allow-list, and mints a token scoped to
+that repository alone.
+
+**The clones keep their origins.** `iac` and `media-iac` fetch from GitHub and push through
+the broker. The workspace clone fetches from the root-owned mirror, so the play gives it a
+GitHub push URL (`remote.origin.pushurl`). Its fetches stay on the mirror. The play also sets
+`user.name` and `user.email` to `claude-247`, so commits name the host, not Pedro.
+
+### Opening a pull request
+
+To run `gh`, call the wrapper by its full path, because `~/.local/bin` is not on the Remote
+Control units' `PATH`:
+
+```sh
+git push -u origin pet-<n>-<slug>
+~/.local/bin/claude-gh pr create --draft --fill
+```
+
+`claude-gh` mints a token per command and passes it to `gh` in `GH_TOKEN`. Nothing logs in,
+and it refuses `gh auth` except `gh auth status`. In the workspace clone, `gh` cannot read a
+repository from a local fetch URL, so the wrapper sets `GH_REPO` from the push URL. It also
+adds `--head <branch>` to `pr create`, because `gh` 2.90.0 fails there with "could not resolve
+remote origin" otherwise.
+
+⚠ **Actions logs and check runs on the private workspace repository need permissions this App
+lacks** (`actions:read`, `checks:read`). `gh run view --log` there fails with a 403 or a 404.
+
+### Seeding it
+
+Creating the App and generating its key are Pedro's steps, not a session's.
+
+1. Create the App under `PeteDio-Labs`, named `petedio-code-247`, private to the org, with the
+   webhook off.
+2. Set **Repository permissions** to `Contents: Read and write`, `Pull requests: Read and
+   write` and `Metadata: Read-only`. Grant nothing else, and never `Workflows`.
+3. Install it on **Only select repositories**: `petedio-iac`, `petedio-media-iac` and
+   `petedio-workspace`.
+4. Generate a private key. Then seed and deploy from `~/petedio/iac`:
+
+```sh
+./scripts/seed-claude-code-app.sh --shred ~/Downloads/petedio-code-247.*.private-key.pem
+./scripts/deploy-claude-247.sh
+```
+
+`seed-claude-code-app.sh` finds the ids through `gh`, or reads `APP_ID` and `INSTALLATION_ID`
+from the environment. It refuses to write unless GitHub reports `repository_selection:
+selected`, exactly those three repositories, permissions equal to
+`contents=write,metadata=read,pull_requests=write`, and an App id that matches none of the
+other three Apps on 247.
+
+### Rotating the code-push App key
+
+Generate a new key on the App's settings page, then re-seed and re-deploy with the commands
+above. Delete the old key afterwards. To check a delivery that has started failing, run the
+broker as the session user. It prints a token, so read the exit status, not the output:
+
+```sh
+runuser -u claude -- /home/claude/.local/bin/claude-code-push-broker mint-token petedio-iac >/dev/null && echo "mint ok"
+```
+
+A mint that fails for one repository name and works for another means the App is not
+installed on the first. ⚠ **To revoke this access, uninstall the App or delete its key on
+GitHub.** Removing the clones from 247 revokes nothing.
+
 ## The IaC toolchain (PET-508)
 
 `claude_iac_tools_enable: true` installs `terraform`, `ansible-core`, `ansible-lint` and

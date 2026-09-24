@@ -37,8 +37,8 @@ claude_workspace_mirror_enable: true
 # ⚠ DECLARED HERE FOR THE SAME REASON claude_remote_enable IS. The role's default is `false`,
 # so a deploy run without this line would stop delivering the clone.
 #
-# ⚠ THIS IS THE ONLY OUTBOUND WRITE CREDENTIAL ON THIS HOST A SESSION CAN READ, AND ITS SHAPE
-# IS INVERTED FROM THE MIRROR ABOVE ON PURPOSE. The mirror's key is 0400 root behind a 0500
+# ⚠ A SESSION CAN READ THIS WRITE CREDENTIAL, AND THE CODE-PUSH ONE BELOW, AND ITS SHAPE IS
+# INVERTED FROM THE MIRROR ABOVE ON PURPOSE. The mirror's key is 0400 root behind a 0500
 # root broker because ROOT fetches. Here the SESSION pushes, so the key is 0400 claude in the
 # session user's home — and every process running as `claude` on this host can therefore push
 # to petedio-vault, the work loop's `claude -p` included if claude_loop_enable is ever set.
@@ -50,6 +50,22 @@ claude_workspace_mirror_enable: true
 # bare play run leaves the clone as it found it. roles/claude-code/README.md has the design,
 # the trust step and the rotation.
 claude_vault_enable: true
+
+# A session here pushes branches to petedio-iac, petedio-media-iac and petedio-workspace and
+# opens pull requests on them (PET-507), so 247 implements instead of handing work to the Mac.
+#
+# ⚠ DECLARED HERE FOR THE SAME REASON claude_vault_enable IS. The role's default is `false`.
+#
+# ⚠ THE SHAPE IS THE VAULT'S, WIDENED TO THREE REPOSITORIES. The key is 0400 claude, so every
+# process running as `claude` can push to those three and open pull requests on them. What
+# bounds it is the App: contents:write, pull_requests:write and metadata:read, no `workflows`
+# permission, and a `main` on each that requires a review the App cannot give. So a session
+# pushes and opens pull requests, and Pedro still decides every merge.
+#
+# Run scripts/deploy-claude-247.sh, which reads kv/services/claude-code-push from Vault; a
+# bare play run lands no key, and configures the clones only once one is on disk. roles/claude-code/README.md has
+# the design and the rotation.
+claude_code_push_enable: true
 
 # terraform, ansible-core, ansible-lint and shellcheck at the CI pins (PET-508), so a session
 # here verifies the IaC it writes instead of handing it to the Mac. The role's default is

@@ -207,6 +207,82 @@ claude_vault_git_opts: >-
 #   claude_vault_installation_id
 #   claude_vault_app_pem
 
+# --- Code push (PET-507) ------------------------------------------------------------------
+# A session on this host pushes branches to three code repositories and opens pull requests
+# on them, as the Mac does. Pedro chose this on 2026-09-24. It reverses the line PET-498 held,
+# that no session on 247 holds a code credential.
+#
+# THE PET-498 SHAPE, WIDENED FROM ONE REPOSITORY TO THREE. The key, the identity file and the
+# broker belong to the session user, for the reason the vault block above gives: the session
+# is what pushes, so the session has to reach the credential. Every process running as
+# `claude` can therefore push to these three repositories and open pull requests on them, the
+# work loop's `claude -p` included if claude_loop_enable is ever set. Read
+# vault/Systems/claude-loop.md before that flag moves.
+#
+# WHAT BOUNDS IT IS THE APP AND BRANCH PROTECTION, NOT THE FILE MODES:
+#
+#   · The App is installed on these three repositories alone, with contents:write,
+#     pull_requests:write and metadata:read. scripts/seed-claude-code-app.sh refuses to seed
+#     it otherwise.
+#   · It holds no `workflows` permission, so GitHub refuses any push that touches
+#     .github/workflows/**. That keeps the PET-425 property.
+#   · `main` on each repository requires a review the App cannot give, so Pedro still decides
+#     every merge.
+#
+# ⚠ THE FOURTH APP, AND IT MUST NOT BECOME ANY OF THE OTHER THREE. The loop's App reaches
+# petedio-iac from a root-owned directory, the mirror's is read-only and read by root, and the
+# vault's reaches petedio-vault alone. scripts/deploy-claude-247.sh refuses every pairing by
+# App id.
+#
+# DEFAULT FALSE, like every other delivery in this role. `true` belongs in host_vars.
+claude_code_push_enable: false
+
+claude_code_push_org: PeteDio-Labs
+
+# The repositories the App is installed on, and the only ones the broker answers for. `dest`
+# is the session's clone, RELATIVE to claude_workspace. `mirrored: true` marks the clone whose
+# origin is the local workspace mirror rather than GitHub: its fetch URL stays the mirror, and
+# the play gives it a GitHub push URL.
+#
+# ⚠ Adding a repository here does nothing on its own. The App's installation must list it
+# too, and scripts/seed-claude-code-app.sh must accept the wider set.
+claude_code_push_repos:
+  - { name: petedio-iac, dest: iac, mirrored: false }
+  - { name: petedio-media-iac, dest: media-iac, mirrored: false }
+  - { name: petedio-workspace, dest: "{{ claude_workspace_mirror_dest }}", mirrored: true }
+
+# 0700 claude:claude on the directory, 0400 on the two files in it. Read the vault block above
+# before you "fix" that to root.
+claude_code_push_conf_dir: "{{ claude_home }}/.config/claude-code-push"
+
+# 0500 claude:claude. The only thing that reads the App key, and the git credential helper
+# every push from the three clones authenticates through.
+claude_code_push_broker: "{{ claude_home }}/.local/bin/claude-code-push-broker"
+
+# 0500 claude:claude. Runs gh with GH_TOKEN set from the broker, for one command. No
+# `gh auth login`, and no token in ~/.config/gh/hosts.yml.
+#
+# ⚠ ~/.local/bin IS NOT ON THE REMOTE CONTROL UNITS' PATH, and this delivery leaves the units
+# alone: a unit change restarts the servers and ends every live session. A session calls the
+# wrapper by its full path.
+claude_code_push_gh: "{{ claude_home }}/.local/bin/claude-gh"
+
+# The git options the play's own probes carry, for the reasons claude_vault_git_opts gives.
+# tasks/code-push.yml writes the same settings into each clone's config.
+claude_code_push_git_opts: >-
+  -c credential.helper=
+  -c credential.useHttpPath=true
+  -c credential.helper={{ claude_code_push_broker }}
+
+# --- Code push identity (resolved from Vault by scripts/deploy-claude-247.sh) --------------
+# NEVER give these a default, for the reason written over the vault identity above.
+#
+# Vault kv/services/claude-code-push — fields app_id, installation_id, app_pem.
+#
+#   claude_code_push_app_id
+#   claude_code_push_installation_id
+#   claude_code_push_app_pem
+
 # --- Toolchain ------------------------------------------------------------------------
 # Node.js LTS major (NodeSource). 22 = active LTS ("jod").
 claude_nodejs_major: 22

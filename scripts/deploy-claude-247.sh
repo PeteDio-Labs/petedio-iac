@@ -19,15 +19,21 @@
 #     The petedio-vault identity (PET-498). contents:WRITE and metadata:read, installed on
 #     that one repository, because a session on 247 pushes vault notes to `main`. Absent,
 #     this script warns and the play leaves the vault clone as it found it.
+#   kv/services/claude-code-push         -> app_id, installation_id, app_pem   (optional)
+#     The code-push identity (PET-507). contents:write, pull_requests:write and metadata:read
+#     on petedio-iac, petedio-media-iac and petedio-workspace, because a session on 247
+#     pushes branches and opens pull requests there. No `workflows` permission. Absent, this
+#     script warns and the play leaves the three clones' git config as it found it.
 #
 #   AppRole creds: $SECRETS_DIR/ansible.{role_id,secret_id} (gitignored .secrets/)
 #
-# ⚠ THREE APPS, AND THEY MUST STAY THREE. Each reaches one repository and no other: the
-# loop's pushes to petedio-iac and opens PRs, the mirror's is read-only on petedio-workspace,
-# and the vault's pushes to petedio-vault. Two of the six possible mix-ups are outright
+# ⚠ FOUR APPS, AND THEY MUST STAY FOUR. The loop's pushes to petedio-iac and opens PRs, the
+# mirror's is read-only on petedio-workspace, the vault's pushes to petedio-vault, and the
+# code-push App pushes to three code repositories and opens PRs there. Two of the six possible mix-ups are outright
 # dangerous — the vault's App in the mirror's path hands a half-hourly ROOT timer a push
 # credential, and the loop's App in the vault's path hands every session on 247 push and
-# pull-request rights on petedio-iac. The checks below refuse all of them by App id, because
+# pull-request rights on petedio-iac. The code-push App in the mirror's path hands the same
+# root timer a write credential. The checks below refuse all of them by App id, because
 # telling the safe mix-ups from the dangerous ones at a glance is exactly the judgement an
 # operator should not have to make at 03:00.
 #
@@ -288,6 +294,77 @@ if [ "$VAULT_PRESENT" -eq 1 ]; then
     "$VAULT_APP_ID" "$VAULT_INSTALL_ID" "${#VAULT_APP_PEM}"
 fi
 
+step "Resolving the code-push identity (PET-507)"
+# OPTIONAL, for the reason the vault block above gives: 247 declares claude_code_push_enable
+# permanently in host_vars. Three fields or none; some of them is a failed seed, not a state.
+#
+# ⚠ THE SESSION USER CAN READ THIS KEY TOO, like the vault's. It reaches three repositories
+# with push and pull-request rights. What bounds it is the App: no `workflows` permission, and
+# a `main` on each repository that requires a review the App cannot give.
+CODE_APP_ID="$(kvget kv/services/claude-code-push app_id)"
+CODE_INSTALL_ID="$(kvget kv/services/claude-code-push installation_id)"
+CODE_APP_PEM="$(kvget kv/services/claude-code-push app_pem)"
+
+CODE_PRESENT=0
+CODE_FOUND=0
+for v in "$CODE_APP_ID" "$CODE_INSTALL_ID" "$CODE_APP_PEM"; do
+  [ -n "$v" ] && CODE_FOUND=$((CODE_FOUND + 1))
+done
+
+if [ "$CODE_FOUND" -eq 3 ]; then
+  CODE_PRESENT=1
+elif [ "$CODE_FOUND" -gt 0 ]; then
+  die "kv/services/claude-code-push is half-written: $CODE_FOUND of app_id, installation_id, app_pem are set.
+
+  A partial path is what a failed seed leaves behind. Re-run ./scripts/seed-claude-code-app.sh."
+else
+  warn "kv/services/claude-code-push is empty, so the code-push App is NOT being landed.
+
+  Everything else in this run converges, and the play leaves the three code clones' git config
+  as it found it. To fix it, run ./scripts/seed-claude-code-app.sh and then this script again."
+fi
+
+if [ "$CODE_PRESENT" -eq 1 ]; then
+  # Every pairing with the three other Apps, refused here because this block is the only one
+  # that holds all four ids.
+  [ "$CODE_APP_ID" != "$APP_ID" ] \
+    || die "kv/services/claude-code-push and kv/services/claude-loop name the SAME App (id $APP_ID).
+
+  The loop's key is root's on 247, and this path's key is readable by every session there.
+  Create the code-push App as its own App and re-seed."
+
+  if [ "$MIRROR_PRESENT" -eq 1 ]; then
+    [ "$CODE_APP_ID" != "$MIRROR_APP_ID" ] \
+      || die "kv/services/claude-code-push and kv/services/claude-workspace-mirror name the SAME App (id $CODE_APP_ID).
+
+  The code-push App carries contents:write, and the mirror's broker runs as root from a
+  half-hourly timer. Create two Apps and re-seed."
+  fi
+
+  if [ "$VAULT_PRESENT" -eq 1 ]; then
+    [ "$CODE_APP_ID" != "$VAULT_APP_ID" ] \
+      || die "kv/services/claude-code-push and kv/services/claude-vault-push name the SAME App (id $CODE_APP_ID).
+
+  One App installed on four repositories would let a token narrowed for the vault reach code,
+  and the other way round. Create two Apps and re-seed."
+  fi
+
+  for f in ansible/roles/claude-code/tasks/code-push.yml \
+           ansible/roles/claude-code/templates/claude-code-push-broker.j2 \
+           ansible/roles/claude-code/templates/claude-code-push-github.env.j2 \
+           ansible/roles/claude-code/templates/claude-gh.j2; do
+    [ -f "$REPO_ROOT/$f" ] || die "$f is missing from this checkout.
+
+  This tree has the code-push CREDENTIALS but not the consumer. Landing the App key now would
+  put a private key in the session user's home with nothing that reads it. Merge the branch
+  carrying roles/claude-code's code-push tasks first, then re-run. See PET-507."
+  done
+
+  check_pem "$CODE_APP_PEM" "kv/services/claude-code-push"
+  printf 'code-push: app %s, installation %s, pem %s bytes\n' \
+    "$CODE_APP_ID" "$CODE_INSTALL_ID" "${#CODE_APP_PEM}"
+fi
+
 step "Resolving the Plane project id for '$PLANE_IDENTIFIER'"
 # Looked up rather than pinned. A project UUID would have to be re-pinned every time the
 # project is recreated, which plane-bootstrap.sh already learned once. The PAT goes to curl
@@ -327,7 +404,7 @@ trap 'rm -rf "$TMP"' EXIT
 # argv, and two of these are App private keys.
 #
 # The mirror's three keys are OMITTED, not blanked, when its Vault path is empty, and the
-# vault's three the same way. The role decides whether this run carries each identity by
+# vault's and the code-push App's three the same way. The role decides whether this run carries each identity by
 # testing them for length, and an empty string and an undefined variable read the same there
 # — but omitting them keeps a `-e` on the command line able to supply them, which a blank
 # would silently override.
@@ -337,6 +414,8 @@ MIRROR_PRESENT="$MIRROR_PRESENT" MIRROR_APP_ID="$MIRROR_APP_ID" \
 MIRROR_INSTALL_ID="$MIRROR_INSTALL_ID" MIRROR_APP_PEM="$MIRROR_APP_PEM" \
 VAULT_PRESENT="$VAULT_PRESENT" VAULT_APP_ID="$VAULT_APP_ID" \
 VAULT_INSTALL_ID="$VAULT_INSTALL_ID" VAULT_APP_PEM="$VAULT_APP_PEM" \
+CODE_PRESENT="$CODE_PRESENT" CODE_APP_ID="$CODE_APP_ID" \
+CODE_INSTALL_ID="$CODE_INSTALL_ID" CODE_APP_PEM="$CODE_APP_PEM" \
 PLANE_KEY="$PLANE_KEY" PLANE_BASE_URL="$PLANE_BASE_URL" \
 PLANE_WORKSPACE="$PLANE_WORKSPACE" PROJECT_ID="$PROJECT_ID" \
 python3 -c '
@@ -362,9 +441,15 @@ if os.environ["VAULT_PRESENT"] == "1":
         "claude_vault_installation_id": os.environ["VAULT_INSTALL_ID"],
         "claude_vault_app_pem": os.environ["VAULT_APP_PEM"],
     })
+if os.environ["CODE_PRESENT"] == "1":
+    v.update({
+        "claude_code_push_app_id": os.environ["CODE_APP_ID"],
+        "claude_code_push_installation_id": os.environ["CODE_INSTALL_ID"],
+        "claude_code_push_app_pem": os.environ["CODE_APP_PEM"],
+    })
 json.dump(v, open(os.environ["OUT"], "w"))
 ' || die "could not write the extra-vars file."
-unset APP_PEM PLANE_KEY MIRROR_APP_PEM VAULT_APP_PEM
+unset APP_PEM PLANE_KEY MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM
 
 ansible-playbook playbooks/configure-claude-code.yml -e "@$TMP/extra.json" "$@"
 
