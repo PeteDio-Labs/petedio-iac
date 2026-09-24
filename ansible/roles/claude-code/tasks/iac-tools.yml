@@ -11,11 +11,14 @@
 # pipx would give ansible-lint its own private ansible-core, and `ansible --version` would
 # then report a different copy from the one the linter uses.
 
-- name: Install shellcheck and the venv module
+# python3-packaging is for the pip module below: it imports `packaging` from the system Python
+# that Ansible runs on the host, not from the venv it installs into.
+- name: Install shellcheck, the venv module and the pip module's dependency
   ansible.builtin.apt:
     name:
       - "shellcheck={{ claude_shellcheck_version }}"
       - python3-venv
+      - python3-packaging
     state: present
     update_cache: true
 
