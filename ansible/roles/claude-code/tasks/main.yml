@@ -276,6 +276,13 @@
   ansible.builtin.include_tasks: vault.yml
   when: claude_vault_enable | bool
 
+# --- The IaC toolchain (PET-508) --------------------------------------------------------------
+# terraform, ansible-core, ansible-lint and shellcheck at the CI pins, root-owned, so a session
+# here can verify what it writes. tasks/iac-tools.yml carries the design.
+- name: Install the IaC toolchain
+  ansible.builtin.include_tasks: iac-tools.yml
+  when: claude_iac_tools_enable | bool
+
 # --- Claude Code settings ------------------------------------------------------------------
 # SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles
 # and one-time prompts land here — so an Ansible-owned copy would silently revert choices

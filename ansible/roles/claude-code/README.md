@@ -311,6 +311,24 @@ A mint that works and an `ls-remote` that does not means the App is not installe
 `petedio-vault`. ⚠ **To revoke this access, uninstall the App or delete its key on GitHub.**
 Removing the clone from 247 does not revoke anything.
 
+## The IaC toolchain (PET-508)
+
+`claude_iac_tools_enable: true` installs `terraform`, `ansible-core`, `ansible-lint` and
+`shellcheck` at the versions CI pins, so a session here can verify the IaC it writes. The
+tools are root-owned under `/opt/claude-iac-tools` and linked into `/usr/local/bin`, so a
+session runs them but cannot replace them. `tasks/iac-tools.yml` carries the design, and
+`tests/claude-iac-tools-pins.yml` fails CI when the role's pins drift from the workflows'.
+
+The play does not install the Galaxy collections. To lint the tree the way CI does, run this
+once as `claude` from `ansible/`, which installs them under `~/.ansible/collections`:
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+```
+
+Matching pins are not a matching verdict. To trust a lint run here, compare its `Passed:`
+line with the `ansible-validate` run on the same commit.
+
 ## Verify
 
 A unit that is `active` is not a server that registered: one waiting at the consent prompt is
