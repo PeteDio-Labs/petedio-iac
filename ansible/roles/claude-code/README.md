@@ -317,7 +317,8 @@ Removing the clone from 247 does not revoke anything.
 
 A session here pushes branches to `petedio-iac`, `petedio-media-iac` and `petedio-workspace`,
 and opens pull requests on them. So 247 implements work itself instead of handing a bundle to
-the Mac. It never merges: each `main` requires a review the App cannot give.
+the Mac. It never merges. On `petedio-iac` and `petedio-media-iac`, `main` requires a review
+the App cannot give. On `petedio-workspace`, only the session rule stops a merge.
 
 **Set `claude_code_push_enable: true` in host_vars, never with `-e`**, for the reason the vault
 section gives. `inventory/host_vars/claude-247.yml` declares it.
@@ -327,12 +328,17 @@ section gives. `inventory/host_vars/claude-247.yml` declares it.
 process running as `claude` can therefore push to those three repositories and open pull
 requests on them. The vault section's "the one writable key" no longer holds: this is a second.
 
-**What bounds it is the App and branch protection:**
+**What bounds it is the App, branch protection on two repositories, and the session rule:**
 
 - `contents:write`, `pull_requests:write` and `metadata:read`, installed on the three
   repositories alone.
 - No `workflows` permission, so GitHub refuses a push that touches `.github/workflows/**`.
-- Each `main` requires a review, so Pedro decides every merge.
+- `main` on `petedio-iac` and `petedio-media-iac` requires one approving review, with required
+  checks and `strict` on. The App cannot give that review, so Pedro decides every merge there.
+- `petedio-workspace` cannot carry branch protection on the org's plan: GitHub answers HTTP 403
+  for both branch protection and rulesets. On that repository the session rule is the only
+  guard: a session opens a pull request, and never merges or pushes to `main`. The App's
+  `contents:write` permission would accept a push to `main` there.
 
 **The broker narrows every git credential to one repository.** git asks with the repository
 path, because the play sets `credential.useHttpPath=true` in each clone. The broker refuses a
