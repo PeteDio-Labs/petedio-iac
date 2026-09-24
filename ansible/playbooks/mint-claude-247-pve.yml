@@ -139,16 +139,18 @@
     pve_endpoint: https://192.168.50.11:8006
     # The CA that signs pve02's certificate: the leaf's Authority Key Identifier, read from 247
     # on 2026-09-24, and the CA's subject. A mismatch means the file is not the CA 247 meets,
-    # so pinning it would break pve-get or trust the wrong issuer.
+    # so pinning it would break pve-get or trust the wrong issuer. The subject is in RFC 2253
+    # form because the read passes -nameopt RFC2253: OpenSSL 3.0 and 3.5 print the default
+    # form differently, with and without spaces around each "=".
     pve_ca_path: /etc/pve/pve-root-ca.pem
     pve_ca_ski: "61:F1:E5:10:48:47:84:DC:AB:8C:8E:2C:7C:30:9D:46:02:75:FA:71"
-    pve_ca_subject: "CN=Proxmox Virtual Environment, OU=5a3e6852-0b37-437d-8bf3-7a20ee15d520, O=PVE Cluster Manager CA"
+    pve_ca_subject: "O=PVE Cluster Manager CA,OU=5a3e6852-0b37-437d-8bf3-7a20ee15d520,CN=Proxmox Virtual Environment"
     # A different name from the localhost fact it reads, so a lookup cannot resolve to itself.
     pve_have_vault_entry: "{{ hostvars['localhost']['pve_vault_has_entry'] | bool }}"
   tasks:
     - name: Read the CA's Subject Key Identifier and subject
       ansible.builtin.command:
-        cmd: openssl x509 -in {{ pve_ca_path }} -noout -ext subjectKeyIdentifier -subject
+        cmd: openssl x509 -in {{ pve_ca_path }} -noout -ext subjectKeyIdentifier -subject -nameopt RFC2253
       register: pve_ca_info
       changed_when: false
 
