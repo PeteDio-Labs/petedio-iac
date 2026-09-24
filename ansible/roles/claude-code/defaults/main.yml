@@ -219,15 +219,17 @@ claude_vault_git_opts: >-
 # work loop's `claude -p` included if claude_loop_enable is ever set. Read
 # vault/Systems/claude-loop.md before that flag moves.
 #
-# WHAT BOUNDS IT IS THE APP AND BRANCH PROTECTION, NOT THE FILE MODES:
+# WHAT BOUNDS IT IS THE APP, BRANCH PROTECTION AND THE SESSION RULE, NOT THE FILE MODES:
 #
 #   · The App is installed on these three repositories alone, with contents:write,
 #     pull_requests:write and metadata:read. scripts/seed-claude-code-app.sh refuses to seed
 #     it otherwise.
 #   · It holds no `workflows` permission, so GitHub refuses any push that touches
 #     .github/workflows/**. That keeps the PET-425 property.
-#   · `main` on each repository requires a review the App cannot give, so Pedro still decides
-#     every merge.
+#   · `main` on petedio-iac and petedio-media-iac requires a review the App cannot give, so
+#     Pedro decides every merge there.
+#   · petedio-workspace cannot carry branch protection on the org's plan (HTTP 403). There the
+#     session rule is the only guard: open a pull request, never merge, never push to `main`.
 #
 # ⚠ THE FOURTH APP, AND IT MUST NOT BECOME ANY OF THE OTHER THREE. The loop's App reaches
 # petedio-iac from a root-owned directory, the mirror's is read-only and read by root, and the

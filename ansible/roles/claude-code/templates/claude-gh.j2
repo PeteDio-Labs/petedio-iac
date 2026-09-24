@@ -39,6 +39,21 @@ if [ "${1:-}" = auth ] && [ "${2:-}" != status ]; then
   die "refusing 'gh auth ${2:-}'. This wrapper supplies a token per command; nothing logs in."
 fi
 
+# `gh auth status --show-token` and `-t` print the minted token, so every argument after
+# `status` is checked, not only the first. `-t` can hide in a cluster such as `-at`, so any
+# single-dash cluster holding a `t` is refused, except `-h<host>`, whose value follows the h.
+if [ "${1:-}" = auth ]; then
+  for a in "${@:3}"; do
+    case "$a" in
+      --show-token|--show-token=*)
+        die "refusing 'gh auth status $a'. It prints the token this wrapper minted." ;;
+      --*|-h*) ;;
+      -*t*)
+        die "refusing 'gh auth status $a'. It prints the token this wrapper minted." ;;
+    esac
+  done
+fi
+
 if [ -z "${GH_REPO:-}" ]; then
   explicit=0
   for a in "$@"; do
