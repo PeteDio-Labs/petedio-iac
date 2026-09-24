@@ -1,7 +1,7 @@
 ---
 # ⛔ SUPERSEDED 2026-09-04 — DO NOT RUN. The VXLAN anchored on pve01, which died on 2026-09-03;
-# running this writes a vmbr1/vxlan86 leg toward nothing. roles/plex-bridge (a proxy on
-# pete-pi-1) and the tailnet replaced it, and the mesh leg was removed from 236 in PET-332.
+# running this writes a vmbr1/vxlan86 leg toward nothing. pve02's wired mesh adapter
+# (roles/mesh-usb-bridge) replaced it, and 236 holds its only NIC there (PET-504).
 # Kept for the MTU and gateway lessons (docs/GOTCHAS.md).
 #
 # configure-mesh-vxlan.yml — give pve02 a layer-2 presence on the .86 Google mesh

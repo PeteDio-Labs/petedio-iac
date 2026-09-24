@@ -386,10 +386,10 @@ will notice if one fails to come back. They need checking by hand.
 It comes back on its own: Docker is enabled at boot and the `uptime-kuma` container is
 `restart=unless-stopped`. Two things still need eyes on them.
 
-**Both legs are load-bearing.** `eth0` at `192.168.50.4` (default route, metric 100)
-reaches the cluster; `wlan0` at `192.168.86.46` is the only route to Plex on
-`192.168.86.140`. A Pi that comes up with one leg reports a false DOWN on the Plex
-monitor and you will chase Plex instead of the Pi.
+**Check both legs.** `eth0` at `192.168.50.4` (default route, metric 100) reaches the
+cluster. `wlan0` at `192.168.86.46` is the direct route to Plex on `192.168.86.236`.
+Without `wlan0`, the Plex probe falls back to `eth0` and the `.50` router's NAT, so a
+Plex monitor that stays UP does not prove the mesh leg is up.
 
 **The SD card is the only disk**, holding roughly 343,000 heartbeats. A six-hourly timer
 copies the database to `/mnt/ollama-backups` on ollama-host (`.12`) — an automount with

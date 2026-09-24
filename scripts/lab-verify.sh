@@ -171,7 +171,7 @@ radarr|http://192.168.50.16:7878/
 prowlarr|http://192.168.50.20:9696/
 qbittorrent|http://192.168.50.21:8080/
 seerr|http://192.168.50.33:5055/
-plex|http://192.168.50.236:32400/identity
+plex|http://192.168.86.236:32400/identity
 authentik|http://192.168.50.119:9000/
 plane|http://192.168.50.235:8080/
 minio|http://192.168.50.221:9001/

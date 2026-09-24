@@ -1,8 +1,9 @@
 # ⛔ NOT DECLARED — superseded, do not recreate.
 #
 # tailscale-244 died with pve01 on 2026-09-03 and its job has moved.
-# pete-pi-1 is now the tailnet subnet router, advertising 192.168.50.0/24 and
-# 192.168.86.0/24 — and it does that job better, because it sits OUTSIDE the
+# pete-pi-1 is now the tailnet subnet router, advertising 192.168.50.0/24 alone
+# (PET-504 dropped 192.168.86.0/24; roles/tailnet-routes declares the list) — and
+# it does that job better, because it sits OUTSIDE the
 # cluster. The old LXC advertised routes to a homelab it was itself a guest of,
 # so it died exactly when it was most needed.
 #

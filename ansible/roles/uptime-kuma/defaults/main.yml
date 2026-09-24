@@ -6,10 +6,9 @@
 # node. Pete-Pi is outside the cluster and dual-homed: eth0 on the .50 homelab
 # LAN (default route, metric 100) and wlan0 on the .86 home LAN (metric 600).
 # That second leg is not incidental: it is where the TVs live, and it is the only
-# vantage in this inventory that can prove a mesh path is real. The `plex-bridge`
-# proxy served plex to them from it until PET-474 retired it, and pve02's own mesh
-# adapter carries that traffic instead.
-# plex 103 at 192.168.86.140 died with pve01 on 2026-09-03; plex-gpu 236 is probed on .50.
+# vantage in this inventory that can prove a mesh path is real. plex-gpu 236 holds
+# one address, 192.168.86.236, on pve02's mesh adapter (PET-504), and Kuma probes it
+# there. plex 103 at 192.168.86.140 died with pve01 on 2026-09-03.
 #
 # WHY v1 AND NOT v2. The study reads raw heartbeats out of SQLite to compute a
 # per-monitor response-time baseline. v1 keeps every beat in one `heartbeat`
@@ -189,15 +188,15 @@ uptime_kuma_monitors:
     # lands on the 200; verified end state is 200 after one hop.
     type: http
     url: "http://192.168.50.33:5055/"
-  # ⚠ Was http://192.168.86.140:32400 until 2026-09-04. That was plex-103's .86
-  # leg, and 103 died with pve01. plex-gpu (236) is the live server; it is
-  # dual-homed, and the .50 address is the one that does not depend on the VXLAN
-  # bridge being up, so monitor that rather than the .86 leg.
+  # plex-gpu (236) holds one address, on the .86 mesh (PET-504). It had a .50 leg
+  # until 2026-09-23, and this monitor probed that. The Kuma container reaches the
+  # mesh address through the Pi, which sits on the mesh over wlan0. Verified from
+  # inside the container on 2026-09-23: HTTP 200.
   - name: plex-gpu
     # /identity is the unauthenticated liveness endpoint — the web root needs a
     # token and would answer 401.
     type: http
-    url: "http://192.168.50.236:32400/identity"
+    url: "http://192.168.86.236:32400/identity"
 
   # -- added 2026-09-04: live services that were running unwatched -------------
   # The rebuild left six services with no monitor at all, which is how a stale

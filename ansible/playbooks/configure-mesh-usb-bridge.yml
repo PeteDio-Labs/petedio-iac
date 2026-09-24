@@ -1,8 +1,8 @@
 ---
 # configure-mesh-usb-bridge.yml — bridge pve02's USB-to-Ethernet adapter onto
-# the .86 mesh, so plex-gpu (236) can hold a second NIC there directly instead
-# of solely through the pete-pi-1 proxy (vault/Systems/plex-on-the-mesh.md).
-# Pair with net1_bridge = "vmbr2" on the plex_gpu module in petedio-media-iac.
+# the .86 mesh. plex-gpu (236) holds its only NIC there (PET-504;
+# vault/Systems/plex-on-the-mesh.md). Pair with bridge = "vmbr2" on the plex_gpu
+# module in petedio-media-iac.
 #
 #   ansible-playbook playbooks/configure-mesh-usb-bridge.yml
 #

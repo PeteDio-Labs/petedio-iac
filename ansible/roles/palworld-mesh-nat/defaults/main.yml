@@ -5,11 +5,11 @@
 # Google Nest mesh. Palworld runs in LXC 234 on 192.168.50.234, the platform LAN. pve03 is
 # on both — vmbr0 for .50, and wlo1 (Intel AX210) for .86.
 #
-# You cannot give the container a real .86 address through wlo1. roles/plex-bridge already
-# worked this out and wrote it down: 802.11 uses THREE-address frames, so an AP drops any
+# You cannot give the container a real .86 address through wlo1. 802.11 uses THREE-address
+# frames, so an AP drops any
 # frame sourced from a MAC it has not associated. A WiFi station cannot bridge other MACs.
 # 4addr/WDS would need the AP's cooperation and the AP is a Google mesh. That is settled —
-# it is why plex-bridge exists at all, and it applies identically here.
+# pve02 solved the same problem for Plex with a wired mesh adapter (roles/mesh-usb-bridge).
 #
 # ⚠ AND THE ROUTING IS ASYMMETRIC, WHICH TWO DOCS DISAGREED ABOUT. host_vars/palworld-mc.yml
 # claimed "the router carries .50 <-> .86". Measured from a mesh-only interface 2026-09-09:
@@ -20,8 +20,8 @@
 # .50 reaches .86; .86 does NOT reach .50. Players sit on the side that cannot get in, so
 # nothing short of NAT on pve03 makes the game reachable.
 #
-# ⚠ WHY NOT socat, THE WAY plex-bridge DOES IT. plex-bridge proxies Plex's TCP/HTTP port and
-# socat is a fine answer for that. This is UDP game traffic: socat's UDP mode forks a process
+# ⚠ WHY NOT socat. The retired plex-bridge role proxied Plex's TCP/HTTP port with socat,
+# which suits TCP. This is UDP game traffic: socat's UDP mode forks a process
 # per source address with no connection tracking, which is the wrong shape for a latency-
 # sensitive server. Kernel NAT keeps conntrack, handles several clients natively, and copies
 # nothing through userspace.

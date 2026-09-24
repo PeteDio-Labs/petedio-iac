@@ -156,7 +156,7 @@
         cmd: >-
           ssh-keyscan -T 5 -H
           192.168.50.33 192.168.50.15 192.168.50.16 192.168.50.20
-          192.168.50.21 192.168.50.236
+          192.168.50.21 192.168.86.236
           > {{ mtrace_dir }}/.ssh/known_hosts.new
           && mv {{ mtrace_dir }}/.ssh/known_hosts.new {{ mtrace_dir }}/.ssh/known_hosts
       changed_when: true

@@ -23,7 +23,7 @@ all:
         # ⚠ FALSE SINCE PET-381, AND THAT IS NOT A REGRESSION. PET-168 opened 8211/udp
         # from 192.168.86.0/24 because the host had a real leg on that segment. The
         # container does not and cannot — pve03 reaches the mesh over WiFi, and a WiFi
-        # station cannot bridge another MAC (roles/plex-bridge has the detail). Play
+        # station cannot bridge another MAC (roles/palworld-mesh-nat has the detail). Play
         # traffic now arrives NATted, so it reaches the container FROM .50 and the
         # .50 ingress rule is what admits it. A .86 rule here would be dead config.
         palworld_mesh_enabled: false
