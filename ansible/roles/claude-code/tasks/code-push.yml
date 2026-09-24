@@ -205,8 +205,15 @@
     label: "{{ item.dest }}"
   when: claude_code_push_ready | bool
 
-# argv, because one argument IS the empty string.
-- name: Reset each clone's credential helper list
+# THE ORDER IS THE FIX. git reads credential.helper as a list, and an empty value resets every
+# helper before it. So the list must be exactly ["", broker], in that order. A clone that arrived
+# with its own helper used to end as [broker, ""]: the old reset added "" after that helper, and
+# the old point replaced the helper in place, which left the broker first and silenced it. So
+# the three tasks below clear the list, add "", then add the broker. Their shared gate keeps a
+# correct clone unchanged.
+#
+# git exits 5 when --unset-all finds no value, which is a clean start, not a failure.
+- name: Clear each clone's credential helper list
   ansible.builtin.command:
     argv:
       - runuser
@@ -218,10 +225,36 @@
       - "{{ claude_workspace }}/{{ item.item.dest }}"
       - config
       - --local
-      - --replace-all
+      - --unset-all
+      - credential.helper
+  environment:
+    HOME: "{{ claude_home }}"
+  register: claude_code_push_unset
+  changed_when: true
+  failed_when: claude_code_push_unset.rc | default(0) not in [0, 5]
+  loop: "{{ claude_code_push_helpers.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.dest }}"
+  when:
+    - claude_code_push_ready | bool
+    - item.stdout_lines | default([]) != ['', claude_code_push_broker]
+
+# argv, because one argument IS the empty string.
+- name: Start each clone's credential helper list with an empty value
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_user }}"
+      - --
+      - git
+      - -C
+      - "{{ claude_workspace }}/{{ item.item.dest }}"
+      - config
+      - --local
+      - --add
       - credential.helper
       - ""
-      - "^$"
   environment:
     HOME: "{{ claude_home }}"
   changed_when: true
@@ -244,10 +277,9 @@
       - "{{ claude_workspace }}/{{ item.item.dest }}"
       - config
       - --local
-      - --replace-all
+      - --add
       - credential.helper
       - "{{ claude_code_push_broker }}"
-      - "."
   environment:
     HOME: "{{ claude_home }}"
   changed_when: true
