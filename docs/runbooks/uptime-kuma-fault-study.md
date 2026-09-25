@@ -1,6 +1,6 @@
 # Uptime Kuma on Pete-Pi — the fault-injection study instrument
 
-> **Corrected 2026-09-10 (PET-385).** The nodes are pve02 and pve03; pve01 died on 2026-09-03. Plex is probed at `192.168.86.236` (plex-gpu, `.86` only since PET-504); 103 at `.86.140` is gone. The role declares 19 monitors, 17 active (`zot-registry` and `nfs-pve02` disabled 2026-09-04), and since PET-374 every one notifies through pete-bot. **The six-hourly backup has skipped every run since the rack loss** — the pve02 export it mounts no longer exists (PET-386); the sections below still describe it as working.
+> **Corrected 2026-09-10 (PET-385).** The nodes are pve02 and pve03; pve01 died on 2026-09-03. Plex is probed at `192.168.86.236` (plex-gpu, `.86` only since PET-504); 103 at `.86.140` is gone. The role declares 19 monitors, 17 active (`zot-registry` and `nfs-pve02` disabled 2026-09-04), and since PET-374 every one notifies through pete-bot. From the rack loss until 2026-09-22, the six-hourly backup skipped every run, because the rack loss took the pve02 export it mounted. PET-386 moved the store to ollama-host, which the backup section describes.
 
 Uptime Kuma on Pete-Pi is the measurement apparatus for a controlled
 fault-injection study (PET-300). It is not general monitoring. Machine-readable
@@ -35,12 +35,13 @@ the Keychain.
 
 Pete-Pi is a Raspberry Pi 4 Model B on Debian 13 trixie, `aarch64`. It is
 **outside the Proxmox cluster**, which is the point: the instrument keeps
-recording while `pve01` or `pve02` is the thing being broken.
+recording while `pve02` or `pve03` is the thing being broken.
 
 It is **dual-homed**, and both legs carry monitors:
 
 - `eth0` `192.168.50.4` — default route, metric 100. The cluster, Vault, zot, ollama.
-- `wlan0` `192.168.86.46` — metric 600. The only route to plex on `192.168.86.140`.
+- `wlan0` `192.168.86.46` — metric 600. The only route to plex-gpu (236) on `192.168.86.236`,
+  which sits on pve02's mesh adapter and has had no `.50` address since PET-504.
 
 Neither path uses tailscale, so a tailnet outage cannot masquerade as a service
 fault in the data.
@@ -63,17 +64,25 @@ of being smoothed away. Raw heartbeats are kept for **45 days**.
 | `zot-registry` | HTTP | `https://192.168.50.111/v2/_catalog` (TLS ignored) |
 | `nfs-pve02` | TCP | `192.168.50.11:2049` |
 | `vault` | HTTP | `https://192.168.50.223:8200/v1/sys/health` (TLS ignored) |
-| `pve01` | TCP | `192.168.50.10:8006` |
+| `pve03` | TCP | `192.168.50.10:8006` |
 | `pve02` | TCP | `192.168.50.11:8006` |
-| `lidarr` | HTTP | `http://192.168.50.14:8686/` |
 | `sonarr` | HTTP | `http://192.168.50.15:8989/` |
 | `radarr` | HTTP | `http://192.168.50.16:7878/` |
 | `prowlarr` | HTTP | `http://192.168.50.20:9696/` |
 | `qbittorrent` | HTTP | `http://192.168.50.21:8080/` |
 | `seerr` | HTTP | `http://192.168.50.33:5055/` |
-| `plex` | HTTP | `http://192.168.86.140:32400/identity` |
+| `plex-gpu` | HTTP | `http://192.168.86.236:32400/identity` |
+| `authentik` | HTTP | `http://192.168.50.119:9000/` (2xx or 3xx accepted) |
+| `plane` | HTTP | `http://192.168.50.235:8080/` |
+| `minio` | HTTP | `http://192.168.50.221:9001/` (2xx or 3xx accepted) |
+| `minio-data` | HTTP | `http://192.168.50.245:9001/` (2xx or 3xx accepted) |
+| `postgres` | TCP | `192.168.50.231:5432` |
+| `flaresolverr` | HTTP | `http://192.168.50.150:8191/` |
 | `ollama` | HTTP | `http://192.168.50.12:11434/api/version` |
 | `dns-router` | DNS | `google.com` A via resolver `192.168.50.1:53` |
+
+`zot-registry` and `nfs-pve02` are declared with `active: false` and have been
+disabled since 2026-09-04, so 17 of the 19 monitors record heartbeats.
 
 ### Why these targets and not the obvious ones
 
@@ -87,11 +96,13 @@ non-browser client. Monitoring `docker.pdlab.dev` would have produced a permanen
 false DOWN and poisoned the baseline before the study started.
 
 **`zot-registry` and `nfs-pve02` are two monitors, never one.** zot's blob store
-is an NFS mount from pve02, so stopping `nfs-server` on pve02 breaks a registry
-running on pve01. Cause and symptom sit on different hosts, and that gap is the
+is an NFS mount from pve02, so stopping `nfs-server` on pve02 broke a registry
+that ran on pve01. Cause and symptom sit on different hosts, and that gap is the
 object of study. The check uses `/v2/_catalog` rather than `/v2/` on purpose:
 `_catalog` reads the storage layer, so the NFS fault actually surfaces, whereas
 `/v2/` answers from memory and would stay green straight through the outage.
+Both monitors are disabled: registry 106 died with pve01 on 2026-09-03 and is
+not restored. Re-enable them together, never one alone.
 
 **`vault` accepts only 2xx.** `/v1/sys/health` answers 200 unsealed-active and
 **503 sealed**, so restricting accepted codes to `200-299` maps a sealed Vault
@@ -99,7 +110,7 @@ onto DOWN — the wanted semantics, since sealing is an injected fault. HTTPS is
 mandatory: the same path over plain HTTP returns a bare 400 that looks like a
 broken server and is not.
 
-**`plex` uses `/identity`.** The web root needs a token and answers 401.
+**`plex-gpu` uses `/identity`.** The web root needs a token and answers 401.
 
 ## Pulling data
 
@@ -153,8 +164,8 @@ cannot put a one-hour step inside a 30-day window.
 ## Backup to the HDD
 
 The database lives on an SD card and Pete-Pi has no local disk — no USB device is
-attached. At 14 monitors on a 20-second interval that is roughly 60,000 row
-writes a day, and an SD failure mid-study takes the baseline with it.
+attached. At 17 active monitors on a 20-second interval that is roughly 73,000
+row writes a day, and an SD failure mid-study takes the baseline with it.
 
 Pete-Pi mounts `192.168.50.12:/srv/backups/pete-pi` at `/mnt/ollama-backups`. The
 export on ollama-host admits the Pi only and squashes every uid to `kuma-backup`
