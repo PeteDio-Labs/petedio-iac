@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+#
+# Start the guests only after the media automounts are in place (PET-449).
+# Guests 104, 105 and 109 bind-mount these paths. If pve-guests starts before
+# the automount exists, a guest binds the bare directory under it and sees an
+# empty library, with no error anywhere.
+#
+# Wants, not Requires: a missing NFS server must not stop every other guest
+# from starting.
+[Unit]
+After=remote-fs.target {{ media_mount_automount_units | join(' ') }}
+Wants={{ media_mount_automount_units | join(' ') }}
