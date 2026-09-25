@@ -1,0 +1,148 @@
+# ansible-claude-247 (PET-515): deploy claude-247's claude-code role from the homelab runner.
+#
+# This is the primary path. scripts/deploy-claude-247.sh is the fallback, run from the
+# operator's machine through the ansible AppRole, and it is still the only way to switch the
+# loop timer, because this workflow has no loop input. Both run
+# scripts/claude-247-extra-vars.sh, so both refuse the same App-id mix-ups with the same words.
+#
+#   gh workflow run ansible-claude-247.yml --ref main
+#   gh workflow run ansible-claude-247.yml --ref main -f mixup_probe=true
+#
+# ⚠ DISPATCH ONLY (PET-266, PET-515 decision 1). No push trigger: merging a change to the role
+# does not deploy it, and a person decides when 247 converges. The claude-247-deploy Vault
+# role binds event_name = workflow_dispatch and this file's workflow_ref, so a push, a
+# schedule or another workflow cannot mint its token.
+#
+# ⚠ NO pull_request TRIGGER, EVER (PET-407). The job runs on the self-hosted runner on the LAN,
+# and petedio-iac is public. ansible-stack.yml explains the exposure in full.
+#
+# This file is pushed from the Mac. petedio-code-247, the App sessions on 247 push with, has
+# no `workflows` permission, so no session on 247 can create or change it.
+name: ansible-claude-247
+
+on:
+  workflow_dispatch:
+    inputs:
+      mixup_probe:
+        description: >-
+          Prove the App-id refusal on the live secrets: set CODE_APP_ID to the loop's App id,
+          expect the checks to refuse, and never run the play.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ansible-claude-247
+  cancel-in-progress: false
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+  ANSIBLE_IMAGE: python:3.12-slim
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, x64, homelab]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      # The claude-247-deploy role reads seven exact paths and nothing else
+      # (environments/homelab/vault-config/policies.tf).
+      #
+      # ignoreNotFound: the mirror, vault, code-push and Proxmox paths are OPTIONAL, and an
+      # absent one is a supported state that claude-247-extra-vars.sh warns about. Without
+      # this flag, vault-action would fail the run before the script could say which path is
+      # empty and why that is allowed. A required field that is absent still stops the run:
+      # the script refuses it by name.
+      - name: Vault — 247's identities via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: claude-247-deploy
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportEnv: true
+          ignoreNotFound: true
+          secrets: |
+            kv/data/services/claude-loop app_id | APP_ID ;
+            kv/data/services/claude-loop installation_id | INSTALL_ID ;
+            kv/data/services/claude-loop app_pem | APP_PEM ;
+            kv/data/services/plane api_key | PLANE_KEY ;
+            kv/data/services/claude-workspace-mirror app_id | MIRROR_APP_ID ;
+            kv/data/services/claude-workspace-mirror installation_id | MIRROR_INSTALL_ID ;
+            kv/data/services/claude-workspace-mirror app_pem | MIRROR_APP_PEM ;
+            kv/data/services/claude-vault-push app_id | VAULT_APP_ID ;
+            kv/data/services/claude-vault-push installation_id | VAULT_INSTALL_ID ;
+            kv/data/services/claude-vault-push app_pem | VAULT_APP_PEM ;
+            kv/data/services/claude-code-push app_id | CODE_APP_ID ;
+            kv/data/services/claude-code-push installation_id | CODE_INSTALL_ID ;
+            kv/data/services/claude-code-push app_pem | CODE_APP_PEM ;
+            kv/data/services/claude-247-pve token_id | PVE_TOKEN_ID ;
+            kv/data/services/claude-247-pve secret | PVE_TOKEN_SECRET ;
+            kv/data/services/claude-247-pve endpoint | PVE_ENDPOINT ;
+            kv/data/services/claude-247-pve ca_pem | PVE_CA_PEM ;
+            kv/data/iac/lxc-ssh private_key | ANSIBLE_SSH_KEY
+
+      - name: Check the identities, then apply configure-claude-code.yml (ansible in Docker)
+        shell: bash
+        env:
+          MIXUP_PROBE: ${{ inputs.mixup_probe }}
+        run: |
+          set -euo pipefail
+          umask 077
+          CI="$(mktemp -d)"
+          trap 'rm -rf "$CI"' EXIT
+
+          # The probe hands the checks one dangerous mix-up, the loop's App in the code-push
+          # path, and passes only when they refuse THAT mix-up by name. Any other refusal, such
+          # as an unreachable Plane, would prove nothing, so it fails the probe. It needs
+          # kv/services/claude-code-push seeded: an empty path is never compared.
+          if [ "$MIXUP_PROBE" = "true" ]; then
+            if err="$(CODE_APP_ID="$APP_ID" scripts/claude-247-extra-vars.sh "$CI/extra.json" 2>&1 >/dev/null)"; then
+              echo "PROBE FAILED: the checks accepted the loop's App id in kv/services/claude-code-push."
+              exit 1
+            fi
+            printf '%s\n' "$err"
+            if grep -q 'kv/services/claude-code-push and kv/services/claude-loop name the SAME App' <<<"$err"; then
+              echo "PROBE OK: the checks refused the mix-up, and the play did not run."
+              exit 0
+            fi
+            echo "PROBE FAILED: the checks refused, but not for the mix-up. Read the ABORT above."
+            exit 1
+          fi
+
+          scripts/claude-247-extra-vars.sh "$CI/extra.json"
+          unset APP_PEM PLANE_KEY MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM PVE_TOKEN_SECRET PVE_CA_PEM
+          printf '%s\n' "$ANSIBLE_SSH_KEY" > "$CI/key"; chmod 600 "$CI/key"
+
+          # ansible-core is pinned to ansible-validate.yml's version, so the play runs on the
+          # core its lint passed on. scripts/ is mounted at /scripts because the role reaches
+          # {{ role_path }}/../../../scripts/claude-loop-tick.sh, which is /scripts inside the
+          # container. ansible_ssh_private_key_file as an extra-var overrides the inventory's
+          # key path, which does not exist in the container.
+          docker run --rm --network host \
+            -v "$GITHUB_WORKSPACE/ansible:/ansible" -v "$GITHUB_WORKSPACE/scripts:/scripts:ro" \
+            -v "$CI:/ci:ro" -w /ansible \
+            -e ANSIBLE_HOST_KEY_CHECKING=False \
+            -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
+            "$ANSIBLE_IMAGE" sh -c \
+            "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && \
+             pip install -q 'ansible-core==2.20.4' && \
+             ansible-galaxy collection install -r requirements.yml && \
+             if ansible-playbook -i inventory/ playbooks/configure-claude-code.yml --list-hosts | grep -q 'hosts (0):'; then \
+               echo 'ABORT: play matches zero hosts — inventory or group name is wrong'; exit 1; \
+             fi && \
+             ansible-playbook -i inventory/ playbooks/configure-claude-code.yml \
+               -e @/ci/extra.json -e ansible_ssh_private_key_file=/ci/key"
