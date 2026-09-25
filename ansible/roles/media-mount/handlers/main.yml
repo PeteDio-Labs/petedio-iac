@@ -1,0 +1,7 @@
+---
+# Reload unit definitions only. This must never restart pve-guests.service:
+# restarting it stops and starts every guest on the node. The drop-in takes
+# effect at the next boot, which is the only time pve-guests orders anything.
+- name: Reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true

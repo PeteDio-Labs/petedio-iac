@@ -43,6 +43,39 @@
   changed_when: false
   failed_when: "'65534' in mount_owner.stdout"
 
+# The automount unit names come from systemd-escape, not from string
+# replacement, so a path with a dash or a space still names the right unit.
+- name: Name the automount unit for each mount point
+  ansible.builtin.command: "systemd-escape --path --suffix=automount {{ item }}"
+  loop: "{{ media_mount_paths }}"
+  register: media_mount_escaped
+  changed_when: false
+  check_mode: false
+
+- name: Collect the automount unit names
+  ansible.builtin.set_fact:
+    media_mount_automount_units: "{{ media_mount_escaped.results | map(attribute='stdout') | list }}"
+
+- name: Create the pve-guests drop-in directory
+  ansible.builtin.file:
+    path: "{{ media_mount_guests_dropin | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Writing this file changes nothing on a running node. The handler reloads unit
+# definitions and restarts nothing: not pve-guests, and not any guest. The
+# ordering applies from the next boot.
+- name: Order pve-guests after the media automounts
+  ansible.builtin.template:
+    src: pve-guests-media-mounts.conf.j2
+    dest: "{{ media_mount_guests_dropin }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
 - name: Report
   ansible.builtin.debug:
     msg: >-

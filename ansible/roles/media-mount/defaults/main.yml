@@ -13,3 +13,9 @@ media_mount_paths:
 # hung one: without them a node whose NFS server is down blocks at boot waiting
 # for a mount, which turns the server's outage into the client's outage too.
 media_mount_options: "defaults,_netdev,nofail,x-systemd.mount-timeout=30,x-systemd.automount"
+
+# Where the pve-guests drop-in goes (PET-449). It orders guest start-up after the
+# automounts above, so a bind mount never captures the empty directory beneath
+# one. configure-media-split.yml applies this role to pve_new only, which is
+# pve03: the one Proxmox node that mounts the pools rather than holding them.
+media_mount_guests_dropin: /etc/systemd/system/pve-guests.service.d/10-media-mounts.conf
