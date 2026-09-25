@@ -16,7 +16,7 @@ draining, no parallelism, and nothing here ever merges.
 |---|---|
 | Host | `claude-247` — `192.168.50.247`, VMID 247, pve03 |
 | Role | `ansible/roles/claude-code` (`tasks/loop.yml`, `tasks/loop-units.yml`) |
-| Deploy | `scripts/deploy-claude-247.sh` — was `deploy-claude-loop.sh`; renamed in PET-493, when it took on the workspace mirror's App as well |
+| Deploy | `gh workflow run ansible-claude-247.yml --ref main`, on the homelab runner (PET-515). Fallback, and the only way to switch the timer: `scripts/deploy-claude-247.sh` — was `deploy-claude-loop.sh`; renamed in PET-493, when it took on the workspace mirror's App as well |
 | Tick | `scripts/claude-loop-tick.sh` → `/usr/local/sbin/claude-loop-tick` on the host, root `0755` |
 | Units | `claude-loop.timer` → `claude-loop.service` |
 | Heartbeat | `/var/lib/claude-loop/last-tick.json`, root `0644`, read by `scripts/lab-verify.sh` |
@@ -141,19 +141,31 @@ Everything before step 4 is one-time.
    and `pull_requests: write` and nothing else. Generate a private key and keep the `.pem`.
 
 2. **Seed Vault.** `kv/services/claude-loop`, fields `app_id`, `installation_id`,
-   `app_pem`. The key must keep its newlines — `deploy-claude-247.sh` refuses a single-line
-   PEM, because `openssl`'s complaint about one points at the signature rather than the
+   `app_pem`. The key must keep its newlines — `scripts/claude-247-extra-vars.sh`, which both
+   deploy paths run, refuses a single-line PEM, because `openssl`'s complaint about one points at the signature rather than the
    field.
 
    The Plane PAT is already at `kv/services/plane` field `api_key`; the loop reuses it
-   rather than minting a second Plane identity. No `vault-config` change is needed — the
-   `ansible` policy already reads `kv/data/services/*`.
+   rather than minting a second Plane identity. No `vault-config` change is needed for it:
+   the `ansible` policy the fallback uses reads `kv/data/services/*`, and the
+   `claude-247-deploy` policy the workflow uses names both paths (PET-515).
 
 3. **Create the label.** The project had no labels at all when this was written, so this is
    a creation step and not a lookup. Add `agent-ready` in Plane. The broker exits non-zero
    if it cannot find it, rather than reporting an empty queue.
 
-4. **Deploy.** From your machine, not from 247 — the AppRole login happens on yours:
+4. **Deploy.** Dispatch the workflow from a machine whose `gh` holds the `workflow` scope. It
+   runs on the homelab runner and logs in to Vault as the `claude-247-deploy` role:
+
+   ```sh
+   gh workflow run ansible-claude-247.yml --ref main
+   ```
+
+   A dispatch always leaves claude-loop.timer stopped and disabled, because the workflow has no
+   loop input. If you had enabled the loop with the script, run
+   `./scripts/deploy-claude-247.sh -e claude_loop_enable=true` again after the dispatch.
+
+   The fallback runs from your machine, not from 247 — the AppRole login happens on yours:
 
    ```sh
    ./scripts/deploy-claude-247.sh
@@ -307,8 +319,12 @@ pins one model. To change it, set the variable in
 `ansible/inventory/host_vars/claude-247.yml`, merge the pull request, and re-run the play:
 
 ```sh
-./scripts/deploy-claude-247.sh
+gh workflow run ansible-claude-247.yml --ref main   # or ./scripts/deploy-claude-247.sh
 ```
+
+A dispatch always leaves claude-loop.timer stopped and disabled, because the workflow has no
+loop input. If you had enabled the loop with the script, run
+`./scripts/deploy-claude-247.sh -e claude_loop_enable=true` again after the dispatch.
 
 Don't pass it with `-e`. The next play run without the flag puts the default back, and no
 commit records that the loop's cost against the shared Max quota changed. `PET-431` is
@@ -358,8 +374,11 @@ signs for them lasts until someone replaces it.
 
 1. Generate a new private key in the App's settings. **Do not delete the old one yet.**
 2. Update `kv/services/claude-loop` field `app_pem`.
-3. `./scripts/deploy-claude-247.sh` — the play re-lands the key and mints a token with it,
+3. `gh workflow run ansible-claude-247.yml --ref main`, or `./scripts/deploy-claude-247.sh` — the play re-lands the key and mints a token with it,
    so a bad paste fails the play.
+   A dispatch always leaves claude-loop.timer stopped and disabled, because the workflow has no
+   loop input. If you had enabled the loop with the script, run
+   `./scripts/deploy-claude-247.sh -e claude_loop_enable=true` again after the dispatch.
 4. Delete the old key in GitHub.
 
 To revoke the loop's access immediately and completely, uninstall the App from the

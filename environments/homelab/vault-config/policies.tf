@@ -489,3 +489,48 @@ resource "vault_policy" "openfaas_ci" {
     }
   EOT
 }
+
+# claude-247-deploy: what ansible-claude-247.yml may read to deploy 247's claude-code role
+# (PET-515). Exact paths, read only: no glob and no list, because the workflow reads named
+# fields from named paths and never needs to enumerate anything. The `ansible` AppRole that
+# deploy-claude-247.sh uses reads kv/data/services/*; this role reads these seven and no more.
+resource "vault_policy" "claude_247_deploy" {
+  name = "claude-247-deploy"
+
+  policy = <<-EOT
+    # The work loop's GitHub App: app_id, installation_id, app_pem. Required.
+    path "kv/data/services/claude-loop" {
+      capabilities = ["read"]
+    }
+
+    # The Plane PAT the loop files and moves work items with. Required.
+    path "kv/data/services/plane" {
+      capabilities = ["read"]
+    }
+
+    # The read-only App that delivers petedio-workspace to 247 (PET-493). Optional.
+    path "kv/data/services/claude-workspace-mirror" {
+      capabilities = ["read"]
+    }
+
+    # The App a session on 247 pushes petedio-vault with (PET-498). Optional.
+    path "kv/data/services/claude-vault-push" {
+      capabilities = ["read"]
+    }
+
+    # The App a session on 247 pushes branches and opens PRs with (PET-507). Optional.
+    path "kv/data/services/claude-code-push" {
+      capabilities = ["read"]
+    }
+
+    # 247's PVEAuditor token for the Proxmox API (PET-510). Optional.
+    path "kv/data/services/claude-247-pve" {
+      capabilities = ["read"]
+    }
+
+    # The Ansible SSH key the play reaches 247 with.
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+  EOT
+}

@@ -14,6 +14,7 @@ closes.
 | Terraform | `environments/homelab/claude.tf` |
 | Playbook | `ansible/playbooks/configure-claude-code.yml` |
 | Runs as | `claude`, a non-root user with **no sudo at all** |
+| Deploy | `gh workflow run ansible-claude-247.yml --ref main`; fallback `scripts/deploy-claude-247.sh` (PET-515) |
 | Serves | one `claude remote-control` server per entry in `claude_remote_sessions`, plus the work-loop timer when `claude_loop_enable` is set |
 
 ## What Ansible cannot do, and why
@@ -32,6 +33,29 @@ bootstrapped gets stopped units. claude-247 declares `true` in
 `inventory/host_vars/claude-247.yml`, and even then the role refuses to start a unit until
 the one-time consent is on disk: a server started without it waits at its prompt forever
 while systemd reports it active (PET-431).
+
+## Deploying
+
+The primary path is the `ansible-claude-247.yml` workflow on the homelab runner (PET-515).
+Dispatch it from a machine whose `gh` holds the `workflow` scope:
+
+```sh
+gh workflow run ansible-claude-247.yml --ref main
+```
+
+It reads 247's identities through the `claude-247-deploy` JWT role, which only that workflow,
+dispatched on `main`, can mint. `scripts/deploy-claude-247.sh` is the fallback: it reads the
+same fields through the `ansible` AppRole from the operator's machine. Both paths hand the
+fields to `scripts/claude-247-extra-vars.sh`, so they run the same checks, refuse the same
+mix-ups and write the same extra-vars.
+
+The workflow has no loop input. Turning the loop timer on or off still goes through the
+script, with `-e claude_loop_enable=true` or `false`. The steps below name the script; the
+workflow lands the same identities wherever a step runs a plain deploy.
+
+A dispatch always leaves claude-loop.timer stopped and disabled, because the workflow has no
+loop input. If you had enabled the loop with the script, run
+`./scripts/deploy-claude-247.sh -e claude_loop_enable=true` again after the dispatch.
 
 ## Bootstrap
 
@@ -176,7 +200,8 @@ seed fails.
 `contents:write` and `pull_requests:write`, because it opens draft PRs. Pointing the mirror at
 `kv/services/claude-loop` would hand a half-hourly root timer a push credential for
 `petedio-iac`. Two Apps, two Vault paths, two directories, two brokers —
-`scripts/deploy-claude-247.sh` and the seed script both refuse by App id.
+`scripts/claude-247-extra-vars.sh`, which both deploy paths run, and the seed script both
+refuse by App id.
 
 **No session holds anything.** Four properties carry that:
 
