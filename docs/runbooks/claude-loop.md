@@ -161,6 +161,10 @@ Everything before step 4 is one-time.
    gh workflow run ansible-claude-247.yml --ref main
    ```
 
+   A dispatch always leaves claude-loop.timer stopped and disabled, because the workflow has no
+   loop input. If you had enabled the loop with the script, run
+   `./scripts/deploy-claude-247.sh -e claude_loop_enable=true` again after the dispatch.
+
    The fallback runs from your machine, not from 247 — the AppRole login happens on yours:
 
    ```sh
@@ -318,6 +322,10 @@ pins one model. To change it, set the variable in
 gh workflow run ansible-claude-247.yml --ref main   # or ./scripts/deploy-claude-247.sh
 ```
 
+A dispatch always leaves claude-loop.timer stopped and disabled, because the workflow has no
+loop input. If you had enabled the loop with the script, run
+`./scripts/deploy-claude-247.sh -e claude_loop_enable=true` again after the dispatch.
+
 Don't pass it with `-e`. The next play run without the flag puts the default back, and no
 commit records that the loop's cost against the shared Max quota changed. `PET-431` is
 that failure for `claude_remote_enable`.
@@ -368,6 +376,9 @@ signs for them lasts until someone replaces it.
 2. Update `kv/services/claude-loop` field `app_pem`.
 3. `gh workflow run ansible-claude-247.yml --ref main`, or `./scripts/deploy-claude-247.sh` — the play re-lands the key and mints a token with it,
    so a bad paste fails the play.
+   A dispatch always leaves claude-loop.timer stopped and disabled, because the workflow has no
+   loop input. If you had enabled the loop with the script, run
+   `./scripts/deploy-claude-247.sh -e claude_loop_enable=true` again after the dispatch.
 4. Delete the old key in GitHub.
 
 To revoke the loop's access immediately and completely, uninstall the App from the

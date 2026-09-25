@@ -53,6 +53,10 @@ The workflow has no loop input. Turning the loop timer on or off still goes thro
 script, with `-e claude_loop_enable=true` or `false`. The steps below name the script; the
 workflow lands the same identities wherever a step runs a plain deploy.
 
+A dispatch always leaves claude-loop.timer stopped and disabled, because the workflow has no
+loop input. If you had enabled the loop with the script, run
+`./scripts/deploy-claude-247.sh -e claude_loop_enable=true` again after the dispatch.
+
 ## Bootstrap
 
 Run steps 2 onward from this repo's `ansible/` directory. Terraform creates the container
