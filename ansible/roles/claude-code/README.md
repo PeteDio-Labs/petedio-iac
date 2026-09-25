@@ -127,10 +127,12 @@ on merge; nothing here needs a node-side step, because nothing here runs Docker.
    cd ~/work/petedio/workspace && claude    # accept the trust dialog, then /exit
    ```
 
-   Until that dialog is accepted, a session started in that directory waits at the prompt
-   while systemd reports its unit active — the same failure mode as the consent in step 5
-   (PET-431). PET-481 confirmed the sequence on the machine. See "The private workspace repo"
-   below.
+   Until that dialog is accepted, the play does not start that directory's unit, and it fails
+   at the end naming the directory (PET-499). A server started there exits at once with
+   `Error: Workspace not trusted`, and five starts in 5 minutes land its unit in `failed`.
+   That is the opposite of the consent in step 4, which waits at its prompt while systemd
+   reports the unit active (PET-431). After the dialog, re-run `./scripts/deploy-claude-247.sh`.
+   PET-481 confirmed the sequence on the machine. See "The private workspace repo" below.
 
    > ⚠ **Do not paste a deploy key.** Step 6 said to, until PET-493. PeteDio-Labs disallows
    > deploy keys for every repository it owns — `gh api orgs/PeteDio-Labs --jq
@@ -586,15 +588,19 @@ journalctl -u claude-remote-iac -n 100 --no-pager
 Three causes account for most of it. **No eligible login**: the server exits at once, which
 is what `claude_remote_enable: false` exists to prevent before step 3. **A telemetry
 opt-out** in the environment — see the warning in `tasks/main.yml`; the symptom is the
-feature reporting itself unavailable. **Untrusted workspace**: the trust dialog was
-accepted somewhere other than the project directory, so accept it again from
-`~/work/petedio/iac`.
+feature reporting itself unavailable. **Untrusted workspace**: the journal reads
+``Error: Workspace not trusted. Please run `claude` in <dir> first``, and the server exits 1.
+Nobody accepted the trust dialog in that unit's directory, or it was accepted somewhere else.
+Between retries `systemctl is-active` says `activating`, which reads like a slow start. The
+fifth start in 5 minutes parks the unit in `failed`, and accepting the dialog later does not
+restart it. The play reads the trust before it starts a unit, so a deploy leaves an untrusted
+unit stopped instead (PET-499). To recover, run `claude` in that directory as the session user,
+accept the dialog, `/exit`, then re-run `./scripts/deploy-claude-247.sh`.
 
 **If `systemctl start` answers `Start request repeated too quickly`,** the unit tripped the
 `StartLimitBurst` in its `[Unit]` section and is parked in `failed`. Clear it with
 `systemctl reset-failed claude-remote-<name>`, then start it. The play does this for you
-before starting, so a re-run with `-e claude_remote_enable=true` is not blocked by the
-wreckage of the run before it.
+before starting, so a re-run is not blocked by the wreckage of the run before it.
 
 ## If the unit stays up and serves nothing
 

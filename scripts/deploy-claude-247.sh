@@ -149,8 +149,13 @@ cat <<'TXT'
     ssh claude@192.168.50.247
     cd ~/work/petedio/workspace && claude      # accept the trust dialog, then /exit
 
-  Until then a session started in that directory waits at the prompt while systemd reports
-  its unit active — the same failure PET-431 documents for the Remote Control consent.
+  Until then the play does not start that directory's unit, and fails naming it (PET-499).
+  A server started in an untrusted directory exits at once, and five starts in 5 minutes land
+  its unit in `failed`. That is the opposite of the Remote Control consent, which waits at its
+  prompt while systemd reports the unit active (PET-431). After the dialog, re-run this
+  script, or as root run:
+
+    systemctl reset-failed claude-remote-<name> && systemctl start claude-remote-<name>
 
   THE VAULT CLONE needs that same interactive step, in its own directory:
 

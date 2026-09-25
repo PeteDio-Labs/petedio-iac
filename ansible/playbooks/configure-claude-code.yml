@@ -26,8 +26,9 @@
 # inventory/host_vars/claude-247.yml, and the role starts the units only once the operator
 # has signed in and answered the one-time consent. Until then a run converges everything
 # else and FAILS at the end with the step to take, because a unit started without the
-# consent hangs at its prompt while systemd reports it active (PET-431). After the operator
-# steps, run the same command again:
+# consent hangs at its prompt while systemd reports it active (PET-431). The same holds for a
+# directory nobody has trusted, whose unit exits at once and lands in `failed` (PET-499).
+# After the operator steps, run the same command again:
 #
 #   ansible-playbook playbooks/configure-claude-code.yml
 #
@@ -125,3 +126,23 @@
       when:
         - claude_remote_enable | bool
         - claude_remote_consent.rc | default(1) != 0
+
+    # ⚠ DO NOT FINISH GREEN OVER A DIRECTORY NOBODY HAS TRUSTED (PET-499). The consent above
+    # waits at a prompt while systemd reports the unit active. An untrusted directory does the
+    # opposite: the server exits at once, and five starts in 5 minutes land the unit in
+    # `failed`. The role left these units unstarted instead, so say which, and how to finish.
+    - name: Fail while a served directory has no workspace trust
+      ansible.builtin.fail:
+        msg: "{{ ['These remote-control units were NOT started, because nobody has accepted the workspace trust dialog in their directories:']
+                 + (claude_sessions_untrusted | default([])
+                    | map(attribute='dir')
+                    | map('regex_replace', '^', '  ' ~ claude_workspace ~ '/') | list)
+                 + ['Everything else in this play converged, and every trusted unit was started. To finish, for each directory above:',
+                    '1. ssh ' ~ claude_user ~ '@' ~ (ansible_host | default('192.168.50.247')),
+                    '2. cd <dir> && claude   # accept the trust dialog, then /exit',
+                    '3. re-run ./scripts/deploy-claude-247.sh, which starts the unit.',
+                    '   Or, as root: systemctl reset-failed claude-remote-<name> && systemctl start claude-remote-<name>',
+                    'The play does not seed the trust key in ~/.claude.json on purpose. The dialog is where a person reads what the directory can run.'] }}"
+      when:
+        - claude_remote_enable | bool
+        - claude_sessions_untrusted | default([]) | length > 0

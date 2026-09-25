@@ -289,8 +289,10 @@
 # ⚠ ONE MORE STEP AFTER THIS, AND NO PLAY CAN DO IT. Claude Code refuses to work in a
 # directory nobody has trusted, and the trust dialog is interactive. PET-481 confirmed the
 # sequence on the machine: ssh claude@<host>, `cd ~/work/petedio/workspace && claude`, accept
-# the dialog, `/exit`. Until then a session started here waits at the prompt while systemd
-# reports the unit active — the same failure PET-431 documents for the Remote Control consent.
+# the dialog, `/exit`. Until then the role does not start this directory's unit (PET-499). A
+# server started here exits at once, and five starts in 5 minutes land the unit in `failed`.
+# That is the opposite of the Remote Control consent, which waits at its prompt while systemd
+# reports the unit active (PET-431). After the dialog, re-run scripts/deploy-claude-247.sh.
 - name: Clone the workspace repo from the mirror, as the session user
   ansible.builtin.command:
     cmd: >-
