@@ -5,7 +5,8 @@
 # by-identifier route (PET-503), and the paths that matter cannot be reached on
 # demand against the live board: an item already in the target state, an item that
 # moves, a 404, a Plane that drops off the network, and an identifier that resolves
-# to another project. So `curl` is a shim here. It answers each case from the
+# to another project. PET-490 adds the backward-move guard and the `pet-<n>-part-`
+# marker, whose cases need an item in each state. So `curl` is a shim here. It answers each case from the
 # environment and records every call, and the assertions count the calls as well
 # as reading the messages.
 #
@@ -50,7 +51,7 @@ emit() {  # code, body: write the body where -o points, print the code if -w ask
 case "$method $url" in
   PATCH*) emit 200 '{}' ;;
   "GET "*/projects/*/states/*)
-    emit 200 '{"results": [{"id": "st-todo", "name": "Todo"}, {"id": "st-prog", "name": "In Progress"}, {"id": "st-rev", "name": "In Review"}, {"id": "st-done", "name": "Done"}]}' ;;
+    emit 200 '{"results": [{"id": "st-back", "name": "Backlog", "group": "backlog"}, {"id": "st-todo", "name": "Todo", "group": "unstarted"}, {"id": "st-prog", "name": "In Progress", "group": "started"}, {"id": "st-rev", "name": "In Review", "group": "started"}, {"id": "st-done", "name": "Done", "group": "completed"}, {"id": "st-cxl", "name": "Cancelled", "group": "cancelled"}, {"id": "st-ship", "name": "Shipped", "group": "completed"}]}' ;;
   "GET "*/workspaces/*/work-items/PET-*/)
     n="${url%/}"; n="${n##*/PET-}"
     case "$ITEM_MODE" in
@@ -123,6 +124,35 @@ case_ "Plane unreachable at the lookup" pet-386-fixture 'done' down - \
 
 case_ "a 200 for another project" pet-386-fixture 'done' foreign - \
   'PET-386 resolved to project other-proj, not proj — left as-is' 1 0
+
+printf "\n\033[1mThe backward-move guard (PET-490)\033[0m\n"
+case_ "Done to In Review is refused" pet-386-fixture in-review found st-done \
+  'PET-386 is Done; refused the move to In Review \(backward-move guard, PET-490\)' 1 0
+
+case_ "In Review to Todo is refused: a PR closed unmerged" pet-386-fixture todo found st-rev \
+  'PET-386 is In Review; refused the move to Todo \(backward-move guard, PET-490\)' 1 0
+
+case_ "Cancelled to In Progress is refused" pet-386-fixture in-progress found st-cxl \
+  'PET-386 is Cancelled; refused the move to In Progress \(backward-move guard, PET-490\)' 1 0
+
+case_ "an unknown name ranks by its group: Shipped (completed) to In Review is refused" pet-386-fixture in-review found st-ship \
+  'PET-386 is Shipped; refused the move to In Review \(backward-move guard, PET-490\)' 1 0
+
+case_ "In Progress to In Review: one PATCH" pet-386-fixture in-review found st-prog \
+  'PET-386 .+ In Review ✓' 1 1 \
+  '^PATCH http://plane\.test/api/v1/workspaces/ws/projects/proj/work-items/item-386/ \{"state": "st-rev"\}$'
+
+case_ "Backlog to In Progress: one PATCH" pet-386-fixture in-progress found st-back \
+  'PET-386 .+ In Progress ✓' 1 1 \
+  '^PATCH http://plane\.test/api/v1/workspaces/ws/projects/proj/work-items/item-386/ \{"state": "st-prog"\}$'
+
+printf "\n\033[1mA -part- branch merges to In Review (PET-490)\033[0m\n"
+case_ "a -part- merge from In Progress: one PATCH to In Review" pet-490-part-fixture 'done' found st-prog \
+  'keeps it open at In Review.*PET-490 .+ In Review ✓' 1 1 \
+  '^PATCH http://plane\.test/api/v1/workspaces/ws/projects/proj/work-items/item-490/ \{"state": "st-rev"\}$'
+
+case_ "a -part- reconcile on a Done item: refused, no PATCH" pet-490-part-fixture 'done' found st-done \
+  'PET-490 is Done; refused the move to In Review \(backward-move guard, PET-490\)' 1 0
 
 printf "\n\033[1mUnchanged behaviour\033[0m\n"
 case_ "a branch without the prefix syncs nothing" docs-typo 'done' found st-done \
