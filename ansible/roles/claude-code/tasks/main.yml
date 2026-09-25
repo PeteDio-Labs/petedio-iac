@@ -11,8 +11,9 @@
 # unattended path to one — API keys and `claude setup-token` tokens are both refused by the
 # feature. The login, the workspace-trust dialog and the one-time Remote Control consent are
 # operator steps over SSH. The host declares `claude_remote_enable: true` in host_vars, and
-# the role starts the units on the first run that finds the consent on disk (PET-431). See
-# README.md in this role.
+# the role starts the units on the first run that finds the consent on disk (PET-431). It
+# starts each unit only once its directory's trust is on disk too (PET-499). See README.md in
+# this role.
 
 - name: Install base packages
   ansible.builtin.apt:
@@ -451,10 +452,78 @@
   check_mode: false
   when: claude_remote_enable | bool
 
+# ⚠ A SERVER STARTED IN A DIRECTORY NOBODY HAS TRUSTED EXITS AT ONCE, AND LANDS IN `failed`
+# (PET-499). This is the opposite of the consent above, although the two look alike from the
+# README. `claude remote-control` logs "Error: Workspace not trusted. Please run `claude` in
+# <dir> first…" and exits 1. Restart=always retries every 30 s, the fifth start in 5 minutes
+# trips the StartLimit pair in the unit, and systemd parks it in `failed`. Accepting the dialog
+# later does not restart it. Between retries `systemctl is-active` says `activating`, which
+# reads like a slow start, and misled PET-498.
+#
+# So read each directory's trust before starting its unit, as the session user, for the reason
+# the consent check gives. Every served directory is a repository root, and 2.1.280 looks up
+# trust from the working directory up to the repository root. So for a repository root the
+# key is `projects["<dir>"].hasTrustDialogAccepted`, and nothing above it counts. `--arg`
+# passes the path as data, not as jq source.
+#
+# The trust dialog stays a hand step. Do not seed this key from the play: the dialog is where a
+# person reads what the directory can run, such as its hooks, before a session trusts it.
+- name: Check each served directory's workspace trust is on disk
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_user }}"
+      - --
+      - jq
+      - -e
+      - --arg
+      - d
+      - "{{ claude_workspace }}/{{ item.dir }}"
+      - '.projects[$d].hasTrustDialogAccepted == true'
+      - "{{ claude_home }}/.claude.json"
+  register: claude_remote_trust
+  changed_when: false
+  failed_when: false
+  # Read-only, so it runs under --check as well, for the reason the consent check gives.
+  check_mode: false
+  loop: "{{ claude_sessions_servable }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: claude_remote_enable | bool
+
+# Name the trusted sessions rather than the untrusted ones, so the start below needs a jq exit
+# code of 0. A missing file (2), a parse error (5) and a skipped check all read as untrusted.
+- name: Sort the servable sessions by workspace trust
+  ansible.builtin.set_fact:
+    claude_sessions_trusted: >-
+      {{ claude_remote_trust.results | default([]) | selectattr('rc', 'defined')
+         | selectattr('rc', 'equalto', 0) | map(attribute='item.name') | list }}
+    claude_sessions_untrusted: >-
+      {{ claude_remote_trust.results | default([]) | selectattr('rc', 'defined')
+         | rejectattr('rc', 'equalto', 0) | map(attribute='item') | list }}
+
+# Say it where the run happens as well as at the end. The consent failure in the playbook ends
+# the run first when both are missing, and this line still names the trust step.
+- name: Report a session whose directory nobody has trusted
+  ansible.builtin.debug:
+    msg: >-
+      claude_remote_sessions entry '{{ item.name }}' serves
+      {{ claude_workspace }}/{{ item.dir }}, and nobody has accepted the trust dialog there,
+      so its unit is not started. As {{ claude_user }}, run
+      `cd {{ claude_workspace }}/{{ item.dir }} && claude`, accept the dialog, `/exit`, then
+      re-run scripts/deploy-claude-247.sh.
+  loop: "{{ claude_sessions_untrusted }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 # A unit that tripped its start limit on a previous run sits in `failed`, and `systemctl
 # start` answers `Start request repeated too quickly` until someone clears it — so the
 # re-run that carries the operator's fresh login would fail on the wreckage of the run
 # before it. Clear it first; a no-op on a unit that is not failed.
+#
+# Every servable unit, untrusted ones included. An untrusted unit that tripped its limit on an
+# earlier run then reads `inactive`, not `failed`, and the start below leaves it alone.
 - name: Clear a tripped start limit before starting
   ansible.builtin.command:
     cmd: systemctl reset-failed claude-remote-{{ item.name }}.service
@@ -494,8 +563,13 @@
   loop_control:
     label: "{{ item.name }}"
   # Declared on but no consent: a start would only hang, so leave the units exactly as they
-  # are. playbooks/configure-claude-code.yml fails the run at the end with the step to take.
-  when: not (claude_remote_enable | bool) or claude_remote_consent.rc | default(1) == 0
+  # are. Declared on, consent given, but the directory untrusted: a start would only land the
+  # unit in `failed`, so leave that unit alone too. playbooks/configure-claude-code.yml fails
+  # the run at the end with the step to take, for either one.
+  when: >-
+    not (claude_remote_enable | bool)
+    or (claude_remote_consent.rc | default(1) == 0
+        and item.name in claude_sessions_trusted | default([]))
 
 # --- The ticket-driven work loop (PET-399) --------------------------------------------
 # Split into its own file because it is a second, separable thing this host does: the

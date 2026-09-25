@@ -829,6 +829,27 @@ one for the syntax while the text lived only in `CLAUDE.md`.
   served on 247 for two days and never wrote the key. The role checks for it before starting
   a unit, and the playbook fails the run while it is missing.
 
+- **A `claude remote-control` unit in a directory nobody has trusted exits at once and lands
+  in `failed`, the opposite of the consent above (PET-499).** The two look alike from the
+  docs: each is a hand step over SSH that a unit cannot take. They behave in opposite ways.
+  The consent waits at its prompt and systemd reports the unit `active`. An untrusted
+  directory makes the server log ``Error: Workspace not trusted. Please run `claude` in <dir>
+  first…`` and exit 1. `Restart=always` retries every 30 s, the fifth start in 5 minutes trips
+  `StartLimitBurst`, and systemd parks the unit in `failed`. Accepting the dialog later does
+  not restart it: run `systemctl reset-failed` and then start it, or re-run the deploy script.
+  Four places on `main` said an untrusted unit waited at the prompt like the consent, until
+  PET-499 corrected them.
+  - **`activating` is not a slow start.** Between retries the unit sits in
+    `activating (auto-restart)`, so `systemctl is-active` prints `activating` and reads like a
+    server still coming up. That misled PET-498. Read `NRestarts` from `systemctl show`, or
+    the journal, instead.
+  - **The key is `projects["<dir>"].hasTrustDialogAccepted` in `~/.claude.json`.** Claude Code
+    2.1.280 looks it up from the working directory up to the repository root, so for a unit
+    whose directory is a repository root, only that directory's entry counts. The role reads
+    it per unit, as the session user, and starts only the trusted ones. The playbook fails the
+    run naming each untrusted directory. Do not seed the key from the play: the dialog is where
+    a person reads what the directory can run before a session trusts it.
+
 - **A host that serves Remote Control must declare `claude_remote_enable: true`, never pass
   it with `-e` (PET-431).** The role's `false` stops and disables the units. The bootstrap
   once passed `-e claude_remote_enable=true` a single time, so the next run without the flag

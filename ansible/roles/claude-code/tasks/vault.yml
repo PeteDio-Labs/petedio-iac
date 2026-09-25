@@ -237,8 +237,9 @@
 # ⚠ ONE MORE STEP AFTER THIS, AND NO PLAY CAN TAKE IT. Claude Code refuses to work in a
 # directory nobody has trusted, and the trust dialog is interactive: ssh claude@<host>, then
 # `cd ~/work/petedio/{{ claude_vault_dest }} && claude`, accept the dialog, `/exit`. Until
-# then a session started here waits at the prompt while systemd reports the unit active — the
-# failure PET-431 documents for the Remote Control consent.
+# then the role does not start this directory's unit (PET-499). A server started here exits at
+# once, and five starts in 5 minutes land the unit in `failed`, unlike the Remote Control
+# consent, which waits at its prompt (PET-431). After the dialog, re-run the deploy script.
 #
 # noqa reason: `ansible.builtin.git` would run as the connection user, which is root, inside a
 # directory {{ claude_user }} owns. That is the code-execution hazard named in the header.
