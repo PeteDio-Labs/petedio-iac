@@ -19,6 +19,14 @@
 #   HEAD_REF           the PR's head branch, e.g. pet-287-plane-ci-sync
 #   PR_URL             optional; posted as a comment on first transition
 #
+# FORWARD ONLY (PET-490): a move to a state ranked below the item's current one
+# (Backlog < Todo < In Progress < In Review < Done), or any move off Cancelled, is
+# refused with a warning and no PATCH. A person moves an item backward by hand.
+#
+# PARTIAL MERGES (PET-490): a HEAD_REF of `pet-<n>-part-<slug>` delivers part of the
+# item, so PLANE_TRANSITION=done on it moves the item to In Review, not Done. The
+# claude loop names its branches this way, so its PRs never close an item.
+#
 # ADVISORY BY DESIGN: every failure path exits 0 with a ::warning:: annotation.
 # Plane is a homelab LXC — it being down must never block a merge across nine
 # repos. Drift is caught by the nightly reconciler (plane-reconcile.yml).
@@ -59,6 +67,14 @@ case "$PLANE_TRANSITION" in
   todo)        WANT="Todo"        ;;
   *) warn "unknown PLANE_TRANSITION '$PLANE_TRANSITION'"; exit 0 ;;
 esac
+
+# A `pet-<n>-part-` branch delivers part of the item, so its merge leaves the item
+# open at In Review rather than closing it (PET-490). The nightly reconciler passes
+# the same branch name, so it stops re-applying Done too.
+if [[ "$HEAD_REF" =~ ^pet-[0-9]+-part- ]] && [ "$PLANE_TRANSITION" = "done" ]; then
+  WANT="In Review"
+  info "the -part- branch delivers part of PET-$SEQ, so the merge keeps it open at In Review"
+fi
 
 # --- look up the target state ----------------------------------------------------
 STATES=$("${CURL[@]}" "${API}/states/?per_page=100" 2>/dev/null) || {
@@ -128,6 +144,42 @@ if [ "$CUR_STATE" = "$STATE_ID" ]; then
   info "PET-$SEQ already $WANT — no change"
   exit 0
 fi
+
+# --- backward-move guard ---------------------------------------------------------
+# A sync only ever moves an item forward (PET-490): a reconcile must not reopen a
+# Done item, and a closed or drafted PR must not pull an item back. The current
+# state's name and group come from the states list fetched above, so the guard
+# costs no request. Rank by name, then by Plane's state group for a name this
+# table does not know. Cancelled, by name or group, is terminal. A state the list
+# does not hold cannot be ranked, so the move goes ahead as before.
+IFS=$'\t' read -r CUR_NAME VERDICT <<<"$(printf '%s' "$STATES" | python3 -c "
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+rows = d if isinstance(d, list) else (d.get('results') or [])
+cur_id, want = sys.argv[1], sys.argv[2].lower()
+by_name = {'backlog': 0, 'todo': 1, 'in progress': 2, 'in review': 3, 'done': 4}
+by_group = {'backlog': 0, 'triage': 0, 'unstarted': 1, 'started': 2, 'completed': 4}
+cur = next((s for s in rows if s.get('id') == cur_id), None)
+if cur is None:
+    print('-\tunranked'); sys.exit(0)
+name = str(cur.get('name') or '-'); group = str(cur.get('group') or '').lower()
+if name.lower() == 'cancelled' or group == 'cancelled':
+    print(name + '\trefuse'); sys.exit(0)
+rank = by_name.get(name.lower(), by_group.get(group))
+if rank is None:
+    print(name + '\tunranked')
+else:
+    print(name + '\t' + ('refuse' if by_name[want] < rank else 'forward'))
+" "$CUR_STATE" "$WANT" 2>/dev/null)"
+
+case "${VERDICT:-}" in
+  refuse)
+    warn "PET-$SEQ is $CUR_NAME; refused the move to $WANT (backward-move guard, PET-490)"
+    exit 0 ;;
+  forward) ;;
+  *) info "PET-$SEQ current state ${CUR_NAME:-?} has no rank; the guard does not apply" ;;
+esac
 
 CODE=$("${CURL[@]}" -o /tmp/plane-patch.json -w '%{http_code}' \
   -X PATCH "${API}/work-items/${ITEM_ID}/" \

@@ -274,7 +274,7 @@ log "examined ${EXAMINED} work items, ${LABELLED} labelled, ${ELIGIBLE} eligible
 # Pick the first eligible item this loop has not already used up.
 #
 # ⚠ THE CLAIM RECORD IS BELT AND BRACES, NOT BOOKKEEPING. The broker already filters to
-# Todo, and opening a draft PR on a `pet-<n>-` branch fires plane-sync.yml, which moves the
+# Todo, and opening a draft PR on a `pet-<n>-part-` branch fires plane-sync.yml, which moves the
 # item to In Progress. But plane-sync is ADVISORY — it exits 0 on every failure path so a
 # tracker outage cannot block a merge across nine repos — so an outage would leave the item
 # in Todo and the next tick would open a second PR for it. The claim file is what stops
@@ -307,8 +307,8 @@ fi
 ITEM="$(printf '%s' "$PICK" | python3 -c 'import json,sys; print(json.load(sys.stdin)["key"])')"
 TITLE="$(printf '%s' "$PICK" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
 SEQ="${ITEM#PET-}"
-# plane-sync.yml matches `^pet-([0-9]+)-` on the branch name to find the work item again,
-# so a non-numeric key here would open a PR that never syncs its state back.
+# plane-sync.yml matches `^pet-([0-9]+)-` on the branch name, `pet-<n>-part-<slug>`, to find
+# the work item again, so a non-numeric key here would open a PR that never syncs its state back.
 [[ "$SEQ" =~ ^[0-9]+$ ]] || fail "work item key '$ITEM' is not PET-<n>"
 log "taking $ITEM — $TITLE"
 
@@ -380,7 +380,9 @@ fi
 SLUG="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' \
   | sed -e 's/[^a-z0-9]\+/-/g' -e 's/^-*//' -e 's/-*$//' | cut -c1-40 | sed -e 's/-*$//')"
 [ -n "$SLUG" ] || SLUG=work
-BRANCH="pet-${SEQ}-${SLUG}"
+# `-part-` marks the PR as partial delivery, so plane-sync.sh moves the item to In Review
+# on merge rather than Done, and Pedro closes it by hand after review (PET-490).
+BRANCH="pet-${SEQ}-part-${SLUG}"
 
 as_loop_user git -C "$CHECKOUT" fetch --prune origin 2>&1 | sed 's/^/    /' >&2 \
   || fail_item "git fetch failed"

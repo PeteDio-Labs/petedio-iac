@@ -61,7 +61,7 @@ case "$1" in
 # cap — EXITS NON-ZERO rather than returning an empty list that reads like an idle queue.
 #
 # Eligible = carries the label AND sits in the `Todo` state. The state half is what stops
-# the loop re-picking an item it already worked: opening a draft PR on a `pet-<n>-` branch
+# the loop re-picking an item it already worked: opening a draft PR on a `pet-<n>-part-` branch
 # fires plane-sync.yml, which moves the item to In Progress. That sync is advisory and
 # exits 0 on failure, so the tick keeps its own claim record too — belt and braces, see
 # scripts/claude-loop-tick.sh.

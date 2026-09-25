@@ -256,8 +256,8 @@ hb pr | grep -q "pull/999" && ok "heartbeat carries the PR url" || no "pr url" "
 grep -q -- "--draft" "$GH_LOG" && ok "the PR is created --draft" || no "--draft" "$(cat "$GH_LOG")"
 grep -q "pr comment" "$GH_LOG" && ok "the spec diff posts as a comment" || no "pr comment" "$(cat "$GH_LOG")"
 ! grep -qE "pr (merge|ready)" "$GH_LOG" && ok "nothing merges or marks ready" || no "no merge/ready" "$(cat "$GH_LOG")"
-git -C "$CLAUDE_LOOP_CHECKOUT" rev-parse --abbrev-ref HEAD | grep -q "^pet-500-give-the-thing" \
-  && ok "branch is pet-500-<slug>" || no "branch name" "$(git -C "$CLAUDE_LOOP_CHECKOUT" rev-parse --abbrev-ref HEAD)"
+git -C "$CLAUDE_LOOP_CHECKOUT" rev-parse --abbrev-ref HEAD | grep -q "^pet-500-part-give-the-thing" \
+  && ok "branch is pet-500-part-<slug>" || no "branch name" "$(git -C "$CLAUDE_LOOP_CHECKOUT" rev-parse --abbrev-ref HEAD)"
 git -C "$CLAUDE_LOOP_CHECKOUT" ls-remote --heads origin 2>/dev/null | grep -q pet-500 \
   && ok "the branch reached origin" || no "push" ""
 git -C "$CLAUDE_LOOP_CHECKOUT" show --stat --name-only HEAD | grep -q "claude-loop-checkout" \
