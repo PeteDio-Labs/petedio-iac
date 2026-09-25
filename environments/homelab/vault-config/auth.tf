@@ -342,3 +342,34 @@ resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   token_policies = [vault_policy.openfaas_ci.name]
   token_ttl      = 900
 }
+
+# claude-247-deploy role → claude-247-deploy policy (PET-515). petedio-iac's
+# ansible-claude-247.yml deploys 247's claude-code role from the homelab runner, and this is
+# the only role that workflow mints.
+#
+# ⚠ BOUND TO THE WORKFLOW AND THE EVENT, NOT ONLY THE REPO, as media-updates is. repository +
+# ref alone would let any workflow on this repo's main mint it, and this policy reads four
+# App private keys. workflow_ref pins the file and event_name pins workflow_dispatch, so a
+# push, a schedule or a pull request cannot mint it. A pull_request run fails both ref and
+# event_name, which keeps the PET-104 rule that no PR run on this public repo mints a homelab
+# token. It binds claims rather than sub because the id-based subject migration (PET-360)
+# changes sub, and sub cannot name the workflow file.
+#
+# APPLY THIS BEFORE THE FIRST DISPATCH. Until the role exists in Vault, the workflow's login
+# fails with a 403 and the play never runs.
+resource "vault_jwt_auth_backend_role" "claude_247_deploy" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "claude-247-deploy"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository   = var.github_repo
+    ref          = "refs/heads/main"
+    event_name   = "workflow_dispatch"
+    workflow_ref = "${var.github_repo}/.github/workflows/ansible-claude-247.yml@refs/heads/main"
+  }
+  token_policies = [vault_policy.claude_247_deploy.name]
+  token_ttl      = 900
+}
