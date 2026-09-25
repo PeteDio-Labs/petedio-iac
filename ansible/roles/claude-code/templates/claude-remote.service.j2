@@ -41,6 +41,17 @@ ExecStart={{ claude_npm_prefix }}/bin/claude remote-control \
     --remote-control-session-name-prefix {{ item.name }}
 Restart=always
 RestartSec=30
+# WAIT FOR THE RESOLVER, DO NOT FAIL ON IT (PET-446). An expired login and a DNS failure both
+# exit 1 within seconds, so during a resolver outage the start limit above would count five
+# starts and latch the unit failed, the same as for an expired login. A pre-command that
+# FAILS still counts a start and latches the same way, so this one WAITS: it holds the start
+# until api.anthropic.com resolves, then lets the server run.
+# TimeoutStartSec IS LOAD-BEARING. With Type=simple it covers the pre-command, and its 90 s
+# default would kill the gate and count a start. At 10min, starts during an outage are at
+# least 10 minutes apart, so 5 never fit in 300 s. With a live resolver the gate passes at
+# once, so the bound on an expired login is unchanged.
+ExecStartPre=/bin/sh -c 'if ! /usr/bin/getent ahosts api.anthropic.com >/dev/null; then echo "No answer for api.anthropic.com; holding the start until the resolver answers."; until /usr/bin/getent ahosts api.anthropic.com >/dev/null; do sleep 5; done; echo "The resolver answered; starting."; fi'
+TimeoutStartSec=10min
 KillMode=mixed
 TimeoutStopSec=30
 
