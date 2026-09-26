@@ -26,7 +26,9 @@
 # SECRETS (resolved by scripts/deploy-media-dash.sh, passed as no_log extra-vars):
 #   media_dash_ssh_private_key  (Vault kv/services/media/dashboard, field ssh_private_key)
 #   media_dash_ssh_public_key   (kv/services/media/dashboard, field ssh_public_key)
-#   mtrace_api_token            (kv/services/media/dashboard, field api_token)
+#   mtrace_caller_tokens        (kv/services/media/dashboard, one field token_<name> per
+#                                caller; the legacy field api_token maps to caller
+#                                "pete-bot" until scripts/mtrace-caller-token.sh revokes it)
 # Run via:  ./scripts/deploy-media-dash.sh
 
 - name: Authorise mtrace's dedicated key on the media hosts it reads
@@ -83,15 +85,46 @@
     # built on the runner; the operator's script points it at the local checkout.
     media_dash_binary_src: "{{ lookup('env', 'HOME') }}/petedio/media-control/dist/mtrace"
 
+    # ⚠ THE LAN BIND, AND WHO IS ON THE OTHER END OF IT (PET-518). mtrace used to answer
+    # only on 127.0.0.1; it now binds its own LAN address so pete-bot's replacement caller
+    # and anything else on the allowlist can reach it directly. .4 is pete-pi-1, the
+    # tailnet subnet router — `tailscale debug prefs` there shows NoSNAT=false, so a
+    # tailnet client's request arrives at mtrace already SNAT'd to .4, and .4 is the one
+    # address the allowlist needs to carry every tailnet caller. The nftables allowlist
+    # below is what makes opening this bind safe; see mtrace.env.j2 for the rest of that
+    # story.
+    mtrace_bind: "192.168.50.237"
+    mtrace_allow_sources: ["192.168.50.4"]
+
   pre_tasks:
+    - name: Assert the LAN bind and allowlist are sane
+      ansible.builtin.assert:
+        that:
+          - mtrace_bind not in ['0.0.0.0', '::', '127.0.0.1']
+          - mtrace_allow_sources | length > 0
+        fail_msg: >-
+          mtrace_bind must be a real address, not 0.0.0.0, :: or 127.0.0.1 — this play
+          pairs the LAN bind with an nftables allowlist, and a wildcard or loopback bind
+          here defeats the point of both. mtrace_allow_sources must name at least one
+          caller (PET-518).
+
     - name: Assert required secret extra-vars were provided (use scripts/deploy-media-dash.sh)
       ansible.builtin.assert:
         that:
           - media_dash_ssh_private_key is defined and media_dash_ssh_private_key | length > 0
-          - mtrace_api_token is defined and mtrace_api_token | length > 0
+          - mtrace_caller_tokens is defined and mtrace_caller_tokens is mapping
+          - mtrace_caller_tokens | length > 0
+          - mtrace_caller_tokens.keys() | reject('match', '^[a-z0-9-]+$') | list | length == 0
+          - mtrace_caller_tokens.values() | select('equalto', '') | list | length == 0
+          - mtrace_caller_tokens.values() | reject('match', '\\A[A-Za-z0-9_-]+\\Z') | list | length == 0
         fail_msg: >-
-          Missing secret extra-vars. Run scripts/deploy-media-dash.sh, which resolves them
-          from Vault (kv/services/media/dashboard) and passes them in.
+          Missing or malformed secret extra-vars. Run scripts/deploy-media-dash.sh, which
+          resolves them from Vault (kv/services/media/dashboard) and passes them in.
+          mtrace_caller_tokens must be a non-empty name -> token mapping, every name
+          matching ^[a-z0-9-]+$, and every token matching \A[A-Za-z0-9_-]+\Z (no ',', ':',
+          whitespace or newline — those would corrupt MEDIA_CONTROL_TOKENS's own field
+          and pair separators). \A/\Z, not ^/$: Python's $ matches before a trailing
+          newline too, which is exactly the byte this assert exists to catch.
       no_log: true
 
     # Without this the play would install a stale binary, or none, and the service would
@@ -177,6 +210,82 @@
         mode: "0750"
       notify: Restart mtrace
 
+    # ⚠ THE ALLOWLIST, AND WHY IT LOADS BEFORE mtrace EVER BINDS THE LAN (PET-518). mtrace
+    # used to bind loopback only; it now binds mtrace_bind, and the SSH key it holds is
+    # root on six media hosts. This table is the thing making that bind safe: only lo and
+    # mtrace_allow_sources may reach mtrace_port, everything else gets a TCP reset. It is
+    # its own systemd unit and its own nftables table on purpose — see
+    # templates/mtrace-allowlist.service.j2 and templates/mtrace-allowlist.nft.j2 for why
+    # this does not touch /etc/nftables.conf or nftables.service.
+    - name: Install nftables
+      ansible.builtin.apt:
+        name: nftables
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create the allowlist directory
+      ansible.builtin.file:
+        path: /etc/mtrace
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the LAN allowlist ruleset
+      ansible.builtin.template:
+        src: mtrace-allowlist.nft.j2
+        dest: /etc/mtrace/allowlist.nft
+        owner: root
+        group: root
+        mode: "0644"
+        # nft parses the file at install time, so a syntax error fails HERE rather than at
+        # the next boot on a node nobody is watching.
+        validate: /usr/sbin/nft -c -f %s
+      notify: Restart mtrace allowlist
+
+    - name: Install the allowlist unit
+      ansible.builtin.template:
+        src: mtrace-allowlist.service.j2
+        dest: /etc/systemd/system/mtrace-allowlist.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart mtrace allowlist
+
+    - name: Enable and start the allowlist
+      ansible.builtin.systemd:
+        name: mtrace-allowlist
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Flush handlers so the allowlist is live before mtrace ever binds the LAN
+      ansible.builtin.meta: flush_handlers
+
+    - name: Read the live allowlist
+      ansible.builtin.command:
+        cmd: nft list table inet mtrace_allow
+      register: mtrace_allow_live
+      changed_when: false
+
+    - name: Assert the allowlist is actually loaded, before mtrace binds the LAN
+      ansible.builtin.assert:
+        that:
+          - (mtrace_port | string) in mtrace_allow_live.stdout
+          - "'iif \"lo\" accept' in mtrace_allow_live.stdout"
+          - mtrace_allow_sources | select('in', mtrace_allow_live.stdout) | list | length == mtrace_allow_sources | length
+          - "'reject' in mtrace_allow_live.stdout"
+        fail_msg: >-
+          table inet mtrace_allow is not carrying the rules this deploy expects — port
+          {{ mtrace_port }}, a loopback accept, every one of {{ mtrace_allow_sources }},
+          and a reject. Fix the allowlist before mtrace starts on the LAN bind, not after.
+        success_msg: >-
+          mtrace_allow accepts lo and {{ mtrace_allow_sources | join(', ') }} on
+          {{ mtrace_port }}/tcp, and rejects everything else.
+
     - name: Install the service environment
       ansible.builtin.template:
         src: mtrace.env.j2
@@ -210,8 +319,11 @@
     # the stack, which is what a fresh key, a missing known_hosts entry or a moved container
     # all break — and all of which leave /health perfectly green.
     - name: Wait for the service to answer
+      # Runs on the target, so this reaches mtrace_bind via lo — a connection to an
+      # address the host owns is delivered locally regardless of bind, and the allowlist
+      # accepts lo unconditionally (PET-518).
       ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ mtrace_port }}/health"
+        url: "http://{{ mtrace_bind }}:{{ mtrace_port }}/health"
         return_content: true
       register: mtrace_health
       retries: 10
@@ -258,6 +370,17 @@
     - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: true
+
+    # ⚠ LISTED BEFORE "Restart mtrace", AND THAT ORDER IS THE POINT. Handlers run in the
+    # order they are DEFINED here, not the order they are notified, so a run that changes
+    # both the allowlist and mtrace's own files always reloads the allowlist first. The
+    # nftables tasks above also flush handlers and verify the live table before mtrace's
+    # tasks run at all, so this handler mainly covers a LATER run that only touches the
+    # allowlist file or unit.
+    - name: Restart mtrace allowlist
+      ansible.builtin.systemd:
+        name: mtrace-allowlist
+        state: restarted
 
     - name: Restart mtrace
       ansible.builtin.systemd:

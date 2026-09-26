@@ -1,0 +1,24 @@
+# mtrace's LAN allowlist loader (PET-518). MANAGED BY ANSIBLE — edits here are
+# overwritten.
+#
+# ⚠ ITS OWN UNIT RATHER THAN nftables.service, for the same reason as the file it loads:
+# nftables.service applies /etc/nftables.conf, whose default content flushes the whole
+# ruleset — a node-wide change this app must not make. This unit loads exactly one file
+# and creates exactly one table.
+#
+# ⚠ NO ExecStop, DELIBERATELY. Stopping this unit must never open mtrace_port to the
+# LAN: mtrace holds an SSH key that is root on six media hosts, so "the allowlist service
+# stopped" must not be a way to remove the allowlist while mtrace.service keeps running.
+# The table only goes away if something explicitly flushes it or the host reboots without
+# this unit's [Install] enabled.
+[Unit]
+Description=mtrace LAN allowlist (nftables)
+Before=mtrace.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/mtrace/allowlist.nft
+
+[Install]
+WantedBy=multi-user.target
