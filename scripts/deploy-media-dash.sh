@@ -35,8 +35,15 @@ export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault token invalid / Vault unreachable."
 
 step "Compiling the binary"
-( cd "$SRC" && bun install --frozen-lockfile >/dev/null && bun run build )
+# ⚠ NAME THE TARGET. `bun build --compile` builds for the machine it runs on. From 247
+# that is Linux x86_64 and matches 237 by luck; from the Mac it is a Mach-O arm64
+# binary, which the playbook copied into place and systemd refused with
+# `Exec format error` (PET-521). The extra argument is appended to the package's
+# build script.
+( cd "$SRC" && bun install --frozen-lockfile >/dev/null && bun run build --target=bun-linux-x64 )
 [ -x "$SRC/dist/mtrace" ] || die "bun run build produced no dist/mtrace."
+file -b "$SRC/dist/mtrace" | grep -q '^ELF 64-bit.*x86-64' \
+  || die "dist/mtrace is not a Linux x86-64 binary: $(file -b "$SRC/dist/mtrace")"
 ls -lh "$SRC/dist/mtrace"
 
 step "Reading kv/services/media/dashboard"
