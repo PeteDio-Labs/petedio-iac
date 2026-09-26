@@ -5,7 +5,8 @@
 # privileged Vault token. This plans first and REFUSES to apply if the plan would destroy
 # anything, so routine changes (e.g. a JWT bound_claims edit) apply safely and unattended.
 #
-#   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM, else prompt
+#   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No
+#   interactive prompt (PET-518) — set one of those first, or this refuses to run.
 set -euo pipefail
 
 # ⚠ DESTROYS ARE OPT-IN, PER INVOCATION. The guard below refuses any plan that removes
@@ -52,7 +53,7 @@ step "Credentials"
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
-[ -n "${VAULT_TOKEN:-}" ] || { read -rsp "Vault token: " VAULT_TOKEN; echo; }
+[ -n "${VAULT_TOKEN:-}" ] || die "no Vault token: set VAULT_TOKEN or add the Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM"
 export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault token invalid / Vault unreachable."
 # vault-config state lives in the MinIO S3 backend
