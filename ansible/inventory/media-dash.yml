@@ -46,4 +46,9 @@ all:
         # ⚠ plex-gpu (236), NOT the dead plex 103 at .140. 103 died with pve01 on
         # 2026-09-03 and was never rebuilt; a probe pointed at .140 for three days and
         # scored a hard NO on every Plex check.
-        plex-gpu: { ansible_host: 192.168.86.236 }    # 236, pve02, .86 only (PET-504)
+        # ⚠ 237 reaches 236's mesh address through the .50 router's NAT, so sshd on 236
+        # sees mtrace arrive as 192.168.86.44, not .237 (PET-522). Every .50 host arrives
+        # as .44 too, so here from= no longer pins the key to 237. The key never leaves 237.
+        plex-gpu:                                      # 236, pve02, .86 only (PET-504)
+          ansible_host: 192.168.86.236
+          mtrace_key_sources: ["192.168.50.237", "192.168.86.44"]

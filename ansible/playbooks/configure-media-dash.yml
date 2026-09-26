@@ -65,7 +65,9 @@
         # *arr API key on its own host instead of centralising them. Narrowing further
         # needs a forced command wrapping that call, deployed to all six hosts, which is
         # its own change rather than a line here.
-        key_options: 'restrict,from="192.168.50.237"'
+        # A host reached through NAT lists its NAT source in mtrace_key_sources, in the
+        # inventory (plex-gpu, PET-522).
+        key_options: 'restrict,from="{{ mtrace_key_sources | default(["192.168.50.237"]) | join(",") }}"'
         state: present
         # Never exclusive: these hosts are also reached by the ansible key and by the
         # operator, and pruning those would lock the lab out of its own media stack.
