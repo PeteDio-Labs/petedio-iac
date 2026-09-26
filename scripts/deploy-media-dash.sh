@@ -35,7 +35,8 @@ export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault token invalid / Vault unreachable."
 
 step "Compiling the binary"
-( cd "$SRC" && bun install --frozen-lockfile >/dev/null && bun run build )
+# 237 is x86-64 Linux, and bun compiles for the host by default, so name the target.
+( cd "$SRC" && bun install --frozen-lockfile >/dev/null && bun run build --target=bun-linux-x64 )
 [ -x "$SRC/dist/mtrace" ] || die "bun run build produced no dist/mtrace."
 ls -lh "$SRC/dist/mtrace"
 
