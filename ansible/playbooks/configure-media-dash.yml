@@ -116,13 +116,15 @@
           - mtrace_caller_tokens | length > 0
           - mtrace_caller_tokens.keys() | reject('match', '^[a-z0-9-]+$') | list | length == 0
           - mtrace_caller_tokens.values() | select('equalto', '') | list | length == 0
-          - mtrace_caller_tokens.values() | select('search', '[,:]') | list | length == 0
+          - mtrace_caller_tokens.values() | reject('match', '\\A[A-Za-z0-9_-]+\\Z') | list | length == 0
         fail_msg: >-
           Missing or malformed secret extra-vars. Run scripts/deploy-media-dash.sh, which
           resolves them from Vault (kv/services/media/dashboard) and passes them in.
           mtrace_caller_tokens must be a non-empty name -> token mapping, every name
-          matching ^[a-z0-9-]+$, and every token non-empty with no ',' or ':' (those are
-          MEDIA_CONTROL_TOKENS's own field and pair separators).
+          matching ^[a-z0-9-]+$, and every token matching \A[A-Za-z0-9_-]+\Z (no ',', ':',
+          whitespace or newline — those would corrupt MEDIA_CONTROL_TOKENS's own field
+          and pair separators). \A/\Z, not ^/$: Python's $ matches before a trailing
+          newline too, which is exactly the byte this assert exists to catch.
       no_log: true
 
     # Without this the play would install a stale binary, or none, and the service would

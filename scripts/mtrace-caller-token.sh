@@ -80,8 +80,11 @@ mtrace_create() {
   step "Minting and writing $FIELD"
   local result version
   # The token never touches argv: openssl writes it to a pipe, and vault reads that pipe
-  # as the value for FIELD because the argument is "FIELD=-".
-  result="$(openssl rand -hex 32 | vault kv patch -format=json "$SECRET_PATH" "${FIELD}=-")"
+  # as the value for FIELD because the argument is "FIELD=-". `tr -d '\n'` matters: Vault's
+  # kv-builder copies stdin verbatim for a "-" value, and openssl's own output ends in a
+  # newline, so without this the stored token is 64 hex chars PLUS a trailing newline —
+  # MEDIA_CONTROL_TOKENS then splits across two lines and systemd silently drops the rest.
+  result="$(openssl rand -hex 32 | tr -d '\n' | vault kv patch -format=json "$SECRET_PATH" "${FIELD}=-")"
   version="$(printf '%s' "$result" | jq -r '.data.version')"
 
   echo "field: $FIELD"
@@ -102,7 +105,8 @@ mtrace_rotate() {
 
   step "Minting and writing a fresh $FIELD"
   local result version
-  result="$(openssl rand -hex 32 | vault kv patch -format=json "$SECRET_PATH" "${FIELD}=-")"
+  # See mtrace_create for why `tr -d '\n'` is required here too.
+  result="$(openssl rand -hex 32 | tr -d '\n' | vault kv patch -format=json "$SECRET_PATH" "${FIELD}=-")"
   version="$(printf '%s' "$result" | jq -r '.data.version')"
 
   echo "field: $FIELD"
