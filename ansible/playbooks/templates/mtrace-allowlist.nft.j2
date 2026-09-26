@@ -1,0 +1,24 @@
+#!/usr/sbin/nft -f
+# mtrace's LAN allowlist. MANAGED BY ANSIBLE — edits here are overwritten.
+#
+# ⚠ ITS OWN TABLE, ON PURPOSE (PET-518). Everything here lives in
+# `table inet mtrace_allow` and nothing else on this node is touched. This does NOT
+# touch /etc/nftables.conf or nftables.service: Debian's default nftables.conf flushes
+# the whole ruleset, and enabling that service would be a node-wide firewall change made
+# as a side effect of one app's deploy. `delete table` at the top makes this file
+# idempotent — re-running it replaces this table and leaves every other table alone.
+#
+# Loaded by mtrace-allowlist.service, which runs BEFORE mtrace.service (see
+# mtrace.service.j2's Requires=/After=), so mtrace never binds mtrace_bind with the port
+# open to the whole LAN, even for one boot.
+table inet mtrace_allow
+delete table inet mtrace_allow
+
+table inet mtrace_allow {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    tcp dport {{ mtrace_port }} iif "lo" accept
+    tcp dport {{ mtrace_port }} ip saddr { {{ mtrace_allow_sources | join(', ') }} } accept
+    tcp dport {{ mtrace_port }} reject with tcp reset
+  }
+}

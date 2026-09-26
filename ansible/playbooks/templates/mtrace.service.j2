@@ -8,6 +8,10 @@ Description=mtrace — media stack control surface
 Documentation=https://github.com/PeteDio-Labs/petedio-media-control
 After=network-online.target
 Wants=network-online.target
+# mtrace now binds mtrace_bind (the LAN), not loopback, so it must never start — or
+# restart — before the allowlist that makes that bind safe is loaded (PET-518).
+Requires=mtrace-allowlist.service
+After=mtrace-allowlist.service
 
 [Service]
 Type=simple

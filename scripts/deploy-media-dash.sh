@@ -46,14 +46,29 @@ vault kv get -format=json kv/services/media/dashboard \
   | python3 -c '
 import json, sys, yaml
 d = json.load(sys.stdin)["data"]["data"]
-missing = [k for k in ("ssh_private_key", "ssh_public_key", "api_token") if not d.get(k)]
+missing = [k for k in ("ssh_private_key", "ssh_public_key") if not d.get(k)]
 if missing:
     sys.exit("kv/services/media/dashboard is missing: " + ", ".join(missing) +
              " — run scripts/reseed-media-dash-vault.sh first.")
+
+# One token per caller (PET-518): every token_<name> field maps to caller <name>. The
+# legacy api_token maps to "pete-bot", unless token_pete-bot already exists — once
+# scripts/mtrace-caller-token.sh mints a dedicated token, that one wins.
+caller_tokens = {}
+for key, value in d.items():
+    if key.startswith("token_") and value:
+        caller_tokens[key[len("token_"):]] = value
+if d.get("api_token") and "pete-bot" not in caller_tokens:
+    caller_tokens["pete-bot"] = d["api_token"]
+
+if not caller_tokens:
+    sys.exit("kv/services/media/dashboard has no caller tokens (token_<name> fields, or "
+             "the legacy api_token) — run scripts/mtrace-caller-token.sh create <name>.")
+
 yaml.safe_dump({
     "media_dash_ssh_private_key": d["ssh_private_key"],
     "media_dash_ssh_public_key": d["ssh_public_key"],
-    "mtrace_api_token": d["api_token"],
+    "mtrace_caller_tokens": caller_tokens,
 }, open(sys.argv[1], "w"))
 ' "$TMP/extra.yml"
 
@@ -64,5 +79,32 @@ ansible-playbook playbooks/configure-media-dash.yml \
   -e "@$TMP/extra.yml" \
   "$@"
 
-step "Proving it answers"
-curl -fsS --max-time 15 http://192.168.50.237:8237/health && echo
+step "Confirming the LAN bind refuses this controller"
+# ⚠ THE MAC IS NOT IN mtrace_allow_sources. Only pete-pi-1 (192.168.50.4, the tailnet
+# subnet router) is allowed, so a successful TCP connect from here means the allowlist
+# did not load, not that everything is fine. The one exception: a controller that itself
+# reaches the LAN through pete-pi-1 (for example, over the tailnet with pete-pi-1 as the
+# subnet router) — that controller SHOULD see this "probe succeeded" failure, because it
+# is indistinguishable on the wire from .4 itself.
+#
+# Portable background-and-kill instead of `timeout`: macOS's default bash ships with no
+# timeout(1), but /dev/tcp is a bash builtin on both platforms.
+mtrace_probe_open() {
+  local host="$1" port="$2" secs="$3"
+  ( exec 3<>"/dev/tcp/${host}/${port}" ) >/dev/null 2>&1 &
+  local probe_pid=$!
+  ( sleep "$secs"; kill -KILL "$probe_pid" >/dev/null 2>&1 ) &
+  local killer_pid=$!
+  local rc=0
+  wait "$probe_pid" 2>/dev/null || rc=$?
+  kill "$killer_pid" >/dev/null 2>&1 || true
+  wait "$killer_pid" 2>/dev/null || true
+  return "$rc"
+}
+
+if mtrace_probe_open 192.168.50.237 8237 5; then
+  die "192.168.50.237:8237 accepted a TCP connection from this controller. Either the" \
+      "allowlist did not load, or this controller reaches the LAN through pete-pi-1" \
+      "(192.168.50.4) — the one caller mtrace_allow_sources permits."
+fi
+echo "  refused, as expected from a controller outside mtrace_allow_sources"
