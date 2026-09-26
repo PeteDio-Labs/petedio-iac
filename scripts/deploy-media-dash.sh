@@ -109,9 +109,21 @@ mtrace_probe_open() {
   return "$rc"
 }
 
-if mtrace_probe_open 192.168.50.237 8237 5; then
+# A controller whose route to 237 runs through a tunnel interface (utun on macOS,
+# tailscale0 on Linux) arrives SNATed as .4, so the probe proves nothing from here.
+# Say so rather than fail a deploy that worked (PET-521).
+mtrace_route_if="$( { route -n get 192.168.50.237 2>/dev/null | awk '/interface:/ {print $2}'; } \
+  || true)"
+[ -n "$mtrace_route_if" ] || mtrace_route_if="$(ip route get 192.168.50.237 2>/dev/null \
+  | awk '{for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1)}' || true)"
+if [[ "$mtrace_route_if" == utun* || "$mtrace_route_if" == tailscale* ]]; then
+  echo "  skipped: this controller reaches the LAN through $mtrace_route_if, so pete-pi-1"
+  echo "  SNATs it to 192.168.50.4, which the allowlist accepts. Probe from a LAN host"
+  echo "  outside mtrace_allow_sources to check the allowlist."
+elif mtrace_probe_open 192.168.50.237 8237 5; then
   die "192.168.50.237:8237 accepted a TCP connection from this controller. Either the" \
       "allowlist did not load, or this controller reaches the LAN through pete-pi-1" \
       "(192.168.50.4) — the one caller mtrace_allow_sources permits."
+else
+  echo "  refused, as expected from a controller outside mtrace_allow_sources"
 fi
-echo "  refused, as expected from a controller outside mtrace_allow_sources"
