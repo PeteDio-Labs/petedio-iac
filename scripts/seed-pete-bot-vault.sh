@@ -11,9 +11,8 @@
 # every sibling reseed script does: $VAULT_TOKEN, else the macOS Keychain item, else a
 # prompt.
 #
-# ⚠ mtrace's API token is deliberately NOT copied here. It already lives at
-# kv/services/media/dashboard, and duplicating it would mean rotating it in two places
-# and finding out about the second one at 3am. deploy-pete-bot.sh reads both paths.
+# ⚠ No mtrace token belongs here. Pete Bot stopped calling mtrace in PET-518, so
+# deploy-pete-bot.sh reads this one path and nothing else.
 #
 # Usage:
 #   ./scripts/seed-pete-bot-vault.sh              # prompts for what it needs

@@ -6,10 +6,8 @@
 # Ansible have no view of, and the secrets live in Vault behind a privileged read that
 # a play cannot perform for itself.
 #
-# ⚠ TWO VAULT PATHS, DELIBERATELY. pete-bot's own credentials are at
-# kv/services/pete-bot; mtrace's API token stays at kv/services/media/dashboard and is
-# read from there rather than copied. Duplicating it would mean rotating it in two
-# places and finding out about the second one at 3am.
+# ⚠ ONE VAULT PATH. Every credential pete-bot uses is at kv/services/pete-bot. It no
+# longer reads kv/services/media/dashboard, because it no longer calls mtrace (PET-518).
 #
 # Usage:
 #   ./scripts/deploy-pete-bot.sh              # build, then deploy
@@ -63,14 +61,13 @@ PB_TOKEN="$(read_field kv/services/pete-bot discord_token)"
 PB_CLIENT="$(read_field kv/services/pete-bot discord_client_id)"
 PB_OWNER="$(read_field kv/services/pete-bot owner_user_id)"
 PB_BEARER="$(read_field kv/services/pete-bot alert_bearer_token)"
-MTRACE_TOKEN="$(read_field kv/services/media/dashboard api_token)"
 # Optional (PET-395): the token /update dispatches with. Absent leaves /update saying it
 # is not configured, rather than failing the whole deploy.
 PB_UPDATES_TOKEN="$(vault kv get -field=github_updates_token kv/services/pete-bot 2>/dev/null || true)"
 if [ -n "$PB_UPDATES_TOKEN" ]; then
-  echo "  resolved 6 values from 2 paths, including the /update token"
+  echo "  resolved 5 values, including the /update token"
 else
-  echo "  resolved 5 values from 2 paths; no github_updates_token, so /update will say it is not configured"
+  echo "  resolved 4 values; no github_updates_token, so /update will say it is not configured"
 fi
 
 if [ "$BUILD" = "1" ]; then
@@ -95,7 +92,7 @@ trap 'rm -rf "$TMP"' EXIT
 # reach python through the ENVIRONMENT, never argv.
 OUT="$TMP/extra.json" \
 PB_TOKEN="$PB_TOKEN" PB_CLIENT="$PB_CLIENT" PB_OWNER="$PB_OWNER" \
-PB_BEARER="$PB_BEARER" MTRACE_TOKEN="$MTRACE_TOKEN" BIN="$BIN" \
+PB_BEARER="$PB_BEARER" BIN="$BIN" \
 PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
 python3 -c '
 import json, os
@@ -105,7 +102,6 @@ json.dump({
     "pete_bot_discord_client_id":os.environ["PB_CLIENT"],
     "pete_bot_owner_user_id":    os.environ["PB_OWNER"],
     "pete_bot_alert_bearer":     os.environ["PB_BEARER"],
-    "pete_bot_mtrace_token":     os.environ["MTRACE_TOKEN"],
     "pete_bot_github_updates_token": os.environ.get("PB_UPDATES_TOKEN", ""),
 }, open(os.environ["OUT"], "w"))
 '
@@ -115,8 +111,8 @@ ansible-playbook -i inventory/ playbooks/configure-pete-bot.yml -e "@$TMP/extra.
 
 step "Done"
 cat <<'NOTE'
-  pete-bot is on media-dash-237. It reaches mtrace over loopback and Discord outbound;
-  nothing new listens on the LAN.
+  pete-bot is on media-dash-237. It reaches Discord and GitHub outbound, and nothing
+  new listens on the LAN.
 
   Check it with:
     ssh root@192.168.50.10 'pct exec 237 -- systemctl status pete-bot --no-pager'

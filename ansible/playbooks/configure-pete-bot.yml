@@ -1,15 +1,16 @@
 ---
 # configure-pete-bot.yml — install pete-bot on media-dash-237, beside mtrace (PET-375).
 #
-# WHAT IT IS. A Discord surface and nothing else. /ask forwards to mtrace on loopback
-# and renders the answer; POST /v1/alert takes an Uptime Kuma webhook and DMs the owner,
-# editing the original message when the service recovers. It holds no tools of its own.
+# WHAT IT IS. A Discord surface and nothing else. POST /v1/alert takes an Uptime Kuma
+# webhook and DMs the owner, editing the original message when the service recovers, and
+# /update starts the media-updates workflow. It holds no tools of its own.
+#
+# ⚠ IT NO LONGER TALKS TO MTRACE (PET-518). /ask, DM forwarding and the /status mtrace
+# line are gone, so this play passes no mtrace token or URL. Don't add one back: mtrace
+# gives each caller its own token, and Pete Bot isn't a caller.
 #
 # WHY IT LIVES HERE. A Discord bot needs only an OUTBOUND websocket, so co-locating it
-# exposes nothing new, and it reaches mtrace over 127.0.0.1 without widening that bind
-# or copying the SSH key that is root on six media hosts onto a second box. Keeping that
-# key on exactly one host is worth more than isolating two processes that already trust
-# each other.
+# on 237 exposes nothing new.
 #
 # ⚠ THE BINARY IS BUILT ON THE CONTROLLER. `bun build --compile` produces a standalone
 # linux-x64 executable, so 237 needs neither node nor bun and no npm install runs on a
@@ -36,7 +37,7 @@
     pete_bot_port: 3015
     # Required, passed by scripts/deploy-pete-bot.sh. Never defaulted here.
     #   pete_bot_binary_src, pete_bot_discord_token, pete_bot_discord_client_id,
-    #   pete_bot_owner_user_id, pete_bot_alert_bearer, pete_bot_mtrace_token
+    #   pete_bot_owner_user_id, pete_bot_alert_bearer
     # Optional (PET-395): pete_bot_github_updates_token, for /update. Empty leaves
     # /update answering that it is not configured.
 
@@ -48,10 +49,9 @@
           - pete_bot_discord_client_id is defined and pete_bot_discord_client_id | length > 0
           - pete_bot_owner_user_id is defined and pete_bot_owner_user_id | length > 0
           - pete_bot_alert_bearer is defined and pete_bot_alert_bearer | length > 0
-          - pete_bot_mtrace_token is defined and pete_bot_mtrace_token | length > 0
         fail_msg: >-
           Missing secret extra-vars. Run scripts/deploy-pete-bot.sh, which resolves them
-          from kv/services/pete-bot and kv/services/media/dashboard and passes them in.
+          from kv/services/pete-bot and passes them in.
       # no_log deliberately absent: assert never echoes a value, and censoring the result
       # would hide the fail_msg that names the script to run.
 
