@@ -143,6 +143,28 @@
           petedio-media-control first, or pass -e media_dash_binary_src=<path>.
       when: not mtrace_binary_stat.stat.exists
 
+    # ⚠ 237 is an x86-64 Linux container, and `bun build --compile` targets the machine it
+    # runs on. A build on the Mac yields a Mach-O arm64 file that installs cleanly, then
+    # fails every start with "Exec format error" (PET-518). Bytes 0-3 are the ELF magic,
+    # and bytes 18-19 are e_machine, 0x3e for x86-64.
+    - name: Read the binary's ELF header
+      ansible.builtin.command:
+        argv: [od, -An, -tx1, -N20, "{{ media_dash_binary_src }}"]
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      register: mtrace_binary_header
+
+    - name: Fail when the binary is not an x86-64 Linux executable
+      ansible.builtin.assert:
+        that:
+          - (mtrace_binary_header.stdout.split())[0:4] == ['7f', '45', '4c', '46']
+          - (mtrace_binary_header.stdout.split())[18:20] == ['3e', '00']
+        fail_msg: >-
+          {{ media_dash_binary_src }} is not an x86-64 Linux executable. Build it with
+          `bun run build --target=bun-linux-x64`.
+        quiet: true
+
   tasks:
     - name: Create the service account
       ansible.builtin.user:
