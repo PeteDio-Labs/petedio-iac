@@ -1,0 +1,28 @@
+---
+# wd-disk — mount the recovered pve02 data disk on ollama-host. (PET-527)
+#
+# The WD Blue WD10EZEX 1 TB (serial WD-WCC6Y5DKX2FV) was pve02's NFS data disk.
+# It survived the 2026-09-03 rack loss and went into ollama-host as sdb on
+# 2026-09-26 (PET-520). Its volume group activates on boot; this role mounts it.
+#
+# Mount by LV path, not by UUID: the path names what the LV holds, and LVM keeps
+# it stable across reboots and disk reordering.
+
+wd_disk_vg: network-storage
+
+# Pedro chose these on 2026-09-27: read-write, recovered data kept in place.
+# nofail keeps a missing or failed disk from dropping the host into emergency
+# mode, which would take Ollama and the backup store down with it.
+wd_disk_mounts:
+  - lv: backups
+    path: /mnt/wd-backups
+  - lv: general
+    path: /mnt/wd-general
+
+wd_disk_mount_options: defaults,nofail
+
+# ⚠ nexus-data is deliberately NOT here. It holds zot's blob store, and PET-389
+# decides where it mounts when it restores the registry. The role asserts that
+# nothing mounts it, so a hand mount shows up as a failed run.
+wd_disk_unmounted_lvs:
+  - nexus-data

@@ -1,0 +1,96 @@
+---
+# A host without the disk must fail here, not create empty mount points on the
+# root filesystem that later writes land on.
+- name: Read the volume group's logical volumes
+  ansible.builtin.command: "lvs --noheadings -o lv_name {{ wd_disk_vg }}"
+  register: wd_disk_lvs
+  changed_when: false
+  check_mode: false
+
+- name: Assert every declared LV exists
+  ansible.builtin.assert:
+    that: item in (wd_disk_lvs.stdout_lines | map('trim') | list)
+    fail_msg: "LV {{ wd_disk_vg }}/{{ item }} is missing. Is the WD disk in this host?"
+    quiet: true
+  loop: "{{ (wd_disk_mounts | map(attribute='lv') | list) + wd_disk_unmounted_lvs }}"
+
+# The mount module formats nothing, so a blank LV would fail the mount. Checking
+# the type first names the real problem instead of mount's error.
+- name: Read each LV's filesystem type
+  ansible.builtin.command: "blkid -s TYPE -o value /dev/{{ wd_disk_vg }}/{{ item.lv }}"
+  loop: "{{ wd_disk_mounts }}"
+  loop_control:
+    label: "{{ item.lv }}"
+  register: wd_disk_fstypes
+  changed_when: false
+  check_mode: false
+
+- name: Assert each LV carries ext4
+  ansible.builtin.assert:
+    that: item.stdout | trim == 'ext4'
+    fail_msg: "/dev/{{ wd_disk_vg }}/{{ item.item.lv }} reads '{{ item.stdout | trim }}', not ext4"
+    quiet: true
+  loop: "{{ wd_disk_fstypes.results }}"
+  loop_control:
+    label: "{{ item.item.lv }}"
+
+- name: Create the mount points
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ wd_disk_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Mount each LV
+  ansible.posix.mount:
+    src: "/dev/{{ wd_disk_vg }}/{{ item.lv }}"
+    path: "{{ item.path }}"
+    fstype: ext4
+    opts: "{{ wd_disk_mount_options }}"
+    state: mounted
+  loop: "{{ wd_disk_mounts }}"
+  loop_control:
+    label: "{{ item.lv }} -> {{ item.path }}"
+
+# `state: mounted` reports ok when fstab and the kernel agree, even when the
+# path resolves to another filesystem. findmnt reads what the kernel mounted.
+- name: Read the source mounted at each path
+  ansible.builtin.command: "findmnt -n -o SOURCE --mountpoint {{ item.path }}"
+  loop: "{{ wd_disk_mounts }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: wd_disk_sources
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Assert each path holds its LV
+  ansible.builtin.assert:
+    that: item.stdout | trim == '/dev/mapper/' ~ (wd_disk_vg | replace('-', '--')) ~ '-' ~ (item.item.lv | replace('-', '--'))
+    fail_msg: "{{ item.item.path }} holds '{{ item.stdout | trim }}', not {{ wd_disk_vg }}/{{ item.item.lv }}"
+    quiet: true
+  loop: "{{ wd_disk_sources.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+  when: not ansible_check_mode
+
+- name: Read what mounts the reserved LVs
+  ansible.builtin.command: "findmnt -n -o TARGET --source /dev/{{ wd_disk_vg }}/{{ item }}"
+  loop: "{{ wd_disk_unmounted_lvs }}"
+  register: wd_disk_reserved
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Assert the reserved LVs stay unmounted
+  ansible.builtin.assert:
+    that: item.stdout | trim | length == 0
+    fail_msg: "{{ wd_disk_vg }}/{{ item.item }} is mounted at {{ item.stdout | trim }}. PET-389 owns that LV."
+    quiet: true
+  loop: "{{ wd_disk_reserved.results }}"
+  loop_control:
+    label: "{{ item.item }}"
