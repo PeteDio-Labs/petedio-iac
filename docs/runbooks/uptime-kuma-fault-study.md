@@ -1,6 +1,6 @@
 # Uptime Kuma on Pete-Pi — the fault-injection study instrument
 
-> **Corrected 2026-09-10 (PET-385).** The nodes are pve02 and pve03; pve01 died on 2026-09-03. Plex is probed at `192.168.86.236` (plex-gpu, `.86` only since PET-504); 103 at `.86.140` is gone. The role declares 19 monitors, 17 active (`zot-registry` and `nfs-pve02` disabled 2026-09-04), and since PET-374 every one notifies through pete-bot. From the rack loss until 2026-09-22, the six-hourly backup skipped every run, because the rack loss took the pve02 export it mounted. PET-386 moved the store to ollama-host, which the backup section describes.
+> **Corrected 2026-09-10 (PET-385).** The nodes are pve02 and pve03; pve01 died on 2026-09-03. Plex is probed at `192.168.86.236` (plex-gpu, `.86` only since PET-504); 103 at `.86.140` is gone. The role declares 20 monitors, 18 active (`zot-registry` and `nfs-pve02` disabled 2026-09-04), and since PET-374 every one notifies through pete-bot. From the rack loss until 2026-09-22, the six-hourly backup skipped every run, because the rack loss took the pve02 export it mounted. PET-386 moved the store to ollama-host, which the backup section describes.
 
 Uptime Kuma on Pete-Pi is the measurement apparatus for a controlled
 fault-injection study (PET-300). It is not general monitoring. Machine-readable
@@ -164,7 +164,7 @@ cannot put a one-hour step inside a 30-day window.
 ## Backup to the HDD
 
 The database lives on an SD card and Pete-Pi has no local disk — no USB device is
-attached. At 17 active monitors on a 20-second interval that is roughly 73,000
+attached. At 18 active monitors on a 20-second interval that is roughly 78,000
 row writes a day, and an SD failure mid-study takes the baseline with it.
 
 Pete-Pi mounts `192.168.50.12:/srv/backups/pete-pi` at `/mnt/ollama-backups`. The
