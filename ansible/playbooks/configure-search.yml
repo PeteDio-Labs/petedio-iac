@@ -1,0 +1,287 @@
+---
+# configure-search.yml — deploy petedio-search on ollama-host as two systemd units (PET-526).
+#
+# petedio-search (repo PeteDio-Labs/petedio-search, private) is the shared, meaning-based
+# search over the vault, Plane (PET, MSG and DAY items and comments) and the lab digest.
+# Claude and Bobbert call it with one bearer token each.
+#
+# WHY OLLAMA-HOST. The embeddings come from the :11435 lane on this host
+# (qwen3-embedding:0.6b, resident), so the service reaches Ollama over loopback. The host
+# never sleeps: its sleep targets are masked, and it is the vzdump NFS target.
+#
+# TWO UNITS SHARE ONE SQLITE FILE. petedio-search.service answers /api/search.
+# petedio-search-refresh.timer runs `refresh`, which re-reads the three sources and
+# re-embeds only the chunks that changed. WAL mode lets both open the file at once, and
+# serve reloads its in-memory copy when refresh bumps the generation counter.
+#
+# THE PLAY COPIES A COMPILED BINARY and never builds on the target, as mtrace does
+# (configure-media-dash.yml). scripts/deploy-search.sh builds it with
+# `--target=bun-linux-x64`.
+#
+# SECRETS (resolved by scripts/deploy-search.sh from Vault kv/services/search, passed as
+# no_log extra-vars; scripts/search-secrets.sh mints them):
+#   search_caller_tokens     one field token_<name> per caller (claude, bobbert)
+#   search_vault_deploy_key  field vault_deploy_key: the private half of the read-only
+#                            deploy key on PeteDio-Labs/petedio-vault
+#   search_plane_api_key     field plane_api_key, optional: without it, refresh skips Plane
+# Run via:  ./scripts/deploy-search.sh
+
+- name: Deploy petedio-search on ollama-host
+  hosts: ollama
+  become: true
+
+  vars:
+    search_user: petedio-search
+    search_group: petedio-search
+    search_opt: /opt/petedio-search
+    search_bin: /opt/petedio-search/petedio-search
+    search_data: /var/lib/petedio-search
+    search_port: 8526
+    # The LAN address, not 0.0.0.0: the service answers on one interface only. ufw
+    # admits search_allow_subnet, and every call except /healthz needs a caller's token.
+    search_bind: "192.168.50.12"
+    search_allow_subnet: "192.168.50.0/24"
+    search_ollama_url: "http://127.0.0.1:11435"
+    search_embed_model: "{{ ollama_embed_model | default('qwen3-embedding:0.6b') }}"
+    search_vault_remote: "git@github.com:PeteDio-Labs/petedio-vault.git"
+    search_plane_base_url: "http://192.168.50.235:8080"
+    search_plane_workspace: petedio
+    search_plane_projects: "PET,MSG,DAY"
+    search_digest_url: "http://192.168.50.4:8099/digest.md"
+    # Refresh cadence. Plane costs one listing per project per run, plus one comments
+    # call per changed item, well under its 120-a-minute key limit.
+    search_refresh_every: "15min"
+    # GitHub's published ed25519 host key (api.github.com/meta, ssh_keys). Pinned rather
+    # than keyscanned, so a spoofed first contact cannot plant its own key.
+    search_github_host_key: >-
+      github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+    # Controller path to the compiled binary. scripts/deploy-search.sh sets it.
+    search_binary_src: "{{ lookup('env', 'HOME') }}/petedio/search/dist/petedio-search"
+    search_plane_api_key: ""
+
+  pre_tasks:
+    - name: Assert the bind is a real address
+      ansible.builtin.assert:
+        that:
+          - search_bind not in ['0.0.0.0', '::', '127.0.0.1']
+        fail_msg: >-
+          search_bind must be the host's LAN address. A wildcard bind would also answer
+          on the tailnet and the Docker bridges, and loopback would shut out Bobbert.
+
+    - name: Assert the secret extra-vars were provided (use scripts/deploy-search.sh)
+      ansible.builtin.assert:
+        that:
+          - search_vault_deploy_key is defined and search_vault_deploy_key | length > 0
+          - search_caller_tokens is defined and search_caller_tokens is mapping
+          - search_caller_tokens | length > 0
+          - search_caller_tokens.keys() | reject('match', '^[a-z0-9-]+$') | list | length == 0
+          - search_caller_tokens.values() | reject('match', '\\A[A-Za-z0-9_-]+\\Z') | list | length == 0
+          - search_plane_api_key is match('\\A[A-Za-z0-9_-]*\\Z')
+        fail_msg: >-
+          Missing or malformed secret extra-vars. Run scripts/deploy-search.sh, which
+          resolves them from Vault (kv/services/search). search_caller_tokens must be a
+          non-empty name -> token mapping, every name matching ^[a-z0-9-]+$ and every
+          token matching \A[A-Za-z0-9_-]+\Z. A comma, colon or newline would corrupt
+          SEARCH_TOKENS, and a newline would end the line in the env file.
+      no_log: true
+
+    - name: Check the binary on the controller
+      ansible.builtin.stat:
+        path: "{{ search_binary_src }}"
+      delegate_to: localhost
+      become: false
+      register: search_binary_stat
+
+    - name: Fail when the binary is missing
+      ansible.builtin.fail:
+        msg: >-
+          No binary at {{ search_binary_src }}. Run
+          `bun run build --target=bun-linux-x64` in petedio-search first, or pass
+          -e search_binary_src=<path>.
+      when: not search_binary_stat.stat.exists
+
+    # ⚠ ollama-host is x86-64, and `bun build --compile` targets the machine it runs on.
+    # A Mac build installs cleanly and then fails every start with "Exec format error"
+    # (PET-521). Bytes 0-3 are the ELF magic; bytes 18-19 are e_machine, 0x3e for x86-64.
+    - name: Read the binary's ELF header
+      ansible.builtin.command:
+        argv: [od, -An, -tx1, -N20, "{{ search_binary_src }}"]
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      check_mode: false # read-only, and the assert below needs its output in --check too
+      register: search_binary_header
+
+    - name: Fail when the binary is not an x86-64 Linux executable
+      ansible.builtin.assert:
+        that:
+          - (search_binary_header.stdout.split())[0:4] == ['7f', '45', '4c', '46']
+          - (search_binary_header.stdout.split())[18:20] == ['3e', '00']
+        fail_msg: >-
+          {{ search_binary_src }} is not an x86-64 Linux executable. Build it with
+          `bun run build --target=bun-linux-x64`.
+        quiet: true
+
+  tasks:
+    - name: Install git, which refresh uses to sync its vault clone
+      ansible.builtin.apt:
+        name: git
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create the service account
+      ansible.builtin.user:
+        name: "{{ search_user }}"
+        system: true
+        create_home: false
+        home: "{{ search_data }}"
+        shell: /usr/sbin/nologin
+        state: present
+
+    - name: Create the binary directory
+      ansible.builtin.file:
+        path: "{{ search_opt }}"
+        state: directory
+        owner: root
+        group: "{{ search_group }}"
+        mode: "0750"
+
+    - name: Create the data and ssh directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ search_user }}"
+        group: "{{ search_group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ search_data }}", mode: "0750" }
+        - { path: "{{ search_data }}/.ssh", mode: "0700" }
+      loop_control:
+        label: "{{ item.path }}"
+
+    # A read-only deploy key on petedio-vault and nothing else. It cannot push, and it
+    # opens no other repository.
+    - name: Install the vault deploy key
+      ansible.builtin.copy:
+        content: "{{ search_vault_deploy_key | trim }}\n"
+        dest: "{{ search_data }}/.ssh/id_ed25519_vault"
+        owner: "{{ search_user }}"
+        group: "{{ search_group }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Pin GitHub's host key
+      ansible.builtin.copy:
+        content: "{{ search_github_host_key }}\n"
+        dest: "{{ search_data }}/.ssh/known_hosts"
+        owner: "{{ search_user }}"
+        group: "{{ search_group }}"
+        mode: "0600"
+
+    - name: Install the binary
+      ansible.builtin.copy:
+        src: "{{ search_binary_src }}"
+        dest: "{{ search_bin }}"
+        owner: root
+        group: "{{ search_group }}"
+        mode: "0750"
+      notify: Restart petedio-search
+
+    - name: Install the service environment
+      ansible.builtin.template:
+        src: petedio-search.env.j2
+        dest: /etc/petedio-search.env
+        owner: root
+        group: "{{ search_group }}"
+        mode: "0640"
+      no_log: true
+      notify: Restart petedio-search
+
+    - name: Install the systemd units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - petedio-search.service
+        - petedio-search-refresh.service
+        - petedio-search-refresh.timer
+      notify:
+        - Reload systemd
+        - Restart petedio-search
+
+    # ufw is active on this host with a default-deny inbound policy, so this rule is what
+    # opens the port. Its peers on 11434 and 11435 come from roles/ollama-service.
+    - name: Allow the search API from the homelab LAN (UFW)
+      community.general.ufw:
+        rule: allow
+        port: "{{ search_port | string }}"
+        proto: tcp
+        from_ip: "{{ search_allow_subnet }}"
+        comment: "petedio-search - homelab LAN (PET-526)"
+
+    - name: Flush handlers before the first refresh
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start the search service
+      ansible.builtin.systemd:
+        name: petedio-search
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Enable and start the refresh timer
+      ansible.builtin.systemd:
+        name: petedio-search-refresh.timer
+        enabled: true
+        state: started
+
+  post_tasks:
+    - name: Wait for the service to answer
+      ansible.builtin.uri:
+        url: "http://{{ search_bind }}:{{ search_port }}/healthz"
+        return_content: true
+      register: search_health
+      retries: 10
+      delay: 2
+      until: search_health.status is defined and search_health.status == 200
+
+    # ⚠ /healthz proves only that serve is up. This proves the embedding lane answers and
+    # a real caller's token works, which a wrong EMBED_MODEL or a corrupt SEARCH_TOKENS
+    # breaks while /healthz stays green. An empty index answers 200 with no hits.
+    - name: Prove a caller can search
+      ansible.builtin.uri:
+        url: "http://{{ search_bind }}:{{ search_port }}/api/search?q=health&k=1"
+        headers:
+          Authorization: "Bearer {{ search_caller_tokens[search_caller_tokens.keys() | first] }}"
+        timeout: 150
+      register: search_probe
+      changed_when: false
+      no_log: true
+
+    - name: Report the index state
+      ansible.builtin.command:
+        cmd: "runuser -u {{ search_user }} -- {{ search_bin }} status"
+      environment:
+        SEARCH_DATA_DIR: "{{ search_data }}"
+      register: search_status
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Show the index state
+      when: not ansible_check_mode
+      ansible.builtin.debug:
+        msg: "{{ search_status.stdout_lines + ['The first refresh runs from the timer; follow it with: journalctl -u petedio-search-refresh -f'] }}"
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart petedio-search
+      ansible.builtin.systemd:
+        name: petedio-search
+        state: restarted
