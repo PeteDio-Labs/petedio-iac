@@ -1,0 +1,11 @@
+# petedio-search refresh cadence (PET-526). MANAGED BY ANSIBLE.
+[Unit]
+Description=petedio-search — refresh the index every {{ search_refresh_every }}
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec={{ search_refresh_every }}
+Persistent=false
+
+[Install]
+WantedBy=timers.target

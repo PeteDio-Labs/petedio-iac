@@ -1,0 +1,29 @@
+# petedio-search — meaning-based search for Claude and Bobbert (PET-526). MANAGED BY ANSIBLE.
+[Unit]
+Description=petedio-search — search API over the vault, Plane and the lab digest
+Documentation=https://github.com/PeteDio-Labs/petedio-search
+After=network-online.target ollama-1660s.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ search_user }}
+Group={{ search_group }}
+EnvironmentFile=/etc/petedio-search.env
+ExecStart={{ search_bin }} serve
+# The bind names the LAN address, which may not exist yet at boot. Retry until it does.
+Restart=always
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ search_data }}
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

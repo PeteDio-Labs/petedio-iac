@@ -1,0 +1,27 @@
+# petedio-search refresh: re-read every source, re-embed what changed (PET-526).
+# MANAGED BY ANSIBLE. Started by petedio-search-refresh.timer. A oneshot never overlaps
+# itself, so a slow first refresh delays the next run instead of racing it.
+[Unit]
+Description=petedio-search — refresh the index
+After=network-online.target ollama-1660s.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ search_user }}
+Group={{ search_group }}
+EnvironmentFile=/etc/petedio-search.env
+ExecStart={{ search_bin }} refresh
+# The first run embeds every chunk and fetches every Plane item's comments.
+TimeoutStartSec=2h
+Nice=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ search_data }}
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true

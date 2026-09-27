@@ -59,6 +59,7 @@ variable "plane_repos" {
     "petedio-vault"          = "1312503638" # migrated to the id form
     "petedio-workspace"      = "1257293543" # added in PET-360; had no binding at all (PET-290)
     "petedio-media-control"  = "1358823831" # migrated to the id form; new in PET-355
+    "petedio-search"         = "1390098254" # PET-526
   }
 }
 
