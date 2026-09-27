@@ -1,0 +1,22 @@
+---
+# configure-wd-disk.yml — mount the recovered pve02 WD disk on ollama-host. (PET-527)
+#
+#   ansible-playbook playbooks/configure-wd-disk.yml
+#
+# Mounts the `backups` and `general` LVs of VG `network-storage` at
+# /mnt/wd-backups and /mnt/wd-general, read-write, and leaves `nexus-data`
+# unmounted for PET-389. The disk's history and contents are in the vault note
+# Hosts/012-ollama-host.md.
+#
+# No workflow applies this on merge. Run it from the Mac after the PR merges.
+#
+# The connection user is set on the play, as configure-backup-store.yml does:
+# `ansible` has passwordless sudo on this host, and `pedro`'s password is unknown.
+
+- name: Mount the recovered WD disk
+  hosts: ollama-host
+  become: true
+  vars:
+    ansible_user: ansible
+  roles:
+    - wd-disk
