@@ -5,7 +5,7 @@
 # model is pinned ENTIRELY to its own GPU: a model that spills onto the Turing 1660S falls
 # back to slow kernels, and that can only be guaranteed per-process via CUDA_VISIBLE_DEVICES.
 # So the layout is TWO single-GPU services: the primary `ollama` (:11434, pinned to the
-# 3060 Ti — today it serves mtrace's router model and the lab digest) plus extra pinned
+# 3060 Ti; no resident model since PET-525) plus extra pinned
 # instances (see ollama_extra_instances; the embedding model on the 1660S at :11435).
 # This deliberately supersedes the older "one service across both GPUs" design. The
 # pins/env and the models live in host_vars/ollama-host.yml.

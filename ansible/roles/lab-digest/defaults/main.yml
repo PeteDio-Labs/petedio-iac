@@ -1,12 +1,6 @@
 ---
-# ollama-host is bare metal and survived the 2026-09-03 rack failure, so a digest
-# that depends on it keeps working when the cluster does not.
-lab_digest_ollama_url: "http://192.168.50.12:11434"
-
-# qwen3:8b is the only model measured correct both with and without its reasoning
-# block, and its reasoning terminates. qwen3.5 was removed for never closing it.
-# See vault Systems/ollama-local-inference.md.
-lab_digest_model: "qwen3:8b"
+# The digest prints facts only. Until PET-525 it asked qwen3:8b on ollama-host for a
+# three-sentence narration; PET-526 indexes each day's digest for search instead.
 
 # qBittorrent needs no auth from the LAN, so the digest reads it directly and
 # this Pi holds no credential for the cluster.

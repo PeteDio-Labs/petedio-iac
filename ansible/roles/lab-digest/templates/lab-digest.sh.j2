@@ -1,15 +1,9 @@
 #!/usr/bin/env bash
 # {{ ansible_managed }}
 #
-# A daily readable summary of the homelab, assembled from facts and narrated by
-# a local model on ollama-host.
-#
-# THE MODEL NEVER SUPPLIES A FACT. Every figure below is read from a live
-# system; the model is handed that text and asked only to write prose about it.
-# This is deliberate -- qwen3.5:4b was measured answering "2" and "0" to how many
-# disks RAIDZ1 tolerates (it is 1), so a model that invents infrastructure state
-# is a liability. If ollama does not answer the digest still prints; it just
-# prints the facts without the prose.
+# A daily readable summary of the homelab, assembled from facts read from live
+# systems. No model narrates it: until PET-525 qwen3:8b wrote a three-sentence
+# note on top, and a reader of the facts needs no prose to find what is down.
 #
 # EVERYTHING HERE WORKS WITHOUT CREDENTIALS. Kuma's database is local, and
 # qBittorrent's API needs no auth from the LAN. Nothing is read over SSH, so this
@@ -17,8 +11,6 @@
 # somewhere the cluster cannot take down with it.
 set -uo pipefail
 
-OLLAMA={{ lab_digest_ollama_url }}
-MODEL={{ lab_digest_model }}
 KUMA_DB={{ lab_digest_kuma_db }}
 QBIT={{ lab_digest_qbit_url }}
 OUT={{ lab_digest_output }}
@@ -93,35 +85,8 @@ for t in d:
 
 FACTS="$(facts)"
 
-PROSE=""
-if PAYLOAD=$(python3 - <<PY 2>/dev/null
-import json
-facts = """$FACTS"""
-prompt = (
-  "Write a short status note about a home server, for its owner.\n"
-  "Use ONLY the facts below. Do not add numbers, hostnames, causes or advice\n"
-  "that are not present in them. Lead with anything that is down or degraded;\n"
-  "if everything is healthy, say so in one sentence. Three sentences at most.\n"
-  "No preamble, no bullet points, no heading.\n\n" + facts
-)
-print(json.dumps({"model": "$MODEL", "prompt": prompt, "stream": False,
-                  "think": False, "options": {"num_predict": 220, "temperature": 0.2}}))
-PY
-); then
-  PROSE=$(curl -s -m 120 "$OLLAMA/api/generate" -d "$PAYLOAD" 2>/dev/null \
-    | python3 -c "import sys,json;print((json.load(sys.stdin).get('response') or '').strip())" 2>/dev/null)
-fi
-
 {
   echo "# Lab digest — $(date '+%Y-%m-%d %H:%M %Z')"
-  echo
-  if [ -n "$PROSE" ]; then
-    echo "$PROSE"
-    echo
-    echo "_Narrated by ${MODEL} from the facts below. Every figure is measured; the model added none._"
-  else
-    echo "_No narration: ollama at ${OLLAMA} did not answer. Facts follow._"
-  fi
   echo
   echo '```'
   echo "$FACTS"
