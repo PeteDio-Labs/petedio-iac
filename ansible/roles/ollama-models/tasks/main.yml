@@ -37,6 +37,15 @@
       {{ ollama_resident_models | selectattr('kind', 'defined')
          | selectattr('kind', 'equalto', 'embed') | list }}
 
+- name: List the instance ports and the declared model@port pairs
+  ansible.builtin.set_fact:
+    ollama_instance_ports: >-
+      {{ [ollama_port | default(11434)]
+         + (ollama_extra_instances | default([]) | map(attribute='port') | list) }}
+    ollama_resident_keys: >-
+      {{ ollama_resident_models | map(attribute='model')
+         | zip(ollama_resident_models | map(attribute='port')) | map('join', '@') | list }}
+
 - name: Load each resident GENERATE-capable model onto its pinned instance (keep_alive=-1)
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ item.port }}/api/generate"
@@ -69,6 +78,62 @@
     label: "{{ item.model }} -> :{{ item.port }} (embed)"
   changed_when: false
   when: ollama_resident_embed | length > 0
+
+# ── Unload what is not declared (PET-525) ─────────────────────────────────────
+# ⚠ Every instance runs with OLLAMA_KEEP_ALIVE=-1, so a model that leaves
+# ollama_resident_models stays in VRAM until something unloads it. Removing qwen3:8b
+# from the list freed nothing on its own. These tasks read /api/ps on each instance,
+# unload every model not declared resident on that port, then read /api/ps again and
+# fail if one is still there. An undeclared embedding model fails the unload with a
+# 400, loudly: declare it or unload it by hand, never skip it here.
+- name: Read the models each instance holds loaded
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ item }}/api/ps"
+    return_content: true
+  loop: "{{ ollama_instance_ports }}"
+  register: ollama_ps_before
+
+- name: Unload each model an instance holds but does not declare resident
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ item.0.item }}/api/generate"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ item.1.name }}"
+      keep_alive: 0
+    status_code: 200
+    timeout: 120
+  loop: "{{ ollama_ps_before.results | subelements('json.models', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.1.name }} on :{{ item.0.item }}"
+  when: (item.1.name ~ '@' ~ item.0.item) not in ollama_resident_keys
+  changed_when: true
+
+- name: Read the loaded models back
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ item }}/api/ps"
+    return_content: true
+  loop: "{{ ollama_instance_ports }}"
+  register: ollama_ps_after
+
+- name: Fail if an undeclared model is still loaded
+  ansible.builtin.assert:
+    that: ollama_undeclared_loaded | length == 0
+    fail_msg: >-
+      Still loaded but not declared resident: {{ ollama_undeclared_loaded | join(', ') }}.
+      Check nvidia-smi for an orphaned llama-server (see host_vars/ollama-host.yml).
+    success_msg: "Each instance holds only its declared resident models."
+  vars:
+    ollama_undeclared_loaded: >-
+      {%- set out = [] -%}
+      {%- for r in ollama_ps_after.results -%}
+      {%- for m in r.json.models | default([]) -%}
+      {%- if (m.name ~ '@' ~ r.item) not in ollama_resident_keys -%}
+      {%- set _ = out.append(m.name ~ '@' ~ r.item) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{- out -}}
 
 - name: Report resident models
   ansible.builtin.debug:

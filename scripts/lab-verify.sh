@@ -518,6 +518,21 @@ for model, port in resident:
         here = model in served[port]
         print(f"{'OK' if here else 'BAD'}\tresident {model} on :{port}\t"
               f"{'' if here else 'declared keep_alive=-1, never pulled'}")
+
+# ⚠ A MODEL THAT LEAVES ollama_resident_models STAYS LOADED (PET-525). Every instance runs
+# with OLLAMA_KEEP_ALIVE=-1, so dropping qwen3:8b from the list freed no VRAM by itself.
+# /api/ps lists what an instance holds loaded; anything there that host_vars does not
+# declare resident on that port is drift. The ollama-models role unloads it.
+want = {(m, p) for m, p in resident}
+for p in sorted(ports):
+    try:
+        d = json.loads(urllib.request.urlopen(f"http://{host}:{p}/api/ps", timeout=10).read())
+    except Exception as e:
+        print(f"BAD\tollama :{p} loaded set readable\t{type(e).__name__}")
+        continue
+    extra = sorted(m["name"] for m in d.get("models", []) if (m["name"], p) not in want)
+    print(f"BAD\tollama :{p} holds only declared models\tundeclared {', '.join(extra)}; run playbooks/ollama-models.yml"
+          if extra else f"OK\tollama :{p} holds only declared models\t{len(d.get('models', []))} loaded")
 PY
 )
   # ⚠ THREE VERDICTS, NOT TWO. This used to be `OK -> ok, everything else -> bad`, which

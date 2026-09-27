@@ -5,12 +5,13 @@
 # GPUs: GTX 1660 SUPER (6GB) + RTX 3060 Ti (8GB).
 # TWO PINNED INSTANCES, ONE GPU EACH (kept from the fleet-era PET-132 layout and the resume
 # builder's P1 retune). :11434 on the RTX 3060 Ti is the QUALITY lane; :11435 on the GTX
-# 1660 SUPER carries embeddings. What they serve TODAY (PET-385, 2026-09-10): mtrace on
-# media-dash-237 and the pete-pi lab digest route questions through qwen3:8b on :11434,
-# and qwen3-embedding:0.6b stays resident on :11435. The resume builder's qwen3.5:9b /
-# qwen3.5:4b lanes were declared here until 2026-09-10 — the app lost its host on
-# 2026-08-24 (PET-307, PET-387 decides its future) and both models were deleted from this
-# box on 2026-09-04, so lab-verify.sh reported them as declared-and-missing for a week.
+# 1660 SUPER carries embeddings. What they serve (PET-525, 2026-09-26): qwen3-embedding:0.6b
+# stays resident on :11435, and :11434 holds no resident model. mtrace and the pete-pi lab
+# digest used qwen3:8b on :11434 until PET-525 removed both uses; the model stays pulled.
+# The resume builder's qwen3.5:9b / qwen3.5:4b lanes were declared here until 2026-09-10 —
+# the app lost its host on 2026-08-24 (PET-307, PET-387 decides its future) and both
+# models were deleted from this box on 2026-09-04, so lab-verify.sh reported them as
+# declared-and-missing for a week.
 # Declare what runs; when the resume builder comes back, its lanes come back with it.
 # NIC: eth0, MAC 2c:f0:5d:a2:7f:4f — WoL enabled (magic packet).
 wol_interface: eth0
@@ -44,7 +45,7 @@ ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pedro
 # CURRENT server process thinks is loaded) before trusting a spill/fit measurement.
 # 16384 ctx was NOT re-verified after finding this — 8192 is what's proven; if a future
 # session wants more context, re-test from a confirmed-clean baseline first.
-ollama_coder_model: "qwen3:8b"   # quality lane on :11434 — mtrace's router model; verified 100% GPU @ ctx 8192 (2026-07-21)
+ollama_coder_model: "qwen3:8b"   # pulled, not resident (PET-525); verified 100% GPU on :11434 @ ctx 8192 (2026-07-21)
 ollama_embed_model: "qwen3-embedding:0.6b"   # embeddings on :11435
 
 # GPU pins — CUDA_VISIBLE_DEVICES values. MUST be the stable per-card UUIDs (indices can
@@ -101,13 +102,15 @@ ollama_extra_instances:
       - "OLLAMA_CONTEXT_LENGTH=8192"
       - "OLLAMA_KEEP_ALIVE=-1"
 
-# Keep each model warm on its pinned instance/GPU (loaded with keep_alive=-1). Two
-# entries on :11435 — both models resident together, same port. The embedding model is
-# tagged `kind: embed` — it doesn't support /api/generate (verified live, 2026-07-21;
-# see roles/ollama-models/tasks/main.yml for the warm-up split this drives).
+# Keep each model warm on its pinned instance/GPU (loaded with keep_alive=-1). The
+# embedding model is tagged `kind: embed` — it doesn't support /api/generate (verified
+# live, 2026-07-21; see roles/ollama-models/tasks/main.yml for the warm-up split this drives).
+#
+# ⚠ THIS LIST IS THE WHOLE RESIDENT SET. OLLAMA_KEEP_ALIVE=-1 keeps any loaded model in
+# VRAM forever, so dropping an entry here unloads nothing by itself. The ollama-models
+# role unloads every model an instance holds that this list does not declare for that
+# port, and lab-verify.sh reports one as BAD. qwen3:8b left this list in PET-525.
 ollama_resident_models:
-  - model: "{{ ollama_coder_model }}"
-    port: 11434
   - model: "{{ ollama_embed_model }}"
     port: 11435
     kind: embed
