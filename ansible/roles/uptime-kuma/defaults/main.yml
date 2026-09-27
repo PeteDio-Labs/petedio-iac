@@ -43,7 +43,7 @@ uptime_kuma_max_retries: 1
 uptime_kuma_retry_interval: 20
 
 # Raw beats are pruned on this schedule. 45 > the 30 days the study needs, and
-# 17 active monitors x 4320 beats/day x 45 days is ~3.3M rows — a few hundred MB of
+# 18 active monitors x 4320 beats/day x 45 days is ~3.5M rows — a few hundred MB of
 # SQLite, comfortable on 49G free.
 uptime_kuma_retention_days: 45
 
@@ -233,6 +233,17 @@ uptime_kuma_monitors:
     type: http
     url: "http://192.168.50.12:11434/api/version"
 
+  # -- the chat surface on 237 (PET-524) ---------------------------------------
+  # /health is mtrace's unauthenticated liveness route. It says the process is up and
+  # touches nothing in the media stack, so a stack fault never turns it red. 237's
+  # nftables accepts 8237 only from lo and 192.168.50.4, which is this Pi.
+  # pete-bot on the same host gets no monitor: its outage would alert through
+  # pete-bot and reach nobody.
+  - name: mtrace
+    type: http
+    url: "http://192.168.50.237:8237/health"
+    description: "Media triage API on 237. Liveness only; Bobbert is its caller."
+
   # -- the one monitor that is ALLOWED to depend on the resolver ---------------
   # DNS is not self-hosted, so the router is a real single point of failure and
   # an injectable fault. Kuma queries the named server directly rather than
@@ -248,7 +259,7 @@ uptime_kuma_monitors:
 
 # ------------------------------------------------------- backup to the HDD --
 # The database lives on an SD card (mmcblk0p2) and this box has no local disk —
-# no USB device is attached. At 17 monitors x 20s that is ~73k row writes a day,
+# no USB device is attached. At 18 monitors x 20s that is ~78k row writes a day,
 # and an SD card that fails mid-study takes the baseline with it.
 #
 # ⚠ THE MOUNT MUST NEVER HANG THE INSTRUMENT. NFS is one of the things this study
