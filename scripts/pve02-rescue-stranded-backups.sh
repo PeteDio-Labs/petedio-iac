@@ -55,7 +55,7 @@ for bin in pct findmnt sha256sum systemctl lvs; do
 done
 
 cleanup() {
-  if findmnt -rn "$ROOTVIEW" >/dev/null 2>&1; then umount "$ROOTVIEW" || true; fi
+  if findmnt -rn "$ROOTVIEW" >/dev/null 2>&1; then umount -R "$ROOTVIEW" || true; fi
 }
 trap cleanup EXIT
 
@@ -65,8 +65,16 @@ df -h /
 # ------------------------------------------------------------ 1. root view --
 # /run is tmpfs, so this works with 0 bytes free on root. A plain (non-recursive) bind
 # shows the root filesystem alone, including the directory under any mount at $MNT.
+# ⚠ / is a shared mount (systemd's default), so a bind of it joins the same peer group, and
+# the NFS mount in step 3 propagated into the view and hid the stranded files (the first run,
+# 2026-09-28). Make the view private before anything mounts. A view left by an earlier run
+# can carry that propagated share, so start from a fresh one.
 mkdir -p "$ROOTVIEW"
-findmnt -rn "$ROOTVIEW" >/dev/null || mount --bind -o ro / "$ROOTVIEW"
+if findmnt -rn "$ROOTVIEW" >/dev/null; then umount -R "$ROOTVIEW"; fi
+mount --bind -o ro / "$ROOTVIEW"
+mount --make-private "$ROOTVIEW"
+[[ $(findmnt -no PROPAGATION "$ROOTVIEW") == private ]] || die "$ROOTVIEW is not private"
+if findmnt -rn -o TARGET | grep -qF "$ROOTVIEW/"; then die "$ROOTVIEW has submounts"; fi
 LOCAL="$ROOTVIEW$MNT"
 [[ -d $LOCAL ]] || die "$LOCAL does not exist on the root filesystem"
 
