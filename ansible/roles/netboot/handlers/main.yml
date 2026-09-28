@@ -1,0 +1,14 @@
+---
+- name: Reload nginx
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: reloaded
+  listen: reload nginx
+
+# A config change must not start dnsmasq outside an install window.
+- name: Restart dnsmasq
+  ansible.builtin.systemd_service:
+    name: dnsmasq
+    state: restarted
+  listen: restart dnsmasq
+  when: netboot_enabled | bool

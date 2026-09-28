@@ -1,0 +1,5 @@
+---
+# Derived paths. The ISO and its extracted kernel and initrd share one directory, named
+# after the ISO, under the HTTP root.
+netboot_iso_path: "pve/{{ netboot_iso_name | regex_replace('\\.iso$', '') }}"
+netboot_iso_dir: "{{ netboot_root }}/http/{{ netboot_iso_path }}"

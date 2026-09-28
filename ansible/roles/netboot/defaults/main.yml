@@ -1,0 +1,24 @@
+---
+# The Proxmox VE installer to serve. Keep the major version equal to the cluster's:
+# pve02 ran pve-manager 9.2.11 on 2026-09-28. The checksum is from
+# https://enterprise.proxmox.com/iso/SHA256SUMS, and get_url refuses a file that differs.
+netboot_iso_name: proxmox-ve_9.2-1.iso
+netboot_iso_url: "https://enterprise.proxmox.com/iso/{{ netboot_iso_name }}"
+netboot_iso_sha256: 4e88fe416df9b527624a175f24c9aa07c714d3332afb1ee3dbf3879573ef2c6c
+
+netboot_root: /srv/netboot
+netboot_server_ip: "{{ ansible_host }}"
+
+# ⚠ THE ALLOWLIST IS THE SAFETY. dnsmasq answers PXE requests from these MAC addresses
+# and ignores every other machine on the LAN. Add a scratch VM's MAC to rehearse the boot
+# before pointing it at real hardware.
+netboot_allowed_macs:
+  - 2c:f0:5d:a2:7f:4f # ollama-host (.12), eth0
+
+# Off stops dnsmasq, so nothing answers PXE at all. Leave it off outside an install
+# window: a client whose BIOS tries the network first would otherwise reach the menu on
+# every reboot.
+netboot_enabled: false
+
+# Seconds the iPXE menu waits before it takes the default, which boots the local disk.
+netboot_menu_timeout: 30

@@ -1,0 +1,133 @@
+---
+- name: Install dnsmasq, iPXE, nginx and the ISO tools
+  ansible.builtin.apt:
+    name:
+      - dnsmasq
+      - ipxe
+      - nginx
+      - xorriso
+      - zstd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the TFTP and HTTP roots
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ netboot_root }}/tftp"
+    - "{{ netboot_root }}/http"
+    - "{{ netboot_iso_dir }}"
+
+# The first stage over TFTP: undionly.kpxe for a BIOS client such as ollama-host, and
+# ipxe.efi for a UEFI one. Each then fetches boot.ipxe over HTTP.
+- name: Stage the iPXE loaders for TFTP
+  ansible.builtin.copy:
+    src: "/usr/lib/ipxe/{{ item }}"
+    dest: "{{ netboot_root }}/tftp/{{ item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - undionly.kpxe
+    - ipxe.efi
+
+- name: Download the Proxmox VE installer ISO
+  ansible.builtin.get_url:
+    url: "{{ netboot_iso_url }}"
+    dest: "{{ netboot_iso_dir }}/{{ netboot_iso_name }}"
+    checksum: "sha256:{{ netboot_iso_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+    timeout: 60
+
+# The extraction follows prepare_pxe_compatible_files() in proxmox-auto-install-assistant:
+# the kernel is /boot/linux26, and the zstd initrd is recompressed to gzip because iPXE
+# can't load a zstd initrd. Each file lives beside the ISO it came from, so a change to
+# netboot_iso_name extracts afresh instead of serving a stale kernel.
+- name: Extract the installer kernel and initrd from the ISO
+  ansible.builtin.command:
+    cmd: >-
+      xorriso -osirrox on -indev {{ netboot_iso_name }}
+      -extract /boot/linux26 vmlinuz
+      -extract /boot/initrd.img initrd.img.zst
+    chdir: "{{ netboot_iso_dir }}"
+    creates: "{{ netboot_iso_dir }}/vmlinuz"
+
+- name: Recompress the initrd from zstd to gzip
+  ansible.builtin.shell:
+    cmd: set -o pipefail && zstd -dc initrd.img.zst | gzip -9 > initrd.img.tmp && mv initrd.img.tmp initrd.img
+    chdir: "{{ netboot_iso_dir }}"
+    creates: "{{ netboot_iso_dir }}/initrd.img"
+    executable: /bin/bash
+
+- name: Write the iPXE boot menu
+  ansible.builtin.template:
+    src: boot.ipxe.j2
+    dest: "{{ netboot_root }}/http/boot.ipxe"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Serve the HTTP root with nginx
+  ansible.builtin.template:
+    src: nginx-netboot.conf.j2
+    dest: /etc/nginx/sites-available/netboot
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+
+- name: Enable the netboot site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/netboot
+    dest: /etc/nginx/sites-enabled/netboot
+    state: link
+  notify: reload nginx
+
+- name: Disable the default nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+
+- name: Write the proxy-DHCP and TFTP config
+  ansible.builtin.template:
+    src: dnsmasq-netboot.conf.j2
+    dest: /etc/dnsmasq.d/netboot.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart dnsmasq
+
+- name: Start nginx
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: started
+    enabled: true
+
+# ⚠ dnsmasq runs only inside an install window. See netboot_enabled in defaults.
+- name: Set dnsmasq to match netboot_enabled
+  ansible.builtin.systemd_service:
+    name: dnsmasq
+    state: "{{ 'started' if netboot_enabled | bool else 'stopped' }}"
+    enabled: "{{ netboot_enabled | bool }}"
+
+- name: Flush handlers before the read-back
+  ansible.builtin.meta: flush_handlers
+
+- name: Read back each file iPXE fetches
+  ansible.builtin.uri:
+    url: "http://127.0.0.1/{{ item }}"
+    method: HEAD
+  loop:
+    - boot.ipxe
+    - "{{ netboot_iso_path }}/vmlinuz"
+    - "{{ netboot_iso_path }}/initrd.img"
+    - "{{ netboot_iso_path }}/{{ netboot_iso_name }}"
