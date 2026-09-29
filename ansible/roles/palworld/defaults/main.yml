@@ -53,9 +53,9 @@ palworld_rcon_port: 25575
 
 # REST API — the control panel (PET-266) depends on it; live 234 has had it on since
 # launch day but only by hand-edit (drift, found in PET-278). Declared here so a
-# converge keeps it. The template task carries no restart notify, so flag changes arm
-# at the NEXT server restart (e.g. the next bedtime shutdown/start cycle), never
-# mid-session.
+# converge keeps it. A changed ini restarts a RUNNING server on apply (see
+# handlers/main.yml): save and warn players before you merge. A stopped server picks
+# the change up at its next start.
 palworld_rest_api_enabled: true
 palworld_rest_api_port: 8212
 
@@ -85,10 +85,9 @@ palworld_gamedata_api_enabled: true
 
 # --- Base-building world tunables (bases + pals) ----------------------------------
 # Role defaults mirror the engine defaults (4 base camps per guild / 15 worker pals
-# per camp); inventory/group_vars/palworld.yml raises them for the shared world (that
-# file is also the panel's GitOps write target — keep overrides there, not here). Like
-# the REST flags above, the converge re-templates the ini with no restart notify, so
-# new values arm at the NEXT server restart — never mid-session.
+# per camp); inventory/group_vars/palworld.yml raises them for the shared world (keep
+# overrides there, not here). Like the REST flags above, a changed value restarts a
+# RUNNING server on apply — the PET-530 merge did so with 2 players online.
 palworld_base_camp_max_in_guild: 4 # BaseCampMaxNumInGuild (ini/slider max 10)
 palworld_base_camp_worker_max: 15 # BaseCampWorkerMaxNum (slider max 20; ini accepts 1-50, >20 is a perf lever)
 
