@@ -537,10 +537,11 @@ resource "vault_policy" "claude_247_deploy" {
 # claude-ops: the policy behind auth.tf's claude-ops token role, minted by
 # scripts/seed-claude-ops-vault-token.sh onto claude-247 for claude-ops, Pedro's Remote
 # Control identity (PET-531). READ + LIST only — no create/update/delete. The Mac's seed-*
-# scripts and deploy-claude-247.sh WRITE these paths with an admin root token that never
-# leaves the Mac; they do not read through this policy at all. What this policy scopes is
-# what claude-ops itself may read once a token minted against it lands on 247 — the same
-# services/iac/db prefixes those scripts populate, and nothing wider.
+# scripts write these paths from the Mac with the admin token; deploy-claude-247.sh reads
+# them through its own AppRole login (scripts/deploy-claude-247.sh), never the admin token.
+# Neither path goes through this policy. What this policy scopes is what claude-ops itself
+# may read once a token minted against it lands on 247 — the services, iac and db prefixes
+# those scripts populate, and not kv/admin/*.
 #
 # ⚠ NEVER kv/data/admin/*. Every other broad-scoped policy in this file (ci-read, terraform,
 # ansible) reads kv/data/admin/*, but that prefix is where the Vault ROOT TOKEN and the
