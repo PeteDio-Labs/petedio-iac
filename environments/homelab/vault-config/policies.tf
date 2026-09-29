@@ -536,12 +536,33 @@ resource "vault_policy" "claude_247_deploy" {
 
 # claude-ops: the policy behind auth.tf's claude-ops token role, minted by
 # scripts/seed-claude-ops-vault-token.sh onto claude-247 for claude-ops, Pedro's Remote
-# Control identity (PET-531). READ + LIST only — no create/update/delete. The Mac's seed-*
-# scripts write these paths from the Mac with the admin token; deploy-claude-247.sh reads
-# them through its own AppRole login (scripts/deploy-claude-247.sh), never the admin token.
-# Neither path goes through this policy. What this policy scopes is what claude-ops itself
-# may read once a token minted against it lands on 247 — the services, iac and db prefixes
-# those scripts populate, and not kv/admin/*.
+# Control identity (PET-531). READ + LIST only — no create/update/delete, and no App keys.
+#
+# Pedro's decision: exact paths, not a wildcard glob. Every `kv/data/<path>` below is one
+# secret the Mac's own scripts already read (deploy-claude-247.sh, apply-vault-config.sh,
+# seed-*.sh) or write there — never a GitHub App's private key. `kv/metadata/{services,iac,db}/*`
+# stays a wildcard: `list` only returns names, never values, so listing the whole prefix
+# reveals no secret and needs no per-path grant.
+#
+# The Mac's seed-* scripts write these paths from the Mac with the admin token;
+# deploy-claude-247.sh reads them through its own AppRole login
+# (scripts/deploy-claude-247.sh), never the admin token. Neither path goes through this
+# policy — this is what claude-ops itself may read once a token minted against it lands on
+# 247.
+#
+# Deliberately excluded by name, and not by omission — each is another App's private key,
+# and the separation between the Apps is the point:
+#   kv/services/claude-code-push        — the code-push App (PET-507)
+#   kv/services/claude-loop             — the work loop's App (PET-399)
+#   kv/services/claude-vault-push       — the vault-push App (PET-498)
+#   kv/services/claude-workspace-mirror — the workspace-mirror App (PET-480/493)
+#   kv/services/claude-ops-github       — claude-ops's OWN App key. claude-ops reads it from
+#                                          disk on 247 (~/.config/claude-ops-github/), never
+#                                          from Vault, so it is not in this policy either.
+#   kv/services/agent-loop              — the retired agent fleet (PET-265); no session reads it.
+#
+# A new secret needs a policy change to be readable here, and that is by design: adding a
+# path is a reviewable diff, not a standing grant that widens itself.
 #
 # ⚠ NEVER kv/data/admin/*. Every other broad-scoped policy in this file (ci-read, terraform,
 # ansible) reads kv/data/admin/*, but that prefix is where the Vault ROOT TOKEN and the
@@ -554,15 +575,111 @@ resource "vault_policy" "claude_ops" {
   name = "claude-ops"
 
   policy = <<-EOT
-    path "kv/data/services/*" {
+    path "kv/data/db/plane" {
       capabilities = ["read"]
     }
 
-    path "kv/data/iac/*" {
+    path "kv/data/iac/authentik" {
       capabilities = ["read"]
     }
 
-    path "kv/data/db/*" {
+    path "kv/data/iac/cloudflare" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/github-runner-pat" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/minio" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/minio-data-root" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/minio-root" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/proxmox" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/authentik" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/backup-health" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/claude-247-pve" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/cloudflare" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/media/dashboard" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/media/qbittorrent" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/minio-obsidian" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/palworld-panel" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/pete-bot" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/qbittorrent" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/registry" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/resume-builder" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/search" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/tailscale" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/uptime-kuma" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/vault-snapshots" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/water-fast" {
       capabilities = ["read"]
     }
 
