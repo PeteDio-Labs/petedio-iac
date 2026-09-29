@@ -132,8 +132,9 @@ backup_store_jobs:
 
 # ----------------------------------------------------------- vzdump hook ----
 # Before vzdump backs up a Palworld guest, the hook announces the backup, waits, and
-# POSTs /v1/api/save (PET-539). It does not start the game again afterwards: the
-# palworld unit is disabled on purpose, and only the panel starts it.
+# POSTs /v1/api/save (PET-539). When the game was running, the hook starts it again
+# after the backup, because the palworld unit is disabled on purpose and a restarted
+# container leaves it off.
 backup_store_hook_path: /usr/local/sbin/vzdump-hook
 backup_store_palworld_guests: [234]
 backup_store_palworld_ini: /home/steam/palworld/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini

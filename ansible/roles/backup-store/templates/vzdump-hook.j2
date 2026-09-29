@@ -3,33 +3,40 @@
 # of every backup on this node, through `script:` in /etc/vzdump.conf.
 #
 # Before vzdump touches a Palworld guest, warn the players and save the world. The
-# AdminPassword is read inside the container and never leaves it.
+# AdminPassword is read inside the container and never leaves it. When the game was
+# running, start it again once the backup is done: the palworld unit is disabled on
+# purpose, so a restarted container does not start it by itself.
 #
 # ⚠ This script must never fail a backup: vzdump aborts the guest's backup when a
 # hook exits non-zero. Every path exits 0, and the output lands in the task log.
 phase="$1" mode="$2" vmid="$3"
 
-[ "$phase" = backup-start ] || exit 0
 guests=" {{ backup_store_palworld_guests | join(' ') }} "
 case "$guests" in
   *" $vmid "*) ;;
   *) exit 0 ;;
 esac
 
-if ! pct exec "$vmid" -- systemctl is-active --quiet palworld 2>/dev/null; then
-  echo "palworld-hook: CT $vmid has no running palworld; nothing to save"
-  exit 0
-fi
+# Records that the game was running at backup-start, for the phases after the stop.
+marker="/run/vzdump-hook/palworld-$vmid.running"
 
-# Stop mode takes the server down, and the service is disabled, so it stays down.
-if [ "$mode" = stop ]; then
-  msg="Nightly backup: the server stops in {{ backup_store_palworld_warn_s }} seconds and stays off until an admin starts it. The world is saving now."
-else
-  msg="Nightly backup: saving the world. The server stays up."
-fi
+case "$phase" in
+  backup-start)
+    rm -f "$marker"
+    if ! pct exec "$vmid" -- systemctl is-active --quiet palworld 2>/dev/null; then
+      echo "palworld-hook: CT $vmid has no running palworld; nothing to save"
+      exit 0
+    fi
+    mkdir -p "${marker%/*}" && touch "$marker"
 
-echo "palworld-hook: CT $vmid ($mode): announcing, waiting {{ backup_store_palworld_warn_s }} s, saving"
-pct exec "$vmid" -- env MSG="$msg" WAIT="{{ backup_store_palworld_warn_s }}" bash -s <<'SH' || true
+    if [ "$mode" = stop ]; then
+      msg="Nightly backup: the server stops in {{ backup_store_palworld_warn_s }} seconds and starts again in about 2 minutes. The world is saving now."
+    else
+      msg="Nightly backup: saving the world. The server stays up."
+    fi
+
+    echo "palworld-hook: CT $vmid ($mode): announcing, waiting {{ backup_store_palworld_warn_s }} s, saving"
+    pct exec "$vmid" -- env MSG="$msg" WAIT="{{ backup_store_palworld_warn_s }}" bash -s <<'SH' || true
 INI={{ backup_store_palworld_ini }}
 PW=$(sed -nE 's/.*AdminPassword="([^"]*)".*/\1/p' "$INI")
 API=http://127.0.0.1:8212/v1/api
@@ -40,4 +47,19 @@ sleep "$WAIT"
 curl -s -m 60 -o /dev/null -w 'save %{http_code}\n' -u "admin:$PW" \
   -X POST -H 'Content-Length: 0' "$API/save"
 SH
+    ;;
+
+  # post-restart covers stop mode. backup-end and backup-abort catch any path that
+  # skips it. `systemctl start` on a running unit does nothing, so a repeat is safe.
+  post-restart|backup-end|backup-abort)
+    [ -e "$marker" ] || exit 0
+    rm -f "$marker"
+    if pct status "$vmid" 2>/dev/null | grep -q running; then
+      echo "palworld-hook: CT $vmid ($phase): starting palworld again"
+      pct exec "$vmid" -- systemctl start --no-block palworld || true
+    else
+      echo "palworld-hook: CT $vmid ($phase): container is not running; palworld stays off"
+    fi
+    ;;
+esac
 exit 0
