@@ -339,6 +339,36 @@ if [ -n "$BKOK" ]; then ok "kuma backup wrote" "${BKOK#ok }"
 elif [ -z "$LASTBK" ]; then bad "kuma backup" "no run recorded on the Pi"
 else bad "kuma backup" "$(printf '%s\n' "$LASTBK" | tail -1)"; fi
 
+# ⚠ A STORE CAN BE ACTIVE WITH NOTHING MOUNTED ON IT. From 2026-09-14 to 2026-09-28 pve02's
+# share was unmounted, vzdump wrote every archive to the root disk until it filled, and three
+# guests stayed locked. Proxmox reported the store active throughout (PET-529). Each node runs
+# backup-health at 06:00, which checks the mount, root use, archive age and locks, and pushes
+# to Kuma. Read that run's verdict line, then check the mount live, since a verdict is a day old.
+sec "Backups land off-node"
+for n in $PVE02 $PVE03; do
+  if [ "$n" = "$PVE03" ]; then SUDO=sudo; else SUDO=; fi
+  # An empty InvocationID means the unit never ran. Skip the journal read then, because a
+  # match on an empty field value is not a match on nothing.
+  HV=$(on "$n" "I=\$(systemctl show -p InvocationID --value backup-health.service); [ -n \"\$I\" ] && $SUDO journalctl -o cat --no-pager _SYSTEMD_INVOCATION_ID=\$I 2>/dev/null")
+  HVLINE=$(printf '%s\n' "$HV" | grep -m1 -E '^(ok|FAIL) backup-health' || true)
+  case "$HVLINE" in
+    "ok backup-health"*)   ok "backup-health $n" "last run passed" ;;
+    "FAIL backup-health"*) bad "backup-health $n" "${HVLINE#FAIL backup-health: }" ;;
+    *)
+      if [ -z "$HV" ]; then bad "backup-health $n" "no run recorded; is backup-health.timer installed?"
+      else bad "backup-health $n" "no verdict line; last: $(printf '%s\n' "$HV" | tail -1)"; fi ;;
+  esac
+  FS=$(on "$n" "findmnt -no FSTYPE --mountpoint /mnt/ollama-backups")
+  case "$FS" in
+    nfs*) ok "backup share mounted on $n" "$FS" ;;
+    *)    bad "backup share mounted on $n" "got '${FS:-nothing}'; vzdump would write to the root disk" ;;
+  esac
+  RP=$(on "$n" "df --output=pcent / | tail -1" | tr -dc '0-9')
+  if [ -z "$RP" ]; then bad "root disk on $n" "could not read df"
+  elif [ "$RP" -lt 85 ]; then ok "root disk on $n" "${RP}% used"
+  else bad "root disk on $n" "${RP}% used, limit 85%"; fi
+done
+
 # ⚠ CHECK EVERY RUNNER, AND CHECK THE SPREAD.
 #
 # This loop read `runner-233 pete-pi-1` until 2026-09-04 and never mentioned

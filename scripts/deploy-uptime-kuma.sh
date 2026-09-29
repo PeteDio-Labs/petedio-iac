@@ -82,6 +82,24 @@ else
   echo "  alert channel: no bearer at kv/services/pete-bot — monitors will alert NOBODY (PET-374)"
 fi
 
+# The backup-health push tokens are OPTIONAL too. Absent, no backups-<node> monitor is
+# declared. Present, each goes to Ansible in a 0600 file, never in argv (PET-529).
+# Mint them with scripts/seed-backup-health-vault.sh.
+PUSH_VARS="$(mktemp)"
+chmod 600 "$PUSH_VARS"
+trap 'rm -f "$PUSH_VARS"' EXIT
+VAULT_TOKEN="$AN_TOKEN" vault kv get -format=json kv/services/backup-health 2>/dev/null \
+  | python3 -c '
+import json, sys
+try:
+    tokens = json.load(sys.stdin)["data"]["data"]
+except Exception:
+    tokens = {}
+json.dump({"uptime_kuma_backup_push_tokens": tokens}, open(sys.argv[1], "w"))
+names = ", ".join("backups-" + n for n in sorted(tokens))
+print("  backup push monitors: " + (names or "none, no tokens at kv/services/backup-health"))
+' "$PUSH_VARS"
+
 # Keep the Keychain mirror in step with Vault if the password was rotated there.
 security add-generic-password -U -s "$KC_SERVICE" -a "$KC_ACCOUNT" -w "$KUMA_PW" 2>/dev/null || true
 
@@ -91,6 +109,7 @@ ansible-playbook playbooks/configure-pete-pi.yml \
   -e "uptime_kuma_admin_user=$KUMA_USER" \
   -e "uptime_kuma_admin_password=$KUMA_PW" \
   -e "uptime_kuma_pete_bot_bearer=$KUMA_BEARER" \
+  -e "@$PUSH_VARS" \
   "$@"
 
 step "Done"
