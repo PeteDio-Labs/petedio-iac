@@ -1,0 +1,44 @@
+{{ ansible_managed | comment }}
+# The ONE `claude remote-control` server claude-ops runs, serving
+# {{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }} (PET-531).
+#
+# A SIBLING OF claude-remote.service.j2, NOT A PARAMETERIZED COPY OF IT. claude-ops gets
+# exactly one unit for one directory, never a list like claude_remote_sessions, so folding it
+# into that template's `{{ '{{' }} item {{ '}}' }}` loop would add a branch nothing else takes.
+# Every load-bearing property that template's header documents — flag order after the
+# `remote-control` subcommand, no telemetry opt-outs, the bounded Restart=always, the DNS
+# wait gate — holds here unchanged; read it before changing either file.
+#
+# User/Group=claude-ops, HOME=claude-ops's home, and a PATH that carries claude-ops's OWN npm
+# prefix, never {{ claude_npm_prefix }}: the two session users share no writable path.
+
+[Unit]
+Description=Claude Code Remote Control server (claude-ops)
+Documentation=https://code.claude.com/docs/en/remote-control
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User={{ claude_ops_user }}
+Group={{ claude_ops_user }}
+WorkingDirectory={{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }}
+Environment=HOME={{ claude_ops_home }}
+Environment=PATH={{ claude_ops_npm_prefix }}/bin:/usr/local/bin:/usr/bin:/bin
+Environment=VAULT_ADDR={{ claude_ops_vault_addr }}
+Environment=VAULT_CACERT={{ claude_ops_vault_ca_path }}
+ExecStart={{ claude_ops_npm_prefix }}/bin/claude remote-control \
+    --permission-mode {{ claude_ops_permission_mode }} \
+    --spawn claude \
+    --remote-control-session-name-prefix {{ claude_ops_remote_name }}
+Restart=always
+RestartSec=30
+ExecStartPre=/bin/sh -c 'if ! /usr/bin/getent ahosts api.anthropic.com >/dev/null; then echo "No answer for api.anthropic.com; holding the start until the resolver answers."; until /usr/bin/getent ahosts api.anthropic.com >/dev/null; do sleep 5; done; echo "The resolver answered; starting."; fi'
+TimeoutStartSec=10min
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

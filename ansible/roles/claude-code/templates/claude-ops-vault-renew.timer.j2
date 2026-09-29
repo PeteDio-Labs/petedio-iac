@@ -1,0 +1,17 @@
+{{ ansible_managed | comment }}
+# When claude-ops-vault-renew.service ticks (PET-531).
+#
+# Daily, well inside the token role's 7-day period (environments/homelab/vault-config/auth.tf,
+# token_period = 604800): a missed day or two from a host that was off still renews before the
+# period lapses. Persistent=true catches up a renewal missed across a reboot.
+
+[Unit]
+Description=Daily renewal of claude-ops's Vault token (PET-531)
+
+[Timer]
+OnCalendar={{ claude_ops_vault_renew_oncalendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

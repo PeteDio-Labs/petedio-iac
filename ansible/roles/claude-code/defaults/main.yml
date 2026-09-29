@@ -409,7 +409,13 @@ claude_remote_enable: false
 # DEFAULT FALSE, like every other delivery in this role. `true` belongs in host_vars.
 # `false` installs nothing and removes nothing: a tool left on disk grants no access.
 #
-# Not `vault`: a CLI without a token verifies nothing, and a token here is PET-509's question.
+# Changed 2026-09-29 (PET-531): this used to say "Not `vault`: a CLI without a token verifies
+# nothing, and a token here is PET-509's question." PET-509 resolved to a read-only Proxmox
+# token (tasks/pve.yml), not a Vault token, so that question is closed a different way than
+# this comment predicted. The Vault CLI and Bun are pinned below anyway, for claude-ops, which
+# reads its OWN token from claude_ops_vault_token_path — see the "claude-ops" section at the
+# end of this file. `claude` still gets no token of its own.
+#
 # Not `sudo`: its absence is part of this host's permission model.
 claude_iac_tools_enable: false
 
@@ -431,6 +437,24 @@ claude_ansible_lint_version: "26.4.0"
 # CI pins no shellcheck, so this pins the Debian trixie package. Read the candidate with
 # `apt-cache policy shellcheck` on the host before you change it.
 claude_shellcheck_version: "0.10.0-1"
+
+# The Vault CLI and Bun, added for claude-ops (PET-531): claude-ops renews its own Vault
+# token daily (tasks/claude-ops.yml) and clones its own workspace, and both want their tools
+# on the same root-owned, hash-checked footing as terraform and ansible-lint above. Neither
+# is gated on claude_ops_enable — they land whenever claude_iac_tools_enable is true, the same
+# as the rest of this file, so `claude` gets them too and nothing here depends on which
+# session user ends up using them.
+#
+# Pin matches the Vault SERVER's reported version (`/v1/sys/health`) at the time this was
+# written, not a CI workflow — this role is the only place either tool is installed.
+claude_vault_cli_version: "2.0.1"
+# The linux_amd64 row of
+# https://releases.hashicorp.com/vault/<version>/vault_<version>_SHA256SUMS.
+claude_vault_cli_sha256: c6ed3be36a750875906916716680322719920a102f98c9a0b3105ecff63b9e34
+claude_bun_version: "1.4.2"
+# The bun-linux-x64.zip row of
+# https://github.com/oven-sh/bun/releases/download/bun-v<version>/SHASUMS256.txt.
+claude_bun_sha256: 36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913
 
 # --- The read-only Proxmox token (PET-510) ------------------------------------------------
 # claude-247@pve!audit, PVEAuditor on / with privilege separation, so a session here reads the
@@ -553,3 +577,120 @@ claude_loop_model: sonnet
 # Vault kv/services/plane       — field  api_key (the PAT CI already uses).
 claude_loop_plane_base_url: http://192.168.50.235:8080
 claude_loop_plane_workspace: petedio
+
+# --- claude-ops: a second, privileged session user (PET-531) ------------------------------
+# Pedro's Remote Control sessions get Mac parity — a read-only Vault token, a Terraform/
+# Ansible toolchain, and SSH to the Proxmox nodes — through a SECOND Unix user, not through
+# `claude`. `claude` is the loop's user and the general session user; widening its powers
+# would widen the loop's too, since the loop's `claude -p` runs as `claude` whenever
+# claude_loop_enable is set. claude-ops has NO loop and NO Bobbert — nothing here ever sets
+# CLAUDE_LOOP_USER or a bot identity to claude_ops_user, and tasks/claude-ops.yml asserts it.
+#
+# DEFAULT FALSE, like every other delivery in this role. Do not set this true in host_vars
+# from this branch: claude-M1 flips it once the App, the Vault role and the deploy have all
+# landed, on Pedro's word. `false` converges nothing new and changes nothing existing — every
+# task in tasks/claude-ops.yml is included behind this flag.
+claude_ops_enable: false
+
+claude_ops_user: claude-ops
+claude_ops_home: "/home/{{ claude_ops_user }}"
+
+# claude-ops owns no group `claude` belongs to and joins none of `claude`'s. Each user has
+# its own primary group, made implicitly by ansible.builtin.user, so a mistake in either
+# role's file modes cannot cross between them through a shared group.
+claude_ops_workspace: "{{ claude_ops_home }}/work/petedio"
+claude_ops_workspace_repo: PeteDio-Labs/petedio-workspace
+claude_ops_workspace_dest: workspace
+
+# Its own npm prefix and its own Claude Code install, entirely separate from claude_npm_prefix
+# above. The point is that claude-ops never executes a file `claude` can write: the two
+# session users share no writable path, and PATH inside the claude-remote-ops unit carries
+# only this prefix and root-owned system directories — never {{ claude_npm_prefix }}/bin.
+claude_ops_npm_prefix: "{{ claude_ops_home }}/.npm-global"
+
+# --- The GitHub App claude-ops pushes and opens pull requests with -------------------------
+# A FIFTH App, distinct from the loop's, the mirror's, the vault's and the code-push App
+# above. Unlike code-push's fixed three-repository allow-list, this one is installed wherever
+# Pedro puts it under PeteDio-Labs and the broker enforces only the organization, not a
+# repository list — see templates/claude-ops-github-broker.j2. contents:write,
+# pull_requests:write and workflows:write (Pedro's decision, READ FIRST): unlike the other
+# four Apps, this one CAN push a change to .github/workflows/**, because it exists for
+# Pedro's own sessions, not for an unattended one.
+#
+# DEFAULT FALSE is redundant with claude_ops_enable above and kept anyway, so every
+# conditional in tasks/claude-ops.yml reads the same way the rest of this file's do.
+claude_ops_github_org: PeteDio-Labs
+
+# 0700 claude-ops:claude-ops on the directory, 0400 on the two files in it — the code-push
+# shape, because the session is what pushes.
+claude_ops_github_conf_dir: "{{ claude_ops_home }}/.config/claude-ops-github"
+claude_ops_github_broker: "{{ claude_ops_home }}/.local/bin/claude-ops-github-broker"
+claude_ops_gh: "{{ claude_ops_home }}/.local/bin/claude-ops-gh"
+
+# The git options every claude-ops git command carries, for the reasons claude_vault_git_opts
+# documents: the empty helper resets the list, the helper is an absolute path, and
+# useHttpPath carries the repository path to the broker.
+claude_ops_github_git_opts: >-
+  -c credential.helper=
+  -c credential.useHttpPath=true
+  -c credential.helper={{ claude_ops_github_broker }}
+
+# --- claude-ops GitHub App identity (resolved from Vault by scripts/deploy-claude-247.sh) --
+# NEVER give these a default, for the reason written over every other identity block in this
+# file: a committed placeholder lands on the host as a 0400 file that looks provisioned and
+# fails at the first mint.
+#
+# Vault kv/services/claude-ops-github — fields app_id, installation_id, app_pem.
+#
+#   claude_ops_github_app_id
+#   claude_ops_github_installation_id
+#   claude_ops_github_app_pem
+
+# --- The read-only Vault token (Pedro's decision, READ FIRST) ------------------------------
+# A POLICY token, not root and not the unseal key — scoped to exactly the paths
+# scripts/deploy-claude-247.sh, the other deploy-*.sh scripts and workspace/scripts/pet-secrets
+# read, with no write, no create/update/patch/delete, no sys/*, no auth/* and no token-create.
+# environments/homelab/vault-config/{policies.tf,auth.tf} carry the "claude-ops" policy and
+# token role; this role only places the token a seed script mints, and renews it.
+#
+# ⚠ THE ROLE NEVER WRITES OR READS THE TOKEN FILE'S CONTENTS. tasks/claude-ops.yml creates
+# the directory and nothing else; scripts/seed-claude-ops-vault-token.sh installs the token
+# out of band, over SSH, after the deploy. That keeps the token off every Ansible run's
+# stdout, its extra-vars file, and Vault's own audit log of THIS role's reads.
+claude_ops_vault_conf_dir: "{{ claude_ops_home }}/.config/claude-ops-vault"
+claude_ops_vault_token_path: "{{ claude_ops_vault_conf_dir }}/token"
+claude_ops_vault_ca_path: "{{ claude_ops_vault_conf_dir }}/ca.pem"
+claude_ops_vault_addr: https://192.168.50.223:8200
+claude_ops_vault_renew_bin: "{{ claude_ops_home }}/.local/bin/claude-ops-vault-renew"
+
+# The token role in vault-config/auth.tf: token_period=604800 (7 days), so an unrenewed token
+# still dies a week after its last renewal, not never; token_explicit_max_ttl=7776000 (90
+# days) is the hard ceiling a renewal cannot extend past, so an abandoned token cannot be
+# renewed forever. The timer below renews it daily, well inside the period.
+claude_ops_vault_renew_oncalendar: "03:00"
+
+# --- SSH to the Proxmox nodes -------------------------------------------------------------
+# Generated ON THE HOST, as claude-ops, so the private half NEVER leaves 247 — not into
+# Vault, not into CI, not into a Terraform state. tasks/claude-ops.yml runs `ssh-keygen`
+# only when the file is absent, so a re-run never overwrites a key pve02 already trusts.
+# scripts/seed-claude-ops-ssh.sh reads back the PUBLIC half only and authorizes it on pve02,
+# which pmxcfs then carries to pve03.
+claude_ops_ssh_key: "{{ claude_ops_home }}/.ssh/id_ed25519"
+
+# StrictHostKeyChecking=accept-new: trust a node's key on the first connection and pin it
+# after that, rather than either failing cold on an unknown host or accepting a changed one
+# silently. root, because there is no operator account on either Proxmox node — the same
+# posture ansible/inventory reaches them with.
+claude_ops_ssh_targets:
+  - { name: pve02, host: 192.168.50.11 }
+  - { name: pve03, host: 192.168.50.10 }
+
+# --- The Remote Control server ------------------------------------------------------------
+# ONE unit, ONE directory: the petedio-workspace clone above. Not an entry in
+# claude_remote_sessions — that list belongs to `claude`, and its stale-unit reconcile in
+# tasks/main.yml deletes any claude-remote-*.service it does not name, so
+# claude-remote-ops.service is excluded from that reconcile by name rather than folded into
+# the list. tasks/main.yml also asserts no claude_remote_sessions entry is itself named
+# "ops", so the two mechanisms can never collide on one unit file.
+claude_ops_remote_name: ops
+claude_ops_permission_mode: auto

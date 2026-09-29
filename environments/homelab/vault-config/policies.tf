@@ -487,7 +487,7 @@ resource "vault_policy" "openfaas_ci" {
 # claude-247-deploy: what ansible-claude-247.yml may read to deploy 247's claude-code role
 # (PET-515). Exact paths, read only: no glob and no list, because the workflow reads named
 # fields from named paths and never needs to enumerate anything. The `ansible` AppRole that
-# deploy-claude-247.sh uses reads kv/data/services/*; this role reads these seven and no more.
+# deploy-claude-247.sh uses reads kv/data/services/*; this role reads these eight and no more.
 resource "vault_policy" "claude_247_deploy" {
   name = "claude-247-deploy"
 
@@ -517,6 +517,11 @@ resource "vault_policy" "claude_247_deploy" {
       capabilities = ["read"]
     }
 
+    # claude-ops's own GitHub App, for Pedro's Remote Control sessions (PET-531). Optional.
+    path "kv/data/services/claude-ops-github" {
+      capabilities = ["read"]
+    }
+
     # 247's PVEAuditor token for the Proxmox API (PET-510). Optional.
     path "kv/data/services/claude-247-pve" {
       capabilities = ["read"]
@@ -525,6 +530,57 @@ resource "vault_policy" "claude_247_deploy" {
     # The Ansible SSH key the play reaches 247 with.
     path "kv/data/iac/lxc-ssh" {
       capabilities = ["read"]
+    }
+  EOT
+}
+
+# claude-ops: the policy behind auth.tf's claude-ops token role, minted by
+# scripts/seed-claude-ops-vault-token.sh onto claude-247 for claude-ops, Pedro's Remote
+# Control identity (PET-531). READ + LIST only — no create/update/delete — so a token that
+# renews unattended for up to 90 days can read the same secrets the Mac's own scripts
+# already read (deploy-claude-247.sh, apply-vault-config.sh, seed-*.sh), and nothing wider.
+#
+# ⚠ NEVER kv/data/admin/*. Every other broad-scoped policy in this file (ci-read, terraform,
+# ansible) reads kv/data/admin/*, but that prefix is where the Vault ROOT TOKEN and the
+# unseal material are documented (vault/Systems/vault-and-secrets.md) — exactly what Pedro's
+# decision for PET-531 rules out landing on 247 by any path. Granting it here would make a
+# renewing token on 247 equivalent to the one credential this whole design exists to keep
+# off that host. If a future need requires one specific kv/data/admin/<x> path, add that
+# ONE path with its own comment — never widen this to kv/data/admin/*.
+resource "vault_policy" "claude_ops" {
+  name = "claude-ops"
+
+  policy = <<-EOT
+    path "kv/data/services/*" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/*" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/db/*" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/poker/*" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/db/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/poker/*" {
+      capabilities = ["list"]
     }
   EOT
 }

@@ -24,11 +24,16 @@
 #     on petedio-iac, petedio-media-iac and petedio-workspace, because a session on 247
 #     pushes branches and opens pull requests there. No `workflows` permission. Absent, this
 #     script warns and the play leaves the three clones' git config as it found it.
+#   kv/services/claude-ops-github        -> app_id, installation_id, app_pem   (optional)
+#     The claude-ops identity (PET-531). contents, pull_requests AND workflows write on
+#     PeteDio-Labs, for Pedro's Remote Control sessions as claude-ops only — never the loop,
+#     never Bobbert. Absent, this script warns and the play leaves claude-ops without GitHub
+#     access until it is seeded.
 #
 #   AppRole creds: $SECRETS_DIR/ansible.{role_id,secret_id} (gitignored .secrets/)
 #
-# ⚠ FOUR APPS, AND THEY MUST STAY FOUR. scripts/claude-247-extra-vars.sh refuses all six
-# mix-ups by App id, and says why each one matters. This script reads the fields and hands
+# ⚠ FIVE APPS, AND THEY MUST STAY FIVE. scripts/claude-247-extra-vars.sh refuses every
+# mix-up by App id, and says why each one matters. This script reads the fields and hands
 # them to it.
 #
 # Operator run, from YOUR machine. This is the wrapper that keeps 247 free of a Vault
@@ -105,6 +110,17 @@ VAULT_APP_PEM="$(kvget kv/services/claude-vault-push app_pem)"
 CODE_APP_ID="$(kvget kv/services/claude-code-push app_id)"
 CODE_INSTALL_ID="$(kvget kv/services/claude-code-push installation_id)"
 CODE_APP_PEM="$(kvget kv/services/claude-code-push app_pem)"
+# PET-531. claude-ops's own App, seeded by scripts/seed-claude-ops-app.sh into
+# kv/services/claude-ops-github. This deviates from the original PET-531 brief, which named
+# only the workflow path and the three new seed scripts for claude-ops — it did not say
+# whether the operator fallback script should also learn this identity. Reading it here
+# keeps this script's stated purpose ("resolve LXC 247's identities from Vault") true for all
+# five identities, and keeps deploy-claude-247.sh usable as a full fallback for the workflow,
+# matching the file's own "THE PRIMARY PATH IS THE WORKFLOW, AND THIS SCRIPT IS THE FALLBACK"
+# claim above. Flagged for Pedro in the PR body as a self-directed addition.
+OPS_APP_ID="$(kvget kv/services/claude-ops-github app_id)"
+OPS_INSTALL_ID="$(kvget kv/services/claude-ops-github installation_id)"
+OPS_APP_PEM="$(kvget kv/services/claude-ops-github app_pem)"
 PVE_TOKEN_ID="$(kvget kv/services/claude-247-pve token_id)"
 PVE_TOKEN_SECRET="$(kvget kv/services/claude-247-pve secret)"
 PVE_ENDPOINT="$(kvget kv/services/claude-247-pve endpoint)"
@@ -113,6 +129,7 @@ export APP_ID INSTALL_ID APP_PEM PLANE_KEY \
   MIRROR_APP_ID MIRROR_INSTALL_ID MIRROR_APP_PEM \
   VAULT_APP_ID VAULT_INSTALL_ID VAULT_APP_PEM \
   CODE_APP_ID CODE_INSTALL_ID CODE_APP_PEM \
+  OPS_APP_ID OPS_INSTALL_ID OPS_APP_PEM \
   PVE_TOKEN_ID PVE_TOKEN_SECRET PVE_ENDPOINT PVE_CA_PEM
 
 # umask BEFORE the temp file exists, so the extra-vars never sit world-readable. mktemp -d
@@ -123,7 +140,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 # The checks and the JSON writer. It prints its own ABORT and exits 1 on any refusal.
 "$SCRIPT_DIR/claude-247-extra-vars.sh" "$TMP/extra.json"
-unset APP_PEM PLANE_KEY MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM PVE_TOKEN_SECRET PVE_CA_PEM
+unset APP_PEM PLANE_KEY MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM OPS_APP_PEM PVE_TOKEN_SECRET PVE_CA_PEM
 
 step "Running configure-claude-code.yml (247's identities)"
 cd "$ANSIBLE_DIR"

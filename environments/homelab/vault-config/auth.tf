@@ -373,3 +373,32 @@ resource "vault_jwt_auth_backend_role" "claude_247_deploy" {
   token_policies = [vault_policy.claude_247_deploy.name]
   token_ttl      = 900
 }
+
+# claude-ops role → claude-ops policy (PET-531). The token backend's OWN role — not an
+# AppRole and not a JWT role — because the token it mints is delivered by hand, once, by
+# scripts/seed-claude-ops-vault-token.sh from an operator's Vault session onto claude-247 for
+# claude-ops, Pedro's Remote Control identity. Nothing logs in as this role; it only bounds
+# what a token created "-role=claude-ops" may carry.
+#
+# orphan = true: the minted token has no parent, so a parent's revocation (or the admin
+# session that minted it expiring) cannot take claude-ops's token down with it.
+#
+# renewable = true, token_period = 604800 (7 days): claude-ops-vault-renew.timer on 247 renews
+# the token daily, well inside its 7-day period, so a token that is renewed on schedule never
+# expires from period alone.
+#
+# token_explicit_max_ttl = 7776000 (90 days): the hard ceiling PERIOD renewal cannot cross —
+# Pedro's PET-531 decision that this token, unlike a Vault Agent's, is never silently
+# perpetual. Past 90 days from mint, scripts/seed-claude-ops-vault-token.sh must run again.
+#
+# allowed_policies is the ONLY policy this role may ever mint — never default, never root.
+# scripts/seed-claude-ops-vault-token.sh verifies all four of these values by accessor lookup
+# before it ships the token to 247, so a drift here shows up there as a refusal, not silently.
+resource "vault_token_auth_backend_role" "claude_ops" {
+  role_name              = "claude-ops"
+  allowed_policies       = [vault_policy.claude_ops.name]
+  orphan                 = true
+  renewable              = true
+  token_period           = 604800
+  token_explicit_max_ttl = 7776000
+}

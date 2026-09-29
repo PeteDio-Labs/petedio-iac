@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+{{ ansible_managed | comment }}
+# claude-ops-vault-renew — renew claude-ops's own Vault token, and never let it reach the
+# journal (PET-531).
+#
+# ⚠ THIS SCRIPT DOES NOT CREATE THE TOKEN. {{ claude_ops_vault_token_path }} is written once,
+# out of band, by scripts/seed-claude-ops-vault-token.sh over SSH — this role's tasks never
+# read or write that file's contents (tasks/claude-ops.yml explains why). A token that is
+# missing or unreadable is an operator problem, not something this script can fix, so it
+# fails loudly and stops rather than minting a request with an empty Authorization header.
+#
+# ⚠ NEVER `vault token renew` BARE. That prints the full token to stdout, and
+# claude-ops-vault-renew.service's stdout goes straight to the journal — root-readable, and
+# readable by anyone `journalctl` reaches. `-field=token_duration` prints only a number of
+# seconds; nothing else about the token leaves this process.
+set -euo pipefail
+
+TOKEN_FILE={{ claude_ops_vault_token_path }}
+
+die() { printf 'claude-ops-vault-renew: %s\n' "$*" >&2; exit 1; }
+
+[ "$(id -un)" = "{{ claude_ops_user }}" ] || die "must run as {{ claude_ops_user }}, not $(id -un)."
+[ -r "$TOKEN_FILE" ] || die "$TOKEN_FILE is missing or unreadable. Run scripts/seed-claude-ops-vault-token.sh."
+command -v vault >/dev/null || die "vault is not in PATH."
+
+# Read once into the environment, never echoed and never passed on argv — `vault` reads
+# VAULT_TOKEN from its own environment for every subcommand.
+VAULT_TOKEN="$(cat "$TOKEN_FILE")"
+export VAULT_TOKEN
+[ -n "$VAULT_TOKEN" ] || die "$TOKEN_FILE is empty."
+
+duration="$(vault token renew -field=token_duration)" \
+  || die "renewal failed. The token may be past its explicit-max-ttl (90 days) and need reseeding with scripts/seed-claude-ops-vault-token.sh."
+printf 'renewed; %s seconds remaining until the next period boundary\n' "$duration"
