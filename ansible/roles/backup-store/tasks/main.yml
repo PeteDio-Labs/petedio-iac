@@ -11,6 +11,13 @@
   ansible.builtin.include_tasks: jobs.yml
   when: inventory_hostname != backup_store_server
 
+# import, not include, so `--tags vzdump-hook` reaches these tasks without the Vault
+# values the rest of the role needs.
+- name: Warn Palworld players and save the world before a backup
+  ansible.builtin.import_tasks: hook.yml
+  when: inventory_hostname != backup_store_server
+  tags: [vzdump-hook]
+
 - name: Check each morning that the night's backups landed
   ansible.builtin.include_tasks: health.yml
   when: inventory_hostname != backup_store_server
