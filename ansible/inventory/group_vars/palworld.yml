@@ -1,7 +1,8 @@
 ---
-# Palworld shared-world overrides (group: palworld). Values are re-templated into
-# PalWorldSettings.ini by the ansible-palworld apply on merge and arm at the NEXT
-# server restart (the panel's stop/start), never mid-session.
+# Palworld shared-world overrides (group: palworld). The ansible-palworld apply on merge
+# re-templates PalWorldSettings.ini, and a changed ini RESTARTS a running server (see
+# roles/palworld/handlers/main.yml). Before you merge a change here, warn players and
+# POST /v1/api/save on 234. A stopped server reads the change at its next start.
 #
 # Raise a limit only through its own PET item and PR; Pedro's merge is the opt-in.
 # The panel's World Settings flow that once wrote this file was removed
