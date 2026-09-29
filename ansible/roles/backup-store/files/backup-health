@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+# backup-health — prove that last night's backups landed on ollama-host. (PET-529)
+# Managed by Ansible: roles/backup-store/files/backup-health.
+#
+# WHY THIS EXISTS. From 2026-09-14 to 2026-09-28 the NFS share was unmounted on pve02,
+# vzdump wrote every archive to the node's own root disk, root filled to 0 bytes, and
+# the full disk left three guests locked `snapshot-delete`. Proxmox reported the store
+# active the whole time, and nothing alerted. Each check below maps to one of those
+# symptoms, so a repeat fails the morning after it starts.
+#
+# It prints one `ok` or `FAIL` line per check, then a verdict line that starts with
+# `ok backup-health` or `FAIL backup-health`. scripts/lab-verify.sh reads that verdict
+# from the journal. Exit status is 0 only when every check passes.
+#
+# It then pushes the verdict to an Uptime Kuma push monitor: status=up when every check
+# passes, status=down with the first problems otherwise. The monitor also goes down
+# when no push arrives for 26 hours, which covers a node or timer that stops running.
+# A push that fails is itself a failure, so the unit shows it.
+#
+# Settings come from the environment. The unit sets the first five, and the push URL
+# comes from /etc/backup-health.env, which is root-only because the URL is the token.
+#   BACKUP_HEALTH_STORE       Proxmox storage ID            (ollama-backups)
+#   BACKUP_HEALTH_MNT         where that storage mounts     (/mnt/ollama-backups)
+#   BACKUP_HEALTH_MAX_AGE_H   newest archive age limit      (26)
+#   BACKUP_HEALTH_ROOT_MAX    root disk use limit, percent  (85)
+#   BACKUP_HEALTH_MIN_GUESTS  fewest guests the job covers  (1)
+#   BACKUP_HEALTH_PUSH_URL    Kuma push URL, without query
+#   BACKUP_HEALTH_NO_PUSH=1   run the checks, never push (for testing)
+#
+# To test the failure path without alerting, point it at an empty directory:
+#   BACKUP_HEALTH_NO_PUSH=1 BACKUP_HEALTH_MNT=/tmp/empty backup-health
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+STORE = os.environ.get("BACKUP_HEALTH_STORE", "ollama-backups")
+MNT = os.environ.get("BACKUP_HEALTH_MNT", "/mnt/ollama-backups")
+MAX_AGE_H = float(os.environ.get("BACKUP_HEALTH_MAX_AGE_H", "26"))
+ROOT_MAX = float(os.environ.get("BACKUP_HEALTH_ROOT_MAX", "85"))
+MIN_GUESTS = int(os.environ.get("BACKUP_HEALTH_MIN_GUESTS", "1"))
+PUSH_URL = os.environ.get("BACKUP_HEALTH_PUSH_URL", "").strip()
+NO_PUSH = os.environ.get("BACKUP_HEALTH_NO_PUSH", "0") == "1"
+NODE = socket.gethostname().split(".")[0]
+
+# vzdump-lxc-110-2026_09_28-02_30_01.tar.zst, vzdump-qemu-300-...vma.zst. The .log and
+# .notes files beside an archive are not archives, so they never count as a backup.
+ARCHIVE = re.compile(
+    r"^vzdump-(?:lxc|qemu)-(\d+)-\d{4}_\d\d_\d\d-\d\d_\d\d_\d\d\.(?:tar|vma)(?:\.(?:zst|gz|lzo))?$"
+)
+
+problems = []
+
+
+def ok(msg):
+    print(f"ok   {msg}", flush=True)
+
+
+def fail(msg):
+    print(f"FAIL {msg}", flush=True)
+    problems.append(msg)
+
+
+def pvesh(path):
+    out = subprocess.run(
+        ["pvesh", "get", path, "--output-format", "json"],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+    return json.loads(out.stdout)
+
+
+def check_mount():
+    # ⚠ `pvesm status` said `active` for the whole outage, because a dir store without
+    # is_mountpoint is active whenever the directory exists. Ask the kernel instead.
+    out = subprocess.run(
+        ["findmnt", "-no", "FSTYPE,SOURCE", "--mountpoint", MNT],
+        capture_output=True, text=True,
+    )
+    parts = out.stdout.split()
+    if out.returncode == 0 and parts and parts[0].startswith("nfs"):
+        ok(f"{MNT} is mounted ({parts[0]} from {parts[1] if len(parts) > 1 else '?'})")
+    else:
+        fail(f"{MNT} is not an NFS mount, so backups would land on the root disk")
+    try:
+        rows = pvesh(f"/nodes/{NODE}/storage")
+        row = next((r for r in rows if r.get("storage") == STORE), None)
+        if row is None:
+            fail(f"storage {STORE} is not defined on {NODE}")
+        elif row.get("active") == 1 and row.get("enabled", 1) == 1:
+            ok(f"storage {STORE} is active")
+        else:
+            fail(f"storage {STORE} is not active")
+    except (subprocess.SubprocessError, ValueError) as e:
+        fail(f"could not read storage status: {e}")
+
+
+def check_root():
+    du = shutil.disk_usage("/")
+    pct = 100 * du.used / du.total
+    free_gb = du.free / 2**30
+    if pct < ROOT_MAX:
+        ok(f"root is {pct:.0f}% used, {free_gb:.0f} GiB free (limit {ROOT_MAX:.0f}%)")
+    else:
+        fail(f"root is {pct:.0f}% used, {free_gb:.0f} GiB free (limit {ROOT_MAX:.0f}%)")
+
+
+def guests():
+    """Every guest on this node: {vmid: (kind, name, lock)}."""
+    found = {}
+    for kind in ("lxc", "qemu"):
+        for g in pvesh(f"/nodes/{NODE}/{kind}"):
+            if g.get("template"):
+                continue
+            found[int(g["vmid"])] = (kind, g.get("name", "?"), g.get("lock", ""))
+    return found
+
+
+def covered(all_guests):
+    """The guests this node's enabled backup jobs cover."""
+    jobs = [j for j in pvesh("/cluster/backup")
+            if j.get("node") == NODE and j.get("enabled", 1) in (1, "1")]
+    if not jobs:
+        fail(f"no enabled backup job names node {NODE}")
+        return set()
+    ids = set()
+    for j in jobs:
+        exclude = {int(x) for x in str(j.get("exclude", "")).split(",") if x.strip()}
+        if str(j.get("all", 0)) == "1":
+            ids |= set(all_guests) - exclude
+        else:
+            ids |= {int(x) for x in str(j.get("vmid", "")).split(",") if x.strip()}
+    ok(f"{len(jobs)} backup job(s) for {NODE} cover {len(ids)} of {len(all_guests)} guests")
+    return ids
+
+
+def check_archives(ids, all_guests):
+    dump = os.path.join(MNT, "dump")
+    newest = {}
+    scanned = 0
+    try:
+        with os.scandir(dump) as it:
+            for entry in it:
+                m = ARCHIVE.match(entry.name)
+                if not m:
+                    continue
+                scanned += 1
+                vmid = int(m.group(1))
+                mtime = entry.stat().st_mtime
+                if mtime > newest.get(vmid, 0):
+                    newest[vmid] = mtime
+    except OSError as e:
+        fail(f"could not list {dump}: {e.strerror}")
+        return
+    print(f"     read {scanned} archives in {dump}", flush=True)
+    now = time.time()
+    stale = []
+    for vmid in sorted(ids):
+        name = all_guests.get(vmid, ("?", "?", ""))[1]
+        if vmid not in newest:
+            stale.append(f"{vmid} {name}: no archive")
+            continue
+        age_h = (now - newest[vmid]) / 3600
+        if age_h > MAX_AGE_H:
+            stale.append(f"{vmid} {name}: newest is {age_h:.0f} h old")
+    if stale:
+        for s in stale:
+            fail(f"backup missing or old: {s}")
+    else:
+        ok(f"all {len(ids)} covered guests have an archive under {MAX_AGE_H:.0f} h old")
+
+
+def check_locks(all_guests):
+    locked = [f"{v} {n} ({lock})" for v, (_, n, lock) in sorted(all_guests.items()) if lock]
+    if locked:
+        for s in locked:
+            fail(f"guest is locked: {s}")
+    else:
+        ok(f"none of {len(all_guests)} guests is locked")
+
+
+def push(status, msg):
+    if NO_PUSH:
+        print("     push skipped: BACKUP_HEALTH_NO_PUSH=1", flush=True)
+        return True
+    if not PUSH_URL:
+        # No URL means the Kuma monitor never hears from this node and goes down after
+        # 26 hours. Say so, and fail the unit, rather than pass quietly.
+        print("FAIL push: BACKUP_HEALTH_PUSH_URL is unset; see /etc/backup-health.env", flush=True)
+        return False
+    query = urllib.parse.urlencode({"status": status, "msg": msg[:250], "ping": ""})
+    try:
+        with urllib.request.urlopen(f"{PUSH_URL}?{query}", timeout=15) as r:
+            body = json.loads(r.read().decode() or "{}")
+    except (OSError, ValueError) as e:
+        print(f"FAIL push: {e}", flush=True)
+        return False
+    # Kuma answers 200 with {"ok": false, "msg": "Monitor not found or not active."}
+    # for a bad token, so the HTTP status alone proves nothing.
+    if body.get("ok") is True:
+        print(f"     pushed status={status} to Kuma", flush=True)
+        return True
+    print(f"FAIL push: Kuma refused it: {body.get('msg', body)}", flush=True)
+    return False
+
+
+def main():
+    print(f"== backup-health on {NODE}, store {STORE} at {MNT}", flush=True)
+    check_mount()
+    check_root()
+    try:
+        all_guests = guests()
+        ids = covered(all_guests)
+        if 0 < len(ids) < MIN_GUESTS:
+            fail(f"the job covers {len(ids)} guests, fewer than {MIN_GUESTS}")
+        if ids:
+            check_archives(ids, all_guests)
+        check_locks(all_guests)
+    except (subprocess.SubprocessError, ValueError, KeyError) as e:
+        fail(f"could not read the node's guests or jobs: {e}")
+
+    if problems:
+        verdict = f"FAIL backup-health: {len(problems)} problem(s): " + "; ".join(problems)
+        status = "down"
+    else:
+        verdict = "ok backup-health: mounted, root below limit, every covered guest backed up, no locks"
+        status = "up"
+    pushed = push(status, verdict)
+    print(verdict, flush=True)
+    return 0 if (not problems and pushed) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

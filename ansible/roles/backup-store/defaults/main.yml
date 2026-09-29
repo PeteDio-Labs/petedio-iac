@@ -129,3 +129,16 @@ backup_store_jobs:
     #     nightly stop kills whatever Remote Control session is in flight, which is the
     #     single thing the host exists to provide (PET-396, PET-403).
     exclude: [247]
+
+# --------------------------------------------------------- backup-health ----
+# A daily check on each node that the night's archives landed on the share (PET-529).
+# It runs after both jobs finish (pve03's ends near 02:50) and pushes its verdict to an
+# Uptime Kuma push monitor, which alerts through pete-bot. See files/backup-health.
+backup_store_health_oncalendar: "*-*-* 06:00:00"
+backup_store_health_max_age_h: 26
+backup_store_health_root_max_pct: 85
+# Per-node Kuma push tokens, keyed by node name. scripts/deploy-backup-store.sh reads
+# them from Vault (kv/services/backup-health) and passes them in. Left empty, the play
+# writes no env file, and the check fails its push step so the gap stays visible.
+backup_store_health_push_tokens: {}
+backup_store_health_kuma_url: http://192.168.50.4:3001

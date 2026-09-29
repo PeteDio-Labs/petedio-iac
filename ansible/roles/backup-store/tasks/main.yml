@@ -10,3 +10,7 @@
 - name: Schedule the nightly job on each Proxmox node
   ansible.builtin.include_tasks: jobs.yml
   when: inventory_hostname != backup_store_server
+
+- name: Check each morning that the night's backups landed
+  ansible.builtin.include_tasks: health.yml
+  when: inventory_hostname != backup_store_server
