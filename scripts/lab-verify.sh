@@ -184,8 +184,10 @@ if [ -z "$PGNODE" ]; then bad "postgres" "guest 231 not found on any node"; else
     || bad "postgres" "not accepting on $PGNODE"
 fi
 # Vault speaks HTTPS. The same path over http returns a bare 400 that reads as a
-# broken server and is not.
-SEAL=$(on $PVE02 "curl -sk -m 8 https://192.168.50.223:8200/v1/sys/seal-status | grep -o '\"sealed\":[a-z]*'")
+# broken server and is not. The Mac pins the homelab CA rather than asking pve02 to
+# skip verification, so a spoofed endpoint cannot report "unsealed" (PET-538).
+VAULT_CA="$(dirname "$0")/../environments/homelab/vault-ca.crt"
+SEAL=$(curl -sS --cacert "$VAULT_CA" -m 8 https://192.168.50.223:8200/v1/sys/seal-status 2>/dev/null | grep -o '"sealed":[a-z]*')
 [ "$SEAL" = '"sealed":false' ] && ok "vault unsealed" || bad "vault" "${SEAL:-unreachable}"
 
 sec "The media pipeline, end to end"
