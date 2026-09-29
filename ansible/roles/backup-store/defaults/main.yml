@@ -130,6 +130,18 @@ backup_store_jobs:
     #     single thing the host exists to provide (PET-396, PET-403).
     exclude: [247]
 
+# ----------------------------------------------------------- vzdump hook ----
+# Before vzdump backs up a Palworld guest, the hook announces the backup, waits, and
+# POSTs /v1/api/save (PET-539). When the game was running, the hook starts it again
+# after the backup, because the palworld unit is disabled on purpose and a restarted
+# container leaves it off.
+backup_store_hook_path: /usr/local/sbin/vzdump-hook
+backup_store_palworld_guests: [234]
+backup_store_palworld_ini: /home/steam/palworld/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini
+# Seconds between the announcement and the save. vzdump waits for the hook, so this
+# delays the stop by the same amount.
+backup_store_palworld_warn_s: 30
+
 # --------------------------------------------------------- backup-health ----
 # A daily check on each node that the night's archives landed on the share (PET-529).
 # It runs after both jobs finish (pve03's ends near 02:50) and pushes its verdict to an
