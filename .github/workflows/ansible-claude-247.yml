@@ -56,8 +56,8 @@ jobs:
         shell: bash
         run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
 
-      # The claude-247-deploy role reads seven exact paths and nothing else
-      # (environments/homelab/vault-config/policies.tf).
+      # The claude-247-deploy role reads eight exact paths and nothing else
+      # (environments/homelab/vault-config/policies.tf). PET-531 adds claude-ops-github.
       #
       # ignoreNotFound: the mirror, vault, code-push and Proxmox paths are OPTIONAL, and an
       # absent one is a supported state that claude-247-extra-vars.sh warns about. Without
@@ -89,6 +89,9 @@ jobs:
             kv/data/services/claude-code-push app_id | CODE_APP_ID ;
             kv/data/services/claude-code-push installation_id | CODE_INSTALL_ID ;
             kv/data/services/claude-code-push app_pem | CODE_APP_PEM ;
+            kv/data/services/claude-ops-github app_id | OPS_APP_ID ;
+            kv/data/services/claude-ops-github installation_id | OPS_INSTALL_ID ;
+            kv/data/services/claude-ops-github app_pem | OPS_APP_PEM ;
             kv/data/services/claude-247-pve token_id | PVE_TOKEN_ID ;
             kv/data/services/claude-247-pve secret | PVE_TOKEN_SECRET ;
             kv/data/services/claude-247-pve endpoint | PVE_ENDPOINT ;
@@ -124,7 +127,7 @@ jobs:
           fi
 
           scripts/claude-247-extra-vars.sh "$CI/extra.json"
-          unset APP_PEM PLANE_KEY MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM PVE_TOKEN_SECRET PVE_CA_PEM
+          unset APP_PEM PLANE_KEY MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM OPS_APP_PEM PVE_TOKEN_SECRET PVE_CA_PEM
           printf '%s\n' "$ANSIBLE_SSH_KEY" > "$CI/key"; chmod 600 "$CI/key"
 
           # ansible-core is pinned to ansible-validate.yml's version, so the play runs on the
