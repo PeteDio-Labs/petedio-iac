@@ -536,13 +536,16 @@ resource "vault_policy" "claude_247_deploy" {
 
 # claude-ops: the policy behind auth.tf's claude-ops token role, minted by
 # scripts/seed-claude-ops-vault-token.sh onto claude-247 for claude-ops, Pedro's Remote
-# Control identity (PET-531). READ + LIST only — no create/update/delete, and no App keys.
+# Control identity (PET-531). READ only, on 27 named secrets — no list, no
+# create/update/delete, and no App keys.
 #
-# Pedro's decision: exact paths, not a wildcard glob. Every `kv/data/<path>` below is one
-# secret the Mac's own scripts already read (deploy-claude-247.sh, apply-vault-config.sh,
-# seed-*.sh) or write there — never a GitHub App's private key. `kv/metadata/{services,iac,db}/*`
-# stays a wildcard: `list` only returns names, never values, so listing the whole prefix
-# reveals no secret and needs no per-path grant.
+# Pedro's decision: exact paths, not a wildcard glob, and no `kv/metadata/*` grant either.
+# Every `kv/data/<path>` below is one secret the Mac's own scripts already read
+# (deploy-claude-247.sh, apply-vault-config.sh, seed-*.sh) or write there — never a GitHub
+# App's private key. `vault kv get` on a named path needs no `list`, and nothing in
+# `ansible/roles/claude-code` or `scripts/seed-claude-ops-*` calls `vault kv list` or reads
+# `kv/metadata/*`, so claude-ops can read exactly these 27 secrets and cannot discover, list
+# or enumerate any other name under `services/`, `iac/` or `db/`.
 #
 # The Mac's seed-* scripts write these paths from the Mac with the admin token;
 # deploy-claude-247.sh reads them through its own AppRole login
@@ -681,18 +684,6 @@ resource "vault_policy" "claude_ops" {
 
     path "kv/data/services/water-fast" {
       capabilities = ["read"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/db/*" {
-      capabilities = ["list"]
     }
   EOT
 }
