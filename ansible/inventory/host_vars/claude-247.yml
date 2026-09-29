@@ -80,8 +80,8 @@ claude_iac_tools_enable: true
 # play run lands no token. playbooks/mint-claude-247-pve.yml mints it, once, from the Mac.
 claude_pve_audit_enable: true
 
-# PET-531: turns on the claude-ops user and its Remote Control unit, Pedro's own identity on
-# this host. Run scripts/apply-vault-config.sh before any dispatch: without it,
-# claude-247-deploy gets a 403 on kv/data/services/claude-ops-github. Seed the App first.
-# The role still lands the App credentials only when present (tasks/claude-ops.yml:192,203).
+# PET-531: turns on the claude-ops user and its Remote Control unit, for Pedro's own
+# sessions only. The role lands the App credentials only when Vault holds them
+# (claude_ops_github_identity_present), and starts the unit only after the login, the
+# Remote Control consent and the directory trust are on disk.
 claude_ops_enable: true
