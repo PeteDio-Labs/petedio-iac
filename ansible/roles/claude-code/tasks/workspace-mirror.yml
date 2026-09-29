@@ -13,6 +13,8 @@
 # repository, Contents and Metadata read-only, minting a one-hour installation token per
 # fetch. It keeps every property the deploy key was chosen for — it cannot push, cannot read
 # a second repository, and cannot act as Pedro — and unlike the key, GitHub accepts it.
+# PET-542 installed the App on petedio-vault too; the broker scopes each token to this
+# repository alone, so the property holds per token.
 #
 # THE SESSION USER STILL HOLDS NOTHING. Four properties carry that, and all four are
 # load-bearing:
