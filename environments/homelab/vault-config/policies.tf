@@ -536,9 +536,11 @@ resource "vault_policy" "claude_247_deploy" {
 
 # claude-ops: the policy behind auth.tf's claude-ops token role, minted by
 # scripts/seed-claude-ops-vault-token.sh onto claude-247 for claude-ops, Pedro's Remote
-# Control identity (PET-531). READ + LIST only — no create/update/delete — so a token that
-# renews unattended for up to 90 days can read the same secrets the Mac's own scripts
-# already read (deploy-claude-247.sh, apply-vault-config.sh, seed-*.sh), and nothing wider.
+# Control identity (PET-531). READ + LIST only — no create/update/delete. The Mac's seed-*
+# scripts and deploy-claude-247.sh WRITE these paths with an admin root token that never
+# leaves the Mac; they do not read through this policy at all. What this policy scopes is
+# what claude-ops itself may read once a token minted against it lands on 247 — the same
+# services/iac/db prefixes those scripts populate, and nothing wider.
 #
 # ⚠ NEVER kv/data/admin/*. Every other broad-scoped policy in this file (ci-read, terraform,
 # ansible) reads kv/data/admin/*, but that prefix is where the Vault ROOT TOKEN and the
@@ -563,10 +565,6 @@ resource "vault_policy" "claude_ops" {
       capabilities = ["read"]
     }
 
-    path "kv/data/poker/*" {
-      capabilities = ["read"]
-    }
-
     path "kv/metadata/services/*" {
       capabilities = ["list"]
     }
@@ -576,10 +574,6 @@ resource "vault_policy" "claude_ops" {
     }
 
     path "kv/metadata/db/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/poker/*" {
       capabilities = ["list"]
     }
   EOT

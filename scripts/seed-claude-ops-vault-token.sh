@@ -98,10 +98,14 @@ ssh -o ConnectTimeout=8 "$PVE03" "pct exec $CT -- test -d /home/claude-ops/.conf
 step "Delivering the token over SSH (stdin only, never an argument)"
 # printf '%s' — no trailing newline. Vault's own SDKs trim one, but the renewal script here
 # does not add one back either, so the file on disk is exactly the token, byte for byte.
-printf '%s' "$TOKEN" | ssh -o ConnectTimeout=8 "$PVE03" "pct exec $CT -- tee $TOKEN_PATH >/dev/null"
+#
+# `install -m 0400 -o claude-ops -g claude-ops /dev/stdin` — not `tee` followed by a separate
+# chown and chmod. `install` creates the destination file with its final owner and mode in
+# one step, so the file is never briefly world- or group-readable (or root-owned) between a
+# `tee` and the chmod that would have followed it.
+printf '%s' "$TOKEN" \
+  | ssh -o ConnectTimeout=8 "$PVE03" "pct exec $CT -- install -m 0400 -o claude-ops -g claude-ops /dev/stdin $TOKEN_PATH"
 unset TOKEN
-ssh -o ConnectTimeout=8 "$PVE03" "pct exec $CT -- chown claude-ops:claude-ops $TOKEN_PATH"
-ssh -o ConnectTimeout=8 "$PVE03" "pct exec $CT -- chmod 0400 $TOKEN_PATH"
 
 step "Verifying delivery (length only, never the contents)"
 LEN="$(ssh -o ConnectTimeout=8 "$PVE03" "pct exec $CT -- wc -c < $TOKEN_PATH" | tr -d ' ')"

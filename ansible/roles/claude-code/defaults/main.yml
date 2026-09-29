@@ -694,3 +694,8 @@ claude_ops_ssh_targets:
 # "ops", so the two mechanisms can never collide on one unit file.
 claude_ops_remote_name: ops
 claude_ops_permission_mode: auto
+# `worktree`, matching the workspace unit (claude_remote_sessions' `workspace` entry above),
+# never the bare `claude` string — that is not a spawn mode, and the unit would fail to
+# start. `same-dir` exists for the vault clone's own reasons (see the comment above
+# claude_remote_sessions) that do not apply to claude-ops's single workspace checkout.
+claude_ops_spawn: worktree

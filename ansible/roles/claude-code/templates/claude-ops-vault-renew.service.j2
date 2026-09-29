@@ -21,3 +21,5 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=VAULT_ADDR={{ claude_ops_vault_addr }}
 Environment=VAULT_CACERT={{ claude_ops_vault_ca_path }}
 ExecStart={{ claude_ops_vault_renew_bin }}
+# claude can write /tmp, and claude-ops must not read or run anything claude plants there.
+PrivateTmp=true
