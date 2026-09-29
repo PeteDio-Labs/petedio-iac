@@ -301,6 +301,15 @@
   ansible.builtin.include_tasks: pve.yml
   when: claude_pve_audit_enable | bool
 
+# --- claude-ops: a second, privileged session user (PET-531) --------------------------------
+# Pedro's Remote Control sessions, never the loop and never Bobbert — a distinct Unix user
+# with its own Vault token, its own GitHub App, its own IaC toolchain install and SSH to the
+# Proxmox nodes. tasks/claude-ops.yml carries the design; defaults/main.yml carries why it is
+# a second user rather than a widened `claude`.
+- name: Deliver the claude-ops user and its Remote Control session
+  ansible.builtin.include_tasks: claude-ops.yml
+  when: claude_ops_enable | bool
+
 # --- Claude Code settings ------------------------------------------------------------------
 # SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles
 # and one-time prompts land here — so an Ansible-owned copy would silently revert choices
@@ -342,6 +351,19 @@
         defaultMode: "{{ claude_permission_mode }}"
       env:
         TZ: "{{ claude_timezone }}"
+
+# claude-remote-ops.service belongs to claude-ops (tasks/claude-ops.yml), not to this list —
+# see the reconcile's comment below. Refuse the collision unconditionally, whether or not
+# claude_ops_enable is set, because host_vars can add a session named "ops" on a run that
+# never touches claude-ops.yml at all, and the two units would then fight over one unit file.
+- name: Refuse a claude_remote_sessions entry named "ops" (PET-531 owns that unit)
+  ansible.builtin.assert:
+    that:
+      - "'ops' not in (claude_remote_sessions | map(attribute='name') | list)"
+    fail_msg: >-
+      claude_remote_sessions has an entry named "ops". That name renders
+      claude-remote-ops.service, which tasks/claude-ops.yml also owns for claude-ops's own
+      Remote Control unit — rename this entry.
 
 # --- The Remote Control servers --------------------------------------------------------------
 # One unit per project directory, rendered from claude_remote_sessions.
@@ -402,12 +424,19 @@
   register: claude_units_present
 
 - name: Work out which units are no longer declared
+  # ⚠ claude-remote-ops.service is excluded by name, not folded into claude_remote_sessions
+  # (PET-531): that list, and this reconcile, belong to `claude`. claude-ops's single unit is
+  # delivered by tasks/claude-ops.yml under its own flag, so this reconcile must never treat
+  # an absent claude-ops delivery (claude_ops_enable: false) as a reason to delete a unit it
+  # does not own. The companion assert below keeps the two mechanisms from ever colliding on
+  # the same unit file.
   ansible.builtin.set_fact:
     claude_units_stale: >-
       {{ claude_units_present.files | map(attribute='path') | map('basename') | list
          | difference(claude_remote_sessions | map(attribute='name')
                       | map('regex_replace', '^', 'claude-remote-')
-                      | map('regex_replace', '$', '.service') | list) }}
+                      | map('regex_replace', '$', '.service') | list)
+         | difference(['claude-remote-ops.service']) }}
 
 - name: Stop and disable the undeclared remote-control units
   ansible.builtin.systemd:

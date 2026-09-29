@@ -12,6 +12,7 @@
 #   MIRROR_APP_ID MIRROR_INSTALL_ID MIRROR_APP_PEM     kv/services/claude-workspace-mirror
 #   VAULT_APP_ID VAULT_INSTALL_ID VAULT_APP_PEM        kv/services/claude-vault-push
 #   CODE_APP_ID CODE_INSTALL_ID CODE_APP_PEM           kv/services/claude-code-push
+#   OPS_APP_ID OPS_INSTALL_ID OPS_APP_PEM              kv/services/claude-ops-github
 #   PVE_TOKEN_ID PVE_TOKEN_SECRET PVE_ENDPOINT PVE_CA_PEM   kv/services/claude-247-pve
 #   PLANE_BASE_URL PLANE_WORKSPACE PLANE_IDENTIFIER    optional, defaults below
 #
@@ -23,15 +24,16 @@
 # So this script needs no Vault CLI and no AppRole. The checks live here so that both paths
 # refuse the same things with the same words. Keep them here; a copy in either caller drifts.
 #
-# ⚠ FOUR APPS, AND THEY MUST STAY FOUR. The loop's pushes to petedio-iac and opens PRs, the
-# mirror's is read-only on petedio-workspace, the vault's pushes to petedio-vault, and the
-# code-push App pushes to three code repositories and opens PRs there. Two of the six possible mix-ups are outright
-# dangerous — the vault's App in the mirror's path hands a half-hourly ROOT timer a push
-# credential, and the loop's App in the vault's path hands every session on 247 push and
-# pull-request rights on petedio-iac. The code-push App in the mirror's path hands the same
-# root timer a write credential. The checks below refuse all of them by App id, because
-# telling the safe mix-ups from the dangerous ones at a glance is exactly the judgement an
-# operator should not have to make at 03:00.
+# ⚠ FIVE APPS, AND THEY MUST STAY FIVE. The loop's pushes to petedio-iac and opens PRs, the
+# mirror's is read-only on petedio-workspace, the vault's pushes to petedio-vault, the
+# code-push App pushes to three code repositories and opens PRs there, and claude-ops's
+# (PET-531) holds contents, pull_requests and workflows write across PeteDio-Labs for Pedro's
+# Remote Control sessions only — never the loop, never Bobbert. Mixing any two of the five is
+# outright dangerous: the vault's or code-push's or claude-ops's App in the mirror's path
+# hands a half-hourly ROOT timer a write credential, and the loop's App in any session path
+# hands that session push and pull-request rights on petedio-iac. The checks below refuse
+# every pairing by App id, because telling the safe mix-ups from the dangerous ones at a
+# glance is exactly the judgement an operator should not have to make at 03:00.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +58,7 @@ OUT="$1"
 : "${MIRROR_APP_ID:=}" "${MIRROR_INSTALL_ID:=}" "${MIRROR_APP_PEM:=}"
 : "${VAULT_APP_ID:=}" "${VAULT_INSTALL_ID:=}" "${VAULT_APP_PEM:=}"
 : "${CODE_APP_ID:=}" "${CODE_INSTALL_ID:=}" "${CODE_APP_PEM:=}"
+: "${OPS_APP_ID:=}" "${OPS_INSTALL_ID:=}" "${OPS_APP_PEM:=}"
 : "${PVE_TOKEN_ID:=}" "${PVE_TOKEN_SECRET:=}" "${PVE_ENDPOINT:=}" "${PVE_CA_PEM:=}"
 
 # ⚠ REFUSE TO LAND A CREDENTIAL WITH NOTHING TO CONSUME IT (PET-414).
@@ -318,6 +321,91 @@ if [ "$CODE_PRESENT" -eq 1 ]; then
     "$CODE_APP_ID" "$CODE_INSTALL_ID" "${#CODE_APP_PEM}"
 fi
 
+step "Resolving the claude-ops identity (PET-531)"
+# OPTIONAL, for the reason the vault and code-push blocks above give: 247 declares
+# claude_ops_enable permanently in host_vars once claude-ops exists, so this script stays
+# runnable against a host whose user is already provisioned and whose Vault path has not been
+# written yet. Three fields or none; some of them is a failed seed, not a state.
+#
+# ⚠ THIS APP IS FOR PEDRO'S REMOTE CONTROL SESSIONS ONLY, NEVER THE LOOP, NEVER BOBBERT. It
+# carries contents, pull_requests AND workflows write across PeteDio-Labs — wider than any of
+# the other four Apps — because a Remote Control session run by Pedro may need to touch a
+# workflow file, which this script's own loop-identity block above refuses to let the loop's
+# App do. The key lands 0400 claude-ops, in claude-ops's own home, unreadable by the `claude`
+# session user or the loop.
+
+OPS_PRESENT=0
+OPS_FOUND=0
+for v in "$OPS_APP_ID" "$OPS_INSTALL_ID" "$OPS_APP_PEM"; do
+  [ -n "$v" ] && OPS_FOUND=$((OPS_FOUND + 1))
+done
+
+if [ "$OPS_FOUND" -eq 3 ]; then
+  OPS_PRESENT=1
+elif [ "$OPS_FOUND" -gt 0 ]; then
+  die "kv/services/claude-ops-github is half-written: $OPS_FOUND of app_id, installation_id, app_pem are set.
+
+  A partial path is what a failed seed leaves behind. Re-run ./scripts/seed-claude-ops-app.sh."
+else
+  warn "kv/services/claude-ops-github is empty, so the claude-ops App is NOT being landed.
+
+  Everything else in this run converges, and the play leaves claude-ops without GitHub access
+  until it is seeded. To fix it, run ./scripts/seed-claude-ops-app.sh and then this script
+  again."
+fi
+
+if [ "$OPS_PRESENT" -eq 1 ]; then
+  # Every pairing with the four other Apps, refused here because this block is the only one
+  # that holds all five ids.
+  [ "$OPS_APP_ID" != "$APP_ID" ] \
+    || die "kv/services/claude-ops-github and kv/services/claude-loop name the SAME App (id $APP_ID).
+
+  The loop's App is root's on 247 and drives the unattended work loop. claude-ops is Pedro's
+  Remote Control identity alone — never the loop. Create claude-ops's own App and re-seed."
+
+  if [ "$MIRROR_PRESENT" -eq 1 ]; then
+    [ "$OPS_APP_ID" != "$MIRROR_APP_ID" ] \
+      || die "kv/services/claude-ops-github and kv/services/claude-workspace-mirror name the SAME App (id $OPS_APP_ID).
+
+  claude-ops's App carries workflows:write, and the mirror's broker runs as root from a
+  half-hourly timer. Create two Apps and re-seed."
+  fi
+
+  if [ "$VAULT_PRESENT" -eq 1 ]; then
+    [ "$OPS_APP_ID" != "$VAULT_APP_ID" ] \
+      || die "kv/services/claude-ops-github and kv/services/claude-vault-push name the SAME App (id $OPS_APP_ID).
+
+  Every session as \`claude\` can read the vault-push key. Pointing it at claude-ops's wider,
+  workflows-write App would hand every one of those sessions claude-ops's scope. Create two
+  Apps and re-seed."
+  fi
+
+  if [ "$CODE_PRESENT" -eq 1 ]; then
+    [ "$OPS_APP_ID" != "$CODE_APP_ID" ] \
+      || die "kv/services/claude-ops-github and kv/services/claude-code-push name the SAME App (id $OPS_APP_ID).
+
+  The code-push App is readable by every session as \`claude\`. Pointing it at claude-ops's
+  wider, workflows-write App would hand every one of those sessions claude-ops's scope.
+  Create two Apps and re-seed."
+  fi
+
+  for f in ansible/roles/claude-code/tasks/claude-ops.yml \
+           ansible/roles/claude-code/templates/claude-ops-github-broker.j2 \
+           ansible/roles/claude-code/templates/claude-ops-gh.j2 \
+           ansible/roles/claude-code/templates/claude-ops-github.env.j2 \
+           ansible/roles/claude-code/templates/claude-remote-ops.service.j2; do
+    [ -f "$REPO_ROOT/$f" ] || die "$f is missing from this checkout.
+
+  This tree has the claude-ops CREDENTIALS but not the consumer. Landing the App key now would
+  put a private key on 247 with nothing that reads it. Merge the branch carrying
+  roles/claude-code's claude-ops tasks first, then re-run. See PET-531."
+  done
+
+  check_pem "$OPS_APP_PEM" "kv/services/claude-ops-github"
+  printf 'claude-ops: app %s, installation %s, pem %s bytes\n' \
+    "$OPS_APP_ID" "$OPS_INSTALL_ID" "${#OPS_APP_PEM}"
+fi
+
 step "Resolving the read-only Proxmox token (PET-510)"
 # OPTIONAL, for the reason the vault block above gives: 247 declares claude_pve_audit_enable
 # permanently in host_vars. Four fields or none; some of them is a failed mint, not a state.
@@ -427,6 +515,8 @@ VAULT_PRESENT="$VAULT_PRESENT" VAULT_APP_ID="$VAULT_APP_ID" \
 VAULT_INSTALL_ID="$VAULT_INSTALL_ID" VAULT_APP_PEM="$VAULT_APP_PEM" \
 CODE_PRESENT="$CODE_PRESENT" CODE_APP_ID="$CODE_APP_ID" \
 CODE_INSTALL_ID="$CODE_INSTALL_ID" CODE_APP_PEM="$CODE_APP_PEM" \
+OPS_PRESENT="$OPS_PRESENT" OPS_APP_ID="$OPS_APP_ID" \
+OPS_INSTALL_ID="$OPS_INSTALL_ID" OPS_APP_PEM="$OPS_APP_PEM" \
 PVE_PRESENT="$PVE_PRESENT" PVE_TOKEN_ID="$PVE_TOKEN_ID" \
 PVE_TOKEN_SECRET="$PVE_TOKEN_SECRET" PVE_ENDPOINT="$PVE_ENDPOINT" PVE_CA_PEM="$PVE_CA_PEM" \
 PLANE_KEY="$PLANE_KEY" PLANE_BASE_URL="$PLANE_BASE_URL" \
@@ -459,6 +549,12 @@ if os.environ["CODE_PRESENT"] == "1":
         "claude_code_push_app_id": os.environ["CODE_APP_ID"],
         "claude_code_push_installation_id": os.environ["CODE_INSTALL_ID"],
         "claude_code_push_app_pem": os.environ["CODE_APP_PEM"],
+    })
+if os.environ["OPS_PRESENT"] == "1":
+    v.update({
+        "claude_ops_github_app_id": os.environ["OPS_APP_ID"],
+        "claude_ops_github_installation_id": os.environ["OPS_INSTALL_ID"],
+        "claude_ops_github_app_pem": os.environ["OPS_APP_PEM"],
     })
 if os.environ["PVE_PRESENT"] == "1":
     v.update({

@@ -1,0 +1,25 @@
+{{ ansible_managed | comment }}
+# One renewal of claude-ops's Vault token (PET-531), triggered by
+# claude-ops-vault-renew.timer.
+#
+# Runs AS {{ claude_ops_user }}, the same user the token belongs to — there is no root side
+# to this delivery, unlike the loop's broker. {{ claude_ops_vault_token_path }} is
+# {{ claude_ops_user }}-owned 0400, so only this user, and Pedro's Remote Control session
+# running as this user, can read it at all.
+
+[Unit]
+Description=Renew claude-ops's Vault token (PET-531)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ claude_ops_user }}
+Group={{ claude_ops_user }}
+Environment=HOME={{ claude_ops_home }}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=VAULT_ADDR={{ claude_ops_vault_addr }}
+Environment=VAULT_CACERT={{ claude_ops_vault_ca_path }}
+ExecStart={{ claude_ops_vault_renew_bin }}
+# claude can write /tmp, and claude-ops must not read or run anything claude plants there.
+PrivateTmp=true

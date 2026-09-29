@@ -549,6 +549,95 @@ which names a token that no longer exists.
 user as well, run `ssh pve02 pveum user delete claude-247@pve`. Deleting
 `~/.config/claude-pve/` on 247 revokes nothing, and the next deploy lands it again.
 
+## The claude-ops user (PET-531)
+
+`claude-ops` is a SECOND session user, for Pedro's own Remote Control sessions only. It exists
+so those sessions get Mac parity — a Vault token, `terraform`/`ansible`, and SSH to the
+Proxmox nodes — without widening `claude`, which is the loop's user too. **Neither the work
+loop nor Bobbert ever runs as `claude-ops`.** Nothing in this role sets `CLAUDE_LOOP_USER` or
+a bot identity to it, and `tasks/main.yml` and `tasks/claude-ops.yml` each assert the two
+users stay apart.
+
+**Built on branch, not yet deployed as of 2026-09-29.** `claude_ops_enable` defaults to
+`false`; claude-M1 flips it once the App, the Vault role and a deploy have all landed, on
+Pedro's word (the order is at the end of this section).
+
+| | |
+|---|---|
+| User | `claude-ops`, home `/home/claude-ops` (`0700`), no sudo, own primary group |
+| Claude Code | its own npm prefix and its own install, entirely separate from `claude`'s |
+| Workspace | one clone, `petedio-workspace`, at `~/work/petedio/workspace` |
+| Remote Control | one unit, `claude-remote-ops.service`, session name prefix `ops` |
+| GitHub | a fifth App (`kv/services/claude-ops-github`), `contents`, `pull_requests` and `workflows` write on whatever it is installed on under `PeteDio-Labs` — not a fixed repo list like code-push's |
+| Vault | a **policy token**, role `claude-ops`, read-and-list only, `token_period` 7 days, `token_explicit_max_ttl` 90 days, renewed daily by `claude-ops-vault-renew.timer` — **never root, never the unseal key** |
+| SSH | an ed25519 key generated on the host, as `claude-ops`; reaches `pve02` and `pve03` as `root` |
+
+**The GitHub App can touch `.github/workflows/**`, unlike every other App in this role.** The
+other four (loop, mirror, vault, code-push) all lack `workflows` permission on purpose, so a
+push from an unattended process cannot touch CI. claude-ops's App carries it because it exists
+for Pedro's own sessions, not an unattended one — see "Open for Pedro" below for the one
+question this leaves unresolved.
+
+**Pedro decides every merge, same as every other session on this host.**
+`templates/claude-ops-gh.j2` never runs `gh pr merge`; nothing besides that discipline stops
+it, the same as everywhere else in this repo.
+
+### Seeding it
+
+Three scripts, modeled on `scripts/seed-claude-code-app.sh` and `scripts/apply-vault-config.sh`:
+
+- `scripts/seed-claude-ops-app.sh` proves the App's permissions and its `PeteDio-Labs`-only
+  token scope, refuses an App id collision against the loop, mirror, vault or code-push Apps,
+  and writes `kv/services/claude-ops-github`.
+- `scripts/seed-claude-ops-vault-token.sh` mints a `role=claude-ops` Vault token and delivers
+  it over `ssh root@pve03 "pct exec 247 -- ..."`, installed `0400 claude-ops:claude-ops` at
+  `~/.config/claude-ops-vault/token`. The role never writes or reads that file.
+- `scripts/seed-claude-ops-ssh.sh` reads the claude-ops public key back from 247 through
+  pve02, authorizes it in `/etc/pve/priv/authorized_keys` (never `/root/.ssh/authorized_keys`,
+  which is a pmxcfs symlink replaced at `pve-cluster` start), and reads it back on pve03 to
+  prove the cluster propagated it.
+
+**All three refuse to prompt for the Vault root token.** They read `$VAULT_TOKEN`, then the
+macOS Keychain item `vault-root-token`, then exit non-zero — never `read -rsp`. Every secret
+travels over stdin, never argv.
+
+### Rotating the App key
+
+The same shape as code-push's: revoke the private key in the App's GitHub settings, generate
+a new one, and re-run `scripts/seed-claude-ops-app.sh`, then `scripts/deploy-claude-247.sh`.
+
+### Rotating the Vault token
+
+Re-run `scripts/seed-claude-ops-vault-token.sh`. The token role's `token_explicit_max_ttl` is
+90 days: a token nobody rotates or renews for that long cannot be renewed further and needs a
+fresh mint, which is what that script does.
+
+### Post-merge operator order
+
+In order, once this PR merges:
+
+1. claude-M1 creates the GitHub App and runs `scripts/seed-claude-ops-app.sh`.
+2. `scripts/apply-vault-config.sh` in `environments/homelab/vault-config`, to create the
+   `claude-ops` policy and token role.
+3. Set `claude_ops_enable: true` in `inventory/host_vars/claude-247.yml` and dispatch
+   `ansible-claude-247.yml`. **A dispatch here also leaves `claude-loop.timer` stopped and
+   disabled**, the same as every other dispatch of this workflow — re-enable it separately if
+   it was running.
+4. Run `scripts/seed-claude-ops-vault-token.sh` and `scripts/seed-claude-ops-ssh.sh`.
+5. Pedro, as root on 247, runs the Claude Code login and both consent dialogs as `claude-ops`
+   (`runuser -u claude-ops -- bash -lc 'cd ~/work/petedio/workspace && claude'`, accept Remote
+   Control, accept the trust dialog, `/exit`), then starts `claude-remote-ops` — either by
+   re-running `scripts/deploy-claude-247.sh` or with `systemctl start claude-remote-ops`.
+
+### Open for Pedro
+
+An App with `pull_requests:write` can, in principle, post an *approving* review on a pull
+request it opened — GitHub does not forbid an App from reviewing its own PR the way it
+forbids a *user* from doing so. Branch protection on `main` requires a review before merge;
+whether that review can come from this App is a question this change does not resolve in
+code. Flagging it rather than guessing: read the PR body for this branch's own note on it
+before relying on the App for anything past opening a PR.
+
 ## Verify
 
 A unit that is `active` is not a server that registered: one waiting at the consent prompt is

@@ -1,0 +1,606 @@
+# claude-ops.yml — a second, privileged session user for Pedro's Remote Control sessions
+# only (PET-531). Included from tasks/main.yml behind claude_ops_enable.
+#
+# WHY A SECOND USER, NOT A WIDER `claude`. `claude` is the loop's user (tasks/loop.yml,
+# tasks/loop-units.yml) and the general session user. Widening its Vault access, its GitHub
+# App or its SSH reach would widen the loop's too, since the loop's `claude -p` runs as
+# `claude` whenever claude_loop_enable is set — and the loop opens pull requests unattended
+# from a Plane work item, which is the last place to hand a workflows:write token or a root
+# SSH key to the Proxmox nodes. claude-ops exists so Pedro's OWN sessions get Mac parity —
+# read Vault, run terraform/ansible, reach pve02 and pve03 — without that reach ever passing
+# through the loop or Bobbert. Neither ever runs as claude-ops: nothing in this role sets
+# CLAUDE_LOOP_USER or a bot identity to claude_ops_user, and the assert below refuses the
+# collision by name.
+#
+# NOT ROOT, EITHER (Pedro's decision). claude-ops gets a POLICY Vault token — read-and-list
+# on exactly the paths the Mac's own scripts read
+# (environments/homelab/vault-config/policies.tf, "claude-ops" policy) — never the unseal
+# key and never a root token. See tasks/claude-ops.yml's Vault section below.
+#
+# ONE UNIT, ONE DIRECTORY. Unlike `claude`, which can serve a list of directories through
+# claude_remote_sessions, claude-ops serves exactly one: its own
+# {{ claude_ops_workspace_dest }} clone. templates/claude-remote-ops.service.j2 is a sibling
+# of claude-remote.service.j2, not an entry in that template's loop — see its header.
+#
+# ONE RUN, NOT TWO, the same shape as tasks/vault.yml and tasks/code-push.yml: a run that
+# carries the claude-ops GitHub App identity clones and configures it; a run that does not
+# leaves the credentials and the clone alone and converges everything else.
+---
+# --- Refuse the collisions the loop's design depends on staying apart -----------------------
+- name: Refuse claude_ops_user colliding with the loop's user or the session user
+  ansible.builtin.assert:
+    that:
+      - claude_ops_user != claude_user
+      - claude_ops_user != (claude_loop_user | default(claude_user))
+    fail_msg: >-
+      claude_ops_user ({{ claude_ops_user }}) must differ from claude_user
+      ({{ claude_user }}) and from the loop's user
+      ({{ claude_loop_user | default(claude_user) }}). claude-ops exists so Pedro's sessions
+      get privileges the loop must never hold; a shared user would hand them to it.
+
+# --- The user, its own home, its own primary group ------------------------------------------
+# No sudo, the same posture `claude` has, for the same reason: a user that can reconfigure
+# the host it runs on can also undo the boundary it was given.
+- name: Create the claude-ops user
+  ansible.builtin.user:
+    name: "{{ claude_ops_user }}"
+    home: "{{ claude_ops_home }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+# 0700, not the 0755 a fresh home gets by default: claude-ops's home holds a Vault token and
+# a GitHub App key, and nothing outside claude-ops and root needs to list its contents.
+- name: Lock claude-ops's home to 0700
+  ansible.builtin.file:
+    path: "{{ claude_ops_home }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0700"
+
+# ⚠ follow: false is load-bearing (PET-410), the same as every other directory this role
+# creates inside a session user's home: this task runs as root, and a symlink planted at any
+# of these paths would hand root's chown to whatever it points at.
+- name: Create claude-ops's per-user config and bin directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0755"
+  loop:
+    - "{{ claude_ops_home }}/.config"
+    - "{{ claude_ops_home }}/.local"
+    - "{{ claude_ops_home }}/.local/bin"
+
+# --- Its own npm prefix and its own Claude Code install --------------------------------------
+# Entirely separate from claude_npm_prefix: the two session users share no writable path, so
+# neither can plant a binary the other's PATH would pick up.
+- name: Create claude-ops's per-user npm prefix
+  ansible.builtin.file:
+    path: "{{ claude_ops_npm_prefix }}/bin"
+    state: directory
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0755"
+
+- name: Point claude-ops's npm at its own prefix
+  ansible.builtin.copy:
+    dest: "{{ claude_ops_home }}/.npmrc"
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/claude-code).
+      prefix={{ claude_ops_npm_prefix }}
+
+- name: Check .bashrc is a real file before root writes to it
+  ansible.builtin.stat:
+    path: "{{ claude_ops_home }}/.bashrc"
+    follow: false
+  register: claude_ops_bashrc
+
+- name: Refuse to write through a symlinked .bashrc
+  ansible.builtin.assert:
+    that:
+      - not (claude_ops_bashrc.stat.islnk | default(false))
+    fail_msg: >-
+      {{ claude_ops_home }}/.bashrc is a symlink to
+      {{ claude_ops_bashrc.stat.lnk_target | default('unknown') }}. The next task runs as
+      root and sets owner/group/mode, so writing through it would hand that target to
+      {{ claude_ops_user }} (PET-410). Remove the link and re-run.
+
+- name: Put claude-ops's per-user npm bin first on its PATH
+  ansible.builtin.blockinfile:
+    path: "{{ claude_ops_home }}/.bashrc"
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0644"
+    create: true
+    marker: "# {mark} ANSIBLE MANAGED BLOCK (claude-code)"
+    block: |
+      export PATH="{{ claude_ops_npm_prefix }}/bin:$PATH"
+
+- name: Check whether claude-ops's Claude Code is already installed
+  ansible.builtin.stat:
+    path: "{{ claude_ops_npm_prefix }}/bin/claude"
+  register: claude_ops_binary
+
+- name: Install Claude Code for claude-ops (npm global, as claude-ops)
+  ansible.builtin.command:
+    cmd: runuser -u {{ claude_ops_user }} -- npm install -g {{ claude_npm_package }}
+  environment:
+    HOME: "{{ claude_ops_home }}"
+    NPM_CONFIG_PREFIX: "{{ claude_ops_npm_prefix }}"
+  when: not claude_ops_binary.stat.exists
+  changed_when: true
+
+# --- The workspace root ----------------------------------------------------------------------
+- name: Create claude-ops's workspace root
+  ansible.builtin.file:
+    path: "{{ claude_ops_workspace }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0755"
+
+# --- The claude-ops GitHub App: identity, broker, gh wrapper --------------------------------
+# THE PET-498/PET-507 SHAPE. The key, the identity file, the broker and the gh wrapper all
+# belong to {{ claude_ops_user }} — 0700 on the directory, 0400 on the two files, 0500 on the
+# broker and the wrapper — because claude-ops is what pushes and what opens pull requests.
+- name: Create the claude-ops GitHub App credential directory
+  ansible.builtin.file:
+    path: "{{ claude_ops_github_conf_dir }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0700"
+
+# Gated on presence, not on the enable flag — a bare re-run of the play must not fail on a
+# host claude-M1 has not seeded yet.
+- name: Decide whether this run carries the claude-ops App identity
+  ansible.builtin.set_fact:
+    claude_ops_github_identity_present: >-
+      {{ claude_ops_github_app_id | default('') | length > 0
+         and claude_ops_github_installation_id | default('') | length > 0
+         and claude_ops_github_app_pem | default('') | length > 0 }}
+  no_log: true
+
+- name: Report that the claude-ops App identity was not passed, so the credentials are left alone
+  ansible.builtin.debug:
+    msg: >-
+      No claude-ops GitHub App identity in this run — {{ claude_ops_github_conf_dir }} is
+      left as it is. Run scripts/seed-claude-ops-app.sh once, then
+      scripts/deploy-claude-247.sh, to land it.
+  when: not claude_ops_github_identity_present | bool
+
+- name: Land the claude-ops App identity the broker reads
+  ansible.builtin.template:
+    src: claude-ops-github.env.j2
+    dest: "{{ claude_ops_github_conf_dir }}/github.env"
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0400"
+  no_log: true
+  when: claude_ops_github_identity_present | bool
+
+- name: Land the claude-ops App private key
+  ansible.builtin.copy:
+    content: "{{ claude_ops_github_app_pem | trim }}\n"
+    dest: "{{ claude_ops_github_conf_dir }}/app.pem"
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0400"
+  no_log: true
+  when: claude_ops_github_identity_present | bool
+
+# Unconditional: neither script holds a secret.
+- name: Install the claude-ops GitHub broker and gh wrapper
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0500"
+  loop:
+    - { src: claude-ops-github-broker.j2, dest: "{{ claude_ops_github_broker }}" }
+    - { src: claude-ops-gh.j2, dest: "{{ claude_ops_gh }}" }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Check whether the claude-ops App credentials are on this host
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: claude_ops_github_creds
+  loop:
+    - "{{ claude_ops_github_conf_dir }}/github.env"
+    - "{{ claude_ops_github_conf_dir }}/app.pem"
+
+- name: Record whether the claude-ops App credentials are complete
+  ansible.builtin.set_fact:
+    claude_ops_github_creds_on_disk: >-
+      {{ (claude_ops_github_creds.results
+          | map(attribute='stat.exists') | select | list | length) == 2 }}
+
+- name: Mint an installation token through the broker, as claude-ops
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      {{ claude_ops_github_broker }} mint-token {{ claude_ops_workspace_repo.split('/')[1] }}
+  environment:
+    HOME: "{{ claude_ops_home }}"
+  register: claude_ops_github_mint
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: claude_ops_github_creds_on_disk | bool
+
+# noqa reason: `ansible.builtin.git` has no ls-remote. Its cheapest operation is a clone,
+# which is the thing this task exists to avoid attempting before the App is proven to read
+# the repository.
+- name: Check whether the claude-ops App can read the workspace repo  # noqa: command-instead-of-python
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      git {{ claude_ops_github_git_opts }}
+      ls-remote --heads https://github.com/{{ claude_ops_workspace_repo }}.git HEAD
+  environment:
+    HOME: "{{ claude_ops_home }}"
+    GIT_TERMINAL_PROMPT: "0"
+  register: claude_ops_github_probe
+  changed_when: false
+  failed_when: false
+  when: claude_ops_github_creds_on_disk | bool
+
+- name: Record whether the claude-ops workspace clone can proceed in this run
+  ansible.builtin.set_fact:
+    claude_ops_github_ready: >-
+      {{ (claude_ops_github_creds_on_disk | bool)
+         and (claude_ops_github_probe.rc | default(1)) == 0 }}
+    claude_ops_github_blocked_at: >-
+      {{ 'nothing; the claude-ops workspace clone converged'
+         if ((claude_ops_github_creds_on_disk | bool) and (claude_ops_github_probe.rc | default(1)) == 0)
+         else ('no claude-ops App credentials on this host yet, so nothing was cloned'
+               if not (claude_ops_github_creds_on_disk | bool)
+               else ('the credentials are on the host but the broker could not mint a token, so the App id, the installation id or the key is wrong'
+                     if (claude_ops_github_mint.rc | default(1)) != 0
+                     else 'the App minted a token but cannot read ' ~ claude_ops_workspace_repo ~ ', so it is probably not installed there')) }}
+
+- name: Report why the claude-ops workspace clone cannot converge in this run
+  ansible.builtin.debug:
+    msg:
+      - "The {{ claude_ops_workspace_dest }} clone did not converge: {{ claude_ops_github_blocked_at }}."
+      - "Everything else in this file converges."
+  when: not claude_ops_github_ready | bool
+
+# SEEDED, NEVER UPDATED — `creates:` guards it for the reason every other session clone in
+# this role carries it: a fast-forward here could move `main` out from under a session
+# mid-task, and a reset could delete an unpushed change.
+#
+# `git -c … clone`, NOT `git clone -c …`, for the reason tasks/vault.yml measured on git
+# 2.50.1: the second form persists the options into the new repository's own config, which
+# this file writes on purpose in the tasks below instead, so a re-run can converge it.
+#
+# noqa reason: `ansible.builtin.git` would run as the connection user (root) inside a
+# directory {{ claude_ops_user }} owns — the code-execution hazard this role's README names
+# for the mirror and tasks/vault.yml names again here.
+- name: Clone the workspace repo, as claude-ops  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      git {{ claude_ops_github_git_opts }}
+      clone https://github.com/{{ claude_ops_workspace_repo }}.git
+      {{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }}
+    creates: "{{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }}/.git"
+  environment:
+    HOME: "{{ claude_ops_home }}"
+    GIT_TERMINAL_PROMPT: "0"
+  when: claude_ops_github_ready | bool
+
+# ⚠ ONE MORE STEP AFTER THIS, AND NO PLAY CAN TAKE IT. Claude Code refuses to work in a
+# directory nobody has trusted (see the consent/trust section below), and that dialog is
+# interactive.
+
+# The helper has to live in the clone's own config for the same reason tasks/vault.yml gives:
+# a session pushes with a plain `git push` and passes no flags of its own.
+- name: Read the claude-ops clone's credential helper list
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      git -C {{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }}
+      config --local --get-all credential.helper
+  environment:
+    HOME: "{{ claude_ops_home }}"
+  register: claude_ops_helper_existing
+  changed_when: false
+  failed_when: false
+  when: claude_ops_github_ready | bool
+
+# THE ORDER IS THE FIX, the same measurement tasks/vault.yml and tasks/code-push.yml record on
+# git 2.50.1: an empty value has to come FIRST to reset the multi-valued list before the
+# broker is added, or a helper the clone arrived with would answer first and silence it.
+- name: Reset the claude-ops clone's credential helper list
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_ops_user }}"
+      - --
+      - git
+      - -C
+      - "{{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }}"
+      - config
+      - --local
+      - --replace-all
+      - credential.helper
+      - ""
+      - "^$"
+  environment:
+    HOME: "{{ claude_ops_home }}"
+  changed_when: true
+  when:
+    - claude_ops_github_ready | bool
+    - claude_ops_helper_existing.stdout_lines | default([]) != ['', claude_ops_github_broker]
+
+- name: Point the claude-ops clone's credential helper at the broker
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_ops_user }}"
+      - --
+      - git
+      - -C
+      - "{{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }}"
+      - config
+      - --local
+      - --replace-all
+      - credential.helper
+      - "{{ claude_ops_github_broker }}"
+      - "."
+  environment:
+    HOME: "{{ claude_ops_home }}"
+  changed_when: true
+  when:
+    - claude_ops_github_ready | bool
+    - claude_ops_helper_existing.stdout_lines | default([]) != ['', claude_ops_github_broker]
+
+# credential.useHttpPath makes git send the repository path, which the broker requires.
+# user.name/user.email attribute a commit from this host to the host, not to Pedro, the same
+# as the vault clone and the code-push clones.
+- name: Read the claude-ops clone's remaining git settings
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      git -C {{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }}
+      config --local --get {{ item.key }}
+  environment:
+    HOME: "{{ claude_ops_home }}"
+  register: claude_ops_settings
+  changed_when: false
+  failed_when: false
+  loop:
+    - { key: credential.useHttpPath, value: "true" }
+    - { key: user.name, value: claude-ops-247 }
+    - { key: user.email, value: claude-ops-247@users.noreply.github.com }
+  loop_control:
+    label: "{{ item.key }}"
+  when: claude_ops_github_ready | bool
+
+- name: Set the claude-ops clone's remaining git settings
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      git -C {{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }}
+      config --local {{ item.item.key }} {{ item.item.value }}
+  environment:
+    HOME: "{{ claude_ops_home }}"
+  changed_when: true
+  loop: "{{ claude_ops_settings.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - claude_ops_github_ready | bool
+    - (item.stdout | default('') | trim) != item.item.value
+
+# --- SSH to the Proxmox nodes -----------------------------------------------------------------
+# Generated AS claude-ops, so the private half never leaves this host. `ssh-keygen -N ''`
+# only when the file is absent, so a re-run never overwrites a key pve02 already trusts —
+# there is no `force:` and no `state: absent` path anywhere in this role for this key.
+- name: Create claude-ops's .ssh directory
+  ansible.builtin.file:
+    path: "{{ claude_ops_home }}/.ssh"
+    state: directory
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0700"
+
+- name: Check whether claude-ops's SSH key already exists
+  ansible.builtin.stat:
+    path: "{{ claude_ops_ssh_key }}"
+    follow: false
+  register: claude_ops_ssh_key_stat
+
+- name: Generate claude-ops's SSH key, as claude-ops
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      ssh-keygen -t ed25519 -N '' -C claude-ops@claude-247 -f {{ claude_ops_ssh_key }}
+  when: not claude_ops_ssh_key_stat.stat.exists
+  changed_when: true
+
+- name: Install claude-ops's SSH client config for the Proxmox nodes
+  ansible.builtin.template:
+    src: claude-ops-ssh-config.j2
+    dest: "{{ claude_ops_home }}/.ssh/config"
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0600"
+
+- name: Touch claude-ops's known_hosts file so StrictHostKeyChecking has somewhere to pin
+  ansible.builtin.file:
+    path: "{{ claude_ops_home }}/.ssh/known_hosts"
+    state: touch
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0600"
+    modification_time: preserve
+    access_time: preserve
+
+# --- The read-only Vault token (Pedro's decision) ----------------------------------------------
+# ⚠ THIS FILE CREATES THE DIRECTORY AND NOTHING ELSE. The token at claude_ops_vault_token_path
+# is minted and delivered by scripts/seed-claude-ops-vault-token.sh, over SSH, out of band —
+# never by this play, never in an extra-vars file, never on this run's stdout. See that
+# script and defaults/main.yml's Vault section for why.
+- name: Create the claude-ops Vault config directory
+  ansible.builtin.file:
+    path: "{{ claude_ops_vault_conf_dir }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0700"
+
+# 0444: the CA is public, the same treatment tasks/pve.yml gives the cluster CA.
+- name: Land the Vault CA claude-ops pins
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../environments/homelab/vault-ca.crt"
+    dest: "{{ claude_ops_vault_ca_path }}"
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0444"
+
+- name: Install the claude-ops Vault renewal script
+  ansible.builtin.template:
+    src: claude-ops-vault-renew.j2
+    dest: "{{ claude_ops_vault_renew_bin }}"
+    follow: false
+    owner: "{{ claude_ops_user }}"
+    group: "{{ claude_ops_user }}"
+    mode: "0500"
+
+- name: Install the claude-ops Vault renewal units
+  ansible.builtin.template:
+    src: "claude-ops-vault-renew.{{ item }}.j2"
+    dest: "/etc/systemd/system/claude-ops-vault-renew.{{ item }}"
+    mode: "0644"
+  loop:
+    - service
+    - timer
+  notify: Reload systemd
+
+- name: Flush handlers so the renewal units are on disk before they are enabled
+  ansible.builtin.meta: flush_handlers
+
+# Always enabled: the timer fires a renewal daily, and the renewal script itself fails loudly
+# (and does nothing else) when the token file is not there yet — it is safe to enable before
+# scripts/seed-claude-ops-vault-token.sh has ever run.
+- name: Enable and start the claude-ops Vault renewal timer
+  ansible.builtin.systemd:
+    name: claude-ops-vault-renew.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Check whether claude-ops's Vault token is on this host
+  ansible.builtin.stat:
+    path: "{{ claude_ops_vault_token_path }}"
+  register: claude_ops_vault_token_stat
+
+- name: Report the claude-ops Vault token's state
+  ansible.builtin.debug:
+    msg: >-
+      {{ claude_ops_vault_token_path }} {{ 'is present.' if claude_ops_vault_token_stat.stat.exists
+         else 'does not exist yet. Run scripts/seed-claude-ops-vault-token.sh to mint and deliver it.' }}
+
+# --- The Remote Control server -----------------------------------------------------------------
+# THE PET-431/PET-499 SHAPE, for one user and one directory instead of a list. Read
+# tasks/main.yml's own consent and trust checks before changing either block below — the two
+# hazards they guard against (a hung prompt that looks healthy, and a unit that trips its
+# start limit and latches `failed`) apply to claude-ops's Claude Code binary exactly as they
+# do to claude's.
+- name: Render the claude-ops Remote Control unit
+  ansible.builtin.template:
+    src: claude-remote-ops.service.j2
+    dest: /etc/systemd/system/claude-remote-ops.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers so the claude-ops unit is on disk before it is started
+  ansible.builtin.meta: flush_handlers
+
+- name: Check the one-time Remote Control consent is on disk for claude-ops
+  ansible.builtin.command:
+    cmd: runuser -u {{ claude_ops_user }} -- jq -e '.remoteDialogSeen == true' {{ claude_ops_home }}/.claude.json
+  register: claude_ops_remote_consent
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Check the claude-ops workspace directory's trust is on disk
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_ops_user }}"
+      - --
+      - jq
+      - -e
+      - --arg
+      - d
+      - "{{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }}"
+      - '.projects[$d].hasTrustDialogAccepted == true'
+      - "{{ claude_ops_home }}/.claude.json"
+  register: claude_ops_remote_trust
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Report that claude-ops's Remote Control unit awaits the login and trust dialog
+  ansible.builtin.debug:
+    msg: >-
+      claude-remote-ops.service is installed but not started: consent
+      rc={{ claude_ops_remote_consent.rc | default('not run') }}, trust
+      rc={{ claude_ops_remote_trust.rc | default('not run') }}. As root, run
+      `runuser -u {{ claude_ops_user }} -- bash -lc "cd {{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }} && claude"`,
+      accept the Remote Control and trust dialogs, `/exit`, then re-run
+      scripts/deploy-claude-247.sh, or start the unit by hand.
+  when: >-
+    (claude_ops_remote_consent.rc | default(1)) != 0
+    or (claude_ops_remote_trust.rc | default(1)) != 0
+
+- name: Clear a tripped start limit on claude-remote-ops before starting
+  ansible.builtin.command:
+    cmd: systemctl reset-failed claude-remote-ops.service
+  when:
+    - (claude_ops_remote_consent.rc | default(1)) == 0
+    - (claude_ops_remote_trust.rc | default(1)) == 0
+  changed_when: false
+  failed_when: false
+
+# Started only once the login, the Remote Control consent and the directory trust are all on
+# disk — never on the strength of claude_ops_enable alone, for the PET-431/PET-499 reasons
+# above. A host that has none of those yet gets the unit installed and left stopped, which is
+# the intended shape for the first apply after claude-M1 flips claude_ops_enable to true.
+- name: Enable and start claude-ops's Remote Control server
+  ansible.builtin.systemd:
+    name: claude-remote-ops.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - (claude_ops_remote_consent.rc | default(1)) == 0
+    - (claude_ops_remote_trust.rc | default(1)) == 0
