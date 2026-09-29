@@ -219,6 +219,17 @@ section heading. History sections for systems that are gone get no rule.
   VM disks into a filesystem. Filesystem-mount LVs → register as a `dir` storage on
   the mountpoint, not as `lvm`.
 
+- **A `dir` storage on an NFS mount point without `is_mountpoint` fills the node's root
+  disk when the mount drops (PET-529).** The backup share mounts with `nofail`, so a boot
+  that cannot reach ollama-host leaves `/mnt/ollama-backups` an ordinary directory, and
+  Proxmox still reports `ollama-backups` as `active`. vzdump wrote every nightly archive there
+  from 2026-09-14 until pve02's root disk held 0 bytes free. The full disk then left 110, 233
+  and 236 on `lock: snapshot-delete`, so their backups failed too. `roles/backup-store` asserts
+  the mount is NFS, but only when the role runs, never at boot. With `is_mountpoint yes`,
+  Proxmox reports the store inactive while the path isn't mounted, and the job fails instead.
+  The one-time cleanup was `scripts/pve02-rescue-stranded-backups.sh`. It reads the stranded
+  files through a bind mount of `/`, because a mount over the directory hides them.
+
 - **pve02 is the homelab NFS file server — it is load-bearing, not idle.** Since the
   2026-09-04 rebuild it exports exactly two things, `/mnt/media` and `/mnt/downloads`, to
   `192.168.50.10` (`exportfs -v`). The three exports it used to carry —
