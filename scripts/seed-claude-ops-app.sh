@@ -3,11 +3,11 @@
 # kv/services/claude-ops-github, so claude-ops on claude-247 can push branches and open pull
 # requests, on whatever it is installed on under PeteDio-Labs (PET-531).
 #
-# A FIFTH APP, distinct from the loop's (kv/services/claude-loop), the workspace mirror's
-# (kv/services/claude-workspace-mirror), the vault push App's (kv/services/claude-vault-push)
-# and the code-push App's (kv/services/claude-code-push). Pedro's decision, not a reuse of
-# any of those: this App is for HIS Remote Control sessions on claude-247, running as
-# claude-ops, never as `claude` and never as the loop.
+# ITS OWN APP, distinct from the workspace mirror's (kv/services/claude-workspace-mirror),
+# the vault push App's (kv/services/claude-vault-push) and the code-push App's
+# (kv/services/claude-code-push). Pedro's decision, not a reuse of any of those: this App is
+# for HIS Remote Control sessions on claude-247, running as claude-ops, never as `claude`.
+# The work loop's App was a fifth until PET-547 retired it.
 #
 # UNLIKE THE CODE-PUSH APP, THIS ONE HAS NO FIXED REPOSITORY ALLOW-LIST, and this script does
 # not enforce one: templates/claude-ops-github-broker.j2 answers for whatever repository git
@@ -16,11 +16,11 @@
 # account must be PeteDio-Labs, and its permissions must be exactly contents:write,
 # pull_requests:write, workflows:write, metadata:read — the fourth because GitHub requires it
 # on every install. `workflows` is deliberately present here and deliberately absent from the
-# other four Apps: this one exists for Pedro's own sessions, not an unattended one.
+# other three Apps: this one exists for Pedro's own sessions.
 #
-# WHY THIS CHECKS THE OTHER FOUR APPS. This App's id must match none of the loop's, the
-# mirror's, the vault App's or the code-push App's. Each is read from Vault, live, so the
-# check survives rotation.
+# WHY THIS CHECKS THE OTHER THREE APPS. This App's id must match none of the mirror's, the
+# vault App's or the code-push App's. Each is read from Vault, live, so the check survives
+# rotation.
 #
 # WHAT THIS DOES NOT DO. It does not create the App, generate its key or install it. Those are
 # browser steps on the App's GitHub settings page. scripts/deploy-claude-247.sh delivers the
@@ -49,7 +49,6 @@ export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
 export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 VAULT_PATH="kv/services/claude-ops-github"
-LOOP_VAULT_PATH="kv/services/claude-loop"
 MIRROR_VAULT_PATH="kv/services/claude-workspace-mirror"
 VAULT_APP_VAULT_PATH="kv/services/claude-vault-push"
 CODE_PUSH_VAULT_PATH="kv/services/claude-code-push"
@@ -131,7 +130,7 @@ vault token lookup >/dev/null 2>&1 || die "Vault rejected the token, or $VAULT_A
   Check both before assuming either: ./scripts/pet-secrets doctor reports whether Vault is
   sealed and whether the Keychain still holds the bootstrap chain."
 
-step "Checking this App id against the other four Apps on claude-247"
+step "Checking this App id against the other three Apps on claude-247"
 refuse_shared_app_id() {
   local path="$1" owner="$2" other_id
   if ! other_id="$(vault kv get -field=app_id "$path" 2>&1)"; then
@@ -148,11 +147,10 @@ refuse_shared_app_id() {
   claude-ops needs its own App, distinct from every other identity on this host. Create it,
   install it, and re-run with its key."
 }
-refuse_shared_app_id "$LOOP_VAULT_PATH" "the work loop"
 refuse_shared_app_id "$MIRROR_VAULT_PATH" "the workspace mirror"
 refuse_shared_app_id "$VAULT_APP_VAULT_PATH" "the vault push"
 refuse_shared_app_id "$CODE_PUSH_VAULT_PATH" "code push"
-echo "  app $APP_ID matches none of the loop's, the mirror's, the vault push App's or the code-push App's app_id."
+echo "  app $APP_ID matches none of the mirror's, the vault push App's or the code-push App's app_id."
 
 # ---------------------------------------------------------------- scope proof
 step "Asking GitHub what this App's own key proves"

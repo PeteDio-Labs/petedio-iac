@@ -21,7 +21,7 @@
 #
 #   1. The App private key is 0400 root:root and the broker that reads it is 0500 root:root.
 #      Sessions run as {{ claude_user }} with no sudo (PET-408), so a session can neither read
-#      the key nor run the broker — the same arrangement {{ claude_loop_conf_dir }} uses.
+#      the key nor run the broker.
 #   2. No token is ever written down. The broker mints one per fetch and hands it to git over
 #      a pipe, as a credential helper. It is in no file, no git config and no command line.
 #   3. Root fetches into a BARE MIRROR it owns, and the session's working clone is cloned
@@ -42,7 +42,7 @@
 # ONE RUN, NOT TWO. The deploy key needed a run to generate it and a run to use it, with a
 # paste in between. The App is authorized before Ansible starts, so the run that carries the
 # identity also mirrors and clones. A run that carries no identity converges everything else
-# and leaves the credentials alone, exactly as tasks/loop.yml does — which is what keeps a
+# and leaves the credentials alone — which is what keeps a
 # bare `ansible-playbook playbooks/configure-claude-code.yml` runnable on a host that has
 # already been seeded.
 ---
@@ -66,7 +66,7 @@
     - "{{ claude_workspace_mirror_key }}"
     - "{{ claude_workspace_mirror_key }}.pub"
 
-# Gated on presence, not on the enable flag — the reverse of tasks/loop.yml, and for a reason
+# Gated on presence, not on the enable flag, for a reason
 # this host makes concrete. claude_workspace_mirror_enable is declared true in host_vars and
 # stays true, so asserting on it would fail every bare run of the play. The end of
 # playbooks/configure-claude-code.yml reports an unfinished delivery instead, naming the step
@@ -101,7 +101,7 @@
   when: claude_workspace_mirror_identity_present | bool
 
 # A trailing newline is added if the Vault field lost one, because openssl rejects a PEM
-# without it. Same treatment as the loop's app.pem, for the same reason.
+# without it.
 - name: Land the App private key
   ansible.builtin.copy:
     content: "{{ claude_workspace_mirror_app_pem | trim }}\n"

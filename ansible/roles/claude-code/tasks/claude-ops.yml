@@ -1,16 +1,14 @@
 # claude-ops.yml — a second, privileged session user for Pedro's Remote Control sessions
 # only (PET-531). Included from tasks/main.yml behind claude_ops_enable.
 #
-# WHY A SECOND USER, NOT A WIDER `claude`. `claude` is the loop's user (tasks/loop.yml,
-# tasks/loop-units.yml) and the general session user. Widening its Vault access, its GitHub
-# App or its SSH reach would widen the loop's too, since the loop's `claude -p` runs as
-# `claude` whenever claude_loop_enable is set — and the loop opens pull requests unattended
-# from a Plane work item, which is the last place to hand a workflows:write token or a root
-# SSH key to the Proxmox nodes. claude-ops exists so Pedro's OWN sessions get Mac parity —
-# read Vault, run terraform/ansible, reach pve02 and pve03 — without that reach ever passing
-# through the loop or Bobbert. Neither ever runs as claude-ops: nothing in this role sets
-# CLAUDE_LOOP_USER or a bot identity to claude_ops_user, and the assert below refuses the
-# collision by name.
+# WHY A SECOND USER, NOT A WIDER `claude`. `claude` is the general session user, and it ran
+# the retired work loop's unattended `claude -p` (PET-399, retired by PET-547). Anything that
+# runs as `claude` would inherit a wider Vault access, GitHub App or SSH reach, and that is
+# the last place to hand a workflows:write token or a root SSH key to the Proxmox nodes.
+# claude-ops exists so Pedro's OWN sessions get Mac parity — read Vault, run
+# terraform/ansible, reach pve02 and pve03 — without that reach passing through `claude` or
+# Bobbert. Nothing in this role sets a bot identity to claude_ops_user, and the assert below
+# refuses the collision with claude_user by name.
 #
 # NOT ROOT, EITHER (Pedro's decision). claude-ops gets a POLICY Vault token — read-and-list
 # on exactly the paths the Mac's own scripts read
@@ -26,17 +24,15 @@
 # carries the claude-ops GitHub App identity clones and configures it; a run that does not
 # leaves the credentials and the clone alone and converges everything else.
 ---
-# --- Refuse the collisions the loop's design depends on staying apart -----------------------
-- name: Refuse claude_ops_user colliding with the loop's user or the session user
+# --- Refuse the collision this design depends on staying apart ------------------------------
+- name: Refuse claude_ops_user colliding with the session user
   ansible.builtin.assert:
     that:
       - claude_ops_user != claude_user
-      - claude_ops_user != (claude_loop_user | default(claude_user))
     fail_msg: >-
       claude_ops_user ({{ claude_ops_user }}) must differ from claude_user
-      ({{ claude_user }}) and from the loop's user
-      ({{ claude_loop_user | default(claude_user) }}). claude-ops exists so Pedro's sessions
-      get privileges the loop must never hold; a shared user would hand them to it.
+      ({{ claude_user }}). claude-ops exists so Pedro's sessions get privileges `claude`
+      must never hold; a shared user would hand them to it.
 
 # --- The user, its own home, its own primary group ------------------------------------------
 # No sudo, the same posture `claude` has, for the same reason: a user that can reconfigure

@@ -142,15 +142,6 @@ case "$APP_ID" in ''|*[!0-9]*) die "app_id is not numeric: '$APP_ID'" ;; esac
 case "$INSTALLATION_ID" in ''|*[!0-9]*) die "installation_id is not numeric: '$INSTALLATION_ID'" ;; esac
 echo "  app_id=$APP_ID  installation_id=$INSTALLATION_ID"
 
-# ⚠ NOT THE LOOP'S APP. The loop's App carries contents:write and pull_requests:write. Both
-# credentials land on the same host, and the mirror's is read by a root timer.
-LOOP_APP_ID="$(vault kv get -field=app_id kv/services/claude-loop 2>/dev/null || true)"
-[ -z "$LOOP_APP_ID" ] || [ "$LOOP_APP_ID" != "$APP_ID" ] \
-  || die "App $APP_ID is the one already seeded at kv/services/claude-loop.
-
-  That App can push and open pull requests. This path must hold a SECOND App, read-only on
-  $REPOS. Create it, then re-run."
-
 # ------------------------------------------------------------------- scope proof
 step "Asking the App what it can actually see"
 # The permission map above is what GitHub says the App was GRANTED. This is what the App can
