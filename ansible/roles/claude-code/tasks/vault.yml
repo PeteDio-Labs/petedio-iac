@@ -6,8 +6,7 @@
 # shape cannot carry here: the vault is PUSHED TO, and the process that pushes is the session.
 # So the key, the identity file and the broker all belong to {{ claude_user }} — 0700 on the
 # directory, 0400 on the two files, 0500 on the broker — and every process running as
-# {{ claude_user }} can mint a token for {{ claude_vault_repo }}. The work loop's `claude -p`
-# is one of those processes if claude_loop_enable is ever set.
+# {{ claude_user }} can mint a token for {{ claude_vault_repo }}.
 #
 # WHAT KEEPS THE BLAST RADIUS NARROW IS THE APP, NOT THE MODES. One installed repository,
 # contents:write and metadata:read, nothing else. It cannot open a pull request, cannot read a
@@ -43,7 +42,7 @@
 # creates inside the session user's home. ansible.builtin.file defaults to follow: yes, and
 # this task runs as ROOT inside a home {{ claude_user }} owns. Replace one of these paths with
 # a symlink and root chowns the TARGET, which is the one move that reaches
-# {{ claude_loop_conf_dir }}/app.pem.
+# {{ claude_workspace_mirror_conf_dir }}/app.pem.
 #
 # The parents are created explicitly rather than left to the leaf task: a parent Ansible
 # creates on the way to a deeper path gets root:root, and ~/.config and ~/.local belong to the
@@ -109,7 +108,7 @@
   when: claude_vault_identity_present | bool
 
 # A trailing newline is added if the Vault field lost one, because openssl rejects a PEM
-# without it. Same treatment as the loop's and the mirror's app.pem, for the same reason.
+# without it. Same treatment as the mirror's app.pem, for the same reason.
 - name: Land the vault App private key
   ansible.builtin.copy:
     content: "{{ claude_vault_app_pem | trim }}\n"

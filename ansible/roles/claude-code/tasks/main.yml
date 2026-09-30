@@ -128,8 +128,8 @@
     # follow: yes, and this task runs as ROOT while the path lives inside a home the
     # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
     # any file on the host becomes claude-owned on the next play run. That is the one
-    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
-    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    # move that would reach /etc/claude-workspace-mirror/app.pem, which the mirror's design
+    # keeps unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
     follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
@@ -158,9 +158,9 @@
 # atomically. A session could swap .bashrc for a symlink in the window between the two
 # tasks. That needs winning a race inside a play run whose timing the session does not
 # control, so it is far smaller than what this closes — but it is narrowed, not shut.
-# The full fix is to stop root writing into that home at all: move the loop's state to a
-# root-created /var/lib/claude-loop with only the leaf owned by the session user. That is
-# a bigger change than the one this guard belongs to (PET-410).
+# The full fix is to stop root writing into that home at all, and keep any root-written
+# state under a root-created directory in /var/lib. That is a bigger change than the one
+# this guard belongs to (PET-410).
 - name: Check .bashrc is a real file before root writes to it
   ansible.builtin.stat:
     path: "{{ claude_home }}/.bashrc"
@@ -227,8 +227,8 @@
     # follow: yes, and this task runs as ROOT while the path lives inside a home the
     # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
     # any file on the host becomes claude-owned on the next play run. That is the one
-    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
-    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    # move that would reach /etc/claude-workspace-mirror/app.pem, which the mirror's design
+    # keeps unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
     follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
@@ -330,8 +330,8 @@
     # follow: yes, and this task runs as ROOT while the path lives inside a home the
     # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
     # any file on the host becomes claude-owned on the next play run. That is the one
-    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
-    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    # move that would reach /etc/claude-workspace-mirror/app.pem, which the mirror's design
+    # keeps unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
     follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
@@ -600,14 +600,8 @@
     or (claude_remote_consent.rc | default(1) == 0
         and item.name in claude_sessions_trusted | default([]))
 
-# --- The ticket-driven work loop (PET-399) --------------------------------------------
-# Split into its own file because it is a second, separable thing this host does: the
-# remote-control servers above answer a human, and the loop below answers a label. Kept in
-# THIS role rather than a sibling because it needs claude_user, claude_home,
-# claude_workspace and claude_npm_prefix — four variables a second role would duplicate and
-# drift the day one of them changes.
-#
-# Imported, not included, so ansible-lint and --syntax-check read it on every run whether
-# or not the loop is enabled.
-- name: Install the ticket-driven work loop
-  ansible.builtin.import_tasks: loop.yml
+# --- The retired ticket-driven work loop (PET-399, retired by PET-547) ------------------
+# Pedro decommissioned the loop on 2026-09-30. This removes what the role used to install
+# for it, so a host converged before PET-547 keeps none of it.
+- name: Remove the retired ticket-driven work loop
+  ansible.builtin.import_tasks: loop-retired.yml

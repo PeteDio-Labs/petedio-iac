@@ -12,15 +12,15 @@
 # THE LOGIN STILL CANNOT BE INJECTED. Remote Control refuses API keys and
 # `claude setup-token` tokens alike, so the claude.ai login is an operator step over SSH.
 #
-# ⚠ THERE IS NOW A VAULT SECRET TO PASS IN (PET-399), and this header used to say there was
-# not. The ticket-driven work loop needs a GitHub App key and the Plane PAT, so run the play
-# through its wrapper when you mean to land or rotate them:
+# ⚠ 247'S GitHub App keys and its Proxmox token come from Vault, so run the play through
+# the workflow or its wrapper when you mean to land or rotate them:
 #
+#   gh workflow run ansible-claude-247.yml --ref main
 #   ./scripts/deploy-claude-247.sh
 #
 # Run bare, the play still converges everything else and leaves the secrets alone — see the
-# "Decide whether this run carries the loop identity" task in roles/claude-code, and its
-# counterpart for the workspace mirror's GitHub App (PET-493).
+# "Decide whether this run carries the ... identity" tasks in roles/claude-code, such as the
+# one for the workspace mirror's GitHub App (PET-493).
 #
 # TWO-PHASE BY DESIGN, DECLARED ONCE. claude-247 declares `claude_remote_enable: true` in
 # inventory/host_vars/claude-247.yml, and the role starts the units only once the operator
@@ -33,7 +33,8 @@
 #   ansible-playbook playbooks/configure-claude-code.yml
 #
 # ⚠ Do not pass `-e claude_remote_enable=true` instead of declaring it. That was the old
-# bootstrap, and the next run without the flag, a loop deploy, stopped the server.
+# bootstrap, and the next run without the flag, a deploy of the retired work loop, stopped the
+# server.
 #
 # Full sequence, including what to click: ansible/roles/claude-code/README.md.
 #
@@ -97,9 +98,9 @@
                     '   rotate it, run ./scripts/seed-claude-vault-app.sh and then ./scripts/deploy-claude-247.sh.',
                     '   Then trust it once, as the session user, in its own directory:',
                     '     cd ~/work/petedio/vault && claude   # accept the dialog, then /exit',
-                    '   ⚠ Do NOT reuse the loop App or the mirror App here to make a red run green. The',
-                    '   loop App can push to petedio-iac and open PRs, and this key is readable by every',
-                    '   session on this host. deploy-claude-247.sh refuses that swap by App id, and a',
+                    '   ⚠ Do NOT reuse the code-push App or the mirror App here to make a red run green.',
+                    '   The code-push App can push to petedio-iac and open PRs, and this key is readable by',
+                    '   every session on this host. deploy-claude-247.sh refuses that swap by App id, and a',
                     '   hand-run play cannot, which is why the credentials come from the script.',
                     '3. For any other private repo, it needs the same treatment: roles/claude-code/tasks/workspace-mirror.yml.',
                     'To stop serving one instead, drop its entry from claude_remote_sessions.',

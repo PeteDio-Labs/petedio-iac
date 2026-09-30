@@ -13,19 +13,22 @@
 # {{ claude_workspace_mirror_repo }} ALONE, Contents and Metadata read-only, keeps every
 # property the deploy key was chosen for: it cannot push, cannot read a second repository,
 # and cannot act as Pedro. That argument holds only while both halves stay true — one
-# installed repository, and read-only permissions. Widen either and re-read
+# repository per token, and read-only permissions. Widen either and re-read
 # roles/claude-code/README.md before you do.
 #
-# ⚠ THIS IS NOT THE LOOP'S APP, AND MUST NOT BECOME IT. The loop's App carries
-# contents:write and pull_requests:write, because it opens draft PRs. Pointing this at
-# {{ claude_loop_conf_dir }} would give a half-hourly root timer a push credential for
-# petedio-iac. Two Apps, two directories, two brokers.
+# PET-542 installed the App on petedio-vault too, for petedio-search on ollama-host. Each
+# token this broker mints is therefore scoped down in the request itself: to
+# {{ claude_workspace_mirror_repo }} alone, contents read. A token that reads the vault
+# never exists on this host.
+#
+# ⚠ THIS APP MUST STAY READ-ONLY. Giving it contents:write would give a half-hourly root
+# timer a push credential. A push credential belongs to a separate App, directory and broker.
 #
 # WHY A BROKER AND NOT A TOKEN ON DISK. The token is minted per fetch and exists only in this
 # process and the pipe to git. Nothing writes it to {{ claude_workspace_mirror_conf_dir }},
 # to the mirror's git config, or to a command line. Sessions run as {{ claude_user }} with no
 # sudo (PET-408), so they can read neither the App key (0400 root) nor this script (0500
-# root) — the same arrangement {{ claude_loop_conf_dir }} already uses.
+# root).
 #
 # Two subcommands, one argument, nothing else:
 #
@@ -44,14 +47,15 @@ WANT_PATH={{ claude_workspace_mirror_repo }}.git
 
 die() { printf 'claude-workspace-mirror-broker: %s\n' "$*" >&2; exit 1; }
 
-# Callable only by root, like the loop's broker. The mode on this file already says so; this
+# Callable only by root. The mode on this file already says so; this
 # says it again where the reason is written down, because a mode is easy to change by hand.
 [ "$(id -u)" -eq 0 ] || die "must run as root. Sessions run as {{ claude_user }}, which cannot read $CONF_DIR."
 [ $# -eq 1 ] || die "usage: $(basename "$0") mint-token|get|store|erase"
 
 # ---------------------------------------------------------------------------------- mint
 #
-# Body carried over from claude-loop-broker, which carried it from scripts/agent-mint-token.sh.
+# Body carried over from the retired work loop's broker, which carried it from
+# scripts/agent-mint-token.sh.
 # Three things in it are load-bearing and were paid for once already:
 #
 #   · The JWT window is 540s (iat back-dated 60s, exp 480s out) under GitHub's HARD 600s
@@ -60,10 +64,11 @@ die() { printf 'claude-workspace-mirror-broker: %s\n' "$*" >&2; exit 1; }
 #   · The JWT goes to curl through STDIN (`-H @-`), never argv. For its lifetime the JWT is
 #     App-bearer-equivalent, and anything on this host could read it out of
 #     /proc/<pid>/cmdline. printf is a bash builtin, so the value never reaches an external
-#     process's command line. The token-exchange POST has no body, so stdin is free.
+#     process's command line. The POST body, which names the repository and permission,
+#     holds no secret, so it rides on argv.
 #   · The PEM reaches openssl as a PATH, not as content. A path is not a secret; the 0400
-#     mode on the file it names is what protects the key. claude-loop-broker's comment claims
-#     a process substitution here and has never done one — corrected in PET-493 rather than
+#     mode on the file it names is what protects the key. The loop broker's comment claimed
+#     a process substitution here and never did one — corrected in PET-493 rather than
 #     copied forward.
 mint() {
   # shellcheck source=/dev/null
@@ -85,6 +90,7 @@ mint() {
 
   resp="$(printf 'Authorization: Bearer %s\n' "$jwt" | curl -sS --max-time 20 -X POST \
     -H @- \
+    --data '{"repositories":["{{ claude_workspace_mirror_repo | basename }}"],"permissions":{"contents":"read"}}' \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     "https://api.github.com/app/installations/${GITHUB_INSTALLATION_ID}/access_tokens")"

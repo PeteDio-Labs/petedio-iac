@@ -13,8 +13,8 @@
 #
 # The key is readable by {{ claude_ops_user }} alone. 0400 on the key and 0500 on this file
 # keep every OTHER user out; they do not keep {{ claude_ops_user }} out, and are not meant to.
-# NEITHER THE LOOP NOR BOBBERT EVER RUNS AS {{ claude_ops_user }} — nothing in this role sets
-# CLAUDE_LOOP_USER or a bot identity to it, and tasks/main.yml asserts the two users differ.
+# BOBBERT NEVER RUNS AS {{ claude_ops_user }} — nothing in this role sets a bot identity to
+# it, and tasks/claude-ops.yml asserts it differs from {{ claude_user }}.
 #
 # Four subcommands, the same shape as claude-code-push-broker:
 #

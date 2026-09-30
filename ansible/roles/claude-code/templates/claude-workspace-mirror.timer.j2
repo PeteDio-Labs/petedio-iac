@@ -1,8 +1,8 @@
 {{ ansible_managed | comment }}
 # When the {{ claude_workspace_mirror_repo }} mirror refreshes (PET-493).
 #
-# Half-hourly, offset from claude-loop.timer's `*:0/30` so the two are never fetching in the
-# same minute. A miss costs nothing: the clone a session works in is behind by design, and
+# Half-hourly, offset from the half hour, where the retired work loop's timer fired
+# (PET-547). A miss costs nothing: the clone a session works in is behind by design, and
 # the session pulls when it needs to.
 
 [Unit]

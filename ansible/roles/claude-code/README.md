@@ -15,7 +15,7 @@ closes.
 | Playbook | `ansible/playbooks/configure-claude-code.yml` |
 | Runs as | `claude`, a non-root user with **no sudo at all** |
 | Deploy | `gh workflow run ansible-claude-247.yml --ref main`; fallback `scripts/deploy-claude-247.sh` (PET-515) |
-| Serves | one `claude remote-control` server per entry in `claude_remote_sessions`, plus the work-loop timer when `claude_loop_enable` is set |
+| Serves | one `claude remote-control` server per entry in `claude_remote_sessions`, |
 
 ## What Ansible cannot do, and why
 
@@ -49,13 +49,8 @@ same fields through the `ansible` AppRole from the operator's machine. Both path
 fields to `scripts/claude-247-extra-vars.sh`, so they run the same checks, refuse the same
 mix-ups and write the same extra-vars.
 
-The workflow has no loop input. Turning the loop timer on or off still goes through the
-script, with `-e claude_loop_enable=true` or `false`. The steps below name the script; the
-workflow lands the same identities wherever a step runs a plain deploy.
-
-A dispatch always leaves claude-loop.timer stopped and disabled, because the workflow has no
-loop input. If you had enabled the loop with the script, run
-`./scripts/deploy-claude-247.sh -e claude_loop_enable=true` again after the dispatch.
+The steps below name the script; the workflow lands the same identities wherever a step runs
+a plain deploy.
 
 ## Bootstrap
 
@@ -109,7 +104,7 @@ on merge; nothing here needs a node-side step, because nothing here runs Docker.
    The play checks for the consent before it starts anything. Without it, the play converges
    everything else, leaves the units alone, and fails at the end with the steps above.
    ⚠ Do not pass `-e claude_remote_enable=true` instead: the next run without the flag stops
-   the server, which is how a loop deploy took claude-247's down.
+   the server, which is how a deploy took claude-247's down (PET-431).
 
 6. **Optional — deliver the private workspace repo.** Declare
    `claude_workspace_mirror_enable: true` in the host's `host_vars`, then:
@@ -186,6 +181,11 @@ delivery never started. PET-493 replaced the key with a **GitHub App**, `petedio
 Contents and Metadata read-only, installed on that one repository. Do not go back to a key to
 make a red run green.
 
+> **PET-542 widened the installation to `petedio-vault`** for petedio-search on ollama-host.
+> The broker asks GitHub for tokens scoped to `petedio-workspace` alone, so no token on 247
+> reads the vault. The properties below hold per token, and the seed script checks all five
+> repositories the installation reaches, which Pedro kept on 2026-09-30.
+
 **The override stays narrow, and the shape is what makes it narrow.** The forbidden act writes
 a token carrying Pedro's permissions across every repo he can reach, write included. An App
 installed on one repository, read-only, cannot push, cannot read a second repository, and
@@ -198,18 +198,15 @@ the objection, not the presence of a secret.
 asked with the App's own key — exactly one reachable repository. Widen the App and the next
 seed fails.
 
-⚠ **This is not the loop's App, and must not become it.** The loop's App carries
-`contents:write` and `pull_requests:write`, because it opens draft PRs. Pointing the mirror at
-`kv/services/claude-loop` would hand a half-hourly root timer a push credential for
-`petedio-iac`. Two Apps, two Vault paths, two directories, two brokers —
-`scripts/claude-247-extra-vars.sh`, which both deploy paths run, and the seed script both
-refuse by App id.
+⚠ **This App must stay read-only.** Giving the mirror a push credential would hand a
+half-hourly root timer write access. `scripts/claude-247-extra-vars.sh`, which both deploy
+paths run, and the seed script both refuse to pair the mirror's App id with another App's.
 
 **No session holds anything.** Four properties carry that:
 
 | | |
 |---|---|
-| The key is `0400 root:root` and the broker is `0500 root:root` | Sessions run as `claude` with no sudo (PET-408), so a session can neither read the key nor mint a token. `/etc/claude-loop` already works this way. |
+| The key is `0400 root:root` and the broker is `0500 root:root` | Sessions run as `claude` with no sudo (PET-408), so a session can neither read the key nor mint a token. |
 | No token is ever written down | `claude-workspace-mirror-broker` mints one per fetch and hands it to `git` as a credential helper, over a pipe. It reaches no file, no git config and no command line. |
 | Root fetches into a bare mirror it owns | `/var/lib/claude-workspace-mirror/petedio-workspace.git`, refreshed by `claude-workspace-mirror.timer`. The session's working clone is cloned from that mirror over a local path. |
 | The clone uses `git -c … clone`, never `git clone -c …` | The second form persists the helper into the new repository's config; the first does not. Measured on git 2.50.1. The mirror's config names no helper at all. |
@@ -283,8 +280,7 @@ delivering. `inventory/host_vars/claude-247.yml` declares it.
 
 The mirror can keep its key away from the session because root is what fetches. Here the
 session is what pushes, so the session has to reach the key. ⚠ **Every process running as
-`claude` on this host can therefore push to the vault**, the work loop's `claude -p` included
-if `claude_loop_enable` is ever set. Read that as the price of the feature. A stricter file
+`claude` on this host can therefore push to the vault**. Read that as the price of the feature. A stricter file
 mode would be locking out the user the design hands the key to.
 
 **What bounds it is the App.** One installed repository, `contents:write` and `metadata:read`,
@@ -294,8 +290,8 @@ in the GitHub UI, where nothing in this repo notices.
 
 ### Seeding it
 
-⚠ **A third App, not the loop's and not the mirror's.** Three Apps, three Vault paths, three
-directories, three brokers. Creating a GitHub App and generating its key are Pedro's steps,
+⚠ **A separate App, not the mirror's.** Separate Apps, Vault paths, directories and
+brokers. Creating a GitHub App and generating its key are Pedro's steps,
 not a session's (`vault/Claude/README.md`).
 
 1. Create the App under `PeteDio-Labs`, named `petedio-vault-247`, with `contents: write` and
@@ -462,8 +458,7 @@ section gives. `inventory/host_vars/claude-247.yml` declares it.
 
 **The shape is the vault's, read-only.** The token is `0400 claude` in `~/.config/claude-pve/`,
 beside the cluster CA at `0444`. Every process running as `claude` can therefore read the
-whole cluster's configuration through it, including the work loop's `claude -p` if
-`claude_loop_enable` is ever set.
+whole cluster's configuration through it.
 
 **What bounds it is Proxmox, not the wrapper:**
 
@@ -553,10 +548,9 @@ user as well, run `ssh pve02 pveum user delete claude-247@pve`. Deleting
 
 `claude-ops` is a SECOND session user, for Pedro's own Remote Control sessions only. It exists
 so those sessions get Mac parity — a Vault token, `terraform`/`ansible`, and SSH to the
-Proxmox nodes — without widening `claude`, which is the loop's user too. **Neither the work
-loop nor Bobbert ever runs as `claude-ops`.** Nothing in this role sets `CLAUDE_LOOP_USER` or
-a bot identity to it, and `tasks/main.yml` and `tasks/claude-ops.yml` each assert the two
-users stay apart.
+Proxmox nodes — without widening `claude`, the general session user. **Bobbert never runs as
+`claude-ops`.** Nothing in this role sets a bot identity to it, and `tasks/claude-ops.yml`
+asserts that `claude-ops` and `claude` stay apart.
 
 **Built on branch, not yet deployed as of 2026-09-29.** `claude_ops_enable` defaults to
 `false`; claude-M1 flips it once the App, the Vault role and a deploy have all landed, on
@@ -573,7 +567,7 @@ Pedro's word (the order is at the end of this section).
 | SSH | an ed25519 key generated on the host, as `claude-ops`; reaches `pve02` and `pve03` as `root` |
 
 **The GitHub App can touch `.github/workflows/**`, unlike every other App in this role.** The
-other four (loop, mirror, vault, code-push) all lack `workflows` permission on purpose, so a
+others (mirror, vault, code-push) all lack `workflows` permission on purpose, so a
 push from an unattended process cannot touch CI. claude-ops's App carries it because it exists
 for Pedro's own sessions, not an unattended one — see "Open for Pedro" below for the one
 question this leaves unresolved.
@@ -587,7 +581,7 @@ it, the same as everywhere else in this repo.
 Three scripts, modeled on `scripts/seed-claude-code-app.sh` and `scripts/apply-vault-config.sh`:
 
 - `scripts/seed-claude-ops-app.sh` proves the App's permissions and its `PeteDio-Labs`-only
-  token scope, refuses an App id collision against the loop, mirror, vault or code-push Apps,
+  token scope, refuses an App id collision against the mirror, vault or code-push Apps,
   and writes `kv/services/claude-ops-github`.
 - `scripts/seed-claude-ops-vault-token.sh` mints a `role=claude-ops` Vault token and delivers
   it over `ssh root@pve03 "pct exec 247 -- ..."`, installed `0400 claude-ops:claude-ops` at
@@ -620,9 +614,7 @@ In order, once this PR merges:
 2. `scripts/apply-vault-config.sh` in `environments/homelab/vault-config`, to create the
    `claude-ops` policy and token role.
 3. Set `claude_ops_enable: true` in `inventory/host_vars/claude-247.yml` and dispatch
-   `ansible-claude-247.yml`. **A dispatch here also leaves `claude-loop.timer` stopped and
-   disabled**, the same as every other dispatch of this workflow — re-enable it separately if
-   it was running.
+   `ansible-claude-247.yml`.
 4. Run `scripts/seed-claude-ops-vault-token.sh` and `scripts/seed-claude-ops-ssh.sh`.
 5. Pedro, as root on 247, runs the Claude Code login and both consent dialogs as `claude-ops`
    (`runuser -u claude-ops -- bash -lc 'cd ~/work/petedio/workspace && claude'`, accept Remote
@@ -751,15 +743,13 @@ same permission-mode class, and holds any other for approval while the sender se
 `success`. Under `bypassPermissions`, every message between a 247 session and the prompting
 Mac session was held (PET-431). `auto` is in the prompting class.
 
-Two things keep their own mode. The work loop's `claude -p` passes
-`--permission-mode bypassPermissions` itself (`scripts/claude-loop-tick.sh`). And
-`~/.claude/settings.json` is seeded once and never rewritten, so a `claude` you start by hand
+One thing keeps its own mode. `~/.claude/settings.json` is seeded once and never rewritten, so a `claude` you start by hand
 over SSH keeps that file's `defaultMode`.
 
 Be clear about what the host exposes whatever the mode. Claude Code's own guidance for
-`bypassPermissions`, which the loop still uses, is "isolated containers and VMs only", and
+`bypassPermissions` is "isolated containers and VMs only", and
 **this container is not isolated from the lab** — it sits on the LAN with Vault, Proxmox and
-Postgres. Until the work loop, the role provisioned no
+Postgres. Before PET-493, the role provisioned no
 outbound credential: the only key it placed was your *public* key, authorizing inbound SSH.
 So a session reached what the LAN serves unauthenticated, plus whatever you added by hand
 afterwards. ⚠ **`gh auth login` is the one addition that is forbidden outright**
@@ -775,26 +765,21 @@ reach.
 
 | App | Reaches | Key lives | A session can read it |
 |---|---|---|---|
-| the loop's | `petedio-iac`, push and pull requests | `/etc/claude-loop/`, `0400 root` | no — `0500 root` broker |
 | the mirror's | `petedio-workspace`, read-only | `/etc/claude-workspace-mirror/`, `0400 root` | no — `0500 root` broker |
 | the vault's | `petedio-vault`, `contents:write` | the session user's home, `0400 claude` | **yes, on purpose** |
 
-The first two are read or used by **root**, so root can hold them. The vault's cannot work
+The mirror's is read or used by **root**, so root can hold them. The vault's cannot work
 that way: the thing that pushes a note **is** the session, so the session has to reach the
 credential. Its broker is `0500 claude:claude` rather than `0500 root`, which keeps other
 users out and cannot keep this user out — that user is the one the design hands the key to.
 
 **So state the exposure plainly rather than implying a mode closes it.** Every process running
-as `claude` on this host can push to `petedio-vault`, the loop's `claude -p` included if
-`claude_loop_enable` is ever set. What bounds the damage is the App, not the file modes: one
+as `claude` on this host can push to `petedio-vault`. What bounds the damage is the App, not the file modes: one
 installed repository, `contents:write` and `metadata:read`, no pull-request rights. It cannot
 reach `petedio-iac`, cannot read a second repository, and cannot act as Pedro. Both halves of
 that hold only while the installation stays as seeded, and it is changed in the GitHub UI,
 where nothing in this repo notices. `scripts/seed-claude-vault-app.sh` re-checks the shape
 against GitHub every time you run it.
-
-⚠ **The work loop changes the picture again.** See "What the loop changes about the isolation
-story" below before you set `claude_loop_enable`.
 
 Deny rules apply in every mode. ⚠ But those deny rules live in
 `~/.claude/settings.json`, which is owned by `claude` — the user the sessions run as — so a
@@ -807,68 +792,18 @@ The handler never restarts a running server, so it keeps the old mode until you 
 and the restart drops whoever is connected. For stricter prompting, set `default` (Manual)
 or `acceptEdits`.
 
-The session user is not root because the loop runs `bypassPermissions`, which Claude Code
-refuses as root or under sudo on Linux.
+The session user is not root because Claude Code refuses `bypassPermissions` as root or under
+sudo on Linux.
 
-## What the loop changes about the isolation story (PET-399)
+## The retired work loop (PET-399, retired by PET-547)
 
-`claude_loop_enable` puts a second thing on this host: a timer that takes one labelled
-Plane work item, runs `claude -p` against it, and opens a **draft** pull request. Enabling
-it gives the host an outbound credential for the first time, so the paragraph above is only
-true while the loop is off.
+This role once installed a ticket-driven work loop: a root timer that took one Plane work item
+labelled `agent-ready`, ran `claude -p` against it, and opened a draft pull request with the
+`petedio-claude-loop` GitHub App. Pedro decommissioned it on 2026-09-30.
 
-**What lands, and where.** Two secrets go to `/etc/claude-loop/`, root-owned `0400`: the
-Plane PAT that CI already uses, and a GitHub App private key with `contents: write` and
-`pull_requests: write` on this repo. Neither is readable by `claude`.
+`tasks/loop-retired.yml` stops and removes what the loop installed: the `claude-loop` units,
+`/etc/claude-loop`, `/var/lib/claude-loop`, the tick and broker binaries, and the loop's clone
+under `~/loop`. The App is uninstalled and deleted at GitHub, which is what revokes its key.
+`scripts/retire-claude-loop-vault.sh` deletes `kv/services/claude-loop`.
 
-**Why a broker and not an `EnvironmentFile`.** The repo's usual landing pattern — a
-root-owned `0600` file handed to a unit through `EnvironmentFile=` — does not hold here.
-systemd reads that file as root, but the values then sit in the process environment of a
-process owned by `claude`, and a session in `bypassPermissions` can read
-`/proc/<pid>/environ` for its own uid while a tick runs. So the secrets are reachable only
-through `/usr/local/sbin/claude-loop-broker`, which is root-owned `0500` and exposes
-exactly two subcommands: `next-item` and `mint-token`.
-
-**There is no sudo on this host, and that is a correction (PET-408).** An earlier version
-of this role installed `sudo` and an `/etc/sudoers.d/claude-loop` grant so that a tick
-running as `claude` could call the broker. That was wrong, and it was wrong in a way worth
-remembering: **sudo binds a grant to the UID, not to a process.** The tick and the
-`claude -p` session it starts are the same user, so the session held the identical grant —
-and the session's instructions come from a Plane work item. Anyone who could write one
-could mint the token directly and skip every guard in the tick.
-
-**So the privilege runs the other way now.** `claude-loop.service` runs as **root**, reads
-`/etc/claude-loop/` directly, and calls `runuser -u claude` for the two things that must
-not be root: the session, and every command touching the working tree. The token exists
-only on the root side and is passed per-command, never exported.
-
-**State the exposure plainly.** A session on this host can read its own home and reach
-whatever the LAN serves unauthenticated. It **cannot** read the App key or the Plane PAT,
-cannot run the broker, and cannot obtain a GitHub token — `runuser` drops privilege and
-cannot raise it, and there is no sudoers entry to abuse. Verify that rather than trusting
-it: `runuser -u claude -- /usr/local/sbin/claude-loop-broker mint-token` must fail.
-
-**The push is the one root command that touches the repo**, and it pushes to an explicit
-URL rather than to `origin`, so git updates no remote-tracking ref. That keeps root from
-writing a root-owned object into a `claude`-owned `.git` and breaking the next session.
-
-⚠ **Branch protection is the only thing that stops that token merging.** `contents: write`
-and `pull_requests: write` are the permissions that merge; nothing about a GitHub App
-withholds that. What withholds it is `required_approving_review_count: 1` on `main`, which
-the App is expected to be unable to satisfy for its own pull request. If that count ever
-drops to zero, this identity can merge unreviewed work the same afternoon.
-
-⚠ **`enforce_admins` stays `false`.** It is not the missing half of that control, and
-turning it on deadlocked the repo for an hour on 2026-09-12: in a one-person org nobody can
-approve anything, because an author cannot approve their own pull request and the admin
-bypass is what was covering that. It only ever constrained Pedro.
-
-⚠ **"An App cannot approve its own pull request" is still untested.** It is the assumption
-the whole arrangement rests on, and the test meant to prove it ran as an admin and showed
-the opposite case instead. Treat the guarantee as designed rather than verified until the
-App has opened a pull request and the merge endpoint has refused it. Read
-`docs/runbooks/claude-loop.md` before enabling, and re-read it before relaxing anything on
-`main`.
-
-**Turning it off** is `claude_loop_enable=false` and a play re-run, which stops and disables
-the timer. Pausing without a play run is a sentinel file — see the runbook.
+The design history is in `docs/GOTCHAS.md`, `vault/Systems/claude-loop.md` and git history.
