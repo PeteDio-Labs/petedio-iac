@@ -487,21 +487,12 @@ resource "vault_policy" "openfaas_ci" {
 # claude-247-deploy: what ansible-claude-247.yml may read to deploy 247's claude-code role
 # (PET-515). Exact paths, read only: no glob and no list, because the workflow reads named
 # fields from named paths and never needs to enumerate anything. The `ansible` AppRole that
-# deploy-claude-247.sh uses reads kv/data/services/*; this role reads these eight and no more.
+# deploy-claude-247.sh uses reads kv/data/services/*; this role reads the six paths below
+# and no more. The work loop's App and the Plane PAT left this policy with the loop (PET-547).
 resource "vault_policy" "claude_247_deploy" {
   name = "claude-247-deploy"
 
   policy = <<-EOT
-    # The work loop's GitHub App: app_id, installation_id, app_pem. Required.
-    path "kv/data/services/claude-loop" {
-      capabilities = ["read"]
-    }
-
-    # The Plane PAT the loop files and moves work items with. Required.
-    path "kv/data/services/plane" {
-      capabilities = ["read"]
-    }
-
     # The read-only App that delivers petedio-workspace to 247 (PET-493). Optional.
     path "kv/data/services/claude-workspace-mirror" {
       capabilities = ["read"]
@@ -556,7 +547,7 @@ resource "vault_policy" "claude_247_deploy" {
 # Deliberately excluded by name, and not by omission — each is another App's private key,
 # and the separation between the Apps is the point:
 #   kv/services/claude-code-push        — the code-push App (PET-507)
-#   kv/services/claude-loop             — the work loop's App (PET-399)
+#   kv/services/claude-loop             — the retired work loop's App (PET-399, PET-547)
 #   kv/services/claude-vault-push       — the vault-push App (PET-498)
 #   kv/services/claude-workspace-mirror — the workspace-mirror App (PET-480/493)
 #   kv/services/claude-ops-github       — claude-ops's OWN App key. claude-ops reads it from

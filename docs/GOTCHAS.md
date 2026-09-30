@@ -1027,6 +1027,10 @@ one for the syntax while the text lived only in `CLAUDE.md`.
 
 ## A sudoers grant belongs to the UID, not to the process you wrote it for (PET-408)
 
+> **History.** `PET-547` retired the PET-399 work loop on 2026-09-30, and
+> `roles/claude-code/tasks/loop-retired.yml` removes its files. The rule applies to any
+> program that starts a session.
+
 - **If a program runs a `claude -p` session as its own user, that session inherits every
   sudo grant the program has.** The PET-399 loop shipped with `/etc/sudoers.d/claude-loop`
   granting `claude` two exact broker commands, no wildcards, `visudo`-validated — a
@@ -1394,6 +1398,9 @@ green. One of five is not a dry run.
 
 ## The test suite needs `flock`, which macOS does not ship
 
+> **History.** `PET-547` deleted `scripts/test-claude-loop-tick.sh` with the work loop. The
+> rule applies to any script with a GNU-only dependency: preflight it.
+
 `scripts/test-claude-loop-tick.sh` reports **52 passed / 0 failed** on 247 and **18 passed /
 29 failed** on a Mac. Every one of those failures is `flock: command not found` — the tick
 cannot take its lock, so every scenario parks as `busy`.
@@ -1437,7 +1444,11 @@ earlier. A tolerant step first silently swallows an outage. Never put `ignoreNot
 
 `contents: write` is not enough; GitHub gates workflow files separately.
 
-**For the claude-loop App this is a feature — do not grant it (PET-425).** The loop's session
+> **History.** `PET-547` retired the claude-loop App on 2026-09-30. The same boundary holds
+> for the `claude` session Apps on 247, which lack `workflows` on purpose. Only claude-ops's
+> App holds it, for Pedro's own sessions (PET-531).
+
+**For the claude-loop App this was a feature — do not grant it (PET-425).** The loop's session
 takes its instructions from a Plane work item any org member can write, and a session that
 can edit `.github/workflows/**` can change what runs on the self-hosted runner or alter a
 required check, arriving as a PR that looks like ordinary work. GitHub is enforcing a

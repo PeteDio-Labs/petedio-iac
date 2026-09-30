@@ -24,8 +24,8 @@
 # refused with a warning and no PATCH. A person moves an item backward by hand.
 #
 # PARTIAL MERGES (PET-490): a HEAD_REF of `pet-<n>-part-<slug>` delivers part of the
-# item, so PLANE_TRANSITION=done on it moves the item to In Review, not Done. The
-# claude loop names its branches this way, so its PRs never close an item.
+# item, so PLANE_TRANSITION=done on it moves the item to In Review, not Done. Use it
+# when the item stays open after the merge, such as for a deploy Pedro still owes.
 #
 # ADVISORY BY DESIGN: every failure path exits 0 with a ::warning:: annotation.
 # Plane is a homelab LXC — it being down must never block a merge across nine

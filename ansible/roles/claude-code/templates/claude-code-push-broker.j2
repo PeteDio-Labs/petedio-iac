@@ -6,8 +6,8 @@
 #
 # ⚠ BUILT FROM claude-vault-broker, AND IT CARRIES THE SAME TRADE. The key is readable by
 # {{ claude_user }}, because the session is what pushes. So every process running as
-# {{ claude_user }} can run this script: every Remote Control session, and the work loop's
-# `claude -p` too if claude_loop_enable is ever set. The 0400 on the key and the 0500 on this
+# {{ claude_user }} can run this script, every Remote Control session included. The 0400 on
+# the key and the 0500 on this
 # file keep OTHER users out. They cannot keep {{ claude_user }} out, and they are not meant to.
 #
 # ⚠ WHAT KEEPS THE BLAST RADIUS NARROW IS THE APP AND BRANCH PROTECTION, NOT THE MODES:
@@ -21,10 +21,9 @@
 # Each of those holds in the GitHub UI, where nothing in this repo notices it changing.
 # scripts/seed-claude-code-app.sh checks the first two before it seeds. Nothing checks the third.
 #
-# ⚠ NOT THE LOOP'S APP, NOT THE MIRROR'S, NOT THE VAULT'S. Four Apps, four Vault paths, four
-# directories, four brokers. Pointing this at {{ claude_loop_conf_dir }} or at
-# {{ claude_workspace_mirror_conf_dir }} would put a root-owned key behind a script the session
-# can rewrite.
+# ⚠ NOT THE MIRROR'S APP, NOT THE VAULT'S. Separate Apps, Vault paths, directories and
+# brokers. Pointing this at {{ claude_workspace_mirror_conf_dir }} would put a root-owned key
+# behind a script the session can rewrite.
 #
 # WHAT THIS BROKER ADDS OVER THE VAULT'S. Two things, both because it answers for three
 # repositories instead of one:
