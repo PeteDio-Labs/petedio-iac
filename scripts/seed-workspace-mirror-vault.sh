@@ -15,6 +15,11 @@
 # Every consumer scopes its token down to one repository in the token request: the broker on
 # 247 to petedio-workspace, petedio-search to petedio-vault.
 #
+# WHY FIVE (2026-09-30). The live installation also held petedio-iac, petedio-media-iac and
+# claude-skills when PET-542 read it, and Pedro chose to keep all five. Two are public, and
+# no consumer mints a token for the other three, but the key could. Narrow the list here and
+# on GitHub together.
+#
 # WHY A SCRIPT AND NOT A PASTE. The private key is multi-line, and a PEM that loses its
 # newlines still LOOKS like a key: `vault kv put app_pem=@file` and a copy-paste through a
 # terminal both produce something that stores fine and fails later, at which point openssl
@@ -24,7 +29,7 @@
 # ⚠ AND BECAUSE THE SCOPE IS THE SECURITY ARGUMENT, NOT A NOTE ON A TICKET. Every reason to
 # prefer this App over a token is "it is read-only and it reaches one repository". This
 # script proves both against GitHub before it writes, by minting a token and asking the App
-# what it can see. An App widened past the two repositories is caught here, not after a root
+# what it can see. An App widened past these five repositories is caught here, not after a root
 # timer has been using it.
 #
 # WHAT THIS DOES NOT DO. It does not create the App, generate the key, or install it — those
@@ -51,8 +56,9 @@ export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 VAULT_PATH="kv/services/claude-workspace-mirror"
 ORG="PeteDio-Labs"
-# The installation must reach exactly these, in `sort` order.
-REPOS="$ORG/petedio-vault, $ORG/petedio-workspace"
+# The installation must reach exactly these, in `sort` order, and REPO_COUNT of them.
+REPOS="$ORG/claude-skills, $ORG/petedio-iac, $ORG/petedio-media-iac, $ORG/petedio-vault, $ORG/petedio-workspace"
+REPO_COUNT=5
 APP_SLUG="petedio-workspace-mirror"
 
 # The whole permission set the App may hold, as GitHub reports it: sorted "key=value" pairs,
@@ -179,13 +185,13 @@ COUNT="$(printf '%s' "$REPOS_JSON" | jq -r '.total_count // empty')"
   $(printf '%s' "$REPOS_JSON" | jq -r '.message // .' | head -c 300)"
 NAMES="$(printf '%s' "$REPOS_JSON" | jq -r '[.repositories[].full_name] | sort | join(", ")')"
 
-[ "$COUNT" = "2" ] || die "This App reaches $COUNT repositories: $NAMES
+[ "$COUNT" = "$REPO_COUNT" ] || die "This App reaches $COUNT repositories: $NAMES
 
-  It must reach exactly two: $REPOS. Fix the installation and re-run."
+  It must reach exactly $REPO_COUNT: $REPOS. Fix the installation and re-run."
 [ "$NAMES" = "$REPOS" ] || die "This App reaches '$NAMES', not '$REPOS'.
 
   Right App, wrong repositories. Fix the installation and re-run."
-echo "  two repositories, $NAMES, and a token minted from this key reached them."
+echo "  $REPO_COUNT repositories, $NAMES, and a token minted from this key reached them."
 
 # ------------------------------------------------------------------- vault
 step "Authenticating to Vault"
@@ -230,7 +236,7 @@ if [ "$SHRED" -eq 1 ]; then
 else
   step "⚠ The downloaded key is still on disk"
   echo "  $PEM_FILE"
-  echo "  It reads $REPOS, both private. Delete it, or re-run with --shred."
+  echo "  It reads $REPOS, three of them private. Delete it, or re-run with --shred."
 fi
 
 step "Next"
