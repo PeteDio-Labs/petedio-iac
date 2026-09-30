@@ -186,6 +186,11 @@ delivery never started. PET-493 replaced the key with a **GitHub App**, `petedio
 Contents and Metadata read-only, installed on that one repository. Do not go back to a key to
 make a red run green.
 
+> **PET-542 widened the installation to `petedio-vault`** for petedio-search on ollama-host.
+> The broker asks GitHub for tokens scoped to `petedio-workspace` alone, so no token on 247
+> reads the vault. The properties below hold per token, and the seed script checks both
+> repositories.
+
 **The override stays narrow, and the shape is what makes it narrow.** The forbidden act writes
 a token carrying Pedro's permissions across every repo he can reach, write included. An App
 installed on one repository, read-only, cannot push, cannot read a second repository, and

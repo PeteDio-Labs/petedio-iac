@@ -18,12 +18,19 @@
 # (configure-media-dash.yml). scripts/deploy-search.sh builds it with
 # `--target=bun-linux-x64`.
 #
-# SECRETS (resolved by scripts/deploy-search.sh from Vault kv/services/search, passed as
-# no_log extra-vars; scripts/search-secrets.sh mints them):
-#   search_caller_tokens     one field token_<name> per caller (claude, bobbert)
-#   search_vault_deploy_key  field vault_deploy_key: the private half of the read-only
-#                            deploy key on PeteDio-Labs/petedio-vault
-#   search_plane_api_key     field plane_api_key, optional: without it, refresh skips Plane
+# READING THE VAULT. The org disallows deploy keys, so the PET-526 deploy key never
+# worked (PET-542). The service holds the petedio-workspace-mirror GitHub App key and
+# mints a token per refresh, scoped to petedio-vault and contents read. The App is
+# installed on petedio-workspace and petedio-vault only (seed-workspace-mirror-vault.sh).
+#
+# SECRETS (resolved by scripts/deploy-search.sh from Vault, passed as no_log extra-vars):
+#   search_caller_tokens     kv/services/search, one field token_<name> per caller
+#                            (claude, bobbert); scripts/search-secrets.sh mints them
+#   search_plane_api_key     kv/services/search field plane_api_key, optional: without
+#                            it, refresh skips Plane
+#   search_github_app_id, search_github_app_installation_id, search_github_app_pem
+#                            kv/services/claude-workspace-mirror, seeded by
+#                            scripts/seed-workspace-mirror-vault.sh
 # Run via:  ./scripts/deploy-search.sh
 
 - name: Deploy petedio-search on ollama-host
@@ -43,7 +50,8 @@
     search_allow_subnet: "192.168.50.0/24"
     search_ollama_url: "http://127.0.0.1:11435"
     search_embed_model: "{{ ollama_embed_model | default('qwen3-embedding:0.6b') }}"
-    search_vault_remote: "git@github.com:PeteDio-Labs/petedio-vault.git"
+    search_vault_remote: "https://github.com/PeteDio-Labs/petedio-vault.git"
+    search_github_app_key_file: "{{ search_data }}/github-app.pem"
     search_plane_base_url: "http://192.168.50.235:8080"
     search_plane_workspace: petedio
     search_plane_projects: "PET,MSG,DAY"
@@ -51,10 +59,6 @@
     # Refresh cadence. Plane costs one listing per project per run, plus one comments
     # call per changed item, well under its 120-a-minute key limit.
     search_refresh_every: "15min"
-    # GitHub's published ed25519 host key (api.github.com/meta, ssh_keys). Pinned rather
-    # than keyscanned, so a spoofed first contact cannot plant its own key.
-    search_github_host_key: >-
-      github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
     # Controller path to the compiled binary. scripts/deploy-search.sh sets it.
     search_binary_src: "{{ lookup('env', 'HOME') }}/petedio/search/dist/petedio-search"
     search_plane_api_key: ""
@@ -71,7 +75,9 @@
     - name: Assert the secret extra-vars were provided (use scripts/deploy-search.sh)
       ansible.builtin.assert:
         that:
-          - search_vault_deploy_key is defined and search_vault_deploy_key | length > 0
+          - search_github_app_id is defined and search_github_app_id | string is match('\\A[0-9]+\\Z')
+          - search_github_app_installation_id is defined and search_github_app_installation_id | string is match('\\A[0-9]+\\Z')
+          - search_github_app_pem is defined and '-----BEGIN' in search_github_app_pem
           - search_caller_tokens is defined and search_caller_tokens is mapping
           - search_caller_tokens | length > 0
           - search_caller_tokens.keys() | reject('match', '^[a-z0-9-]+$') | list | length == 0
@@ -79,7 +85,8 @@
           - search_plane_api_key is match('\\A[A-Za-z0-9_-]*\\Z')
         fail_msg: >-
           Missing or malformed secret extra-vars. Run scripts/deploy-search.sh, which
-          resolves them from Vault (kv/services/search). search_caller_tokens must be a
+          resolves them from Vault (kv/services/search and
+          kv/services/claude-workspace-mirror). search_caller_tokens must be a
           non-empty name -> token mapping, every name matching ^[a-z0-9-]+$ and every
           token matching \A[A-Za-z0-9_-]+\Z. A comma, colon or newline would corrupt
           SEARCH_TOKENS, and a newline would end the line in the env file.
@@ -147,37 +154,31 @@
         group: "{{ search_group }}"
         mode: "0750"
 
-    - name: Create the data and ssh directories
+    - name: Create the data directory
       ansible.builtin.file:
-        path: "{{ item.path }}"
+        path: "{{ search_data }}"
         state: directory
         owner: "{{ search_user }}"
         group: "{{ search_group }}"
-        mode: "{{ item.mode }}"
-      loop:
-        - { path: "{{ search_data }}", mode: "0750" }
-        - { path: "{{ search_data }}/.ssh", mode: "0700" }
-      loop_control:
-        label: "{{ item.path }}"
+        mode: "0750"
 
-    # A read-only deploy key on petedio-vault and nothing else. It cannot push, and it
-    # opens no other repository.
-    - name: Install the vault deploy key
+    # PET-526 placed a deploy key and a pinned host key here. The org refuses deploy keys,
+    # so nothing reads them; remove them rather than leave a dead credential path.
+    - name: Remove the deploy-key directory
+      ansible.builtin.file:
+        path: "{{ search_data }}/.ssh"
+        state: absent
+
+    # The App reads contents on petedio-workspace and petedio-vault, and cannot write.
+    # The service asks GitHub for tokens scoped to petedio-vault alone.
+    - name: Install the GitHub App key
       ansible.builtin.copy:
-        content: "{{ search_vault_deploy_key | trim }}\n"
-        dest: "{{ search_data }}/.ssh/id_ed25519_vault"
+        content: "{{ search_github_app_pem | trim }}\n"
+        dest: "{{ search_github_app_key_file }}"
         owner: "{{ search_user }}"
         group: "{{ search_group }}"
-        mode: "0600"
+        mode: "0400"
       no_log: true
-
-    - name: Pin GitHub's host key
-      ansible.builtin.copy:
-        content: "{{ search_github_host_key }}\n"
-        dest: "{{ search_data }}/.ssh/known_hosts"
-        owner: "{{ search_user }}"
-        group: "{{ search_group }}"
-        mode: "0600"
 
     - name: Install the binary
       ansible.builtin.copy:

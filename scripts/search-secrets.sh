@@ -10,23 +10,22 @@
 #   search-secrets.sh create <name>     mint caller <name>'s bearer token (token_<name>)
 #   search-secrets.sh rotate <name>     replace it
 #   search-secrets.sh revoke <name>     drop it
-#   search-secrets.sh deploy-key        ensure the vault deploy key exists in Vault and on
-#                                       PeteDio-Labs/petedio-vault, read-only
 #   search-secrets.sh plane-key         store the Plane API key, read from stdin
 #
-# The first setup is four commands:
+# The first setup is three commands:
 #   search-secrets.sh create claude
 #   search-secrets.sh create bobbert
-#   search-secrets.sh deploy-key
 #   pbpaste | search-secrets.sh plane-key     (a Plane API key minted for this service)
+#
+# The service reads the vault through the petedio-workspace-mirror GitHub App, whose key
+# scripts/seed-workspace-mirror-vault.sh stores. The org disallows deploy keys, so the
+# PET-526 deploy-key action is gone (PET-542).
 #
 # Give the service its own Plane key rather than plane-sync's: Plane rate-limits each key
 # to 120 calls a minute, and the first refresh spends most of that for several minutes.
 #
 # No value ever appears in argv, stdout, stderr or under `set -x`. Tokens go from openssl
-# to Vault through a pipe. The deploy key lives in a mode-0700 temp directory for the
-# seconds it takes to store it, then the trap removes it. The script prints field names,
-# secret versions and next steps.
+# to Vault through a pipe. The script prints field names, secret versions and next steps.
 #
 # After any change, redeploy with scripts/deploy-search.sh. To hand a caller its token:
 #   vault kv get -field=token_<name> kv/services/search | pbcopy
@@ -43,13 +42,11 @@ export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
 export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 SECRET_PATH="kv/services/search"
-VAULT_REPO="PeteDio-Labs/petedio-vault"
-DEPLOY_KEY_TITLE="petedio-search on ollama-host (PET-526)"
 NAME_RE='^[a-z0-9-]+$'
 
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-usage(){ printf 'Usage: %s create|rotate|revoke <name> | deploy-key | plane-key\n' "$(basename "$0")" >&2; exit 1; }
+usage(){ printf 'Usage: %s create|rotate|revoke <name> | plane-key\n' "$(basename "$0")" >&2; exit 1; }
 
 [ $# -ge 1 ] || usage
 ACTION="$1"
@@ -60,7 +57,7 @@ case "$ACTION" in
     [[ "$NAME" =~ $NAME_RE ]] || die "Name '$NAME' must match $NAME_RE."
     FIELD="token_${NAME}"
     ;;
-  deploy-key|plane-key) [ $# -eq 1 ] || usage ;;
+  plane-key) [ $# -eq 1 ] || usage ;;
   *) usage ;;
 esac
 
@@ -128,42 +125,6 @@ search_revoke() {
   echo "Next: redeploy with scripts/deploy-search.sh so the service drops '$NAME'."
 }
 
-search_deploy_key() {
-  command -v gh >/dev/null || die "gh not in PATH."
-  command -v ssh-keygen >/dev/null || die "ssh-keygen not in PATH."
-  local pub
-  if [ "$(has_field vault_deploy_key)" = "true" ]; then
-    step "Deploy key already at $SECRET_PATH"
-    pub="$(printf '%s' "$EXISTING" | jq -r '.data.data.vault_deploy_key_pub // empty')"
-    [ -n "$pub" ] || die "$SECRET_PATH has vault_deploy_key but no vault_deploy_key_pub."
-  else
-    step "Generating the deploy key"
-    local tmp
-    tmp="$(mktemp -d)"
-    # shellcheck disable=SC2064  # expand now: tmp is local
-    trap "rm -rf '$tmp'" EXIT
-    ssh-keygen -q -t ed25519 -N '' -C "petedio-search@ollama-host" -f "$tmp/key"
-    echo "version: $(kv_write "vault_deploy_key=@$tmp/key" "vault_deploy_key_pub=@$tmp/key.pub" </dev/null)"
-    pub="$(cat "$tmp/key.pub")"
-  fi
-
-  step "Checking $VAULT_REPO's deploy keys"
-  # Compare type and key material only; GitHub drops the comment.
-  local want
-  want="$(printf '%s' "$pub" | awk '{print $1" "$2}')"
-  if gh repo deploy-key list --repo "$VAULT_REPO" --json key -q '.[].key' | grep -qxF "$want"; then
-    echo "  present"
-  else
-    # gh adds deploy keys read-only unless --allow-write is passed. ⚠ GitHub ties a key
-    # gh adds to the gh token that added it: de-authorizing that token removes the key,
-    # and the next refresh fails its vault sync. Rerun deploy-key to restore it.
-    printf '%s\n' "$pub" | gh repo deploy-key add - --repo "$VAULT_REPO" --title "$DEPLOY_KEY_TITLE"
-    echo "  added, read-only"
-  fi
-  echo
-  echo "Next: redeploy with scripts/deploy-search.sh."
-}
-
 search_plane_key() {
   [ ! -t 0 ] || die "pipe the key in: pbpaste | $(basename "$0") plane-key"
   step "Storing plane_api_key"
@@ -179,6 +140,5 @@ case "$ACTION" in
   create) search_create ;;
   rotate) search_rotate ;;
   revoke) search_revoke ;;
-  deploy-key) search_deploy_key ;;
   plane-key) search_plane_key ;;
 esac
