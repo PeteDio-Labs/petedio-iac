@@ -3,8 +3,13 @@
 > **Status: live since 2026-09-10 (PET-393).** The bucket is declared in
 > `ansible/inventory/group_vars/minio_data.yml` and converged by `roles/minio`.
 
-Six years of bank statements and the SQLite database built from them live in one
-directory on the Mac. This bucket is the second copy, and there is no third.
+Six years of bank statements and the SQLite database built from them live in this
+bucket. It is the only copy.
+
+> **Corrected 2026-09-30 (PET-546).** This runbook used to call the bucket the second copy,
+> with the first in `~/petedio/.claude/worktrees/usaa-statements-database-35994e/usaa/data`.
+> That worktree no longer exists, and the pipeline's source went with it. The vault note
+> `Systems/usaa.md` records what survives and the rebuild rules.
 
 ## Why git is not the safety net, deliberately
 
@@ -34,9 +39,11 @@ second backup: it does not survive losing 245.
 `mirror` only sends what changed, so this is the same command every time.
 
 ```bash
-mc mirror --overwrite ~/petedio/.claude/worktrees/usaa-statements-database-35994e/usaa/data \
-  usaa245/usaa-statements/data
+mc mirror --overwrite <usaa-checkout>/data usaa245/usaa-statements/data
 ```
+
+`<usaa-checkout>` is the rebuilt pipeline's directory. To restore the data into it first,
+follow the Restore section.
 
 ⚠ **Never `mc mirror --remove`.** It deletes objects absent from the source, which turns
 a half-populated local directory into a deletion of the archive. Versioning would let you
@@ -76,5 +83,5 @@ A bucket-scoped credential would be better than root here, the way
 
 ## Related
 
-`PET-392` — the pipeline's source is still un-versioned in a worktree, by decision.
+`PET-392` — the pipeline's source was un-versioned in a worktree, and PET-546 found it gone.
 `vault/Hosts/245-minio-data.md` — the host.
