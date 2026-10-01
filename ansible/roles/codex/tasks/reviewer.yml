@@ -122,6 +122,20 @@
     quiet: true
   when: codex_review_mint is not skipped
 
+# A private repository, because a public one answers without credentials and would hide a
+# broken helper.
+- name: Read a private repository through git's credential helper, to prove /etc/gitconfig
+  ansible.builtin.command:
+    argv: [runuser, -u, "{{ codex_user }}", --, git, ls-remote, --heads,
+           "https://github.com/{{ codex_github_org }}/petedio-vault", main]
+  environment:
+    HOME: "{{ codex_home }}"
+    GIT_TERMINAL_PROMPT: "0"
+  register: codex_review_git
+  changed_when: false
+  failed_when: codex_review_git.rc != 0 or 'refs/heads/main' not in codex_review_git.stdout
+  when: codex_review_pem.stat.exists and not ansible_check_mode
+
 - name: Check for the Plane token on disk
   ansible.builtin.stat:
     path: "{{ codex_plane_conf_dir }}/api_key"
