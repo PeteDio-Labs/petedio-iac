@@ -21,6 +21,20 @@ codex_sha256: 3930f31ac5fca861ea3e444e2683f261190d96b63fba58e0a40a879174369cdf
 # The sandbox modes a run on this host may choose. /etc/codex/requirements.toml holds the
 # list, root-owned, so neither a flag nor the user's own config can widen it.
 # danger-full-access is left out on purpose.
+# --- The ChatGPT Plus allowance -----------------------------------------------------------
+# The account is Plus: a 5-hour window and a weekly window, shared with Pedro's own Codex
+# use, and no paid credits. `codex debug models` describes gpt-6.1-sol as the model that
+# maximizes usage, near Astra's performance at a lower cost. Low is its catalog default.
+# ⚠ A retired model fails every run. Read `codex debug models` before an upgrade: the
+# catalog names each model's retirement date and its replacement.
+codex_model: gpt-6.1-sol
+codex_reasoning_effort: low
+
+# codex-quota refuses a run once either window reaches its limit. Pedro chose these on
+# 2026-10-01: the worker may use most of the week.
+codex_quota_max_5h_percent: 90
+codex_quota_max_weekly_percent: 85
+
 codex_allowed_sandbox_modes:
   - read-only
   - workspace-write

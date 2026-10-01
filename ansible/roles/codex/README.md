@@ -91,9 +91,32 @@ Under `workspace-write`, `curl https://api.github.com` returns 200, and a LAN ad
 refused by the guest firewall. Under the default read-only mode, the sandbox has no
 network.
 
+## Spend the Plus allowance carefully
+
+The account is ChatGPT Plus. Every run spends a 5-hour window and a weekly window, which
+Pedro's own Codex use shares, and the account has no paid credits. The role sets three
+things for that:
+
+| Setting | Value | Why |
+|---|---|---|
+| `model` | `gpt-6.1-sol` | The catalog's model for getting the most from an allowance |
+| `model_reasoning_effort` | `low` | The model's default. Raise it with `-c` for one run |
+| `features.fast_mode` | `false` | The Fast tier spends more of the allowance |
+
+To start a worker run, check the allowance first:
+
+```bash
+codex-quota && codex exec ...
+```
+
+`codex-quota` reads both windows without starting a run. It exits 1 when either window
+reaches its limit in `defaults/main.yml`, and 2 when it cannot read them. The script lists a free rate-limit reset when one exists.
+Only Pedro spends it, from the TUI or ChatGPT.
+
 ## Upgrade Codex
 
-Change `codex_version` and `codex_sha256` together in `defaults/main.yml`. The digest is on
+Change `codex_version` and `codex_sha256` together in `defaults/main.yml`. Then read
+`codex debug models` on the host: a retired `codex_model` fails every run. The digest is on
 the release page, or:
 
 ```bash
