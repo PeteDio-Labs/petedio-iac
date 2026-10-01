@@ -4,13 +4,19 @@
 codex_user: codex
 codex_home: "/home/{{ codex_user }}"
 
-# The Codex CLI, pinned. To upgrade, change all three together: the release tag, its
-# version, and the sha256 GitHub publishes for the asset (`gh release view rust-v<version>
-# --repo openai/codex --json assets`). A wrong digest fails the download, by design.
+# The Codex CLI, pinned. To upgrade, change both together: the version, and the sha256
+# GitHub publishes for the asset (`gh release view rust-v<version> --repo openai/codex
+# --json assets`). A wrong digest fails the download, by design.
+#
+# ⚠ THE PACKAGE, NOT THE BARE BINARY. The `codex-x86_64-unknown-linux-musl` asset holds
+# only `codex`. Codex runs every shell command through `codex-code-mode-host`, which it
+# looks for beside its own binary, so the bare binary signs in and then fails every tool
+# call with "failed to spawn code-mode host". The package carries bin/codex,
+# bin/codex-code-mode-host, rg and bwrap in the layout Codex expects.
 codex_version: "0.159.3"
-codex_asset: codex-x86_64-unknown-linux-musl
+codex_asset: codex-package-x86_64-unknown-linux-musl
 codex_url: "https://github.com/openai/codex/releases/download/rust-v{{ codex_version }}/{{ codex_asset }}.tar.gz"
-codex_sha256: b48ca1b2d6b1bf42b944e02c3d937c898e24651916684cdc35fdedf31b291bcb
+codex_sha256: 3930f31ac5fca861ea3e444e2683f261190d96b63fba58e0a40a879174369cdf
 
 # The sandbox modes a run on this host may choose. /etc/codex/requirements.toml holds the
 # list, root-owned, so neither a flag nor the user's own config can widen it.

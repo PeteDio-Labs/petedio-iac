@@ -82,9 +82,9 @@
   loop: "{{ codex_authorized_keys }}"
 
 # --- The Codex CLI -----------------------------------------------------------------------
-# One static musl binary from the GitHub release, checked against its published sha256.
-# Each version unpacks to its own directory, and the symlink picks one, so an upgrade or a
-# rollback is a change to codex_version alone.
+# The release's codex-package, checked against its published sha256. defaults/main.yml says
+# why the package and not the bare binary. Each version unpacks to its own directory, and
+# the symlink picks one, so an upgrade or a rollback is a change to codex_version alone.
 
 - name: Create the Codex version directory
   ansible.builtin.file:
@@ -108,13 +108,22 @@
     src: "/usr/local/lib/codex/{{ codex_version }}/{{ codex_asset }}.tar.gz"
     dest: "/usr/local/lib/codex/{{ codex_version }}"
     remote_src: true
-    creates: "/usr/local/lib/codex/{{ codex_version }}/{{ codex_asset }}"
+    creates: "/usr/local/lib/codex/{{ codex_version }}/bin/codex"
     owner: root
     group: root
 
+# 0.159.3 was first installed from the bare-binary asset, into the same directory.
+- name: Remove the bare-binary install
+  ansible.builtin.file:
+    path: "/usr/local/lib/codex/{{ codex_version }}/{{ item }}"
+    state: absent
+  loop:
+    - codex-x86_64-unknown-linux-musl
+    - codex-x86_64-unknown-linux-musl.tar.gz
+
 - name: Link the pinned Codex version onto the PATH
   ansible.builtin.file:
-    src: "/usr/local/lib/codex/{{ codex_version }}/{{ codex_asset }}"
+    src: "/usr/local/lib/codex/{{ codex_version }}/bin/codex"
     dest: /usr/local/bin/codex
     state: link
     force: true
@@ -125,6 +134,21 @@
   changed_when: false
   failed_when: codex_version not in codex_installed_version.stdout
   # Under --check on a first run, the binary is not there yet.
+  when: not ansible_check_mode
+
+# Codex signs in without it, and then fails every tool call. Nothing else would notice.
+- name: Check for the code-mode host beside the binary
+  ansible.builtin.stat:
+    path: "/usr/local/lib/codex/{{ codex_version }}/bin/codex-code-mode-host"
+  register: codex_code_mode_host
+
+- name: Refuse an install that cannot run a command
+  ansible.builtin.assert:
+    that: codex_code_mode_host.stat.executable | default(false)
+    fail_msg: >-
+      /usr/local/lib/codex/{{ codex_version }}/bin/codex-code-mode-host is missing, so every
+      Codex tool call fails. Install the codex-package asset, not the bare binary.
+    quiet: true
   when: not ansible_check_mode
 
 # --- Configuration -----------------------------------------------------------------------
