@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+# {{ ansible_managed }}
+# codex-quota (roles/codex, PET-553): read the ChatGPT Plus allowance, and refuse a run once
+# either window reaches its limit. It starts no run, so it spends no allowance.
+#
+# Run it as the session user before every worker run:
+#
+#   codex-quota && codex exec ...
+#
+# Exit 0: both windows are under their limits.
+# Exit 1: a window reached its limit, or OpenAI reports the limit reached.
+# Exit 2: the allowance could not be read, so the run must not start either.
+#
+# It asks `codex app-server` over stdio for `account/rateLimits/read`, the method the TUI's
+# /status reads. A free rate-limit reset is listed, never spent: only Pedro spends it.
+import json
+import selectors
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+
+MAX_5H = {{ codex_quota_max_5h_percent }}
+MAX_WEEKLY = {{ codex_quota_max_weekly_percent }}
+TIMEOUT_S = 30
+
+
+def read_limits():
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"clientInfo": {"name": "codex-quota", "version": "1"}}},
+        {"jsonrpc": "2.0", "method": "initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read"},
+    ]
+    proc = subprocess.Popen(
+        ["codex", "app-server", "--listen", "stdio://"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        proc.stdin.write("".join(json.dumps(r) + "\n" for r in requests))
+        proc.stdin.flush()
+        sel = selectors.DefaultSelector()
+        sel.register(proc.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + TIMEOUT_S
+        while time.monotonic() < deadline:
+            if not sel.select(timeout=deadline - time.monotonic()):
+                break
+            line = proc.stdout.readline()
+            if not line:
+                break
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            if msg.get("id") == 2:
+                if "error" in msg:
+                    raise RuntimeError(msg["error"].get("message", "app-server error"))
+                return msg["result"]
+        raise RuntimeError(f"no answer from codex app-server within {TIMEOUT_S}s")
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def when(epoch):
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def main():
+    try:
+        result = read_limits()
+        limits = result["rateLimits"]
+    except Exception as err:  # any failure to read means the run must not start
+        print(f"codex-quota: cannot read the allowance: {err}", file=sys.stderr)
+        return 2
+
+    windows = [("5-hour", limits.get("primary"), MAX_5H),
+               ("weekly", limits.get("secondary"), MAX_WEEKLY)]
+    if not any(w for _, w, _ in windows):
+        print("codex-quota: the answer named neither window, so nothing was checked",
+              file=sys.stderr)
+        return 2
+
+    over = False
+    print(f"plan: {limits.get('planType', 'unknown')}")
+    for name, window, cap in windows:
+        if not window:
+            print(f"{name}: not reported")
+            continue
+        used = window["usedPercent"]
+        state = "over" if used >= cap else "ok"
+        over = over or used >= cap
+        print(f"{name}: {used}% used, limit {cap}%, resets {when(window['resetsAt'])} ({state})")
+
+    if limits.get("rateLimitReachedType") or not result.get("ordinaryUsageAllowed", True):
+        print(f"OpenAI reports the limit reached: {limits.get('rateLimitReachedType')}")
+        over = True
+
+    resets = (result.get("rateLimitResetCredits") or {}).get("availableCount", 0)
+    if resets:
+        print(f"free resets available: {resets} (Pedro's to spend, never a run's)")
+
+    if over:
+        print("codex-quota: refusing the run", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

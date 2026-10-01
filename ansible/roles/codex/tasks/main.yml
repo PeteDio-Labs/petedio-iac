@@ -198,6 +198,16 @@
     group: root
     mode: "0644"
 
+# Reads both Plus windows without starting a run, so a caller can refuse to spend the last
+# of the allowance. The limits are root-owned, in the script itself.
+- name: Install the quota check
+  ansible.builtin.template:
+    src: codex-quota.j2
+    dest: /usr/local/bin/codex-quota
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Create the session user's Codex home
   ansible.builtin.file:
     path: "{{ codex_home }}/.codex"
