@@ -1,0 +1,13 @@
+{{ ansible_managed | comment }}
+# /etc/gitconfig on {{ inventory_hostname }} (roles/codex, PET-553). Root-owned, so a run
+# cannot rewrite it.
+#
+# git fetches from GitHub with a token from codex-review-broker, narrowed to the one
+# repository it asked for. The token reads; it cannot push.
+#
+# ⚠ THE EMPTY helper LINE RESETS THE LIST. credential.helper is multi-valued, and without
+# the reset a helper configured elsewhere answers first and the broker never runs (PET-493).
+[credential "https://github.com"]
+	helper =
+	helper = {{ codex_review_broker }} get
+	useHttpPath = true

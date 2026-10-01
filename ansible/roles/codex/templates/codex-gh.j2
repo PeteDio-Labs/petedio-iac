@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+{{ ansible_managed | comment }}
+# codex-gh (roles/codex, PET-553): run gh as the petedio-codex-review App, for one command.
+#
+#   codex-gh pr view 123 --repo {{ codex_github_org }}/petedio-iac
+#   codex-gh pr diff 123 --repo {{ codex_github_org }}/petedio-iac
+#   codex-gh pr review 123 --repo {{ codex_github_org }}/petedio-iac --comment --body-file review.md
+#
+# It mints an installation token through {{ codex_review_broker }} and runs gh with GH_TOKEN
+# set in that one process. Nothing logs gh in, and no token reaches a file or argv. The
+# token lives an hour.
+#
+# ⚠ THE APP DECIDES WHAT gh CAN DO. The token holds contents:read, pull_requests:write and
+# metadata:read, so a push, a merge or a workflow edit fails at GitHub. This wrapper also
+# refuses an approval, a merge and a sign-in, because the reviewer's verdict is a comment.
+set -euo pipefail
+
+die() { printf 'codex-gh: %s\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" -ne 0 ] || die "refusing to run as root."
+[ "$(id -un)" = "{{ codex_user }}" ] || die "must run as {{ codex_user }}, not $(id -un)."
+command -v gh >/dev/null || die "gh is not in PATH."
+
+case "${1:-} ${2:-}" in
+  "auth status") ;;
+  auth\ *) die "refusing 'gh auth ${2:-}'. This wrapper supplies a token per command; nothing logs in." ;;
+  "pr merge") die "refusing 'gh pr merge'. Pedro decides every merge." ;;
+esac
+
+# `gh auth status --show-token` and `-t` print the minted token.
+if [ "${1:-}" = auth ]; then
+  for a in "${@:3}"; do
+    case "$a" in
+      --show-token|--show-token=*) die "refusing 'gh auth status $a'. It prints the token." ;;
+      --*|-h*) ;;
+      -*t*) die "refusing 'gh auth status $a'. It prints the token." ;;
+    esac
+  done
+fi
+
+# The reviewer comments. An approval from this App cannot satisfy branch protection, and
+# it would read as one to a person skimming the PR.
+if [ "${1:-}" = pr ] && [ "${2:-}" = review ]; then
+  for a in "${@:3}"; do
+    case "$a" in
+      --approve|-a) die "refusing an approval. Post the verdict with --comment." ;;
+      --*) ;;
+      -*a*) die "refusing an approval ('$a'). Post the verdict with --comment." ;;
+    esac
+  done
+fi
+
+token="$({{ codex_review_broker }} mint-token)" || die "the broker could not mint a token."
+GH_TOKEN="$token" GH_HOST=github.com GH_PROMPT_DISABLED=1 exec gh "$@"

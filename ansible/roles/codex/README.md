@@ -1,15 +1,15 @@
 # codex role (PET-553)
 
 Installs the Codex CLI on `codex-248` and leaves it ready for unattended runs
-(`codex exec`), once a person signs it in to OpenAI. The host is the worker for the
-`PET-549` proof of concept: Codex implements on `codex/*` branches, and a Claude session
-and Pedro review before anything merges.
+(`codex exec`), once a person signs it in to OpenAI. The host is the reviewer for the
+`PET-549` proof of concept: a Claude session implements and opens a pull request, Codex
+reviews it with comments, and Pedro decides the merge. Pedro chose that split on 2026-10-01.
 
 | | |
 |---|---|
 | Host | `codex-248`: `192.168.50.248`, VMID 248, pve03 |
 | Terraform | `environments/homelab/codex.tf`, which also declares the guest firewall |
-| Playbooks | `playbooks/configure-pve-firewall.yml` once, then `playbooks/configure-codex.yml` |
+| Playbooks | `playbooks/configure-pve-firewall.yml` once, then `scripts/deploy-codex-248.sh`, which runs `playbooks/configure-codex.yml` |
 | Runs as | `codex`, a non-root user with no sudo |
 | Codex | pinned by `codex_version` and `codex_sha256` in `defaults/main.yml` |
 | Container features | `nesting=1` only, declared in `roles/lxc-features` |
@@ -18,9 +18,10 @@ and Pedro review before anything merges.
 
 | Boundary | Where | Who can change it |
 |---|---|---|
-| No route to `192.168.0.0/16`, the tailnet or other private ranges | Guest firewall, `codex.tf` | A merged Terraform change |
+| No route to `192.168.0.0/16`, the tailnet or other private ranges, except Plane's API on `192.168.50.235:8080` | Guest firewall, `codex.tf` | A merged Terraform change |
 | No `danger-full-access` sandbox | `/etc/codex/requirements.toml`, root-owned | Root on the host |
-| No merge, no workflow edits, `codex/*` branches only | The worker's GitHub App and ruleset | Pedro, in GitHub |
+| Read code and comment on pull requests, and nothing more | The `petedio-codex-review` App's permissions | Pedro, in GitHub |
+| Comment on a Plane work item as `codex`, never as Pedro | The `codex` Plane user, Member on PET | Pedro, in Plane |
 | What the worker is told | `~/.codex/AGENTS.md` | The session user. It is guidance, not a boundary |
 
 ## Bring the host up
@@ -112,6 +113,47 @@ codex-quota && codex exec ...
 `codex-quota` reads both windows without starting a run. It exits 1 when either window
 reaches its limit in `defaults/main.yml`, and 2 when it cannot read them. The script lists a free rate-limit reset when one exists.
 Only Pedro spends it, from the TUI or ChatGPT.
+
+## Give the reviewer its identities
+
+The reviewer holds two credentials, and each comes from Vault through a seed script that
+Pedro runs. Nothing places either one by hand.
+
+| Identity | Vault path | Seeded by | On the host |
+|---|---|---|---|
+| The `petedio-codex-review` GitHub App: contents read, pull requests write, metadata read, on every PeteDio-Labs repository | `kv/services/codex-review-app` | `scripts/seed-codex-review-app.sh <pem>` | `~/.config/codex-review/`, `0400` |
+| The `codex` Plane user's API token | `kv/services/codex-plane` | `scripts/seed-codex-plane-token.sh`, which reads the clipboard | `~/.config/plane/api_key`, `0400` |
+
+Each seed script checks the credential before it writes. The App script requires the exact
+permission set and an install on all repositories. The Plane script requires the `codex`
+user's email and a token that is not Pedro's. To deliver both, run:
+
+```bash
+./scripts/deploy-codex-248.sh
+```
+
+The play mints a GitHub token and reads `PET-553` as `codex`, so a bad identity fails the
+run. A plain `ansible-playbook` run carries no identity and leaves both files as they are.
+
+Without `contents:write`, the App's review never counts toward branch protection, and it
+cannot push. `codex-gh` also refuses an approval and a merge.
+
+## Review a pull request
+
+Every run starts with `codex-quota`. As `codex`, in `~/work`:
+
+```bash
+codex-quota && codex exec "Review PeteDio-Labs/petedio-iac#<n> for PET-<n>."
+```
+
+The run uses these tools, which `AGENTS.md` describes:
+
+| Tool | What it does |
+|---|---|
+| `codex-gh` | Runs `gh` with a 1-hour installation token. `pr view`, `pr diff`, `pr checks` and `pr review --comment` |
+| `git` | Fetches over HTTPS with a read-only token narrowed to one repository, through `/etc/gitconfig` |
+| `plane get PET-<n>` | Prints the item, its state, its description and its comments |
+| `plane comment PET-<n> < body.html` | Posts HTML as `codex`, then reads it back |
 
 ## Upgrade Codex
 
