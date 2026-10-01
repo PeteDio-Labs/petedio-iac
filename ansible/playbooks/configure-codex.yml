@@ -2,7 +2,8 @@
 # configure-codex.yml — the Codex CLI on LXC 248 (codex.tf), for the PET-549 proof of
 # concept. Everything the host needs is in roles/codex.
 #
-# NO NODE-SIDE PRECONDITION. Nothing here runs Docker, so the container needs no features.
+# ONE NODE-SIDE PRECONDITION: `nesting=1` on the container, which roles/lxc-features
+# declares. Without it the Codex sandbox cannot start, and the role fails on that check.
 #
 # THE SIGN-IN CANNOT BE INJECTED. Codex signs in to a ChatGPT account through a device
 # code that a person approves. The play leaves the host ready and prints the step.

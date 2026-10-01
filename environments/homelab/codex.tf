@@ -14,8 +14,9 @@
 # storage. Sized below claude-247: Codex is one Rust binary, and pve03 carries the platform
 # tier on ~15 GiB of RAM.
 #
-# NO out-of-band post-create step. Nothing here runs Docker, so the host needs no
-# `features{}` (nesting/keyctl), which an API token cannot set (docs/GOTCHAS.md).
+# ONE out-of-band post-create step: `nesting=1`, which an API token cannot set
+# (docs/GOTCHAS.md). Codex's sandbox needs it, and roles/lxc-features declares it. The
+# reason is in ansible/roles/codex/README.md, "Test the sandbox".
 #
 # APPLYING THIS FILE DOES NOT GIVE YOU A WORKING WORKER. Pedro signs Codex in to OpenAI
 # over SSH once the play has run. The sequence is ansible/roles/codex/README.md.
