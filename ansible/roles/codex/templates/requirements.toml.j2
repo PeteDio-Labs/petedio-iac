@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# Admin requirements for the Codex CLI on {{ inventory_hostname }} (roles/codex, PET-553).
+# Root-owned, so the session user cannot widen them. A run that asks for a mode outside
+# this list falls back to an allowed one.
+allowed_sandbox_modes = {{ codex_allowed_sandbox_modes | to_json }}

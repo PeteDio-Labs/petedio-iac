@@ -1,0 +1,146 @@
+# codex (LXC 248) — the Codex worker for the PET-549 proof of concept. Codex implements on
+# its own `codex/*` branches, and a Claude peer and M1 review before anything merges. This
+# host runs the Codex CLI headless (`codex exec --json`) under a non-root user with no sudo.
+#
+# Same TF/Ansible split as claude.tf: TF owns existence, hardware, network and the guest
+# firewall; everything inside (the Codex binary, the session user, AGENTS.md, config.toml)
+# is Ansible — ansible/playbooks/configure-codex.yml + roles/codex.
+#
+# VMID 248 = next free in the Agents (24x) block; VMID = last IP octet. 246 is claimed for
+# notes-svc by minio-data.tf, and 247 is claude-247. The 1xx block is for media guests, so
+# the first draft's LXC 120 was wrong (PET-549).
+#
+# Debian 13, pinned to the 13.6-1 image claude.tf uses. The template is on pve03's `local`
+# storage. Sized below claude-247: Codex is one Rust binary, and pve03 carries the platform
+# tier on ~15 GiB of RAM.
+#
+# NO out-of-band post-create step. Nothing here runs Docker, so the host needs no
+# `features{}` (nesting/keyctl), which an API token cannot set (docs/GOTCHAS.md).
+#
+# APPLYING THIS FILE DOES NOT GIVE YOU A WORKING WORKER. Pedro signs Codex in to OpenAI
+# over SSH once the play has run. The sequence is ansible/roles/codex/README.md.
+
+module "codex" {
+  source = "../../modules/proxmox-lxc"
+
+  vm_id                      = 248
+  hostname                   = "codex-248"
+  ipv4_address               = "192.168.50.248/24"
+  ssh_public_key             = var.ssh_public_key
+  target_node                = var.target_node
+  cores                      = 2
+  memory_dedicated           = 2048
+  memory_swap                = 1024
+  disk_size                  = 30
+  datastore_id               = "local"
+  template_file_id           = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
+  network_interface_firewall = true
+  description                = "Codex worker (PET-549 POC) — runs `codex exec` on codex/* branches; egress limited to the internet by the guest firewall. Managed by Terraform."
+}
+
+# --- Egress: the internet, and nothing on the lab's networks -------------------------------
+# PET-553 asks for DNS, GitHub, the OpenAI API and the package registries, and nothing else
+# in 192.168.50.0/24 or the .86 mesh. GitHub's and OpenAI's addresses rotate, and an
+# IP-based firewall cannot name them, so the rules deny every private range instead and let
+# the rest of the internet through. That keeps the boundary the item cares about, the lab,
+# without a rule list that goes stale.
+#
+# ⚠ THESE RULES DO NOTHING UNTIL THE DATACENTER FIREWALL IS ON. The CI token holds no
+# Sys.Modify, so Terraform cannot turn it on. ansible/playbooks/configure-pve-firewall.yml
+# does, over the nodes' root SSH, and turns each node's own host firewall off first, so
+# only guests with a firewall config are filtered (PET-553).
+#
+# Rules are first-match, top to bottom. Conntrack accepts replies on its own, so the
+# inbound policy can drop everything but SSH.
+
+resource "proxmox_virtual_environment_firewall_options" "codex" {
+  node_name    = var.target_node
+  container_id = module.codex.vm_id
+
+  enabled       = true
+  input_policy  = "DROP"
+  output_policy = "ACCEPT"
+  macfilter     = true
+  ipfilter      = false
+  dhcp          = false
+  ndp           = false
+  radv          = false
+}
+
+resource "proxmox_virtual_environment_firewall_rules" "codex" {
+  node_name    = var.target_node
+  container_id = module.codex.vm_id
+
+  # Inbound: SSH only. Pedro signs Codex in over it, and Ansible configures the host over it.
+  rule {
+    type    = "in"
+    action  = "ACCEPT"
+    proto   = "tcp"
+    dport   = "22"
+    comment = "SSH for the operator and Ansible"
+  }
+
+  # Outbound DNS to the router, the one LAN address this host may reach.
+  rule {
+    type    = "out"
+    action  = "ACCEPT"
+    proto   = "udp"
+    dest    = "192.168.50.1"
+    dport   = "53"
+    comment = "DNS to the router"
+  }
+
+  rule {
+    type    = "out"
+    action  = "ACCEPT"
+    proto   = "tcp"
+    dest    = "192.168.50.1"
+    dport   = "53"
+    comment = "DNS to the router (TCP)"
+  }
+
+  # Every private and tailnet range: the LAN (.50), the mesh (.86), the tailnet's CGNAT
+  # block and link-local. REJECT rather than DROP, so a refused request fails at once
+  # instead of hanging until its timeout, and the PET-553 egress test reads a clear refusal.
+  rule {
+    type    = "out"
+    action  = "REJECT"
+    dest    = "192.168.0.0/16"
+    comment = "No LAN (.50) or mesh (.86)"
+  }
+
+  rule {
+    type    = "out"
+    action  = "REJECT"
+    dest    = "10.0.0.0/8"
+    comment = "No private 10/8"
+  }
+
+  rule {
+    type    = "out"
+    action  = "REJECT"
+    dest    = "172.16.0.0/12"
+    comment = "No private 172.16/12"
+  }
+
+  rule {
+    type    = "out"
+    action  = "REJECT"
+    dest    = "100.64.0.0/10"
+    comment = "No tailnet"
+  }
+
+  rule {
+    type    = "out"
+    action  = "REJECT"
+    dest    = "169.254.0.0/16"
+    comment = "No link-local"
+  }
+
+  depends_on = [proxmox_virtual_environment_firewall_options.codex]
+}
+
+output "codex_id" {
+  description = "VMID of the Codex worker container."
+  value       = module.codex.vm_id
+}

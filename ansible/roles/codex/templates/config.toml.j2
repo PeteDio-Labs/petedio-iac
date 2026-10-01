@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+# System defaults for the Codex CLI on {{ inventory_hostname }} (roles/codex, PET-553).
+# A user's ~/.codex/config.toml and command-line flags override these.
+# /etc/codex/requirements.toml limits what they may choose.
+
+# Unattended: `codex exec` never stops to ask. The sandbox is the limit instead.
+approval_policy = "never"
+
+# Writes inside the working directory and /tmp only. Network access is allowed from the
+# sandbox, and the guest firewall decides where it may go.
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
+
+# The ChatGPT sign-in lands in ~/.codex/auth.json. The host has no keyring daemon.
+cli_auth_credentials_store = "file"
