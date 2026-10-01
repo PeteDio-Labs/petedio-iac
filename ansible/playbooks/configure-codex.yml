@@ -1,0 +1,41 @@
+---
+# configure-codex.yml — the Codex CLI on LXC 248 (codex.tf), for the PET-549 proof of
+# concept. Everything the host needs is in roles/codex.
+#
+# NO NODE-SIDE PRECONDITION. Nothing here runs Docker, so the container needs no features.
+#
+# THE SIGN-IN CANNOT BE INJECTED. Codex signs in to a ChatGPT account through a device
+# code that a person approves. The play leaves the host ready and prints the step.
+#
+# ⚠ RUN configure-pve-firewall.yml FIRST, ONCE. Until the datacenter firewall is on, the
+# guest rules in codex.tf do nothing, and this host can reach the whole LAN.
+#
+# Manual-validation-first (PET-266): run this by hand and get it green before any
+# CD-on-merge workflow is wired to it. Nothing in .github/workflows watches this play or
+# inventory/codex.yml.
+#
+#   ansible-playbook playbooks/configure-codex.yml
+#
+# Full sequence: ansible/roles/codex/README.md.
+
+- name: Configure the Codex worker (LXC 248)
+  hosts: codex
+  become: true
+
+  roles:
+    - codex
+
+  post_tasks:
+    - name: Report the sign-in step
+      ansible.builtin.debug:
+        msg:
+          - "Codex {{ codex_version }} is installed. The one step left is the OpenAI sign-in:"
+          - "1. ssh {{ codex_user }}@{{ ansible_host | default('192.168.50.248') }}"
+          - "2. codex login --device-auth   # open the URL it prints, and enter the code"
+          - "3. codex login status          # reads 'Logged in using ChatGPT'"
+      when: not codex_auth.stat.exists
+
+    - name: Report the sign-in on disk
+      ansible.builtin.debug:
+        msg: "Codex {{ codex_version }} is installed, and {{ codex_home }}/.codex/auth.json exists."
+      when: codex_auth.stat.exists

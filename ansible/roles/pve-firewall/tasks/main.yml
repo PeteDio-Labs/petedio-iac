@@ -1,0 +1,134 @@
+---
+# pve-firewall tasks (PET-553) — turn the Proxmox datacenter firewall on, so guest firewall
+# rules take effect, while every node's own host firewall stays off.
+#
+# WHY NOT TERRAFORM. The CI token (petedio@pam!iac) holds PVEVMAdmin, PVEDatastoreUser and
+# IaCPoolUser, and none of them carries Sys.Modify on /, which the datacenter options need.
+# Terraform declares each guest's rules (environments/homelab/codex.tf); this role flips the
+# one switch they depend on, over the nodes' root SSH.
+#
+# WHY FILES AND NOT pvesh. On pve-manager 9.2.11, `pvesh get /cluster/firewall/options`
+# dies with "unknown schema type (not an object?)" before it reads anything, as root, with
+# or without --output-format. The node-level endpoint answers. The files under /etc/pve are
+# what pve-firewall itself reads, so the role writes those.
+#
+# ⚠ ORDER IS THE WHOLE SAFETY STORY. With the datacenter switch on, a node's host firewall
+# defaults to ON with an input policy of DROP. A node with no host.fw saying `enable: 0`
+# would start filtering its own SSH, the web UI and corosync the moment the switch flips.
+# So every node gets host.fw first, the role then reads every node the cluster knows about
+# (not only the ones in this play) and refuses to continue if any lacks it, and only then
+# writes cluster.fw.
+#
+# WHAT IT CHANGES FOR OTHER GUESTS. Nothing for a guest without a firewall config. 101, 110
+# and 119 set `firewall=1` on their NIC, but none has a /etc/pve/firewall/<vmid>.fw, so
+# their guest firewall stays disabled. The datacenter switch does set
+# net.bridge.bridge-nf-call-iptables=1, so bridged traffic crosses the FORWARD chain, and
+# pve-firewall puts a conntrack INVALID drop at its head. pve03 forwards (ip_forward=1, its
+# default route is the .86 WiFi), and an asymmetric flow reads as INVALID. host.fw sets
+# nf_conntrack_allow_invalid: 1, which leaves that drop out, so FORWARD stays the ACCEPT
+# both nodes ran with on 2026-09-30. Read compile_iptables_filter in
+# /usr/share/perl5/PVE/Firewall.pm before changing either option.
+#
+# TO UNDO. Set pve_firewall_cluster_enable: false and re-run. The host.fw files stay, and
+# they are harmless with the switch off.
+
+# /etc/pve is pmxcfs. Every file there is root:www-data 0640, and a chmod to any other mode
+# fails with EPERM (0644 does, tested on pve02 on 2026-09-30). So the mode is pinned to the
+# one pmxcfs accepts. A rename inside it works, so the copy stays atomic.
+- name: Turn this node's own host firewall off
+  ansible.builtin.copy:
+    dest: "/etc/pve/nodes/{{ inventory_hostname }}/host.fw"
+    content: |
+      # Managed by Ansible (roles/pve-firewall, PET-553). The node's own traffic is not
+      # filtered; only guests with a firewall config are. Read the role before changing it.
+      [OPTIONS]
+
+      enable: 0
+      nf_conntrack_allow_invalid: 1
+    owner: root
+    group: www-data
+    mode: "0640"
+
+- name: List the nodes the cluster knows about
+  ansible.builtin.command: pvesh get /nodes --output-format json
+  register: pve_firewall_nodes
+  changed_when: false
+  check_mode: false
+  run_once: true
+
+- name: Read every node's host.fw
+  ansible.builtin.slurp:
+    src: "/etc/pve/nodes/{{ item }}/host.fw"
+  loop: "{{ pve_firewall_nodes.stdout | from_json | map(attribute='node') | list }}"
+  register: pve_firewall_hostfw
+  failed_when: false
+  run_once: true
+
+- name: Refuse the datacenter switch while any node would filter its own traffic
+  ansible.builtin.assert:
+    that:
+      - item.content is defined
+      - (item.content | b64decode) is search('(?m)^enable:\s*0\s*$')
+    fail_msg: >-
+      Node {{ item.item }} has no host.fw with `enable: 0`. Turning the datacenter firewall
+      on now would start filtering that node's SSH, web UI and corosync with an input
+      policy of DROP. Add the node to this play's hosts, or write its host.fw, then re-run.
+    quiet: true
+  loop: "{{ pve_firewall_hostfw.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  run_once: true
+  # Under --check the host.fw writes above are only reported, so this read would find
+  # nothing to approve. A real run always reaches it.
+  when:
+    - pve_firewall_cluster_enable | bool
+    - not ansible_check_mode
+
+- name: Set the datacenter firewall switch
+  ansible.builtin.copy:
+    dest: /etc/pve/firewall/cluster.fw
+    content: |
+      # Managed by Ansible (roles/pve-firewall, PET-553). Every node's host.fw sets
+      # `enable: 0`, so this switch filters only guests with a firewall config.
+      [OPTIONS]
+
+      enable: {{ 1 if pve_firewall_cluster_enable | bool else 0 }}
+    owner: root
+    group: www-data
+    mode: "0640"
+  run_once: true
+
+# pve-firewall recompiles on its own about every 10 seconds. "enabled/running" is the line
+# only a read config prints; "disabled/running" is what this cluster printed before PET-553.
+- name: Wait for pve-firewall to read the switch
+  ansible.builtin.command: pve-firewall status
+  register: pve_firewall_status
+  changed_when: false
+  until: >-
+    pve_firewall_status.stdout is search(
+      'Status: enabled/running' if pve_firewall_cluster_enable | bool else 'Status: disabled/running')
+  retries: "{{ pve_firewall_status_retries }}"
+  delay: "{{ pve_firewall_status_delay }}"
+  when: not ansible_check_mode
+
+# The proof that the host stayed open. With the datacenter switch on, INPUT always jumps to
+# PVEFW-INPUT, but pve-firewall adds `-j PVEFW-HOST-IN` to it only for a node whose host
+# firewall is on (enable_host_firewall in /usr/share/perl5/PVE/Firewall.pm). A missing
+# chain is the switch being off, which is also open.
+- name: Read the node's PVEFW-INPUT chain
+  ansible.builtin.command: iptables -S PVEFW-INPUT
+  register: pve_firewall_input
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Assert the node does not filter its own traffic
+  ansible.builtin.assert:
+    that:
+      - "'PVEFW-HOST-IN' not in pve_firewall_input.stdout"
+    fail_msg: >-
+      {{ inventory_hostname }}'s PVEFW-INPUT chain jumps to PVEFW-HOST-IN, so its host
+      firewall is on. Set pve_firewall_cluster_enable: false and re-run to undo, then read
+      /etc/pve/nodes/{{ inventory_hostname }}/host.fw.
+    quiet: true
+  when: not ansible_check_mode

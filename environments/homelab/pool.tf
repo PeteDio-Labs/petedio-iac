@@ -58,6 +58,7 @@ locals {
     plane      = module.plane.vm_id
     media_dash = module.media_dash.vm_id
     claude     = module.claude_code.vm_id
+    codex      = module.codex.vm_id
   } : {}
 
   # LXCs that exist on the cluster but have NO Terraform module here, so there is

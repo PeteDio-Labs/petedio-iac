@@ -1,0 +1,195 @@
+---
+# codex tasks (PET-553) — put the Codex CLI on LXC 248 and leave it ready for one operator
+# step: the OpenAI sign-in. Idempotent: apt, the user, the pinned download and the config
+# files all converge.
+#
+# NO PRECONDITION ON THE NODE. Nothing here runs Docker, so the container needs no
+# nesting or keyctl. Codex sandboxes its commands with bubblewrap, which needs unprivileged
+# user namespaces inside the container; README.md says how to test that.
+#
+# WHAT THIS PLAY CANNOT DO. Codex signs in to a ChatGPT account, and only a person can
+# approve that. The play prints the step and leaves the rest of the host ready. It does not
+# fail on a missing sign-in: no service here waits on one.
+#
+# WHAT THIS PLAY DELIBERATELY DOES NOT DO. It gives the host no GitHub credential. `gh` is
+# installed and left unauthenticated. Codex's GitHub App is a separate PET-553 step.
+
+- name: Install base packages and dev tooling
+  ansible.builtin.apt:
+    name:
+      - bubblewrap
+      - ca-certificates
+      - curl
+      - git
+      - gnupg
+      - jq
+      - less
+      - make
+      - python3
+      - ripgrep
+      - tmux
+      - unzip
+    state: present
+    update_cache: true
+
+- name: Ensure the apt keyring directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+# --- GitHub CLI --------------------------------------------------------------------------
+# ⚠ INSTALLED AND LEFT UNAUTHENTICATED. Never run `gh auth login` on this host: the token it
+# writes carries Pedro's permissions, and every run here can read it. The worker's GitHub
+# identity is its own App, scoped to `codex/*` branches.
+
+- name: Add the GitHub CLI apt signing key
+  ansible.builtin.get_url:
+    url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+    dest: /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    mode: "0644"
+
+- name: Add the GitHub CLI apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg]
+      https://cli.github.com/packages stable main
+    filename: github-cli
+    state: present
+
+- name: Install the GitHub CLI
+  ansible.builtin.apt:
+    name: gh
+    state: present
+    update_cache: true
+
+# --- The session user --------------------------------------------------------------------
+
+- name: Create the session user
+  ansible.builtin.user:
+    name: "{{ codex_user }}"
+    home: "{{ codex_home }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Authorize the operator SSH keys for the session user
+  ansible.posix.authorized_key:
+    user: "{{ codex_user }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ codex_authorized_keys }}"
+
+# --- The Codex CLI -----------------------------------------------------------------------
+# One static musl binary from the GitHub release, checked against its published sha256.
+# Each version unpacks to its own directory, and the symlink picks one, so an upgrade or a
+# rollback is a change to codex_version alone.
+
+- name: Create the Codex version directory
+  ansible.builtin.file:
+    path: "/usr/local/lib/codex/{{ codex_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the Codex release
+  ansible.builtin.get_url:
+    url: "{{ codex_url }}"
+    dest: "/usr/local/lib/codex/{{ codex_version }}/{{ codex_asset }}.tar.gz"
+    checksum: "sha256:{{ codex_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Unpack the Codex binary
+  ansible.builtin.unarchive:
+    src: "/usr/local/lib/codex/{{ codex_version }}/{{ codex_asset }}.tar.gz"
+    dest: "/usr/local/lib/codex/{{ codex_version }}"
+    remote_src: true
+    creates: "/usr/local/lib/codex/{{ codex_version }}/{{ codex_asset }}"
+    owner: root
+    group: root
+
+- name: Link the pinned Codex version onto the PATH
+  ansible.builtin.file:
+    src: "/usr/local/lib/codex/{{ codex_version }}/{{ codex_asset }}"
+    dest: /usr/local/bin/codex
+    state: link
+    force: true
+
+- name: Read the installed Codex version
+  ansible.builtin.command: /usr/local/bin/codex --version
+  register: codex_installed_version
+  changed_when: false
+  failed_when: codex_version not in codex_installed_version.stdout
+  # Under --check on a first run, the binary is not there yet.
+  when: not ansible_check_mode
+
+# --- Configuration -----------------------------------------------------------------------
+# The defaults and the limits live under /etc/codex, root-owned, so a run cannot rewrite
+# them. ~/.codex belongs to the session user, because Codex writes its sign-in, its
+# sessions and its logs there.
+
+- name: Create the Codex system config directory
+  ansible.builtin.file:
+    path: /etc/codex
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the Codex system defaults
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: /etc/codex/config.toml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Write the Codex admin requirements
+  ansible.builtin.template:
+    src: requirements.toml.j2
+    dest: /etc/codex/requirements.toml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Create the session user's Codex home
+  ansible.builtin.file:
+    path: "{{ codex_home }}/.codex"
+    state: directory
+    # follow: false, for the reason roles/claude-code gives (PET-410): this task runs as
+    # root on a path the session user owns, and a symlink there would hand that user the
+    # target.
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0700"
+
+# AGENTS.md is guidance, not a boundary: the session user owns the directory it sits in and
+# can replace it. The boundaries are the guest firewall, requirements.toml and the GitHub
+# App's permissions.
+- name: Write the worker's AGENTS.md
+  ansible.builtin.template:
+    src: AGENTS.md.j2
+    dest: "{{ codex_home }}/.codex/AGENTS.md"
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0644"
+
+- name: Create the work directory
+  ansible.builtin.file:
+    path: "{{ codex_home }}/work"
+    state: directory
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0755"
+
+# --- Sign-in state -----------------------------------------------------------------------
+
+- name: Check for the OpenAI sign-in
+  ansible.builtin.stat:
+    path: "{{ codex_home }}/.codex/auth.json"
+  register: codex_auth
