@@ -17,6 +17,9 @@
 #
 #   ansible-playbook playbooks/configure-codex.yml
 #
+# THE REVIEWER'S IDENTITIES COME FROM VAULT (PET-553). Run scripts/deploy-codex-248.sh to
+# land or rotate the GitHub App and the Plane token. A plain run leaves both as they are.
+#
 # Full sequence: ansible/roles/codex/README.md.
 
 - name: Configure the Codex worker (LXC 248)

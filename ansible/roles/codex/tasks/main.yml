@@ -12,8 +12,8 @@
 # approve that. The play prints the step and leaves the rest of the host ready. It does not
 # fail on a missing sign-in: no service here waits on one.
 #
-# WHAT THIS PLAY DELIBERATELY DOES NOT DO. It gives the host no GitHub credential. `gh` is
-# installed and left unauthenticated. Codex's GitHub App is a separate PET-553 step.
+# WHAT THIS PLAY DELIBERATELY DOES NOT DO. It never logs `gh` in. The reviewer's GitHub
+# identity is its own read-and-comment App, which tasks/reviewer.yml lands from Vault.
 
 - name: Install base packages and dev tooling
   ansible.builtin.apt:
@@ -41,8 +41,8 @@
 
 # --- GitHub CLI --------------------------------------------------------------------------
 # ⚠ INSTALLED AND LEFT UNAUTHENTICATED. Never run `gh auth login` on this host: the token it
-# writes carries Pedro's permissions, and every run here can read it. The worker's GitHub
-# identity is its own App, scoped to `codex/*` branches.
+# writes carries Pedro's permissions, and every run here can read it. The reviewer's GitHub
+# identity is its own App, used through codex-gh (tasks/reviewer.yml).
 
 - name: Add the GitHub CLI apt signing key
   ansible.builtin.get_url:
@@ -239,6 +239,11 @@
     owner: "{{ codex_user }}"
     group: "{{ codex_user }}"
     mode: "0755"
+
+# --- The reviewer's identities (PET-553) ---------------------------------------------
+
+- name: Configure the reviewer's GitHub and Plane identities
+  ansible.builtin.include_tasks: reviewer.yml
 
 # --- Sign-in state -----------------------------------------------------------------------
 

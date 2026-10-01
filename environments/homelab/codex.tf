@@ -1,6 +1,6 @@
-# codex (LXC 248) — the Codex worker for the PET-549 proof of concept. Codex implements on
-# its own `codex/*` branches, and a Claude peer and M1 review before anything merges. This
-# host runs the Codex CLI headless (`codex exec --json`) under a non-root user with no sudo.
+# codex (LXC 248) — the Codex reviewer for the PET-549 proof of concept. A Claude session
+# implements and opens a pull request, Codex reviews it with comments, and Pedro decides the
+# merge (2026-10-01). This host runs the Codex CLI headless (`codex exec --json`) under a non-root user with no sudo.
 #
 # Same TF/Ansible split as claude.tf: TF owns existence, hardware, network and the guest
 # firewall; everything inside (the Codex binary, the session user, AGENTS.md, config.toml)
@@ -39,7 +39,7 @@ module "codex" {
   description                = "Codex worker (PET-549 POC) — runs `codex exec` on codex/* branches; egress limited to the internet by the guest firewall. Managed by Terraform."
 }
 
-# --- Egress: the internet, and nothing on the lab's networks -------------------------------
+# --- Egress: the internet, Plane's API, and nothing else on the lab's networks -------------
 # PET-553 asks for DNS, GitHub, the OpenAI API and the package registries, and nothing else
 # in 192.168.50.0/24 or the .86 mesh. GitHub's and OpenAI's addresses rotate, and an
 # IP-based firewall cannot name them, so the rules deny every private range instead and let
@@ -98,6 +98,19 @@ resource "proxmox_virtual_environment_firewall_rules" "codex" {
     dest    = "192.168.50.1"
     dport   = "53"
     comment = "DNS to the router (TCP)"
+  }
+
+  # Plane's API on plane-235, the one LAN service this host may reach (PET-553). The
+  # reviewer reads a work item and posts a comment as its own `codex` Plane user, through
+  # the `plane` CLI that roles/codex installs. Port 8080 only: SSH and Postgres on .235
+  # stay behind the reject below. It sits above that reject, because rules are first-match.
+  rule {
+    type    = "out"
+    action  = "ACCEPT"
+    proto   = "tcp"
+    dest    = "192.168.50.235"
+    dport   = "8080"
+    comment = "Plane API on plane-235, for the codex Plane user"
   }
 
   # Every private and tailnet range: the LAN (.50), the mesh (.86), the tailnet's CGNAT

@@ -43,3 +43,32 @@ codex_allowed_sandbox_modes:
 # automation key that Terraform installs.
 codex_authorized_keys:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEgSIpFv6ipc5B3CATvK1CIqul0hG6MSUT0cR5TqhAX4 pedro@type-shit"
+
+# --- The reviewer's identities (PET-553) -------------------------------------------------
+# Codex reviews. Claude implements, and Pedro merges. Two identities let it do that, and
+# scripts/deploy-codex-248.sh passes both in from Vault. A run that passes neither leaves
+# the files on disk as they are, so a plain `ansible-playbook` run never wipes them.
+#
+#   kv/services/codex-review-app -> the petedio-codex-review GitHub App: contents:read,
+#     pull_requests:write and metadata:read, installed on every PeteDio-Labs repository.
+#     With no contents:write, its review cannot count toward branch protection.
+#   kv/services/codex-plane      -> the `codex` Plane user's API token. Member on PET.
+#
+# Never a committed default. Each stays empty here.
+codex_review_app_id: ""
+codex_review_installation_id: ""
+codex_review_app_pem: ""
+codex_plane_api_key: ""
+
+codex_github_org: PeteDio-Labs
+# Root-owned scripts, so a run cannot rewrite the code that reads the key.
+codex_review_broker: /usr/local/bin/codex-review-broker
+codex_review_gh: /usr/local/bin/codex-gh
+# The session user's credentials. 0700 directories, 0400 files, owned by the session user,
+# because the session is what reviews.
+codex_review_conf_dir: "{{ codex_home }}/.config/codex-review"
+codex_plane_conf_dir: "{{ codex_home }}/.config/plane"
+
+# Plane, through the one LAN rule in codex.tf.
+codex_plane_url: http://192.168.50.235:8080
+codex_plane_workspace: petedio

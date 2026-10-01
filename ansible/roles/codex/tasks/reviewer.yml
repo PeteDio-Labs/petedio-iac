@@ -1,0 +1,136 @@
+---
+# reviewer.yml (PET-553): the two identities Codex reviews with, and the tools that use
+# them. Codex reviews; Claude implements; Pedro merges.
+#
+#   · The petedio-codex-review GitHub App: contents:read, pull_requests:write,
+#     metadata:read, on every PeteDio-Labs repository. codex-review-broker mints its tokens,
+#     codex-gh runs gh with one, and /etc/gitconfig hands git one.
+#   · The `codex` Plane user's API token. The `plane` CLI reads an item and posts a comment.
+#
+# Gated on presence: a run that carries no identity leaves the files on disk as they are.
+# scripts/deploy-codex-248.sh passes both from Vault.
+
+- name: Install the reviewer's scripts
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - { src: codex-review-broker.j2, dest: "{{ codex_review_broker }}" }
+    - { src: codex-gh.j2, dest: "{{ codex_review_gh }}" }
+    - { src: plane.j2, dest: /usr/local/bin/plane }
+
+- name: Point git at the broker for GitHub
+  ansible.builtin.template:
+    src: gitconfig.j2
+    dest: /etc/gitconfig
+    owner: root
+    group: root
+    mode: "0644"
+
+# follow: false, for the PET-410 reason: this runs as root on paths the session user owns.
+- name: Create the session user's credential directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "{{ '0755' if item.endswith('/.config') else '0700' }}"
+  loop:
+    - "{{ codex_home }}/.config"
+    - "{{ codex_review_conf_dir }}"
+    - "{{ codex_plane_conf_dir }}"
+
+- name: Decide which identities this run carries
+  ansible.builtin.set_fact:
+    codex_review_identity_present: >-
+      {{ codex_review_app_id | length > 0
+         and codex_review_installation_id | length > 0
+         and codex_review_app_pem | length > 0 }}
+    codex_plane_identity_present: "{{ codex_plane_api_key | length > 0 }}"
+  no_log: true
+
+- name: Report the identities this run leaves alone
+  ansible.builtin.debug:
+    msg: >-
+      No {{ item.name }} in this run, so {{ item.dir }} is left as it is. Run
+      scripts/deploy-codex-248.sh to land or rotate it.
+  loop:
+    - { name: GitHub App identity, dir: "{{ codex_review_conf_dir }}", present: "{{ codex_review_identity_present }}" }
+    - { name: Plane token, dir: "{{ codex_plane_conf_dir }}", present: "{{ codex_plane_identity_present }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  when: not item.present | bool
+
+- name: Land the App identity the broker reads
+  ansible.builtin.template:
+    src: codex-review-github.env.j2
+    dest: "{{ codex_review_conf_dir }}/github.env"
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0400"
+  no_log: true
+  when: codex_review_identity_present | bool
+
+# A trailing newline is added if the Vault field lost one, because openssl rejects a PEM
+# without it.
+- name: Land the App private key
+  ansible.builtin.copy:
+    content: "{{ codex_review_app_pem | trim }}\n"
+    dest: "{{ codex_review_conf_dir }}/app.pem"
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0400"
+  no_log: true
+  when: codex_review_identity_present | bool
+
+- name: Land the Plane token
+  ansible.builtin.copy:
+    content: "{{ codex_plane_api_key | trim }}\n"
+    dest: "{{ codex_plane_conf_dir }}/api_key"
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0400"
+  no_log: true
+  when: codex_plane_identity_present | bool
+
+# Proof that the identity on disk works, whichever run landed it. runuser, not become_user,
+# because the broker refuses root and the play connects as root.
+- name: Check for the App identity on disk
+  ansible.builtin.stat:
+    path: "{{ codex_review_conf_dir }}/app.pem"
+  register: codex_review_pem
+
+- name: Mint a token as the session user, to prove the App identity
+  ansible.builtin.command:
+    argv: [runuser, -u, "{{ codex_user }}", --, "{{ codex_review_broker }}", mint-token, petedio-iac]
+  register: codex_review_mint
+  changed_when: false
+  no_log: true
+  when: codex_review_pem.stat.exists and not ansible_check_mode
+
+- name: Refuse an App identity that cannot mint
+  ansible.builtin.assert:
+    that: codex_review_mint.rc == 0
+    fail_msg: "codex-review-broker could not mint a token. Run it as {{ codex_user }} to read GitHub's answer."
+    quiet: true
+  when: codex_review_mint is not skipped
+
+- name: Check for the Plane token on disk
+  ansible.builtin.stat:
+    path: "{{ codex_plane_conf_dir }}/api_key"
+  register: codex_plane_key
+
+- name: Read PET-553 as the codex Plane user, to prove the token and the firewall rule
+  ansible.builtin.command:
+    argv: [runuser, -u, "{{ codex_user }}", --, /usr/local/bin/plane, get, PET-553]
+  register: codex_plane_read
+  changed_when: false
+  failed_when: codex_plane_read.rc != 0
+  when: codex_plane_key.stat.exists and not ansible_check_mode
