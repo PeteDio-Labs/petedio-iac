@@ -10,8 +10,10 @@ approval_policy = "never"
 # sandbox, and the guest firewall decides where it may go.
 sandbox_mode = "workspace-write"
 
+# The ChatGPT sign-in lands in ~/.codex/auth.json. The host has no keyring daemon.
+# ⚠ Keep every top-level key above the first [table]. TOML assigns a key to the table
+# above it, and Codex ignores a key it finds in the wrong table, with only a warning.
+cli_auth_credentials_store = "file"
+
 [sandbox_workspace_write]
 network_access = true
-
-# The ChatGPT sign-in lands in ~/.codex/auth.json. The host has no keyring daemon.
-cli_auth_credentials_store = "file"

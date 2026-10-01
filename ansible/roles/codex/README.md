@@ -97,5 +97,5 @@ Change `codex_version` and `codex_sha256` together in `defaults/main.yml`. The d
 the release page, or:
 
 ```bash
-gh release view rust-v<version> --repo openai/codex --json assets --jq '.assets[] | select(.name == "codex-x86_64-unknown-linux-musl.tar.gz") | .digest'
+gh release view rust-v<version> --repo openai/codex --json assets --jq '.assets[] | select(.name == "codex-package-x86_64-unknown-linux-musl.tar.gz") | .digest'
 ```
