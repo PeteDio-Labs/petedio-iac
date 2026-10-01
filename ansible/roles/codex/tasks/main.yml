@@ -3,9 +3,10 @@
 # step: the OpenAI sign-in. Idempotent: apt, the user, the pinned download and the config
 # files all converge.
 #
-# NO PRECONDITION ON THE NODE. Nothing here runs Docker, so the container needs no
-# nesting or keyctl. Codex sandboxes its commands with bubblewrap, which needs unprivileged
-# user namespaces inside the container; README.md says how to test that.
+# ONE PRECONDITION ON THE NODE: `nesting=1`, declared in roles/lxc-features. Codex
+# sandboxes its commands with bubblewrap, which creates a user namespace. Proxmox's
+# AppArmor profile denies that (userns_create) unless nesting is on, because PVE adds
+# `allow userns,` only then. Nothing here runs Docker, so the container needs no keyctl.
 #
 # WHAT THIS PLAY CANNOT DO. Codex signs in to a ChatGPT account, and only a person can
 # approve that. The play prints the step and leaves the rest of the host ready. It does not
@@ -130,6 +131,24 @@
 # The defaults and the limits live under /etc/codex, root-owned, so a run cannot rewrite
 # them. ~/.codex belongs to the session user, because Codex writes its sign-in, its
 # sessions and its logs there.
+
+# The sandbox's precondition, checked where it fails. Without `nesting=1`, every command
+# Codex runs fails with "bwrap: Creating new namespace failed: Permission denied".
+- name: Check that the container can create a user namespace
+  ansible.builtin.command: unshare --user true
+  register: codex_userns
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Refuse to leave a host whose sandbox cannot start
+  ansible.builtin.assert:
+    that: codex_userns.rc == 0
+    fail_msg: >-
+      `unshare --user` failed ({{ codex_userns.stderr | default('') }}), so the Codex sandbox
+      cannot start. Declare `nesting: "1"` for this container in
+      roles/lxc-features/defaults/main.yml, run configure-lxc-features.yml, and restart it.
+    quiet: true
 
 - name: Create the Codex system config directory
   ansible.builtin.file:

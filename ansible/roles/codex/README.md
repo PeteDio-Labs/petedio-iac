@@ -12,6 +12,7 @@ and Pedro review before anything merges.
 | Playbooks | `playbooks/configure-pve-firewall.yml` once, then `playbooks/configure-codex.yml` |
 | Runs as | `codex`, a non-root user with no sudo |
 | Codex | pinned by `codex_version` and `codex_sha256` in `defaults/main.yml` |
+| Container features | `nesting=1` only, declared in `roles/lxc-features` |
 
 ## The boundaries, and where each lives
 
@@ -25,6 +26,8 @@ and Pedro review before anything merges.
 ## Bring the host up
 
 1. Merge the Terraform change. The apply creates CT 248 and its firewall rules.
+   Then run `playbooks/configure-lxc-features.yml`, and restart 248 with `pct reboot 248`
+   on pve03, so the sandbox can create its user namespace.
 2. To turn the datacenter firewall on, run the firewall play once. Preview it first:
 
    ```bash
@@ -62,23 +65,31 @@ The token lands in `~/.codex/auth.json`, because `/etc/codex/config.toml` sets
 
 ## Test the sandbox
 
-Codex runs each command inside bubblewrap, which needs user namespaces inside this
-unprivileged container. To check that the sandbox works, and that it holds, run these as
-`codex` after the sign-in:
+Codex runs each command inside bubblewrap, which creates a user namespace. In a Proxmox
+container, the AppArmor profile denies that unless the container has `nesting=1`. Without
+it, every command fails with `bwrap: Creating new namespace failed: Permission denied`.
+`roles/lxc-features` declares `nesting=1` for 248, and this role fails if
+`unshare --user` fails.
+
+These tests need no sign-in. To run them, connect as `codex` and `cd ~/work`:
 
 ```bash
-cd ~/work && codex exec 'Run `touch ~/outside.txt` and report whether it succeeded.'
+codex sandbox -c 'sandbox_mode="workspace-write"' -- touch ~/work/inside.txt
+codex sandbox -c 'sandbox_mode="workspace-write"' -- touch ~/outside.txt
+codex sandbox -c 'sandbox_mode="danger-full-access"' -- true
 ```
 
-The write outside the working directory must fail. To check the requirements file, ask for
-the mode it forbids:
+On 2026-09-30, the three tests behaved as follows:
 
-```bash
-cd ~/work && codex exec --sandbox danger-full-access 'Print the sandbox mode you run under.'
-```
+| Test | Result |
+|---|---|
+| A write inside `~/work` | Succeeds |
+| A write outside `~/work` | `Read-only file system` |
+| `danger-full-access` | Codex refuses to start: requirements do not allow it with `approval_policy = "never"` |
 
-Codex prints a warning that the value is disallowed by requirements, and falls back to an
-allowed mode.
+Under `workspace-write`, `curl https://api.github.com` returns 200, and a LAN address is
+refused by the guest firewall. Under the default read-only mode, the sandbox has no
+network.
 
 ## Upgrade Codex
 
