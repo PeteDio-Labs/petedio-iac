@@ -1,0 +1,17 @@
+---
+# The two files this role writes, whole. tasks/main.yml compares each with what is on disk
+# and writes only on a difference.
+pve_firewall_hostfw_content: |
+  # Managed by Ansible (roles/pve-firewall, PET-553). The node's own traffic is not
+  # filtered; only guests with a firewall config are. Read the role before changing it.
+  [OPTIONS]
+
+  enable: 0
+  nf_conntrack_allow_invalid: 1
+
+pve_firewall_clusterfw_content: |
+  # Managed by Ansible (roles/pve-firewall, PET-553). Every node's host.fw sets
+  # `enable: 0`, so this switch filters only guests with a firewall config.
+  [OPTIONS]
+
+  enable: {{ 1 if pve_firewall_cluster_enable | bool else 0 }}
