@@ -7,7 +7,10 @@
 #
 # ⚠ THE EMPTY helper LINE RESETS THE LIST. credential.helper is multi-valued, and without
 # the reset a helper configured elsewhere answers first and the broker never runs (PET-493).
+#
+# ⚠ NAME THE BROKER WITHOUT AN ACTION. git appends get, store or erase to the helper
+# command, so `broker get` ran as `broker get get` and refused every request.
 [credential "https://github.com"]
 	helper =
-	helper = {{ codex_review_broker }} get
+	helper = {{ codex_review_broker }}
 	useHttpPath = true
