@@ -32,22 +32,27 @@
 # TO UNDO. Set pve_firewall_cluster_enable: false and re-run. The host.fw files stay, and
 # they are harmless with the switch off.
 
-# /etc/pve is pmxcfs. Every file there is root:www-data 0640, and a chmod to any other mode
-# fails with EPERM (0644 does, tested on pve02 on 2026-09-30). So the mode is pinned to the
-# one pmxcfs accepts. A rename inside it works, so the copy stays atomic.
-- name: Turn this node's own host firewall off
-  ansible.builtin.copy:
-    dest: "/etc/pve/nodes/{{ inventory_hostname }}/host.fw"
-    content: |
-      # Managed by Ansible (roles/pve-firewall, PET-553). The node's own traffic is not
-      # filtered; only guests with a firewall config are. Read the role before changing it.
-      [OPTIONS]
+# WHY tee AND NOT copy. /etc/pve is pmxcfs, where every file is root:www-data 0640 and a
+# chmod to any other mode fails with EPERM. ansible.builtin.copy writes a temp file and sets
+# its metadata, and both of its paths failed on 2026-09-30: the atomic move with EPERM on
+# the temp file, and unsafe_writes with EPERM on the first write of a new file. A plain
+# write is what pvesh does, so the role reads the file, compares, and writes with tee.
+#
+# Under --check these writes report "skipping", because command does not run in check
+# mode. Read the comparison by eye, or run without --check.
+- name: Read this node's host.fw
+  ansible.builtin.slurp:
+    src: "/etc/pve/nodes/{{ inventory_hostname }}/host.fw"
+  register: pve_firewall_hostfw_current
+  failed_when: false
 
-      enable: 0
-      nf_conntrack_allow_invalid: 1
-    owner: root
-    group: www-data
-    mode: "0640"
+- name: Turn this node's own host firewall off
+  ansible.builtin.command:
+    argv: [tee, "/etc/pve/nodes/{{ inventory_hostname }}/host.fw"]
+    stdin: "{{ pve_firewall_hostfw_content }}"
+    stdin_add_newline: false
+  changed_when: true
+  when: (pve_firewall_hostfw_current.content | default('') | b64decode) != pve_firewall_hostfw_content
 
 - name: List the nodes the cluster knows about
   ansible.builtin.command: pvesh get /nodes --output-format json
@@ -78,25 +83,27 @@
   loop_control:
     label: "{{ item.item }}"
   run_once: true
-  # Under --check the host.fw writes above are only reported, so this read would find
+  # Under --check the host.fw writes above are skipped, so this read would find
   # nothing to approve. A real run always reaches it.
   when:
     - pve_firewall_cluster_enable | bool
     - not ansible_check_mode
 
-- name: Set the datacenter firewall switch
-  ansible.builtin.copy:
-    dest: /etc/pve/firewall/cluster.fw
-    content: |
-      # Managed by Ansible (roles/pve-firewall, PET-553). Every node's host.fw sets
-      # `enable: 0`, so this switch filters only guests with a firewall config.
-      [OPTIONS]
-
-      enable: {{ 1 if pve_firewall_cluster_enable | bool else 0 }}
-    owner: root
-    group: www-data
-    mode: "0640"
+- name: Read the datacenter firewall config
+  ansible.builtin.slurp:
+    src: /etc/pve/firewall/cluster.fw
+  register: pve_firewall_clusterfw_current
+  failed_when: false
   run_once: true
+
+- name: Set the datacenter firewall switch
+  ansible.builtin.command:
+    argv: [tee, /etc/pve/firewall/cluster.fw]
+    stdin: "{{ pve_firewall_clusterfw_content }}"
+    stdin_add_newline: false
+  changed_when: true
+  run_once: true
+  when: (pve_firewall_clusterfw_current.content | default('') | b64decode) != pve_firewall_clusterfw_content
 
 # pve-firewall recompiles on its own about every 10 seconds. "enabled/running" is the line
 # only a read config prints; "disabled/running" is what this cluster printed before PET-553.
