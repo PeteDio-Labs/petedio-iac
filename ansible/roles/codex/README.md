@@ -165,18 +165,27 @@ a comment review through `codex-gh` and a summary on each PET item the PR names,
 To review a pull request, connect as `codex`, then run:
 
 ```bash
-cd ~/work
-codex-quota > review-prompt.txt && \
-  printf '\nUse $petedio-review to review PeteDio-Labs/%s pull request %s.\n' <repo> <n> >> review-prompt.txt && \
-  codex exec --skip-git-repo-check -c model_reasoning_effort="medium" - < review-prompt.txt
+codex-review <repo> <n>
 ```
 
-- **Start in `~/work`.** The sandbox writes only under the run's working directory, so a
-  run started elsewhere cannot clone into `~/work`.
-- **Put `codex-quota`'s output in the prompt.** `AGENTS.md` stops a run without it, and
-  the `&&` chain stops before the run when the allowance is near its limit.
-- **Use `medium` effort.** Use `high` when Pedro asks, or when the diff touches a sensitive
-  path such as a workflow, `CODEOWNERS`, sudoers, a Vault policy or a GitHub App.
+For example, `codex-review petedio-iac 406`. To raise the effort, add `high` as a third
+argument. Use `high` when Pedro asks, or when the diff touches a sensitive path such as a
+workflow, `CODEOWNERS`, sudoers, a Vault policy or a GitHub App.
+
+`codex-review` does what a review needs, in order:
+
+1. **Takes a lock.** Every review spends the same Plus allowance, so reviews run one at a
+   time. A second caller waits up to `codex_review_lock_wait_s` seconds, then exits 3.
+2. **Runs `codex-quota`** after it holds the lock, so each run reads the allowance after
+   the previous run spent its share. It puts the output in the prompt, because
+   `AGENTS.md` stops a run without it.
+3. **Starts `codex exec` in `~/work`.** The sandbox writes only under the run's working
+   directory, so a run started elsewhere cannot clone into `~/work`.
+4. **Keeps each run's files apart.** The prompt, log and final message go to
+   `~/work/reviews/runs/`, with a timestamp in each name.
+
+It exits 0 when the run finishes, 1 when `codex-quota` refuses or the run fails, 2 on a
+usage error or an unreadable allowance, and 3 on a lock timeout.
 
 ## Upgrade Codex
 

@@ -35,6 +35,9 @@ codex_reasoning_effort: low
 codex_quota_max_5h_percent: 90
 codex_quota_max_weekly_percent: 85
 
+# codex-review runs one review at a time. A second caller waits this long for the lock.
+codex_review_lock_wait_s: 3600
+
 codex_allowed_sandbox_modes:
   - read-only
   - workspace-write
