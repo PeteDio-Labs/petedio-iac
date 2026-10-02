@@ -78,7 +78,12 @@ step "Minting a token bound to the $ROLE role"
 # it identifies the token for lookup/revocation but grants nothing by itself. The token
 # itself (.auth.client_token) is handled the same as every other secret in this script: held
 # only in a variable, never echoed, never passed as an argument.
-MINT_JSON="$(vault token create -role="$ROLE" -format=json)"
+#
+# -period and -explicit-max-ttl repeat the role's token_period and token_explicit_max_ttl.
+# Vault 2.0 mints a role token without them: the 2026-10-02 run got a 7-day TTL with no
+# period and no cap, so the shape check below refused it (PET-561). The role still bounds
+# the policies, and the shape check still proves what the mint produced.
+MINT_JSON="$(vault token create -role="$ROLE" -period=168h -explicit-max-ttl=2160h -format=json)"
 TOKEN="$(printf '%s' "$MINT_JSON" | jq -r '.auth.client_token // empty')"
 ACCESSOR="$(printf '%s' "$MINT_JSON" | jq -r '.auth.accessor // empty')"
 unset MINT_JSON
