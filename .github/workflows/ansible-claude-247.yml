@@ -129,8 +129,15 @@ jobs:
           # ansible-core is pinned to ansible-validate.yml's version, so the play runs on the
           # core its lint passed on. ansible_ssh_private_key_file as an extra-var overrides the inventory's
           # key path, which does not exist in the container.
+          #
+          # The Vault CA mount (PET-560): tasks/claude-ops.yml reads the CA from
+          # {{ role_path }}/../../../environments/homelab/vault-ca.crt, which leaves ansible/.
+          # In the container role_path is /ansible/roles/claude-code, so that path resolves to
+          # /environments/homelab/vault-ca.crt. Mounting the one public file there keeps the
+          # repo's single CA copy, and scripts/deploy-claude-247.sh resolves it unchanged.
           docker run --rm --network host \
             -v "$GITHUB_WORKSPACE/ansible:/ansible" \
+            -v "$GITHUB_WORKSPACE/environments/homelab/vault-ca.crt:/environments/homelab/vault-ca.crt:ro" \
             -v "$CI:/ci:ro" -w /ansible \
             -e ANSIBLE_HOST_KEY_CHECKING=False \
             -e ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS=ignore \
