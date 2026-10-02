@@ -1,0 +1,37 @@
+#!ipxe
+# {{ ansible_managed }}
+#
+# The kernel parameters and the `initrd <iso> proxmox.iso` line match the boot.ipxe that
+# proxmox-auto-install-assistant generates (create_pxe_config_file()).
+#
+# ⚠ Two choices differ from Proxmox's menu on purpose:
+# - The default is the local disk, not an install. A machine that reaches this menu by
+#   accident boots as it would have without it.
+# - There is no "Automated" entry. An automated install picks a disk with no one watching,
+#   and ollama-host has two 1 TB disks. PET-528 step 6 selects sda by model and serial.
+
+set base http://{{ netboot_server_ip }}/{{ netboot_iso_path }}
+set params ramdisk_size=16777216 rw quiet
+
+menu PET-528 netboot: {{ netboot_iso_name }}
+item local Boot from the local disk
+item gui   Install Proxmox VE (Graphical)
+item tui   Install Proxmox VE (Terminal UI)
+choose --default local --timeout {{ (netboot_menu_timeout | int) * 1000 }} target && goto ${target}
+
+:local
+echo Booting from the local disk ...
+sanboot --no-describe --drive 0x80 || exit
+
+:gui
+kernel ${base}/vmlinuz ${params} initrd=initrd.img splash=silent
+goto load
+
+:tui
+kernel ${base}/vmlinuz ${params} initrd=initrd.img splash=silent proxmox-tui-mode vga=788
+goto load
+
+:load
+initrd ${base}/initrd.img
+initrd ${base}/{{ netboot_iso_name }} proxmox.iso
+boot

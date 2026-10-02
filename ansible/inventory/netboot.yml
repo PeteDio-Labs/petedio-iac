@@ -1,0 +1,14 @@
+---
+# netboot — the network-boot server for the pve04 install (PET-528). Temporary.
+#
+# Split out of hosts.yml like media-dash.yml, so an edit here touches this host only.
+# LXC 238 on pve02, declared in environments/homelab/netboot.tf.
+all:
+  children:
+    netboot:
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
+      hosts:
+        netboot-238:
+          ansible_host: 192.168.50.238

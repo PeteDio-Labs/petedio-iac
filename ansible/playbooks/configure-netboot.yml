@@ -1,0 +1,30 @@
+---
+# configure-netboot.yml — the network-boot server that installs Proxmox VE on ollama-host
+# (.12) to make it pve04 (PET-528). LXC 238 on pve02, declared in
+# environments/homelab/netboot.tf. Temporary: delete this with the LXC once pve04 joins.
+#
+# WHAT IT BUILDS. dnsmasq answers PXE requests in proxy-DHCP mode, so the router's DHCP
+# stays untouched, and only for netboot_allowed_macs. It chains the client into iPXE
+# over TFTP. iPXE fetches a menu, the installer kernel and initrd, and the ISO from nginx.
+# The ISO downloads at build time and get_url checks it against Proxmox's SHA256SUMS.
+#
+# ⚠ TWO SAFETY DEFAULTS, AND WHY.
+#   netboot_enabled: false   dnsmasq stays stopped, so nothing answers PXE. Open an install
+#                            window by passing -e netboot_enabled=true, and close it by
+#                            running the play again without it.
+#   menu default: local     A machine that reaches the menu boots its own disk after
+#                            netboot_menu_timeout seconds. The installer starts only when a
+#                            person picks it at the console.
+#
+# No secrets. Run from ansible/:
+#   ansible-playbook playbooks/configure-netboot.yml                          # build, dnsmasq off
+#   ansible-playbook playbooks/configure-netboot.yml -e netboot_enabled=true  # open the window
+#
+# REHEARSE FIRST. Before PET-528 step 6, boot a scratch VM on pve02 from the network with
+# its MAC added to netboot_allowed_macs, and confirm the installer reaches its disk list.
+
+- name: Configure the netboot server
+  hosts: netboot
+  become: true
+  roles:
+    - netboot
