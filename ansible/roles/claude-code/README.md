@@ -55,10 +55,12 @@ a plain deploy.
 ## Bootstrap
 
 Run steps 2 onward from this repo's `ansible/` directory. Terraform creates the container
-on merge; nothing here needs a node-side step, because nothing here runs Docker.
+on merge. The container needs `nesting=1` for systemd 257, and no `keyctl`, because nothing
+here runs Docker.
 
-1. **Create the LXC.** Merge `claude.tf`, or apply it locally. There is no
-   `scripts/lxc-features-247.sh` to run — this host needs no `features{}`.
+1. **Create the LXC.** Merge `claude.tf`, or apply it locally. Then run
+   `playbooks/configure-lxc-features.yml` and `pct reboot 247` on pve03, so systemd's
+   mounts start (PET-557). There is no `scripts/lxc-features-247.sh` to run.
 
 2. **Install everything.** The units land stopped:
 

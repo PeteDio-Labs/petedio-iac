@@ -31,12 +31,13 @@
 # template must exist on pve03's `local` storage or apply-on-merge fails at create:
 #   pveam update && pveam download local debian-13-standard_13.6-1_amd64.tar.zst
 #
-# NO out-of-band post-create step, DELIBERATELY. Nothing here runs Docker, so this host
-# needs no `features{}` (nesting/keyctl) and no device passthrough — the two things a
-# Proxmox API token cannot set (hardcoded root@pam check, docs/GOTCHAS.md). Claude Code is
-# a Node process; containerizing it would buy nothing and would cost a scripts/lxc-features
-# step on every rebuild. Keep it that way: if something here ever seems to want Docker,
-# that is the moment to re-read this paragraph.
+# ONE post-create step: nesting, for systemd. A Proxmox API token cannot set `features{}`
+# (hardcoded root@pam check, docs/GOTCHAS.md), so this resource leaves them out. Debian 13's
+# systemd 257 needs `nesting=1` for tmp.mount, dev-mqueue.mount and run-lock.mount, so
+# ansible/playbooks/configure-lxc-features.yml declares 247 as nesting only, and a rebuild
+# runs it, then `pct reboot 247` (PET-557). Nothing here runs Docker, so there is no keyctl
+# and no device passthrough. Claude Code is a Node process; containerizing it would buy
+# nothing. If something here ever seems to want Docker, re-read this paragraph.
 #
 # NO CLOUDFLARE ROUTE AND NO UFW RULE, DELIBERATELY. Remote Control never opens an inbound
 # port. The session registers with the Anthropic API over outbound HTTPS and polls for

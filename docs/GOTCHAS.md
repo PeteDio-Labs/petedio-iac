@@ -948,11 +948,12 @@ one for the syntax while the text lived only in `CLAUDE.md`.
   rewrite, and out of managed settings, which would also strip the connectors from the
   Remote Control sessions on the host.
 
-- **Nothing about this host needs `features{}`** — no Docker, so no nesting, no keyctl, and
-  no `scripts/lxc-features-<id>.sh` step on the node. Worth stating because the reflex on
-  this cluster is that every app LXC needs the root@pam dance. It is also worth *keeping*
-  true: the day something here wants Docker is the day this host gains an out-of-band step
-  that every rebuild has to remember.
+- **This host needs `nesting=1` for systemd, and no `keyctl`, because nothing here runs
+  Docker.** Debian 13 ships systemd 257, which fails `tmp.mount`, `dev-mqueue.mount` and
+  `run-lock.mount` without nesting. `playbooks/configure-lxc-features.yml` declares 247 as
+  nesting only and converges it, and the flag takes effect after a `pct reboot 247`
+  (PET-557). There is still no `scripts/lxc-features-<id>.sh` step. Keep `keyctl` off: the
+  day something here wants Docker is the day this host gains a second feature to remember.
 
 - **Remote Control opens no inbound port.** The session registers with the Anthropic API
   over outbound HTTPS and polls it, so the most remotely-reachable box in the lab needs no

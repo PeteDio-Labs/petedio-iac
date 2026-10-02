@@ -7,7 +7,8 @@
 # roles/claude-code.
 #
 # NO NODE-SIDE PRECONDITION. Unlike configure-plane.yml there is no
-# scripts/lxc-features-247.sh to run first: nothing here runs Docker.
+# scripts/lxc-features-247.sh to run first: nothing here runs Docker. The container's
+# `nesting=1` comes from playbooks/configure-lxc-features.yml, which declares 247 (PET-557).
 #
 # THE LOGIN STILL CANNOT BE INJECTED. Remote Control refuses API keys and
 # `claude setup-token` tokens alike, so the claude.ai login is an operator step over SSH.
