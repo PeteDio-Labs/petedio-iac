@@ -208,6 +208,15 @@
     group: root
     mode: "0755"
 
+# Reviews spend one allowance, so codex-review runs them in series behind a lock.
+- name: Install the review runner
+  ansible.builtin.template:
+    src: codex-review.j2
+    dest: /usr/local/bin/codex-review
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Create the session user's Codex home
   ansible.builtin.file:
     path: "{{ codex_home }}/.codex"

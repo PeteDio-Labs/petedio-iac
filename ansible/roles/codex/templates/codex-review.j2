@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#
+# {{ ansible_managed }}
+#
+# codex-review (roles/codex, PET-553): run one petedio-review, one at a time.
+#
+#   codex-review petedio-iac 406           medium effort
+#   codex-review petedio-iac 406 high      high effort, for a sensitive path or on Pedro's ask
+#
+# Every review spends the same ChatGPT Plus allowance, so reviews run in series. A second
+# caller waits on a lock for up to {{ codex_review_lock_wait_s }} seconds, then exits 3. Once
+# it holds the lock, it runs codex-quota, so each run reads the allowance after the run
+# before it has spent its share.
+#
+# Each run writes its prompt, log and final message under ~/work/reviews/runs/, with a
+# timestamp in the name, so two runs never share a file.
+#
+# Exit 0 when the review run finishes, 1 when codex-quota refuses or the run fails, 2 on a
+# usage error or an unreadable allowance, and 3 when another review holds the lock too long.
+set -euo pipefail
+
+die() { printf 'codex-review: %s\n' "$2" >&2; exit "$1"; }
+
+[ "$(id -un)" = "{{ codex_user }}" ] || die 2 "must run as {{ codex_user }}, not $(id -un)."
+[ $# -ge 2 ] && [ $# -le 3 ] || die 2 "usage: codex-review <repo> <pr-number> [low|medium|high]"
+
+repo="$1"
+pr="$2"
+effort="${3:-medium}"
+[[ "$repo" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die 2 "'$repo' is not a PeteDio-Labs repository name."
+[[ "$pr" =~ ^[1-9][0-9]*$ ]] || die 2 "'$pr' is not a pull request number."
+case "$effort" in
+  low|medium|high) ;;
+  *) die 2 "effort must be low, medium or high, not '$effort'." ;;
+esac
+
+work="{{ codex_home }}/work"
+runs="$work/reviews/runs"
+mkdir -p "$runs"
+
+# The lock lives as long as file descriptor 9, which codex exec inherits, so the next
+# review starts only after this run and everything it spawned have exited.
+exec 9>"$work/.codex-review.lock"
+if ! flock -n 9; then
+  printf 'codex-review: another review is running. Waiting up to %s seconds.\n' "{{ codex_review_lock_wait_s }}" >&2
+  flock -w "{{ codex_review_lock_wait_s }}" 9 || die 3 "another review still holds the lock."
+fi
+
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+base="$runs/$repo-$pr-$stamp"
+
+# AGENTS.md stops a run whose prompt lacks codex-quota's output.
+quota_status=0
+codex-quota > "$base.prompt" || quota_status=$?
+cat "$base.prompt"
+[ "$quota_status" -eq 0 ] || die "$quota_status" "codex-quota refused the run (exit $quota_status)."
+
+# $petedio-review is the skill's literal name, not a variable.
+# shellcheck disable=SC2016
+printf '\nUse $petedio-review to review PeteDio-Labs/%s pull request %s.\n' "$repo" "$pr" >> "$base.prompt"
+# The run cannot read its own model or effort, so the footer would say "unavailable".
+printf 'This run uses model %s at %s reasoning effort.\n' "{{ codex_model }}" "$effort" >> "$base.prompt"
+
+# The sandbox writes only under the working directory, and the skill clones into ~/work.
+cd "$work"
+run_status=0
+codex exec --skip-git-repo-check -c "model_reasoning_effort=\"$effort\"" \
+  -o "$base.last.txt" - < "$base.prompt" > "$base.log" 2>&1 || run_status=$?
+
+printf 'codex-review: log %s.log\n\n' "$base"
+cat "$base.last.txt" 2>/dev/null || true
+[ "$run_status" -eq 0 ] || die 1 "codex exec exited $run_status. Read $base.log."
