@@ -231,6 +231,33 @@
     group: "{{ codex_user }}"
     mode: "0644"
 
+# The review skill (PET-553) is guidance too, for the same reason. Codex loads it only when a
+# prompt names $petedio-review, because agents/openai.yaml turns implicit invocation off.
+- name: Create the review skill's directories
+  ansible.builtin.file:
+    path: "{{ codex_home }}/.codex/{{ item }}"
+    state: directory
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0755"
+  loop:
+    - skills
+    - skills/petedio-review
+    - skills/petedio-review/agents
+
+- name: Install the review skill
+  ansible.builtin.copy:
+    src: "skills/petedio-review/{{ item }}"
+    dest: "{{ codex_home }}/.codex/skills/petedio-review/{{ item }}"
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0644"
+  loop:
+    - SKILL.md
+    - agents/openai.yaml
+
 - name: Create the work directory
   ansible.builtin.file:
     path: "{{ codex_home }}/work"
