@@ -572,7 +572,7 @@
       rc={{ claude_ops_remote_consent.rc | default('not run') }}, trust
       rc={{ claude_ops_remote_trust.rc | default('not run') }}. As root, run
       `runuser -u {{ claude_ops_user }} -- bash -lc "cd {{ claude_ops_workspace }}/{{ claude_ops_workspace_dest }} && {{ claude_ops_npm_prefix }}/bin/claude"`,
-      accept the Remote Control and trust dialogs, `/exit`, then re-run
+      accept the trust dialog, `/exit`, run `claude remote-control` once to accept its consent (Ctrl+C after), then re-run
       scripts/deploy-claude-247.sh, or start the unit by hand.
   when: >-
     (claude_ops_remote_consent.rc | default(1)) != 0
