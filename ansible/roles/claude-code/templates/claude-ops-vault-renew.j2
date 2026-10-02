@@ -11,8 +11,10 @@
 #
 # ⚠ NEVER `vault token renew` BARE. That prints the full token to stdout, and
 # claude-ops-vault-renew.service's stdout goes straight to the journal — root-readable, and
-# readable by anyone `journalctl` reaches. `-field=token_duration` prints only a number of
-# seconds; nothing else about the token leaves this process.
+# readable by anyone `journalctl` reaches. The JSON goes straight into `jq`, which prints only
+# .auth.lease_duration, a number of seconds; nothing else about the token leaves this process.
+# `vault token renew` takes no -field flag: Vault 2.0.1 refuses it with "flag provided but not
+# defined: -field" (PET-561).
 set -euo pipefail
 
 TOKEN_FILE={{ claude_ops_vault_token_path }}
@@ -29,6 +31,6 @@ VAULT_TOKEN="$(cat "$TOKEN_FILE")"
 export VAULT_TOKEN
 [ -n "$VAULT_TOKEN" ] || die "$TOKEN_FILE is empty."
 
-duration="$(vault token renew -field=token_duration)" \
+duration="$(vault token renew -format=json | jq -r '.auth.lease_duration')" \
   || die "renewal failed. The token may be past its explicit-max-ttl (90 days) and need reseeding with scripts/seed-claude-ops-vault-token.sh."
 printf 'renewed; %s seconds remaining until the next period boundary\n' "$duration"
