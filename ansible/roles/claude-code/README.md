@@ -619,9 +619,16 @@ In order, once this PR merges:
    `ansible-claude-247.yml`.
 4. Run `scripts/seed-claude-ops-vault-token.sh` and `scripts/seed-claude-ops-ssh.sh`.
 5. Pedro, as root on 247, runs the Claude Code login and both consent dialogs as `claude-ops`
-   (`runuser -u claude-ops -- bash -lc 'cd ~/work/petedio/workspace && claude'`, accept Remote
-   Control, accept the trust dialog, `/exit`), then starts `claude-remote-ops` — either by
-   re-running `scripts/deploy-claude-247.sh` or with `systemctl start claude-remote-ops`.
+   (`runuser -u claude-ops -- bash -lc 'cd ~/work/petedio/workspace && ~/.npm-global/bin/claude'`,
+   accept Remote Control, accept the trust dialog, `/exit`), then starts `claude-remote-ops` — either by
+   re-running `scripts/deploy-claude-247.sh` or with `systemctl start claude-remote-ops`. The full
+   path matters: `bash -lc` is a non-interactive shell, so it skips the `.bashrc` line that puts
+   `~/.npm-global/bin` on `PATH`, and a bare `claude` is not found (PET-561).
+   An ordinary session records the login and the trust dialog, but not the Remote Control
+   consent. That dialog appears only on the first `~/.npm-global/bin/claude remote-control`
+   run: answer `y`, choose worktree spawn mode to match the unit, and stop it with Ctrl+C.
+   Long one-line commands also arrived cut off in Pedro's terminal, so run these steps one at
+   a time: `ssh` to pve03, `pct enter 247`, `su - claude-ops`, `cd ~/work/petedio/workspace`.
 
 ### Open for Pedro
 
