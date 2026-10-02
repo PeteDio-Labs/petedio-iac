@@ -12,11 +12,16 @@
 # it holds the lock, it runs codex-quota, so each run reads the allowance after the run
 # before it has spent its share.
 #
+# Before codex-quota, it reads the pull request's state (PET-555). A missing or closed pull
+# request exits 2 and spends no allowance. A merged one still runs, because petedio-review
+# can review a merged pull request.
+#
 # Each run writes its prompt, log and final message under ~/work/reviews/runs/, with a
 # timestamp in the name, so two runs never share a file.
 #
 # Exit 0 when the review run finishes, 1 when codex-quota refuses or the run fails, 2 on a
-# usage error or an unreadable allowance, and 3 when another review holds the lock too long.
+# usage error, an unreadable allowance or a pull request that cannot be reviewed, and 3
+# when another review holds the lock too long.
 set -euo pipefail
 
 die() { printf 'codex-review: %s\n' "$2" >&2; exit "$1"; }
@@ -45,6 +50,14 @@ if ! flock -n 9; then
   printf 'codex-review: another review is running. Waiting up to %s seconds.\n' "{{ codex_review_lock_wait_s }}" >&2
   flock -w "{{ codex_review_lock_wait_s }}" 9 || die 3 "another review still holds the lock."
 fi
+
+# Read the state after the lock, because a pull request can close during the wait.
+state="$({{ codex_review_gh }} pr view "$pr" --repo "{{ codex_github_org }}/$repo" --json state --jq .state)" \
+  || die 2 "cannot read {{ codex_github_org }}/$repo pull request $pr."
+case "$state" in
+  OPEN|MERGED) ;;
+  *) die 2 "{{ codex_github_org }}/$repo pull request $pr is $state, so there is nothing to review." ;;
+esac
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 base="$runs/$repo-$pr-$stamp"

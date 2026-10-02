@@ -176,16 +176,20 @@ workflow, `CODEOWNERS`, sudoers, a Vault policy or a GitHub App.
 
 1. **Takes a lock.** Every review spends the same Plus allowance, so reviews run one at a
    time. A second caller waits up to `codex_review_lock_wait_s` seconds, then exits 3.
-2. **Runs `codex-quota`** after it holds the lock, so each run reads the allowance after
+2. **Reads the pull request's state.** A missing or closed pull request exits 2 before
+   any allowance is spent. A merged one still runs, because the skill can review it. The
+   check runs after the lock, because a pull request can close during the wait.
+3. **Runs `codex-quota`** after it holds the lock, so each run reads the allowance after
    the previous run spent its share. It puts the output in the prompt, because
    `AGENTS.md` stops a run without it.
-3. **Starts `codex exec` in `~/work`.** The sandbox writes only under the run's working
+4. **Starts `codex exec` in `~/work`.** The sandbox writes only under the run's working
    directory, so a run started elsewhere cannot clone into `~/work`.
-4. **Keeps each run's files apart.** The prompt, log and final message go to
+5. **Keeps each run's files apart.** The prompt, log and final message go to
    `~/work/reviews/runs/`, with a timestamp in each name.
 
 It exits 0 when the run finishes, 1 when `codex-quota` refuses or the run fails, 2 on a
-usage error or an unreadable allowance, and 3 on a lock timeout.
+usage error, an unreadable allowance or a missing or closed pull request, and 3 on a lock
+timeout.
 
 ## Upgrade Codex
 
