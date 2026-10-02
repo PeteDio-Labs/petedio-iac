@@ -33,7 +33,7 @@ PVE03=root@192.168.50.10
 # Root on both nodes, by address, with the key named (PET-561). The Mac's `pve03` alias logs in
 # as pedro, who cannot read /etc/pve/priv, and the agent holds no key for a bare root@ login.
 PVE_SSH_KEY="${PVE_SSH_KEY:-$HOME/.ssh/id_ed25519_proxmox_pedro}"
-node() { local host="$1"; shift; ssh -o ConnectTimeout=8 -o IdentitiesOnly=yes -i "$PVE_SSH_KEY" "$host" "$@"; }
+on_node() { local host="$1"; shift; ssh -o ConnectTimeout=8 -o IdentitiesOnly=yes -i "$PVE_SSH_KEY" "$host" "$@"; }
 CT=247
 CT_IP=192.168.50.247
 PUBKEY_PATH=/home/claude-ops/.ssh/id_ed25519.pub
