@@ -126,12 +126,14 @@ step "Delivering the token over SSH (stdin only, never an argument)"
 # printf '%s' — no trailing newline. Vault's own SDKs trim one, but the renewal script here
 # does not add one back either, so the file on disk is exactly the token, byte for byte.
 #
-# `install -m 0400 -o claude-ops -g claude-ops /dev/stdin` — not `tee` followed by a separate
-# chown and chmod. `install` creates the destination file with its final owner and mode in
-# one step, so the file is never briefly world- or group-readable (or root-owned) between a
-# `tee` and the chmod that would have followed it.
+# `cat` reads fd 0 as the container inherits it. `install ... /dev/stdin` reopened the pipe by
+# path, and CT 247 is unprivileged, so its root could not open the host-owned pipe:
+# "cannot open '/dev/stdin' for reading: Permission denied" (PET-561).
+#
+# umask 0377 creates the file as mode 0400 from the first byte, so it is never group- or
+# world-readable. It is root-owned only until the chown, and the mv swaps it into place whole.
 printf '%s' "$TOKEN" \
-  | pve03 "pct exec $CT -- install -m 0400 -o claude-ops -g claude-ops /dev/stdin $TOKEN_PATH"
+  | pve03 "pct exec $CT -- sh -c 'umask 0377 && cat > $TOKEN_PATH.new && chown claude-ops:claude-ops $TOKEN_PATH.new && mv -f $TOKEN_PATH.new $TOKEN_PATH'"
 unset TOKEN
 
 step "Verifying delivery (length only, never the contents)"
