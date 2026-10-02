@@ -3,9 +3,10 @@
 # Remote Control sessions. Idempotent: apt/key/repo/user/clone all converge, and the npm
 # install runs only when the binary is missing (see its comment).
 #
-# NO PRECONDITION ON THE NODE. Unlike plane-235 or openfaas-241 there is no
-# scripts/lxc-features-247.sh to run first: nothing here needs nesting or keyctl, because
-# nothing here runs Docker.
+# NO SCRIPT ON THE NODE. Unlike plane-235 or openfaas-241 there is no
+# scripts/lxc-features-247.sh to run first, and no keyctl, because nothing here runs
+# Docker. The container's `nesting=1`, which systemd 257 needs for its mounts, comes from
+# playbooks/configure-lxc-features.yml (PET-557).
 #
 # WHAT THIS PLAY CANNOT DO. Remote Control needs a real claude.ai login, and there is no
 # unattended path to one — API keys and `claude setup-token` tokens are both refused by the
