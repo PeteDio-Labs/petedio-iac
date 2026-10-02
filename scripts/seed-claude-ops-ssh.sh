@@ -28,8 +28,12 @@
 #   ./scripts/seed-claude-ops-ssh.sh
 set -euo pipefail
 
-PVE02=pve02
-PVE03=pve03
+PVE02=root@192.168.50.11
+PVE03=root@192.168.50.10
+# Root on both nodes, by address, with the key named (PET-561). The Mac's `pve03` alias logs in
+# as pedro, who cannot read /etc/pve/priv, and the agent holds no key for a bare root@ login.
+PVE_SSH_KEY="${PVE_SSH_KEY:-$HOME/.ssh/id_ed25519_proxmox_pedro}"
+on_node() { local host="$1"; shift; ssh -o ConnectTimeout=8 -o IdentitiesOnly=yes -i "$PVE_SSH_KEY" "$host" "$@"; }
 CT=247
 CT_IP=192.168.50.247
 PUBKEY_PATH=/home/claude-ops/.ssh/id_ed25519.pub
@@ -39,10 +43,13 @@ die()  { printf '\033[31mERROR\033[0m %s\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
 command -v ssh >/dev/null || die "ssh not in PATH"
+[ -f "$PVE_SSH_KEY" ] || die "No SSH key at $PVE_SSH_KEY. Set PVE_SSH_KEY to the key root on the nodes accepts."
 
-step "Reading claude-ops's public key from CT $CT, via $PVE02"
-PUBKEY_LINE="$(ssh -o ConnectTimeout=8 "$PVE02" "pct exec $CT -- cat $PUBKEY_PATH" 2>&1)" \
-  || die "Could not read $PUBKEY_PATH on CT $CT via $PVE02:
+# Via pve03, the node that hosts CT 247: `pct exec` on pve02 answers "Configuration file
+# 'nodes/pve02/lxc/247.conf' does not exist" (PET-561).
+step "Reading claude-ops's public key from CT $CT, via $PVE03"
+PUBKEY_LINE="$(on_node "$PVE03" "pct exec $CT -- cat $PUBKEY_PATH" 2>&1)" \
+  || die "Could not read $PUBKEY_PATH on CT $CT via $PVE03:
   $PUBKEY_LINE
 
   claude_ops_enable must be true and deployed first, which generates the key — see
@@ -63,7 +70,7 @@ echo "  one ssh-ed25519 line, ${#KEY_MATERIAL} characters of key material."
 WANT_LINE="from=\"$CT_IP\" ssh-ed25519 $KEY_MATERIAL claude-ops@claude-247"
 
 step "Checking $AUTH_KEYS on $PVE02"
-EXISTING="$(ssh -o ConnectTimeout=8 "$PVE02" "cat $AUTH_KEYS 2>/dev/null" || true)"
+EXISTING="$(on_node "$PVE02" "cat $AUTH_KEYS 2>/dev/null" || true)"
 if printf '%s\n' "$EXISTING" | grep -qF "$KEY_MATERIAL"; then
   echo "  claude-ops's key is already present on $PVE02 — nothing to add."
 else
@@ -71,14 +78,14 @@ else
   # printf on stdin, `tee -a` on the remote: no shell interpolation of the key material
   # happens on either side, and the file is pmxcfs-managed so a normal append is safe — it
   # is not the symlink /root/.ssh/authorized_keys warns about above.
-  printf '%s\n' "$WANT_LINE" | ssh -o ConnectTimeout=8 "$PVE02" "tee -a $AUTH_KEYS >/dev/null"
+  printf '%s\n' "$WANT_LINE" | on_node "$PVE02" "tee -a $AUTH_KEYS >/dev/null"
   echo "  appended."
 fi
 
 step "Proving the cluster propagated it, by reading $AUTH_KEYS back on $PVE03"
 # pmxcfs replicates /etc/pve across the cluster; a read that fails here means either pve03 is
 # unreachable or the propagation has not caught up yet — re-run in a few seconds.
-PROPAGATED="$(ssh -o ConnectTimeout=8 "$PVE03" "cat $AUTH_KEYS 2>/dev/null" || true)"
+PROPAGATED="$(on_node "$PVE03" "cat $AUTH_KEYS 2>/dev/null" || true)"
 printf '%s\n' "$PROPAGATED" | grep -qF "$KEY_MATERIAL" \
   || die "claude-ops's key is not yet on $PVE03's copy of $AUTH_KEYS. pmxcfs may not have
   caught up — wait a few seconds and re-run. If this persists, check cluster quorum

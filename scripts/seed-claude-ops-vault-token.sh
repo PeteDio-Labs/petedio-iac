@@ -39,6 +39,10 @@ export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 
 PVE03="root@192.168.50.10"
+# The Mac's ~/.ssh/config has no Host block for this address, and its agent holds no key, so a
+# bare `ssh root@192.168.50.10` offers id_rsa and pve03 refuses it (PET-561). Name the key.
+PVE_SSH_KEY="${PVE_SSH_KEY:-$HOME/.ssh/id_ed25519_proxmox_pedro}"
+pve03() { ssh -o ConnectTimeout=8 -o IdentitiesOnly=yes -i "$PVE_SSH_KEY" "$PVE03" "$@"; }
 CT=247
 TOKEN_PATH="/home/claude-ops/.config/claude-ops-vault/token"
 ROLE=claude-ops
@@ -47,6 +51,13 @@ die()  { printf '\033[31mERROR\033[0m %s\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
 for t in vault jq ssh; do command -v "$t" >/dev/null || die "$t not in PATH"; done
+[ -f "$PVE_SSH_KEY" ] || die "No SSH key at $PVE_SSH_KEY. Set PVE_SSH_KEY to the key root@pve03 accepts."
+
+# Before the mint, not after it: a run that dies here leaves no token behind (PET-561).
+step "Checking the destination directory exists on claude-247"
+pve03 "pct exec $CT -- test -d /home/claude-ops/.config/claude-ops-vault" \
+  || die "/home/claude-ops/.config/claude-ops-vault does not exist on CT $CT, or pve03 refused SSH.
+  claude_ops_enable must be true and deployed first — see roles/claude-code/README.md, claude-ops."
 
 step "Authenticating to Vault"
 [ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'.
@@ -72,9 +83,25 @@ TOKEN="$(printf '%s' "$MINT_JSON" | jq -r '.auth.client_token // empty')"
 ACCESSOR="$(printf '%s' "$MINT_JSON" | jq -r '.auth.accessor // empty')"
 unset MINT_JSON
 [ -n "$TOKEN" ] && [ -n "$ACCESSOR" ] || die "vault token create did not return a token. Check the role and try again."
+echo "  accessor $ACCESSOR"
+
+# Any exit before the delivery is verified revokes this token, so a failure past this point
+# never leaves an orphan nobody can find (PET-561: one run left one).
+DELIVERED=0
+revoke_unless_delivered() {
+  [ "$DELIVERED" -eq 1 ] && return 0
+  if vault token revoke -accessor "$ACCESSOR" >/dev/null 2>&1; then
+    echo "  Revoked the undelivered token (accessor $ACCESSOR)." >&2
+  else
+    echo "  Could not revoke accessor $ACCESSOR. Run: vault token revoke -accessor $ACCESSOR" >&2
+  fi
+}
+trap revoke_unless_delivered EXIT
 
 step "Verifying the minted token's shape (by accessor, never the token itself)"
-LOOKUP_JSON="$(vault token lookup -accessor "$ACCESSOR" -format=json)"
+# Flags before the positional argument: -accessor is a boolean, so a flag after "$ACCESSOR"
+# reads as a second argument and the CLI refuses with "Too many arguments" (PET-561).
+LOOKUP_JSON="$(vault token lookup -format=json -accessor "$ACCESSOR")"
 POLICIES="$(printf '%s' "$LOOKUP_JSON" | jq -r '.data.policies | sort | join(",")')"
 ORPHAN="$(printf '%s' "$LOOKUP_JSON" | jq -r '.data.orphan')"
 RENEWABLE="$(printf '%s' "$LOOKUP_JSON" | jq -r '.data.renewable')"
@@ -90,11 +117,6 @@ EXPLICIT_MAX_TTL="$(printf '%s' "$LOOKUP_JSON" | jq -r '.data.explicit_max_ttl')
 unset LOOKUP_JSON
 echo "  policies=$POLICIES orphan=$ORPHAN renewable=$RENEWABLE period=${PERIOD}s explicit_max_ttl=${EXPLICIT_MAX_TTL}s"
 
-step "Checking the destination directory exists on claude-247"
-ssh -o ConnectTimeout=8 "$PVE03" "pct exec $CT -- test -d /home/claude-ops/.config/claude-ops-vault" \
-  || die "/home/claude-ops/.config/claude-ops-vault does not exist on CT $CT.
-  claude_ops_enable must be true and deployed first — see roles/claude-code/README.md, claude-ops."
-
 step "Delivering the token over SSH (stdin only, never an argument)"
 # printf '%s' — no trailing newline. Vault's own SDKs trim one, but the renewal script here
 # does not add one back either, so the file on disk is exactly the token, byte for byte.
@@ -104,13 +126,15 @@ step "Delivering the token over SSH (stdin only, never an argument)"
 # one step, so the file is never briefly world- or group-readable (or root-owned) between a
 # `tee` and the chmod that would have followed it.
 printf '%s' "$TOKEN" \
-  | ssh -o ConnectTimeout=8 "$PVE03" "pct exec $CT -- install -m 0400 -o claude-ops -g claude-ops /dev/stdin $TOKEN_PATH"
+  | pve03 "pct exec $CT -- install -m 0400 -o claude-ops -g claude-ops /dev/stdin $TOKEN_PATH"
 unset TOKEN
 
 step "Verifying delivery (length only, never the contents)"
-LEN="$(ssh -o ConnectTimeout=8 "$PVE03" "pct exec $CT -- wc -c < $TOKEN_PATH" | tr -d ' ')"
-MODE="$(ssh -o ConnectTimeout=8 "$PVE03" "pct exec $CT -- stat -c '%a %U:%G' $TOKEN_PATH")"
-[ "$LEN" -gt 0 ] || die "The delivered file is empty. Something ate the token in transit — re-run."
+# `stat` inside the container, not `wc -c < $TOKEN_PATH`: in a remote command string, pve03's
+# shell opens a `<` redirect on pve03, where the path does not exist (PET-561).
+read -r LEN MODE <<<"$(pve03 "pct exec $CT -- stat -c '%s %a %U:%G' $TOKEN_PATH")"
+[ "${LEN:-0}" -gt 0 ] || die "The delivered file is empty. Something ate the token in transit — re-run."
+DELIVERED=1
 echo "  $TOKEN_PATH is $LEN bytes, mode $MODE."
 
 step "Next"
