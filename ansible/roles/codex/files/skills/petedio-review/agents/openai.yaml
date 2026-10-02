@@ -1,0 +1,6 @@
+interface:
+  display_name: "PeteDio Review"
+  short_description: "Review one PeteDio-Labs PR and summarize it on Plane"
+  default_prompt: "Use $petedio-review to review PeteDio-Labs/<repo> pull request <n>, post a comment review, and summarize it on each PET item the PR names."
+policy:
+  allow_implicit_invocation: false

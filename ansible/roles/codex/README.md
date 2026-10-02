@@ -155,6 +155,29 @@ The run uses these tools, which `AGENTS.md` describes:
 | `plane get PET-<n>` | Prints the item, its state, its description and its comments |
 | `plane comment PET-<n> < body.html` | Posts HTML as `codex`, then reads it back |
 
+## Run a review
+
+The role installs the `petedio-review` skill to `~/.codex/skills/petedio-review/`. It posts
+a comment review through `codex-gh` and a summary on each PET item the PR names, through
+`plane`. It never approves and never runs the PR's code. Pedro chose its rules on
+2026-10-01, and Codex revised the wording for its own use.
+
+To review a pull request, connect as `codex`, then run:
+
+```bash
+cd ~/work
+codex-quota > review-prompt.txt && \
+  printf '\nUse $petedio-review to review PeteDio-Labs/%s pull request %s.\n' <repo> <n> >> review-prompt.txt && \
+  codex exec --skip-git-repo-check -c model_reasoning_effort="medium" - < review-prompt.txt
+```
+
+- **Start in `~/work`.** The sandbox writes only under the run's working directory, so a
+  run started elsewhere cannot clone into `~/work`.
+- **Put `codex-quota`'s output in the prompt.** `AGENTS.md` stops a run without it, and
+  the `&&` chain stops before the run when the allowance is near its limit.
+- **Use `medium` effort.** Use `high` when Pedro asks, or when the diff touches a sensitive
+  path such as a workflow, `CODEOWNERS`, sudoers, a Vault policy or a GitHub App.
+
 ## Upgrade Codex
 
 Change `codex_version` and `codex_sha256` together in `defaults/main.yml`. Then read
