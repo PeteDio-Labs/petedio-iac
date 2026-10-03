@@ -39,7 +39,7 @@ module "codex" {
   description                = "Codex worker (PET-549 POC) — runs `codex exec` on codex/* branches; egress limited to the internet by the guest firewall. Managed by Terraform."
 }
 
-# --- Egress: the internet, Plane's API, and nothing else on the lab's networks -------------
+# --- Egress: the internet, Plane's API, pete-bot's notify port, and nothing else on the lab's networks
 # PET-553 asks for DNS, GitHub, the OpenAI API and the package registries, and nothing else
 # in 192.168.50.0/24 or the .86 mesh. GitHub's and OpenAI's addresses rotate, and an
 # IP-based firewall cannot name them, so the rules deny every private range instead and let
@@ -111,6 +111,19 @@ resource "proxmox_virtual_environment_firewall_rules" "codex" {
     dest    = "192.168.50.235"
     dport   = "8080"
     comment = "Plane API on plane-235, for the codex Plane user"
+  }
+
+  # pete-bot's HTTP port on media-dash-237 (PET-584). A review session runs `notify-pedro`,
+  # from roles/notify-pedro, to DM Pedro through POST /v1/notify, which its own bearer gates.
+  # Port 3015 only: SSH, the metrics port and every other service on .237 stay behind the
+  # reject below.
+  rule {
+    type    = "out"
+    action  = "ACCEPT"
+    proto   = "tcp"
+    dest    = "192.168.50.237"
+    dport   = "3015"
+    comment = "pete-bot /v1/notify on media-dash-237, for notify-pedro"
   }
 
   # Every private and tailnet range: the LAN (.50), the mesh (.86), the tailnet's CGNAT

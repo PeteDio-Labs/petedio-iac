@@ -23,6 +23,10 @@
 #     The claude-ops identity (PET-531). contents, pull_requests AND workflows write on
 #     PeteDio-Labs, for Pedro's Remote Control sessions as claude-ops only — never Bobbert. Absent, this script warns and the play leaves claude-ops without GitHub
 #     access until it is seeded.
+#   kv/services/pete-bot                 -> notify_bearer_token               (optional)
+#     The notify-pedro token (PET-584). It opens pete-bot's /v1/notify alone, and every
+#     session user gets a copy. The workflow cannot read this path, so only this script
+#     lands or rotates it.
 #
 #   AppRole creds: $SECRETS_DIR/ansible.{role_id,secret_id} (gitignored .secrets/)
 #
@@ -107,11 +111,13 @@ PVE_TOKEN_ID="$(kvget kv/services/claude-247-pve token_id)"
 PVE_TOKEN_SECRET="$(kvget kv/services/claude-247-pve secret)"
 PVE_ENDPOINT="$(kvget kv/services/claude-247-pve endpoint)"
 PVE_CA_PEM="$(kvget kv/services/claude-247-pve ca_pem)"
+NOTIFY_TOKEN="$(kvget kv/services/pete-bot notify_bearer_token)"
 export MIRROR_APP_ID MIRROR_INSTALL_ID MIRROR_APP_PEM \
   VAULT_APP_ID VAULT_INSTALL_ID VAULT_APP_PEM \
   CODE_APP_ID CODE_INSTALL_ID CODE_APP_PEM \
   OPS_APP_ID OPS_INSTALL_ID OPS_APP_PEM \
-  PVE_TOKEN_ID PVE_TOKEN_SECRET PVE_ENDPOINT PVE_CA_PEM
+  PVE_TOKEN_ID PVE_TOKEN_SECRET PVE_ENDPOINT PVE_CA_PEM \
+  NOTIFY_TOKEN
 
 # umask BEFORE the temp file exists, so the extra-vars never sit world-readable. mktemp -d
 # gives a 0700 parent, but the file inside it inherits the process umask.
@@ -121,7 +127,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 # The checks and the JSON writer. It prints its own ABORT and exits 1 on any refusal.
 "$SCRIPT_DIR/claude-247-extra-vars.sh" "$TMP/extra.json"
-unset MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM OPS_APP_PEM PVE_TOKEN_SECRET PVE_CA_PEM
+unset MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM OPS_APP_PEM PVE_TOKEN_SECRET PVE_CA_PEM NOTIFY_TOKEN
 
 step "Running configure-claude-code.yml (247's identities)"
 cd "$ANSIBLE_DIR"

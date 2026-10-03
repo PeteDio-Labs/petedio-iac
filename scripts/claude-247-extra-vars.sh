@@ -12,6 +12,12 @@
 #   CODE_APP_ID CODE_INSTALL_ID CODE_APP_PEM           kv/services/claude-code-push
 #   OPS_APP_ID OPS_INSTALL_ID OPS_APP_PEM              kv/services/claude-ops-github
 #   PVE_TOKEN_ID PVE_TOKEN_SECRET PVE_ENDPOINT PVE_CA_PEM   kv/services/claude-247-pve
+#   NOTIFY_TOKEN                                       kv/services/pete-bot notify_bearer_token
+#
+# NOTIFY_TOKEN COMES FROM deploy-claude-247.sh ALONE (PET-584). The workflow's
+# claude-247-deploy role names exact paths, and kv/services/pete-bot also holds pete-bot's
+# Discord token, so the role does not read it. A workflow run passes no notify token, and the
+# play leaves the copies on 247 as they are.
 #
 # It has two callers, and they differ only in how they read Vault:
 #   .github/workflows/ansible-claude-247.yml   the primary path. vault-action reads the fields
@@ -54,6 +60,7 @@ OUT="$1"
 : "${CODE_APP_ID:=}" "${CODE_INSTALL_ID:=}" "${CODE_APP_PEM:=}"
 : "${OPS_APP_ID:=}" "${OPS_INSTALL_ID:=}" "${OPS_APP_PEM:=}"
 : "${PVE_TOKEN_ID:=}" "${PVE_TOKEN_SECRET:=}" "${PVE_ENDPOINT:=}" "${PVE_CA_PEM:=}"
+: "${NOTIFY_TOKEN:=}"
 
 # ⚠ REFUSE TO LAND A CREDENTIAL WITH NOTHING TO CONSUME IT (PET-414). A script that lands a
 # credential checks that the thing which consumes it is present. Here that check is cheap and
@@ -383,6 +390,31 @@ if [ "$PVE_PRESENT" -eq 1 ]; then
     "$PVE_TOKEN_ID" "$PVE_ENDPOINT" "${#PVE_TOKEN_SECRET}"
 fi
 
+step "Resolving the notify-pedro token (PET-584)"
+# OPTIONAL, and absent on every workflow run (see the header). It opens pete-bot's
+# /v1/notify and nothing else, so every session user on 247 gets a 0400 copy.
+NOTIFY_PRESENT=0
+if [ -n "$NOTIFY_TOKEN" ]; then
+  # seed-pete-bot-notify-token.sh mints it with Python's secrets.token_urlsafe(32): 43
+  # characters of A-Z, a-z, 0-9, - and _. Anything else came from somewhere else.
+  case "$NOTIFY_TOKEN" in
+    *[!A-Za-z0-9_-]*) die "notify_bearer_token in kv/services/pete-bot holds characters a minted token never has. Run scripts/seed-pete-bot-notify-token.sh --rotate." ;;
+  esac
+  [ "${#NOTIFY_TOKEN}" -ge 32 ] \
+    || die "notify_bearer_token in kv/services/pete-bot is ${#NOTIFY_TOKEN} characters, short of 32. Run scripts/seed-pete-bot-notify-token.sh --rotate."
+  for f in ansible/roles/notify-pedro/tasks/main.yml \
+           ansible/roles/notify-pedro/templates/notify-pedro.j2; do
+    [ -f "$REPO_ROOT/$f" ] || die "$f is missing from this checkout.
+
+  This tree has the notify TOKEN but not the command that sends it. Merge the branch carrying
+  roles/notify-pedro first, then re-run (PET-414)."
+  done
+  NOTIFY_PRESENT=1
+  printf 'notify-pedro: token present, %s bytes\n' "${#NOTIFY_TOKEN}"
+else
+  echo "notify-pedro: no token in this run, so the copies on 247 stay as they are."
+fi
+
 step "Writing the extra-vars file"
 # umask BEFORE the file exists, so the extra-vars never sit world-readable.
 umask 077
@@ -409,6 +441,7 @@ OPS_PRESENT="$OPS_PRESENT" OPS_APP_ID="$OPS_APP_ID" \
 OPS_INSTALL_ID="$OPS_INSTALL_ID" OPS_APP_PEM="$OPS_APP_PEM" \
 PVE_PRESENT="$PVE_PRESENT" PVE_TOKEN_ID="$PVE_TOKEN_ID" \
 PVE_TOKEN_SECRET="$PVE_TOKEN_SECRET" PVE_ENDPOINT="$PVE_ENDPOINT" PVE_CA_PEM="$PVE_CA_PEM" \
+NOTIFY_PRESENT="$NOTIFY_PRESENT" NOTIFY_TOKEN="$NOTIFY_TOKEN" \
 python3 -c '
 import json, os
 v = {}
@@ -443,5 +476,7 @@ if os.environ["PVE_PRESENT"] == "1":
         "claude_pve_endpoint": os.environ["PVE_ENDPOINT"],
         "claude_pve_ca_pem": os.environ["PVE_CA_PEM"],
     })
+if os.environ["NOTIFY_PRESENT"] == "1":
+    v["notify_pedro_token"] = os.environ["NOTIFY_TOKEN"]
 json.dump(v, open(os.environ["OUT"], "w"))
 ' || die "could not write the extra-vars file."

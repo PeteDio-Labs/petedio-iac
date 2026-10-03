@@ -7,9 +7,12 @@
 #     metadata:read, on every PeteDio-Labs repository. Seeded by seed-codex-review-app.sh.
 #   kv/services/codex-plane      -> api_key                            (optional)
 #     The `codex` Plane user's token. Seeded by seed-codex-plane-token.sh.
+#   kv/services/pete-bot         -> notify_bearer_token                (optional)
+#     The notify-pedro token (PET-584). It opens pete-bot's /v1/notify alone. Seeded by
+#     seed-pete-bot-notify-token.sh.
 #
 # An absent identity is a warning, and the play leaves that one's files on the host as they
-# are. Both absent is a plain configure run.
+# are. All three absent is a plain configure run.
 #
 #   AppRole creds: $SECRETS_DIR/ansible.{role_id,secret_id} (gitignored .secrets/)
 #
@@ -49,6 +52,7 @@ CODEX_APP_ID="$(kvget kv/services/codex-review-app app_id)"
 CODEX_INSTALL_ID="$(kvget kv/services/codex-review-app installation_id)"
 CODEX_APP_PEM="$(kvget kv/services/codex-review-app app_pem)"
 CODEX_PLANE_KEY="$(kvget kv/services/codex-plane api_key)"
+CODEX_NOTIFY_TOKEN="$(kvget kv/services/pete-bot notify_bearer_token)"
 unset AN_TOKEN
 
 # Both-or-nothing per identity: a partial App identity mints nothing.
@@ -67,7 +71,12 @@ if [ -n "$CODEX_PLANE_KEY" ]; then
 else
   warn "kv/services/codex-plane is not seeded. The play leaves the Plane token on the host as it is."
 fi
-export CODEX_APP_ID CODEX_INSTALL_ID CODEX_APP_PEM CODEX_PLANE_KEY
+if [ -n "$CODEX_NOTIFY_TOKEN" ]; then
+  echo "  notify-pedro token: present"
+else
+  warn "kv/services/pete-bot has no notify_bearer_token. The play leaves notify-pedro's token on the host as it is."
+fi
+export CODEX_APP_ID CODEX_INSTALL_ID CODEX_APP_PEM CODEX_PLANE_KEY CODEX_NOTIFY_TOKEN
 
 umask 077
 TMP="$(mktemp -d)"
@@ -76,9 +85,10 @@ jq -n '{
   codex_review_app_id: env.CODEX_APP_ID,
   codex_review_installation_id: env.CODEX_INSTALL_ID,
   codex_review_app_pem: env.CODEX_APP_PEM,
-  codex_plane_api_key: env.CODEX_PLANE_KEY
+  codex_plane_api_key: env.CODEX_PLANE_KEY,
+  notify_pedro_token: env.CODEX_NOTIFY_TOKEN
 }' > "$TMP/extra.json"
-unset CODEX_APP_PEM CODEX_PLANE_KEY
+unset CODEX_APP_PEM CODEX_PLANE_KEY CODEX_NOTIFY_TOKEN
 
 step "Running configure-codex.yml"
 cd "$ANSIBLE_DIR"
@@ -91,4 +101,5 @@ cat <<'TXT'
   To prove the identities from the host:
     ssh -i ~/.ssh/id_ed25519_pedro codex@192.168.50.248 'codex-review-broker mint-token petedio-iac >/dev/null && echo minted'
     ssh -i ~/.ssh/id_ed25519_pedro codex@192.168.50.248 'plane get PET-553 | head -3'
+    ssh -i ~/.ssh/id_ed25519_pedro codex@192.168.50.248 'notify-pedro --check'
 TXT

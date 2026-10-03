@@ -49,6 +49,13 @@
 
   roles:
     - claude-code
+    # The command a session runs to DM Pedro (PET-584), for both session users. Its token
+    # comes from deploy-claude-247.sh alone, because the workflow's Vault role cannot read
+    # kv/services/pete-bot. A run without it leaves the copies on disk as they are.
+    - role: notify-pedro
+      vars:
+        notify_pedro_users: "{{ [claude_user] + ([claude_ops_user] if claude_ops_enable | bool else []) }}"
+        notify_pedro_deploy_script: scripts/deploy-claude-247.sh
 
   post_tasks:
     # Remote Control is off for this host, so the units are stopped. Say how to turn it on
