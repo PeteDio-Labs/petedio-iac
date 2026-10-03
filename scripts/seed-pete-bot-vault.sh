@@ -11,6 +11,11 @@
 # every sibling reseed script does: $VAULT_TOKEN, else the macOS Keychain item, else a
 # prompt.
 #
+# ⚠ IT CARRIES EVERY OTHER FIELD THROUGH (PET-584). `vault kv put` replaces the whole
+# secret, so a payload of these four fields alone dropped github_updates_token and would
+# drop notify_bearer_token. The payload starts from what the path holds, and the read-back
+# fails on a field the write lost.
+#
 # ⚠ No mtrace token belongs here. Pete Bot stopped calling mtrace in PET-518, so
 # deploy-pete-bot.sh reads this one path and nothing else.
 #
@@ -128,19 +133,26 @@ trap 'rm -rf "$TMP"' EXIT
 # characters that are valid in the value and invalid in a bare shell or YAML scalar.
 # Values arrive through the ENVIRONMENT, never argv.
 OUT="$TMP/payload.json" \
+EXISTING="$EXISTING" \
 DISCORD_TOKEN="$DISCORD_TOKEN" \
 DISCORD_CLIENT_ID="$DISCORD_CLIENT_ID" \
 OWNER_USER_ID="$OWNER_USER_ID" \
 ALERT_BEARER="$ALERT_BEARER" \
 python3 -c '
 import json, os
-json.dump({
+try:
+    payload = json.loads(os.environ["EXISTING"])["data"]["data"]
+except Exception:
+    payload = {}
+payload.update({
     "discord_token":      os.environ["DISCORD_TOKEN"],
     "discord_client_id":  os.environ["DISCORD_CLIENT_ID"],
     "owner_user_id":      os.environ["OWNER_USER_ID"],
     "alert_bearer_token": os.environ["ALERT_BEARER"],
-}, open(os.environ["OUT"], "w"))
+})
+json.dump(payload, open(os.environ["OUT"], "w"))
 '
+KEPT="$(python3 -c 'import json,sys; print(" ".join(sorted(json.load(open(sys.argv[1])))))' "$TMP/payload.json")"
 
 vault kv put "$PATH_KV" @"$TMP/payload.json" >/dev/null \
   || die "vault kv put failed for $PATH_KV."
@@ -156,6 +168,10 @@ print("token len:", len(d.get("discord_token","")))
 print("bearer len:", len(d.get("alert_bearer_token","")))
 ')"
 echo "$FIELDS" | sed 's/^/  /'
+STORED="$(printf '%s\n' "$FIELDS" | head -1)"
+for f in $KEPT; do
+  case ",$STORED," in *",$f,"*) ;; *) die "the write lost the field $f." ;; esac
+done
 
 step "Done"
 cat <<NOTE

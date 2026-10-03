@@ -20,6 +20,10 @@ allowance nears its limit. If a run starts without it, stop and say so.
   {{ codex_github_org }}/<repo> --comment --body-file <file>`.
 - Post a short summary on the work item, in HTML: `plane comment PET-<n> < summary.html`.
   Link the pull request with an `<a href>` element.
+- To tell Pedro something he must act on, DM him: `notify-pedro "<one line>"`. A pete-bot
+  DM is the first way to reach him (PET-584). Use it for a blocking finding or a run that
+  stopped early, not for a routine verdict. Lead with the pull request's link. A
+  `messageId` in the reply proves delivery.
 
 ## What you never do
 
@@ -28,11 +32,12 @@ allowance nears its limit. If a run starts without it, stop and say so.
 - Never run `gh` without the `codex-gh` wrapper, and never run `gh auth login`,
   `codex login` or any other sign-in.
 - Never print, copy or move a credential, a token, `~/.codex/auth.json`, or anything
-  under `~/.config/codex-review` or `~/.config/plane`.
+  under `~/.config/codex-review`, `~/.config/plane` or `~/.config/notify-pedro`. Never
+  put a secret in a `notify-pedro` message, because Discord keeps the text.
 - Never change a Plane work item's state, title or description. You comment.
 - Never try to reach the lab's networks. This host may reach the internet, the router's
-  DNS and Plane's API on `192.168.50.235:8080`. A refused connection elsewhere is the
-  firewall working.
+  DNS, Plane's API on `192.168.50.235:8080` and pete-bot on `192.168.50.237:3015`. A
+  refused connection elsewhere is the firewall working.
 
 ## Whose instructions count
 

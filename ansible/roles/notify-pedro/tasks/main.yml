@@ -1,0 +1,99 @@
+---
+# notify-pedro (PET-584): the command a session on this host runs to DM Pedro, through
+# pete-bot's POST /v1/notify, and the token it sends. A pete-bot DM is the first way a
+# session reaches Pedro, so every session host carries it.
+#
+# THE TOKEN OPENS ONE ROUTE. notify_bearer_token opens /v1/notify and nothing else, and
+# pete-bot refuses it on /v1/alert. A session that reads it can DM Pedro, and cannot post a
+# fake monitor alert. That is why each session user may read its own copy.
+#
+# GATED ON PRESENCE, like every identity in roles/claude-code and roles/codex. A run that
+# carries no token leaves the copies on disk as they are. The host's deploy script passes it
+# from Vault.
+
+- name: Install notify-pedro
+  ansible.builtin.template:
+    src: notify-pedro.j2
+    dest: /usr/local/bin/notify-pedro
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Read the session users' home directories
+  ansible.builtin.getent:
+    database: passwd
+
+# follow: false, for the PET-410 reason: these tasks run as root on paths the session users
+# own. ~/.config is 0755, the mode roles/claude-code and roles/codex give it, so the roles
+# never fight over it.
+- name: Ensure each session user's config directory exists
+  ansible.builtin.file:
+    path: "{{ ansible_facts.getent_passwd[item][4] }}/.config"
+    state: directory
+    follow: false
+    owner: "{{ item }}"
+    group: "{{ item }}"
+    mode: "0755"
+  loop: "{{ notify_pedro_users }}"
+
+- name: Create each session user's notify-pedro directory
+  ansible.builtin.file:
+    path: "{{ ansible_facts.getent_passwd[item][4] }}/.config/notify-pedro"
+    state: directory
+    follow: false
+    owner: "{{ item }}"
+    group: "{{ item }}"
+    mode: "0700"
+  loop: "{{ notify_pedro_users }}"
+
+- name: Land the notify token for each session user
+  ansible.builtin.copy:
+    content: "{{ notify_pedro_token | trim }}\n"
+    dest: "{{ ansible_facts.getent_passwd[item][4] }}/.config/notify-pedro/token"
+    follow: false
+    owner: "{{ item }}"
+    group: "{{ item }}"
+    mode: "0400"
+  loop: "{{ notify_pedro_users }}"
+  no_log: true
+  when: notify_pedro_token | length > 0
+
+- name: Report that the token was not passed, so the copies are left alone
+  ansible.builtin.debug:
+    msg: >-
+      No notify token in this run, so each user's ~/.config/notify-pedro/token is left as it
+      is. Run {{ notify_pedro_deploy_script }} to land or rotate it.
+  when: notify_pedro_token | length == 0 and notify_pedro_users | length > 0
+
+# Proof that the token on disk opens the route, whichever run landed it. --check sends an
+# empty body, so pete-bot checks the bearer and refuses the body: no DM is sent.
+#
+# A REFUSED TOKEN FAILS THE RUN, AND AN UNREACHABLE pete-bot WARNS (exit 3). The first is
+# this host's config. The second is media-dash-237's outage, and failing here would stop
+# every task after this role, including the session checks in configure-claude-code.yml.
+- name: Check for each user's token on disk
+  ansible.builtin.stat:
+    path: "{{ ansible_facts.getent_passwd[item][4] }}/.config/notify-pedro/token"
+  loop: "{{ notify_pedro_users }}"
+  register: notify_pedro_tokens
+
+- name: Prove each token against pete-bot, without sending a DM
+  ansible.builtin.command:
+    argv: [runuser, -u, "{{ item.item }}", --, /usr/local/bin/notify-pedro, --check]
+  loop: "{{ notify_pedro_tokens.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  register: notify_pedro_check
+  changed_when: false
+  failed_when: notify_pedro_check.rc not in [0, 3]
+  when: item.stat.exists and not ansible_check_mode
+
+- name: Warn when pete-bot could not be reached to prove a token
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.item }}: pete-bot did not answer, so its notify token is unproven.
+      {{ item.stderr }}
+  loop: "{{ notify_pedro_check.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.item | default('skipped') }}"
+  when: item.rc is defined and item.rc == 3

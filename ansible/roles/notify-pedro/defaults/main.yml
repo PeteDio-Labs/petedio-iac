@@ -1,0 +1,17 @@
+---
+# pete-bot's free-text route on media-dash-237 (PET-579). codex.tf opens this one port to
+# codex-248; claude-247 reaches the LAN without a guest firewall.
+notify_pedro_url: http://192.168.50.237:3015/v1/notify
+
+# The session users that get the command's token, one 0400 copy each. The playbook sets
+# this list; an empty list installs the command and lands no token.
+notify_pedro_users: []
+
+# kv/services/pete-bot notify_bearer_token, passed in by the host's deploy script. NEVER
+# give it a committed default: a placeholder lands as a 0400 file that looks provisioned
+# and fails at the first DM. Empty leaves every copy on disk as it is.
+notify_pedro_token: ""
+
+# Named in the command's error when its token is missing, so a session knows what to ask
+# Pedro for. The playbook sets it per host.
+notify_pedro_deploy_script: the host's deploy script in petedio-iac

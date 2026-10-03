@@ -37,7 +37,7 @@
     pete_bot_port: 3015
     # Required, passed by scripts/deploy-pete-bot.sh. Never defaulted here.
     #   pete_bot_binary_src, pete_bot_discord_token, pete_bot_discord_client_id,
-    #   pete_bot_owner_user_id, pete_bot_alert_bearer
+    #   pete_bot_owner_user_id, pete_bot_alert_bearer, pete_bot_notify_bearer (PET-584)
     # Optional (PET-395): pete_bot_github_updates_token, for /update. Empty leaves
     # /update answering that it is not configured.
 
@@ -49,9 +49,13 @@
           - pete_bot_discord_client_id is defined and pete_bot_discord_client_id | length > 0
           - pete_bot_owner_user_id is defined and pete_bot_owner_user_id | length > 0
           - pete_bot_alert_bearer is defined and pete_bot_alert_bearer | length > 0
+          - pete_bot_notify_bearer is defined and pete_bot_notify_bearer | length > 0
+          # The point of a second token (PET-584): a session host must not hold the alert one.
+          - pete_bot_notify_bearer != pete_bot_alert_bearer
         fail_msg: >-
-          Missing secret extra-vars. Run scripts/deploy-pete-bot.sh, which resolves them
-          from kv/services/pete-bot and passes them in.
+          Missing secret extra-vars, or the notify bearer equals the alert bearer. Run
+          scripts/deploy-pete-bot.sh, which resolves them from kv/services/pete-bot and
+          passes them in. To mint the notify bearer, run scripts/seed-pete-bot-notify-token.sh.
       # no_log deliberately absent: assert never echoes a value, and censoring the result
       # would hide the fail_msg that names the script to run.
 

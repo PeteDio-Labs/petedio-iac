@@ -18,7 +18,8 @@
 #   ansible-playbook playbooks/configure-codex.yml
 #
 # THE REVIEWER'S IDENTITIES COME FROM VAULT (PET-553). Run scripts/deploy-codex-248.sh to
-# land or rotate the GitHub App and the Plane token. A plain run leaves both as they are.
+# land or rotate the GitHub App, the Plane token and the notify-pedro token (PET-584). A
+# plain run leaves all three as they are.
 #
 # Full sequence: ansible/roles/codex/README.md.
 
@@ -28,6 +29,12 @@
 
   roles:
     - codex
+    # The command a review session runs to DM Pedro (PET-584). codex.tf opens pete-bot's
+    # one port for it above the LAN reject.
+    - role: notify-pedro
+      vars:
+        notify_pedro_users: ["{{ codex_user }}"]
+        notify_pedro_deploy_script: scripts/deploy-codex-248.sh
 
   post_tasks:
     - name: Report the sign-in step
