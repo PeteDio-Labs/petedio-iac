@@ -24,6 +24,9 @@ TYPES = {
     # A push monitor waits for the checked host to call in, and goes DOWN when no
     # call arrives within its interval (PET-529, the nightly backup check).
     "push": MonitorType.PUSH,
+    # A keyword monitor is an HTTP check that also needs a string in the body. It
+    # watches the house's public IPv4 through api.ipify.org (PET-588).
+    "keyword": MonitorType.KEYWORD,
 }
 
 # Declared-field -> Kuma socket-field. Kuma is inconsistent about case and this
@@ -38,6 +41,7 @@ FIELD_MAP = {
     "dns_resolve_type": "dns_resolve_type",
     "description": "description",
     "push_token": "pushToken",
+    "keyword": "keyword",
 }
 
 
@@ -72,7 +76,7 @@ def build_kwargs(spec, cfg):
     # Only 2xx counts as UP unless a monitor says otherwise. This is what makes
     # a sealed Vault (503) record as DOWN rather than as a probe error.
     kw.setdefault("accepted_statuscodes", ["200-299"])
-    if kw["type"] != MonitorType.HTTP:
+    if kw["type"] not in (MonitorType.HTTP, MonitorType.KEYWORD):
         kw.pop("accepted_statuscodes", None)
     return kw
 

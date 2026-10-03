@@ -257,6 +257,21 @@ uptime_kuma_monitors:
     port: 53
     description: "Router resolver at 192.168.50.1. The isolated DNS fault probe."
 
+  # -- the house's public IPv4 (PET-588) ---------------------------------------
+  # Blue Ridge hands the Nest Wifi its public address on a 24-hour DHCP lease, and
+  # Plex remote access depends on the port forward to it (PET-587). This goes DOWN
+  # when ipify returns any other address. It is the one monitor that depends on an
+  # outside service, so an ipify outage also reads as DOWN. Kuma's DOWN message
+  # quotes the body, which tells a new address apart from an ipify fault.
+  # To accept a new address, change the keyword here and redeploy.
+  - name: public-ip
+    type: keyword
+    url: "https://api.ipify.org"
+    keyword: "24.115.142.74"
+    interval: 300
+    retry_interval: 60
+    description: "House public IPv4. DOWN means the address changed or ipify failed."
+
 # ------------------------------------------------------ push monitors (PET-529) --
 # One push monitor per Proxmox node. roles/backup-store installs a daily check on each
 # node that pushes its verdict here: up when the night's archives landed, down with
