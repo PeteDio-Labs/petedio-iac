@@ -126,6 +126,46 @@ vault token lookup >/dev/null 2>&1 \
   || die "the Vault token is invalid, or Vault is sealed. Run scripts/pet-secrets doctor."
 echo "  reachable, and the token is valid"
 
+# field NAME, from the JSON in $SNAPSHOT. The value reaches python through the environment,
+# never argv, and returns on stdout into a variable. Nothing here prints it.
+field(){ SNAPSHOT="$SNAPSHOT" python3 -c '
+import json, os, sys
+try:
+    d = json.loads(os.environ["SNAPSHOT"])["data"]["data"] or {}
+except Exception:
+    d = {}
+print(d.get(sys.argv[1], ""))' "$1"; }
+# version prints the version $SNAPSHOT holds, or `deleted` when that version is soft-deleted.
+version(){ SNAPSHOT="$SNAPSHOT" python3 -c '
+import json, os
+d = json.loads(os.environ["SNAPSHOT"])["data"]
+print("deleted" if d.get("data") is None else d["metadata"]["version"])'; }
+oneline(){ printf '%s' "$1" | tr -s '\n\t' '  ' | cut -c1-240; }
+
+step "Read $DEST_PATH"
+# Only Vault's "No value found" answer proves the path absent. A 403, a timeout or a sealed
+# Vault is a fault, and a mint after it would replace a key the token cannot see. So the
+# script stops here, before it touches MinIO, and the write below is check-and-set.
+if SNAPSHOT="$(vault kv get -format=json "$DEST_PATH" 2>/dev/null)"; then
+  VERSION="$(version)" || die "could not parse the read of $DEST_PATH."
+elif ERR="$(vault kv metadata get "$DEST_PATH" 2>&1 >/dev/null)"; then
+  die "$DEST_PATH has metadata, but the token cannot read its data. Check the token's policy."
+else
+  case "$ERR" in
+    "No value found at "*) VERSION=0; SNAPSHOT='{}' ;;
+    *) die "Vault failed the read of $DEST_PATH, so nothing was minted: $(oneline "$ERR")" ;;
+  esac
+fi
+case "$VERSION" in
+  0) echo "  absent" ;;
+  deleted) die "the current version of $DEST_PATH is deleted. Undelete or destroy it by hand, then run this again." ;;
+  [1-9]*) echo "  present at version $VERSION" ;;
+  *) die "unrecognized version for $DEST_PATH: $VERSION" ;;
+esac
+OLD_AK="$(field access_key)"
+OLD_SK="$(field secret_key)"
+unset SNAPSHOT
+
 step "MinIO admin at $MINIO_ENDPOINT, from $ROOT_PATH"
 MROOT_U="$(vault kv get -field=root_user "$ROOT_PATH" 2>/dev/null || true)"
 MROOT_P="$(vault kv get -field=root_password "$ROOT_PATH" 2>/dev/null || true)"
@@ -143,9 +183,7 @@ m stat "adm/$BUCKET/$PROBE_OBJECT" >/dev/null 2>&1 \
   || die "$BUCKET has no $PROBE_OBJECT. Set USAA_PROBE_OBJECT to an object it holds."
 echo "  authenticated, and $BUCKET holds $PROBE_OBJECT"
 
-step "Check $DEST_PATH"
-OLD_AK="$(vault kv get -field=access_key "$DEST_PATH" 2>/dev/null || true)"
-OLD_SK="$(vault kv get -field=secret_key "$DEST_PATH" 2>/dev/null || true)"
+step "Check the stored key"
 if [ -n "$OLD_AK" ] && [ -n "$OLD_SK" ]; then
   set_alias old "$OLD_AK" "$OLD_SK" || die "mc could not store the alias for the stored key."
   unset OLD_SK
@@ -162,7 +200,11 @@ if [ -n "$OLD_AK" ] && [ -n "$OLD_SK" ]; then
   m alias rm old >/dev/null 2>&1 || true
 else
   unset OLD_SK
-  echo "  absent. Minting one."
+  case "$VERSION" in
+    0) echo "  absent. Minting one." ;;
+    [1-9]*) echo "  version $VERSION holds no key. Minting one." ;;
+    *) die "unrecognized version for $DEST_PATH: $VERSION" ;;
+  esac
 fi
 
 step "Mint a service account that reads $BUCKET only"
@@ -198,11 +240,14 @@ echo "  reads $BUCKET, sees no other bucket, and its policy holds only the three
 
 step "Write $DEST_PATH"
 # JSON on stdin, so neither key reaches argv. `put` fits: the path holds this key alone.
+# -cas=VERSION creates only when the read found the path absent (0), and otherwise fails
+# when another writer changed the path since the read.
 U_AK="$NEW_AK" U_SK="$NEW_SK" U_EP="$MINIO_ENDPOINT" U_BK="$BUCKET" python3 -c '
 import json, os
 print(json.dumps({"access_key": os.environ["U_AK"], "secret_key": os.environ["U_SK"],
                   "endpoint": os.environ["U_EP"], "bucket": os.environ["U_BK"]}))
-' | vault kv put "$DEST_PATH" - >/dev/null || die "vault kv put failed for $DEST_PATH."
+' | vault kv put -cas="$VERSION" "$DEST_PATH" - >/dev/null \
+  || die "vault kv put failed for $DEST_PATH, so Vault keeps what it held. Remove $NAME with mc admin user svcacct rm, then run this again."
 
 step "Verify, by reading it back"
 SNAPSHOT="$(vault kv get -format=json "$DEST_PATH")"
@@ -220,16 +265,35 @@ echo "  access_key, secret_key, endpoint and bucket match the write"
 
 step "Older usaa keys"
 # Every rotation leaves the previous key valid until you remove it. This counts the older
-# keys by name, so they cannot pile up unseen, and prints no key.
-m admin user svcacct ls --json adm "$MROOT_U" 2>/dev/null \
-  | CUR="$NEW_AK" PREFIX="$NAME_PREFIX" python3 -c '
-import json, os, sys
-rows = [json.loads(l) for l in sys.stdin if l.strip()]
-older = [r for r in rows
-         if (r.get("name") or "").startswith(os.environ["PREFIX"])
-         and r.get("accessKey") != os.environ["CUR"]]
-print(f"  read {len(rows)} service accounts; {len(older)} older usaa key(s) still valid")
-' || echo "  could not list the service accounts. Check by hand with mc admin user svcacct ls."
+# keys by name, so they cannot pile up unseen, and prints no key. `svcacct ls --json` gives
+# each account's access key and status but not its name, so the count reads each account's
+# info. It reports how many names it read, so an empty listing cannot pass for zero.
+COUNTED=no
+if KEYS="$(m admin user svcacct ls --json adm "$MROOT_U" 2>/dev/null | python3 -c '
+import json, sys
+for l in sys.stdin:
+    if l.strip():
+        print(json.loads(l)["accessKey"])')"; then
+  LISTED=0; NAMED=0; OLDER=0; SAW_NEW=no
+  for ak in $KEYS; do
+    LISTED=$((LISTED + 1))
+    nm="$(m admin user svcacct info --json adm "$ak" 2>/dev/null \
+      | python3 -c 'import json,sys;print(json.load(sys.stdin).get("name") or "")')" || continue
+    NAMED=$((NAMED + 1))
+    case "$ak" in
+      "$NEW_AK") SAW_NEW=yes ;;
+      *) case "$nm" in "$NAME_PREFIX"*) OLDER=$((OLDER + 1)) ;; esac ;;
+    esac
+  done
+  echo "  read the names of $NAMED of $LISTED service accounts; $OLDER older usaa key(s) still valid"
+  case "$NAMED/$LISTED/$SAW_NEW" in
+    "$LISTED/$LISTED/yes") COUNTED=yes ;;
+    */*/no) echo "  the listing does not include the new key, so the count is incomplete." ;;
+    *) echo "  some accounts did not answer, so the count is incomplete." ;;
+  esac
+else
+  echo "  could not list the service accounts."
+fi
 unset NEW_AK MROOT_U
 
 step "Done"
@@ -242,4 +306,12 @@ case "$ROTATE" in
   0) ;;
   1) echo "  Next: ./scripts/deploy-usaa.sh, then remove each older usaa key." ;;
   *) die "unrecognized value for ROTATE: $ROTATE" ;;
+esac
+# The key and its Vault entry are in place, but an incomplete count could hide a valid older
+# key, so this run does not exit 0.
+case "$COUNTED" in
+  yes) ;;
+  no) printf '\033[1;33mSeeded, but the older-key count is incomplete. Count them by hand: mc admin user svcacct info, for each key that mc admin user svcacct ls lists.\033[0m\n' >&2
+      exit 3 ;;
+  *) die "unrecognized value for COUNTED: $COUNTED" ;;
 esac
