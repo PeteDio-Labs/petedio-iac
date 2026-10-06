@@ -44,6 +44,15 @@ locals {
     # DATABASE OWNER may CREATE EXTENSION a trusted one. No superuser grant — that would
     # be superuser over waterfast too.
     plane = {}
+
+    # usaa — the savings and trip tracker (usaa.tf, LXC 238, PET-590). Takes the defaults:
+    # kv/db/usaa field `password`.
+    #
+    # ⚠ ORDER MATTERS. The ci-read grant on kv/data/db/usaa lands in the
+    # pet-590-usaa-vault-seeds PR and must be applied with scripts/apply-vault-config.sh
+    # BEFORE this entry merges. apply-on-merge reads the secret at plan time, so without the
+    # grant it fails with permission denied. kv/db/usaa must also be seeded by then.
+    usaa = {}
   }
 
   # Defaults applied to every entry, so a new database needs only `name = {}`.

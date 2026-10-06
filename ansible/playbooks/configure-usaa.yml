@@ -1,0 +1,250 @@
+---
+# configure-usaa.yml — deploy petedio-usaa on usaa-238 as one systemd service (PET-590).
+#
+# petedio-usaa (repo PeteDio-Labs/petedio-usaa, private) is a savings and trip tracker over
+# the USAA bank ledger. It serves HTTP on :8080 behind Cloudflare Access at usaa.pdlab.dev,
+# and accepts Batsy's totals on usaa-feed.pdlab.dev (cloudflare-routes.tf). Its state is the
+# `usaa` database on postgres-rds-231 (databases.tf); the host keeps only the binary, the
+# env file and /var/lib/usaa for the import's scratch copy.
+#
+# THE PLAY COPIES A COMPILED BINARY and never builds on the target, as configure-search.yml
+# and configure-media-dash.yml do. scripts/deploy-usaa.sh builds it with
+# `--target=bun-linux-x64`.
+#
+# NOT A SECRET, BUT REQUIRED: usaa_access_aud, the Access application audience tag for
+# usaa.pdlab.dev, from the Terraform output of the same name. The app checks it on the
+# Cf-Access-Jwt-Assertion JWT; without it a token issued for any other Access app in the
+# team would pass. scripts/deploy-usaa.sh reads it with `terraform output`.
+#
+# SECRETS (resolved by scripts/deploy-usaa.sh from Vault, passed as no_log extra-vars):
+#   usaa_db_password      kv/db/usaa field password
+#   usaa_batsy_bearer     kv/services/usaa field batsy_bearer_token
+# Both are seeded by the PET-590 vault-seeds change, not by this play. There is no default
+# for either: a committed placeholder would become the live credential on a bare re-run.
+#
+# PREREQUISITES: usaa-238 exists (usaa.tf) and the `usaa` database and role exist
+# (databases.tf). The play does not create either, and the health check fails loudly if the
+# database is unreachable.
+# Run via:  ./scripts/deploy-usaa.sh
+
+- name: Deploy petedio-usaa on usaa-238
+  hosts: usaa
+  become: true
+
+  vars:
+    usaa_user: usaa
+    usaa_group: usaa
+    usaa_opt: /opt/usaa
+    usaa_bin: /opt/usaa/bin/petedio-usaa
+    usaa_data: /var/lib/usaa
+    usaa_env_dir: /etc/usaa
+    usaa_env_file: /etc/usaa/usaa.env
+    usaa_port: 8080
+    usaa_host: "0.0.0.0"
+    usaa_db_host: 192.168.50.231
+    usaa_db_port: 5432
+    usaa_db_name: usaa
+    usaa_db_user: usaa
+    usaa_access_team_domain: petedillo-labs.cloudflareaccess.com
+    usaa_public_origin: https://usaa.pdlab.dev
+    usaa_feed_host: usaa-feed.pdlab.dev
+    # Who may sign in, and who sees the ledger. The email is the identity Access asserts.
+    usaa_viewers:
+      pedelgadillo@gmail.com: { name: Pedro, ledger: true }
+      soniasdelgadillo@gmail.com: { name: Sonia, ledger: false }
+    # Controller path to the compiled binary. scripts/deploy-usaa.sh sets it. There is no
+    # default: the play fails below when it is missing.
+    # usaa_binary_src: <path to dist/petedio-usaa>
+
+  pre_tasks:
+    - name: Assert the secret extra-vars were provided (use scripts/deploy-usaa.sh)
+      ansible.builtin.assert:
+        that:
+          - usaa_db_password is defined and usaa_db_password | length > 0
+          - usaa_batsy_bearer is defined and usaa_batsy_bearer is match('\\A[A-Za-z0-9_-]+\\Z')
+        fail_msg: >-
+          Missing or malformed secret extra-vars. Run scripts/deploy-usaa.sh, which
+          resolves them from Vault (kv/db/usaa and kv/services/usaa). usaa_batsy_bearer
+          must match \A[A-Za-z0-9_-]+\Z: a space, quote or newline would corrupt the
+          line it sits on in the env file.
+      no_log: true
+
+    - name: Assert the Access audience was provided (use scripts/deploy-usaa.sh)
+      ansible.builtin.assert:
+        that:
+          - usaa_access_aud is defined and usaa_access_aud is match('\\A[0-9a-f]{64}\\Z')
+        fail_msg: >-
+          usaa_access_aud is missing or is not a 64-character lowercase hex Cloudflare Access
+          audience tag. Run scripts/deploy-usaa.sh, which reads it from the usaa_access_aud
+          Terraform output (apply petedio-iac#424 first).
+
+    - name: Assert the binary path was provided
+      ansible.builtin.assert:
+        that:
+          - usaa_binary_src is defined and usaa_binary_src | length > 0
+        fail_msg: >-
+          usaa_binary_src is not set. Run scripts/deploy-usaa.sh, or pass
+          -e usaa_binary_src=<path to dist/petedio-usaa>.
+
+    - name: Check the binary on the controller
+      ansible.builtin.stat:
+        path: "{{ usaa_binary_src }}"
+      delegate_to: localhost
+      become: false
+      register: usaa_binary_stat
+
+    - name: Fail when the binary is missing
+      ansible.builtin.fail:
+        msg: >-
+          No binary at {{ usaa_binary_src }}. Run
+          `bun run build --target=bun-linux-x64` in petedio-usaa first, or pass
+          -e usaa_binary_src=<path>.
+      when: not usaa_binary_stat.stat.exists
+
+    # ⚠ usaa-238 is x86-64, and `bun build --compile` targets the machine it runs on. A Mac
+    # build installs cleanly and then fails every start with "Exec format error" (PET-521).
+    # Bytes 0-3 are the ELF magic; bytes 18-19 are e_machine, 0x3e for x86-64.
+    - name: Read the binary's ELF header
+      ansible.builtin.command:
+        argv: [od, -An, -tx1, -N20, "{{ usaa_binary_src }}"]
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      check_mode: false # read-only, and the assert below needs its output in --check too
+      register: usaa_binary_header
+
+    - name: Fail when the binary is not an x86-64 Linux executable
+      ansible.builtin.assert:
+        that:
+          - (usaa_binary_header.stdout.split())[0:4] == ['7f', '45', '4c', '46']
+          - (usaa_binary_header.stdout.split())[18:20] == ['3e', '00']
+        fail_msg: >-
+          {{ usaa_binary_src }} is not an x86-64 Linux executable. Build it with
+          `bun run build --target=bun-linux-x64`.
+        quiet: true
+
+  tasks:
+    - name: Create the service group
+      ansible.builtin.group:
+        name: "{{ usaa_group }}"
+        system: true
+        state: present
+
+    - name: Create the service account
+      ansible.builtin.user:
+        name: "{{ usaa_user }}"
+        group: "{{ usaa_group }}"
+        system: true
+        create_home: false
+        home: "{{ usaa_data }}"
+        shell: /usr/sbin/nologin
+        state: present
+
+    - name: Create the binary directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: "{{ usaa_group }}"
+        mode: "0750"
+      loop:
+        - "{{ usaa_opt }}"
+        - "{{ usaa_opt }}/bin"
+
+    - name: Create the data directory
+      ansible.builtin.file:
+        path: "{{ usaa_data }}"
+        state: directory
+        owner: "{{ usaa_user }}"
+        group: "{{ usaa_group }}"
+        mode: "0750"
+
+    - name: Create the environment directory
+      ansible.builtin.file:
+        path: "{{ usaa_env_dir }}"
+        state: directory
+        owner: root
+        group: "{{ usaa_group }}"
+        mode: "0750"
+
+    - name: Install the binary
+      ansible.builtin.copy:
+        src: "{{ usaa_binary_src }}"
+        dest: "{{ usaa_bin }}"
+        owner: root
+        group: "{{ usaa_group }}"
+        mode: "0750"
+      notify: Restart usaa
+
+    - name: Install the service environment
+      ansible.builtin.template:
+        src: usaa.env.j2
+        dest: "{{ usaa_env_file }}"
+        owner: root
+        group: "{{ usaa_group }}"
+        mode: "0640"
+      no_log: true
+      notify: Restart usaa
+
+    - name: Install the systemd unit
+      ansible.builtin.template:
+        src: usaa.service.j2
+        dest: /etc/systemd/system/usaa.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart usaa
+
+    # Handlers run in the order they are defined, so a change to the unit reloads systemd
+    # before the restart. Flush here so the health check below tests the new files.
+    - name: Flush handlers before enabling the service
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start the usaa service
+      ansible.builtin.systemd:
+        name: usaa
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  post_tasks:
+    # ⚠ /healthz is the app's own answer. A wrong DATABASE_URL or a missing `usaa` database
+    # keeps the unit up and fails here, which is why the check runs before the play ends.
+    - name: Wait for the service to answer
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ usaa_port }}/healthz"
+        return_content: true
+      register: usaa_health
+      retries: 10
+      delay: 2
+      until:
+        - usaa_health.status is defined
+        - usaa_health.status == 200
+        - usaa_health.json is defined and usaa_health.json.db is true
+      failed_when: false
+
+    # /healthz answers {"ok":true,"db":<bool>}. A 200 alone does not prove the database
+    # connection, so the check also requires db=true. failed_when is off above so a failure
+    # reaches this assert and its message instead of ending the play on a bare uri error.
+    - name: Fail when the service is up but the database is not
+      ansible.builtin.assert:
+        that:
+          - usaa_health.status | default(0) == 200
+          - usaa_health.json is defined and usaa_health.json.db is true
+        fail_msg: >-
+          /healthz did not return 200 with db=true (status {{ usaa_health.status | default('none') }},
+          body {{ usaa_health.content | default('none') }}). The database is unreachable, or the
+          usaa role or database is missing: check DATABASE_URL in {{ usaa_env_file }}, the
+          pg_hba rule on 231 and `journalctl -u usaa -n 50` on this host.
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart usaa
+      ansible.builtin.systemd:
+        name: usaa
+        state: restarted

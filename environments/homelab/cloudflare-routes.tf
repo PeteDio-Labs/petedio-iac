@@ -79,6 +79,26 @@ module "cloudflare_ingress" {
         session_duration      = "168h"
       }
     }
+
+    # petedio-usaa (PET-590), the savings and trip tracker on usaa-238. The origin is a LAN
+    # address because cloudflared runs on LXC 112, a different host. Access is the gate, with
+    # the Authentik IdP, and the two emails are the whole allow-list: Pedro and Sonia.
+    "usaa.pdlab.dev" = {
+      service       = "http://192.168.50.238:8080"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com", "soniasdelgadillo@gmail.com"]
+    }
+
+    # Batsy (Sonia's agent) posts USAA totals here from outside the lab, so Access is OFF for
+    # this hostname and the app's bearer check (kv/services/usaa batsy_bearer_token) is the
+    # gate. Only this one path is routed. The ingress rule matches hostname AND path, so every
+    # other path on this hostname falls through to the tunnel's catch-all 404, and the app
+    # also refuses non-feed paths on this Host. `path` is a regex, hence the anchors.
+    "usaa-feed.pdlab.dev" = {
+      service = "http://192.168.50.238:8080"
+      path    = "^/api/v1/totals$"
+    }
   }
 }
 
