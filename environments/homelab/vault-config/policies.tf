@@ -38,6 +38,13 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
+    # usaa (LXC 238, PET-590). The same gated read as plane, for `usaa = {}` in
+    # databases.tf. Apply this, and seed kv/db/usaa with scripts/seed-usaa-db.sh, BEFORE
+    # the merge that adds that entry, or its apply-on-merge fails on this path.
+    path "kv/data/db/usaa" {
+      capabilities = ["read"]
+    }
+
     path "kv/data/iac/proxmox" {
       capabilities = ["read"]
     }
