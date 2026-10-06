@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+# Proxy DHCP and TFTP for the pve04 install (PET-528). The router keeps assigning
+# addresses; this server adds only the boot instructions, and only for allowlisted MACs.
+
+# No DNS service.
+port=0
+interface=eth0
+bind-interfaces
+log-dhcp
+
+dhcp-range={{ netboot_server_ip | regex_replace('\.[0-9]+$', '.0') }},proxy,255.255.255.0
+
+# ⚠ The allowlist. Every other machine on the LAN gets no answer from this server.
+{% for mac in netboot_allowed_macs %}
+dhcp-mac=set:netboot,{{ mac }}
+{% endfor %}
+dhcp-ignore=tag:!netboot
+
+enable-tftp
+tftp-root={{ netboot_root }}/tftp
+
+# Stage one: the firmware's PXE ROM loads iPXE over TFTP. Stage two: iPXE announces
+# itself with option 175 and gets the menu over HTTP instead.
+dhcp-match=set:ipxe,175
+pxe-service=tag:!ipxe,x86PC,"PET-528 netboot (BIOS)",undionly.kpxe
+pxe-service=tag:!ipxe,X86-64_EFI,"PET-528 netboot (UEFI)",ipxe.efi
+pxe-service=tag:ipxe,x86PC,"PET-528 installer menu",http://{{ netboot_server_ip }}/boot.ipxe
+pxe-service=tag:ipxe,X86-64_EFI,"PET-528 installer menu",http://{{ netboot_server_ip }}/boot.ipxe
