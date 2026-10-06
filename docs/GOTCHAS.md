@@ -94,6 +94,16 @@ section heading. History sections for systems that are gone get no rule.
     that mattered. **When two hosts differ in the thing you suspect but agree on the
     outcome, check what else differs before discarding the hypothesis.**
 
+- **A new `proxmox-lxc` module also goes in `pool_lxc_members`, and nothing fails when it
+  doesn't** (PET-590, PET-592). `environments/homelab/pool.tf` maps every container's
+  `vm_id` into the `homelab` pool. A module left out of the map plans clean, applies clean and
+  drifts silently, because the pool's only job is to account for every container. It drifted
+  three times: authentik-119 and runner-233, then tailscale-244 and minio-data-245, then
+  usaa-238, which Codex caught on round 2 of
+  [petedio-iac#424](https://github.com/PeteDio-Labs/petedio-iac/pull/424). Add the entry in the
+  same PR as the module, along with the container's `lxc-features` entry, and count modules
+  against map entries before you ask for review.
+
 - **The loop reads live LXC config read-only — never with the mutation token.** Brownfield
   captures need the running `pct config` so the import plans as a no-op; the loop is
   author-only and must not guess specs on live hosts. `scripts/proxmox-ro-config.sh
