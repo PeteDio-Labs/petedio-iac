@@ -1,0 +1,28 @@
+# petedio-usaa — savings and trip tracker (PET-590). MANAGED BY ANSIBLE: configure-usaa.yml.
+[Unit]
+Description=petedio-usaa — savings and trip tracker over the USAA ledger
+Documentation=https://github.com/PeteDio-Labs/petedio-usaa
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ usaa_user }}
+Group={{ usaa_group }}
+EnvironmentFile={{ usaa_env_file }}
+ExecStart={{ usaa_bin }} serve
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ usaa_data }}
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
