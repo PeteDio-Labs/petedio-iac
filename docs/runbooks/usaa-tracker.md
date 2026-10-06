@@ -56,7 +56,7 @@ grant fails it with permission denied.
         --limit pve03 -e lxc_features_allow_restart_pending=true
       ```
 
-      The report line for 238 should read `declared=keyctl=1,nesting=1` and
+      The report line for 238 should read `declared=nesting=1` and
       `RESTART PENDING`.
    b. Restart the container, on pve03. 238 has no service yet, so nothing is interrupted:
 
