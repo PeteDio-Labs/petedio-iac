@@ -122,8 +122,11 @@ Run it on 238 as the service user, so it uses the same env file. Dry-run first, 
      unmapped.
    - The counts match 218 statements, 218 reconciled, 9,526 transactions, dated
      2020-06-23 to 2026-07-31, and each `MATCH` or `DIFF` line reads `MATCH`.
-   - The money sums look like dollars. A total 100 times too large means the file holds
-     cents and the unit is wrong.
+   - The `money unit` line names the unit you expect.
+   - Each account's `latest statement … closing $…` line matches the closing balance printed
+     on the PDF it names as `source`, in MinIO. Counts and reconciliation pass in either unit, so this
+     comparison is the only check that catches a wrong `--money-unit`. A closing 100 times too
+     large means the file holds cents; 100 times too small means the reverse.
 
 3. Write, with the `--money-unit` the dry run confirmed (`dollars` or `cents`):
 
