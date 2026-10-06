@@ -13,7 +13,7 @@
 # Step 3 before steps 1 and 2 fails the apply on a path ci-read can see but not read.
 #
 # A ROTATION. `password_wo` is write-only, so the plan cannot see a new value. After
-# --rotate, bump `usaa` in the TF_VAR_postgres_db_password_versions repo variable, let an
+# --rotate, bump `usaa` in the POSTGRES_DB_PASSWORD_VERSIONS repo variable, let an
 # apply push the password to Postgres, then redeploy the app with scripts/deploy-usaa.sh.
 #
 #   Vault token: $VAULT_TOKEN, else the macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM.
@@ -144,7 +144,7 @@ NOTE
   ;;
   1) cat <<'NOTE'
   Next, in this order:
-    1. Bump `usaa` in the TF_VAR_postgres_db_password_versions repo variable.
+    1. Bump `usaa` in the POSTGRES_DB_PASSWORD_VERSIONS repo variable.
     2. Let an apply run, which pushes the password to Postgres.
     3. ./scripts/deploy-usaa.sh
   The app refuses its database connection until step 3 finishes.
