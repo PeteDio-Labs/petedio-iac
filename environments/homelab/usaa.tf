@@ -54,6 +54,15 @@ module "usaa" {
   description = "petedio-usaa — savings and trip tracker over the USAA ledger (PET-590). Managed by Terraform; app by configure-usaa.yml."
 }
 
+# The Access application audience tag for usaa.pdlab.dev. petedio-usaa checks it against the
+# `aud` claim of the Cf-Access-Jwt-Assertion JWT, so a token issued for another Access app in
+# the team cannot replay to the LAN origin. It is an identifier, not a secret.
+# scripts/deploy-usaa.sh reads it and passes it to configure-usaa.yml as usaa_access_aud.
+output "usaa_access_aud" {
+  description = "Access application audience tag for usaa.pdlab.dev, which the app checks on the Cf-Access-Jwt-Assertion JWT. It is not a secret."
+  value       = module.cloudflare_ingress.access_application_auds["usaa.pdlab.dev"]
+}
+
 output "usaa_id" {
   description = "VMID of the usaa container."
   value       = module.usaa.vm_id

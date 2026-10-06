@@ -11,6 +11,11 @@
 # and configure-media-dash.yml do. scripts/deploy-usaa.sh builds it with
 # `--target=bun-linux-x64`.
 #
+# NOT A SECRET, BUT REQUIRED: usaa_access_aud, the Access application audience tag for
+# usaa.pdlab.dev, from the Terraform output of the same name. The app checks it on the
+# Cf-Access-Jwt-Assertion JWT; without it a token issued for any other Access app in the
+# team would pass. scripts/deploy-usaa.sh reads it with `terraform output`.
+#
 # SECRETS (resolved by scripts/deploy-usaa.sh from Vault, passed as no_log extra-vars):
 #   usaa_db_password      kv/db/usaa field password
 #   usaa_batsy_bearer     kv/services/usaa field batsy_bearer_token
@@ -63,6 +68,15 @@
           must match \A[A-Za-z0-9_-]+\Z: a space, quote or newline would corrupt the
           line it sits on in the env file.
       no_log: true
+
+    - name: Assert the Access audience was provided (use scripts/deploy-usaa.sh)
+      ansible.builtin.assert:
+        that:
+          - usaa_access_aud is defined and usaa_access_aud is match('\\A[0-9a-f]{64}\\Z')
+        fail_msg: >-
+          usaa_access_aud is missing or is not a 64-character lowercase hex Cloudflare Access
+          audience tag. Run scripts/deploy-usaa.sh, which reads it from the usaa_access_aud
+          Terraform output (apply petedio-iac#424 first).
 
     - name: Assert the binary path was provided
       ansible.builtin.assert:
@@ -205,7 +219,25 @@
       register: usaa_health
       retries: 10
       delay: 2
-      until: usaa_health.status is defined and usaa_health.status == 200
+      until:
+        - usaa_health.status is defined
+        - usaa_health.status == 200
+        - usaa_health.json is defined and usaa_health.json.db is true
+      failed_when: false
+
+    # /healthz answers {"ok":true,"db":<bool>}. A 200 alone does not prove the database
+    # connection, so the check also requires db=true. failed_when is off above so a failure
+    # reaches this assert and its message instead of ending the play on a bare uri error.
+    - name: Fail when the service is up but the database is not
+      ansible.builtin.assert:
+        that:
+          - usaa_health.status | default(0) == 200
+          - usaa_health.json is defined and usaa_health.json.db is true
+        fail_msg: >-
+          /healthz did not return 200 with db=true (status {{ usaa_health.status | default('none') }},
+          body {{ usaa_health.content | default('none') }}). The database is unreachable, or the
+          usaa role or database is missing: check DATABASE_URL in {{ usaa_env_file }}, the
+          pg_hba rule on 231 and `journalctl -u usaa -n 50` on this host.
 
   handlers:
     - name: Reload systemd

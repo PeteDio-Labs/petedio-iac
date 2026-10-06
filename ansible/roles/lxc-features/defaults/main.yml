@@ -108,6 +108,10 @@ lxc_features_declared:
   # and PVE grants `allow userns,` only with nesting. Nothing here runs Docker, so the
   # container gets no keyctl. roles/codex fails if the namespace check fails (PET-553).
   "248": { nesting: "1" }                # codex-248 — the Codex worker
+  # usaa-238, created by PET-590. Its usaa.service sets PrivateTmp, ProtectSystem=strict and
+  # ProtectHome, so systemd must build a mount namespace, which needs nesting. It gets the
+  # lab default, both flags. Applying it takes a `pct reboot 238` (docs/runbooks/usaa-tracker.md).
+  "238": { nesting: "1", keyctl: "1" }   # usaa-238 — petedio-usaa, sandboxed unit
   # Declared but on neither node as of 2026-09-09. Kept so they are configured on
   # the way back rather than remembered: 106's rootfs will not `pct restore`
   # (lxc.idmap), and 244 is absent from both nodes' `pct list`.
