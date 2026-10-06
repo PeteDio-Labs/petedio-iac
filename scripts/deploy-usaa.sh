@@ -32,6 +32,12 @@ step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 for t in vault terraform ansible-playbook bun python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
 [ -d "$SRC" ] || die "No petedio-usaa checkout at $SRC (set USAA_SRC)."
+# petedio-usaa's bun.lock is lockfileVersion 2, written by Bun 1.4.2. Bun 1.3.14 prints
+# "Ignoring lockfile" and fails --frozen-lockfile, so check the version up front.
+BUN_MIN=1.4.2
+BUN_VER="$(bun --version)"
+[ "$(printf '%s\n%s\n' "$BUN_MIN" "$BUN_VER" | sort -V | head -1)" = "$BUN_MIN" ] \
+  || die "bun $BUN_VER is older than $BUN_MIN, which petedio-usaa's bun.lock needs. Run: bun upgrade"
 
 step "Resolving Vault token"
 if [ -z "${VAULT_TOKEN:-}" ]; then

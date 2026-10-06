@@ -76,7 +76,9 @@ grant fails it with permission denied.
    d. Optionally re-run step a without the extra-var. 238 now reads `ok`. Any other
       container on pve03 that is still pending a restart keeps the play non-zero, and that
       is not a 238 fault.
-4. Run the deploy from the Mac, with the app checkout at `~/petedio/usaa` or `USAA_SRC` set:
+4. Run the deploy from the Mac, with the app checkout at `~/petedio/usaa` or `USAA_SRC` set.
+   It needs Bun 1.4.2 or later, because older Bun cannot read the app's `bun.lock`; run
+   `bun upgrade` first if `bun --version` is older. The script checks this and stops.
 
    ```bash
    ./scripts/deploy-usaa.sh
