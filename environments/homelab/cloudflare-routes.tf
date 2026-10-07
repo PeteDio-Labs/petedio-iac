@@ -83,7 +83,9 @@ module "cloudflare_ingress" {
     # petedio-usaa (PET-590), the savings and trip tracker on usaa-238. The origin is a LAN
     # address because cloudflared runs on LXC 112, a different host. Access is the gate, with
     # the Authentik IdP, and the two emails are the whole allow-list: Pedro and Sonia.
-    "usaa.pdlab.dev" = {
+    # PET-599 renamed both hostnames from usaa to savings; the moved blocks below keep the
+    # Access application, and so its audience tag.
+    "savings.pdlab.dev" = {
       service       = "http://192.168.50.238:8080"
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
@@ -95,7 +97,7 @@ module "cloudflare_ingress" {
     # gate. Only this one path is routed. The ingress rule matches hostname AND path, so every
     # other path on this hostname falls through to the tunnel's catch-all 404, and the app
     # also refuses non-feed paths on this Host. `path` is a regex, hence the anchors.
-    "usaa-feed.pdlab.dev" = {
+    "savings-feed.pdlab.dev" = {
       service = "http://192.168.50.238:8080"
       path    = "^/api/v1/totals$"
     }
@@ -117,6 +119,26 @@ import {
 import {
   to = module.cloudflare_ingress.cloudflare_dns_record.route["seer.pdlab.dev"]
   id = "${local.cloudflare_zone_id}/553f672178651906b01c66cdca2c9de7"
+}
+
+# PET-599: rename the savings tracker's hostnames in place. Without these, the apply destroys
+# and recreates each resource. A recreated Access application mints a different audience tag,
+# and the app rejects every JWT until deploy-usaa.sh lands the new one.
+moved {
+  from = module.cloudflare_ingress.cloudflare_zero_trust_access_application.route["usaa.pdlab.dev"]
+  to   = module.cloudflare_ingress.cloudflare_zero_trust_access_application.route["savings.pdlab.dev"]
+}
+moved {
+  from = module.cloudflare_ingress.cloudflare_zero_trust_access_policy.route["usaa.pdlab.dev"]
+  to   = module.cloudflare_ingress.cloudflare_zero_trust_access_policy.route["savings.pdlab.dev"]
+}
+moved {
+  from = module.cloudflare_ingress.cloudflare_dns_record.route["usaa.pdlab.dev"]
+  to   = module.cloudflare_ingress.cloudflare_dns_record.route["savings.pdlab.dev"]
+}
+moved {
+  from = module.cloudflare_ingress.cloudflare_dns_record.route["usaa-feed.pdlab.dev"]
+  to   = module.cloudflare_ingress.cloudflare_dns_record.route["savings-feed.pdlab.dev"]
 }
 
 # ============================================================================================
