@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# palworld-backup (PET-382) — flush the live Palworld world to disk, tar it, and upload
+# to MinIO. Run by palworld-backup.timer. Mirrors vault-snapshot.sh.j2 / resume-mongo-
+# backup.sh.j2's structure: preconditions first, mc via MC_HOST_ env, never persisted to
+# ~/.mc/config.json, nothing echoed.
+#
+# ⚠ THIS SCRIPT ONLY BACKS UP A SERVER systemd CALLS active, AND SKIPS OTHERWISE.
+# Recorded verbatim so nobody re-litigates it: the PET-382 work item's own guidance reads
+# both ways in the same paragraph — "do not let it run while the server is stopped", then
+# "a backup taken from a stopped server is fine." Both are true, and only one is safe to
+# AUTOMATE unattended:
+#
+#   A stopped server's on-disk save is static, so tarring it directly would be fine — but
+#   there is no REST API to confirm anything against while it's down, and the one check
+#   that actually matters here (the day-count assertion below) needs that API. The real
+#   hazard the item warns about — a backup caught mid-start, before the world has loaded,
+#   producing "a small tar of nothing that looks exactly like a real one" — is a race
+#   against the SAME instant `systemctl is-active` starts reporting true, not against
+#   "stopped" as a state: Palworld's own startup can still be short of a loaded world at
+#   that moment. So the day-count check is the actual control; the active-check below
+#   only decides whether that control CAN run tonight.
+#
+# When the unit is not active, this exits 0, not a failure — a quiet night because the
+# server was off is an ordinary outcome, and it must not look like a run that silently
+# examined nothing (docs/GOTCHAS.md has this fleet's whole history of that shape of bug).
+set -euo pipefail
+
+# shellcheck disable=SC1090
+source "{{ palworld_backup_env_path }}"
+
+MC="{{ palworld_backup_mc_path }}"
+MC_ALIAS="{{ palworld_backup_mc_alias }}"
+MINIO_URL="{{ palworld_backup_minio_scheme }}://{{ palworld_backup_minio_hostport }}"
+BUCKET="{{ palworld_backup_bucket }}"
+RETAIN="{{ palworld_backup_retain }}"
+SERVICE="{{ palworld_service_name }}"
+REST="http://127.0.0.1:{{ palworld_rest_api_port }}/v1/api"
+PAL_DIR="{{ palworld_server_dir }}/Pal"
+INI="${PAL_DIR}/Saved/Config/LinuxServer/PalWorldSettings.ini"
+
+log() { printf 'palworld-backup: %s\n' "$*"; }
+die() { printf 'palworld-backup: ERROR: %s\n' "$*" >&2; exit 1; }
+
+[ -x "$MC" ] || die "mc not found at $MC"
+[ -n "${MC_ACCESS_KEY:-}" ] && [ -n "${MC_SECRET_KEY:-}" ] ||
+  die "MC_ACCESS_KEY/MC_SECRET_KEY missing from {{ palworld_backup_env_path }} — seed kv/services/palworld-backups and re-run the playbook with the extra-vars (see the playbook header)."
+
+# shellcheck disable=SC2140
+export "MC_HOST_${MC_ALIAS}"="{{ palworld_backup_minio_scheme }}://${MC_ACCESS_KEY}:${MC_SECRET_KEY}@{{ palworld_backup_minio_hostport }}"
+
+# --- External-dependency precondition FIRST (PET-151 pattern): the destination before
+# any game-side work, so a missing bucket/creds fails fast instead of after a flush.
+"$MC" ls "${MC_ALIAS}/${BUCKET}" >/dev/null 2>&1 ||
+  die "MinIO bucket '${BUCKET}' missing or unreachable at ${MINIO_URL} — it should already hold the two PET-266 hand-taken archives; check the svcacct scope before assuming the bucket itself is gone."
+
+# --- Only proceed against a server systemd calls active — see the header comment ------
+if ! systemctl is-active --quiet "$SERVICE"; then
+  log "server not active (state: $(systemctl is-active "$SERVICE" 2>/dev/null || true)) — skipping tonight's backup, nothing examined beyond that state."
+  exit 0
+fi
+
+[ -f "$INI" ] || die "PalWorldSettings.ini not found at $INI — service reports active but its own config is missing"
+ADMIN_PW="$(sed -nE 's/.*AdminPassword="([^"]*)".*/\1/p' "$INI" 2>/dev/null || true)"
+
+# --- Flush: POST /v1/api/save. Needs an explicit Content-Length: 0 — curl sends neither
+# a body nor a length for a bodyless POST, and the REST listener answers 411 without it.
+flush_code="$(curl -sS -o /dev/null -w '%{http_code}' -m 15 -X POST -H 'Content-Length: 0' -u "admin:${ADMIN_PW}" "$REST/save")" ||
+  die "POST /v1/api/save did not respond — refusing to back up an unconfirmed flush"
+[ "$flush_code" = "200" ] ||
+  die "POST /v1/api/save returned HTTP ${flush_code}, not 200 — refusing to back up an unconfirmed flush"
+log "flushed to disk (HTTP $flush_code)"
+
+# --- The check that actually matters (see the header): a fresh/starting world reads
+# days:0, and this is the only thing here that catches it. Assert BEFORE touching the tar.
+metrics_json="$(curl -sS -m 15 -u "admin:${ADMIN_PW}" "$REST/metrics")" || die "GET /v1/api/metrics did not respond"
+days="$(printf '%s' "$metrics_json" | sed -nE 's/.*"days"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p')"
+case "$days" in
+  '' | 0)
+    die "day count is 0 or unreadable from /v1/api/metrics (${metrics_json}) — refusing to upload what looks like a fresh/starting world"
+    ;;
+esac
+
+info_json="$(curl -sS -m 15 -u "admin:${ADMIN_PW}" "$REST/info")" || die "GET /v1/api/info did not respond"
+worldguid="$(printf '%s' "$info_json" | sed -nE 's/.*"worldguid"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p')"
+[ -n "$worldguid" ] || die "worldguid unreadable from /v1/api/info (${info_json})"
+log "world ${worldguid}, day ${days} — clear to back up"
+
+[ -d "${PAL_DIR}/Saved" ] || die "${PAL_DIR}/Saved does not exist — nothing to back up"
+
+# --- Tar. Rooted the same way the two PET-266 hand-taken archives were (a dated top
+# directory over Saved/), so restore-palworld-world.sh's prefix-detection needs no
+# special case for what this timer produces: <top>/Saved/SaveGames/0/<guid>/...
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+ARCHIVE_TOP="palworld-backup-${ts}"
+ARCHIVE="${ARCHIVE_TOP}.tar.gz"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+tar czf "$WORK/$ARCHIVE" -C "$PAL_DIR" --transform "s,^Saved,${ARCHIVE_TOP}/Saved," Saved ||
+  die "tar failed"
+log "tarred $(du -h "$WORK/$ARCHIVE" | cut -f1) into $ARCHIVE"
+
+# Sidecar hash — same shape restore-palworld-world.sh already knows how to verify.
+sha256sum "$WORK/$ARCHIVE" | awk '{print $1}' >"$WORK/$ARCHIVE.sha256"
+
+# Sidecar metadata — worldguid + day count readable WITHOUT extracting the archive, so a
+# future restore can tell which one holds what (the PET-382 ask, verbatim).
+printf '{"worldguid":"%s","days":%s,"archived_at":"%s"}\n' "$worldguid" "$days" "$ts" >"$WORK/$ARCHIVE.meta.json"
+
+"$MC" cp --quiet "$WORK/$ARCHIVE" "${MC_ALIAS}/${BUCKET}/" >/dev/null || die "upload of $ARCHIVE failed"
+"$MC" cp --quiet "$WORK/$ARCHIVE.sha256" "${MC_ALIAS}/${BUCKET}/" >/dev/null || die "upload of $ARCHIVE.sha256 failed"
+"$MC" cp --quiet "$WORK/$ARCHIVE.meta.json" "${MC_ALIAS}/${BUCKET}/" >/dev/null || die "upload of $ARCHIVE.meta.json failed"
+log "uploaded $ARCHIVE (+ .sha256, .meta.json) to ${MINIO_URL}/${BUCKET}/"
+
+# --- Prune: keep the newest $RETAIN archives THIS script's naming pattern matches, drop
+# the rest (+ their sidecars). Bucket versioning (docs/GOTCHAS.md: "MinIO S3 state
+# backend") is the net for anything pruned in error. This also ages out the two original
+# PET-266 archives once 30 nightly runs have landed — see defaults/main.yml.
+mapfile -t all_archives < <("$MC" ls "${MC_ALIAS}/${BUCKET}" 2>/dev/null | awk '{print $NF}' | grep -E '^palworld-backup-[0-9]{8}T[0-9]{6}Z\.tar\.gz$' | sort)
+total="${#all_archives[@]}"
+if [ "$total" -gt "$RETAIN" ]; then
+  prune_count=$((total - RETAIN))
+  i=0
+  for name in "${all_archives[@]}"; do
+    [ "$i" -ge "$prune_count" ] && break
+    log "pruning $name (+ sidecars) — beyond the newest $RETAIN"
+    "$MC" rm --quiet "${MC_ALIAS}/${BUCKET}/${name}" || true
+    "$MC" rm --quiet "${MC_ALIAS}/${BUCKET}/${name}.sha256" 2>/dev/null || true
+    "$MC" rm --quiet "${MC_ALIAS}/${BUCKET}/${name}.meta.json" 2>/dev/null || true
+    i=$((i + 1))
+  done
+else
+  log "retention: $total archive(s) matching this script's own naming, keeping all (limit $RETAIN)"
+fi
+
+log "ok"

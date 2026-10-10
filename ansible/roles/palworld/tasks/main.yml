@@ -368,3 +368,99 @@
     enabled: "{{ palworld_service_autostart | bool }}"
     daemon_reload: true
   when: palworld_install_binaries | bool
+
+# --- Nightly world backup (PET-382) -----------------------------------------------
+# Gated on install_binaries like the unit/autostart tasks above — a prep-only converge
+# has no server dir and nothing to back up yet.
+- name: Nightly world backup to MinIO
+  when:
+    - palworld_backup_enabled | bool
+    - palworld_install_binaries | bool
+  block:
+    # The apply-on-merge runner's Vault role cannot supply palworld_backup_minio_access_key
+    # / _secret_key (same gap as palworld_admin_password, see defaults/main.yml) — so an
+    # ordinary CI merge that touches this role must not blank creds an operator already
+    # seeded by hand. Read the live env file first and keep its values when this run
+    # supplied none, exactly the AdminPassword-preservation pattern above (PET-278).
+    - name: Read the existing backup env file (creds preservation)
+      ansible.builtin.slurp:
+        src: "{{ palworld_backup_env_path }}"
+      register: palworld_backup_existing_env
+      failed_when: false
+      no_log: true
+
+    - name: Preserve the live backup MinIO creds when none were supplied this run
+      ansible.builtin.set_fact:
+        palworld_backup_minio_access_key: "{{ (palworld_backup_existing_env.content | b64decode | regex_search('MC_ACCESS_KEY=(.*)', '\\1') or ['']) | first }}"
+        palworld_backup_minio_secret_key: "{{ (palworld_backup_existing_env.content | b64decode | regex_search('MC_SECRET_KEY=(.*)', '\\1') or ['']) | first }}"
+      when:
+        - palworld_backup_existing_env.content is defined
+        - (palworld_backup_minio_access_key | default('')) | length == 0
+        - (palworld_backup_minio_secret_key | default('')) | length == 0
+      no_log: true
+
+    # Warn, don't fail — mirrors vault-snapshot's "secret_id not seeded yet" task. The
+    # units still install below; the timer is what fails loudly (and only at 04:10, not
+    # at converge time) until an operator seeds the creds. Failing this whole play instead
+    # would break every ordinary CI merge-apply on a host nobody has seeded yet.
+    - name: Warn if the backup MinIO creds are still not seeded (timer will fail until they are)
+      ansible.builtin.debug:
+        msg: >-
+          palworld_backup_minio_access_key/secret_key are unset and
+          {{ palworld_backup_env_path }} does not exist yet — seed a scoped MinIO svcacct
+          for the palworld-backups bucket at Vault kv/services/palworld-backups (fields
+          mc_access_key / mc_secret_key), then run this playbook once with those as
+          extra-vars (see the playbook header). The backup script + timer install
+          regardless; palworld-backup.service will fail until the creds exist.
+      when: (palworld_backup_minio_access_key | default('')) | length == 0
+
+    - name: Install the mc (MinIO client) binary, if not already present
+      ansible.builtin.get_url:
+        url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+        dest: "{{ palworld_backup_mc_path }}"
+        mode: "0755"
+        owner: root
+        group: root
+        # mc is a moving 'latest' URL; fetch once, refresh deliberately (matches
+        # vault-snapshot's own TODO on the same tradeoff).
+        force: false
+
+    - name: Write the backup env file (0600, root-only — MinIO creds)
+      ansible.builtin.template:
+        src: palworld-backup.env.j2
+        dest: "{{ palworld_backup_env_path }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      # Never write a file with an empty credential — that would replace a working
+      # 0600 env file with one the script itself rejects, on a converge that only
+      # meant to leave it alone.
+      when: (palworld_backup_minio_access_key | default('')) | length > 0
+
+    - name: Install the backup script
+      ansible.builtin.template:
+        src: palworld-backup.sh.j2
+        dest: "{{ palworld_backup_script_path }}"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Install the backup systemd service + timer units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - palworld-backup.service
+        - palworld-backup.timer
+      notify: Reload systemd
+
+    - name: Enable and start the backup timer
+      ansible.builtin.systemd:
+        name: palworld-backup.timer
+        enabled: true
+        state: started
+        daemon_reload: true
