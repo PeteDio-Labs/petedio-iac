@@ -3,8 +3,9 @@
 # them. Codex reviews; Claude implements; Pedro merges.
 #
 #   · The petedio-codex-review GitHub App: contents:read, pull_requests:write,
-#     metadata:read, on every PeteDio-Labs repository. codex-review-broker mints its tokens,
-#     codex-gh runs gh with one, and /etc/gitconfig hands git one.
+#     metadata:read, checks:read and statuses:read, on every PeteDio-Labs repository.
+#     codex-review-broker mints its tokens, codex-gh runs gh with one, and /etc/gitconfig
+#     hands git one.
 #   · The `codex` Plane user's API token. The `plane` CLI reads an item and posts a comment.
 #
 # Gated on presence: a run that carries no identity leaves the files on disk as they are.
