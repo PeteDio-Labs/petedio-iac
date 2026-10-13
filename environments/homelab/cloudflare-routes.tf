@@ -90,6 +90,21 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com", "soniasdelgadillo@gmail.com"]
     }
 
+    # The Plane board (PET-610), so Tom can work in it from outside the lab. The origin is
+    # Plane's own proxy on plane-235, a LAN address because cloudflared runs on LXC 112.
+    # Access is the gate, with the Authentik IdP, and the two emails are the whole allow-list:
+    # Pedro and Tom. Only the app is routed. Attachments live in MinIO on 245, which stays
+    # private, so uploads and file views work on the LAN and the tailnet only.
+    #
+    # This is a different route from mcp.pdlab.dev above. That one holds Pedro's PAT, so it
+    # stays a one-person list. Here, each person signs in to Plane as themselves.
+    "plane.pdlab.dev" = {
+      service       = "http://192.168.50.235:8080"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com", "tsilveri406@gmail.com"]
+    }
+
     # Batsy (Sonia's agent) posts USAA totals here from outside the lab, so Access is OFF for
     # this hostname and the app's bearer check (kv/services/usaa batsy_bearer_token) is the
     # gate. Only this one path is routed. The ingress rule matches hostname AND path, so every

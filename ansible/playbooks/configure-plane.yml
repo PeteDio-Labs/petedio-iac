@@ -10,8 +10,10 @@
 #   * MinIO     -> the `plane` bucket on minio-data-245. NOT .221, which holds tfstate.
 #   * Redis + RabbitMQ stay BUNDLED: no durable state worth a separate backup path.
 #
-# TAILNET-ONLY. There is no cloudflare-routes.tf entry and there should not be — see the
-# header of plane.tf. Nothing here binds a public interface.
+# THE APP IS PUBLIC BEHIND ACCESS, THE BUCKET IS NOT (PET-610). plane.pdlab.dev routes to
+# :8080 through the tunnel on LXC 112, gated by Cloudflare Access (cloudflare-routes.tf).
+# Attachments stay on the LAN and the tailnet; the header of plane.tf says why. Nothing here
+# binds a public interface: cloudflared reaches the LAN address from another host.
 #
 # PREREQUISITES (this play does not do them, and will fail loudly if they are missing):
 #   1. playbooks/configure-lxc-features.yml (PET-378) has set nesting=1,keyctl=1 on the node. Docker will
@@ -35,6 +37,8 @@
     plane_version: "{{ plane_release | default('v1.4.1') }}"
     plane_web_port: 8080
     plane_host_ip: 192.168.50.235
+    # WEB_URL, and the first CORS origin. Plane builds its sign-in redirects from it.
+    plane_public_url: https://plane.pdlab.dev
     pg_host: 192.168.50.231
     pg_db: plane
     pg_user: plane
@@ -167,4 +171,4 @@
       ansible.builtin.debug:
         msg: >-
           Plane {{ plane_version }} up on http://192.168.50.235:{{ plane_web_port }}
-          (tailnet-only) · db={{ pg_db }}@{{ pg_host }} · bucket={{ minio_bucket }}@245
+          and {{ plane_public_url }} (Access) · db={{ pg_db }}@{{ pg_host }} · bucket={{ minio_bucket }}@245

@@ -5,13 +5,14 @@
 # Edition takes over. Full audit + decisions: the vault notes Projects/plane-cutover.md
 # and Projects/plane-deploy.md.
 #
-# NO CLOUDFLARE ROUTE, DELIBERATELY — same reasoning as minio-data.tf. Plane is reached
-# over the tailnet ([[244-tailscale]] advertises 192.168.50.0/24), never publicly. That is
-# not a limitation, it is what makes the rest of the design simple: no CORS policy on the
-# attachment bucket, no cache-bypass rule, no managed-transform fix, no Cloudflare 100 MB
-# request-body cap silently 413-ing uploads, no /api/* Access bypass, and above all no
-# UNGATED public MinIO S3 API (Access cannot gate a presigned-URL S3 client). Do not
-# "fix" this by adding a cloudflare-routes.tf entry.
+# THE APP IS PUBLIC, THE BUCKET IS NOT. Until PET-610, Plane had no Cloudflare route and was
+# reached over the tailnet only ([[244-tailscale]] advertises 192.168.50.0/24). PET-610
+# routed the app, plane.pdlab.dev behind Access, so Tom can work in it from outside the lab
+# (cloudflare-routes.tf). The attachment bucket on minio-data-245 stays private, for the
+# reasons that kept the whole app off the edge: no CORS policy on the bucket, no Cloudflare
+# 100 MB request-body cap on uploads, and above all no UNGATED public MinIO S3 API (Access
+# cannot gate a presigned-URL S3 client). So uploads and file views work on the LAN and the
+# tailnet only. Do not "fix" that by routing MinIO.
 #
 # The CI that moves work-item state on PR events runs on the SELF-HOSTED runners for the
 # same reason — GitHub's hosted runners cannot reach a LAN-only Plane, and do not need to.
