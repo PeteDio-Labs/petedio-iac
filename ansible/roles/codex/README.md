@@ -121,7 +121,7 @@ Pedro runs. Nothing places either one by hand.
 
 | Identity | Vault path | Seeded by | On the host |
 |---|---|---|---|
-| The `petedio-codex-review` GitHub App: contents read, pull requests write, metadata read, on every PeteDio-Labs repository | `kv/services/codex-review-app` | `scripts/seed-codex-review-app.sh <pem>` | `~/.config/codex-review/`, `0400` |
+| The `petedio-codex-review` GitHub App: contents read, pull requests write, metadata read, checks read and commit statuses read, on every PeteDio-Labs repository | `kv/services/codex-review-app` | `scripts/seed-codex-review-app.sh <pem>` | `~/.config/codex-review/`, `0400` |
 | The `codex` Plane user's API token | `kv/services/codex-plane` | `scripts/seed-codex-plane-token.sh`, which reads the clipboard | `~/.config/plane/api_key`, `0400` |
 
 Each seed script checks the credential before it writes. The App script requires the exact
@@ -137,6 +137,11 @@ run. A plain `ansible-playbook` run carries no identity and leaves both files as
 
 Without `contents:write`, the App's review never counts toward branch protection, and it
 cannot push. `codex-gh` also refuses an approval and a merge.
+
+The App reads checks and commit statuses because a private repository shows them to no
+other token (`PET-609`). Without them, `codex-gh pr checks` fails with "Resource not
+accessible by integration", and the reviewer escalates for lack of CI evidence. Both stay
+read-only: write access would let the App post its own passing result.
 
 ## Review a pull request
 

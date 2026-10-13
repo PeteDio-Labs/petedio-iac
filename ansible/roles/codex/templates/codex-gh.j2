@@ -10,8 +10,9 @@
 # set in that one process. Nothing logs gh in, and no token reaches a file or argv. The
 # token lives an hour.
 #
-# ⚠ THE APP DECIDES WHAT gh CAN DO. The token holds contents:read, pull_requests:write and
-# metadata:read, so a push, a merge or a workflow edit fails at GitHub. This wrapper also
+# ⚠ THE APP DECIDES WHAT gh CAN DO. The token holds contents:read, pull_requests:write,
+# metadata:read, checks:read and statuses:read, so a push, a merge or a workflow edit fails
+# at GitHub. This wrapper also
 # refuses an approval, a merge and a sign-in, because the reviewer's verdict is a comment.
 set -euo pipefail
 

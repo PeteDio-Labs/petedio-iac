@@ -3,8 +3,9 @@
 # configure-codex.yml against it (PET-553). Modeled on deploy-claude-247.sh.
 #
 #   kv/services/codex-review-app -> app_id, installation_id, app_pem   (optional)
-#     The petedio-codex-review GitHub App. contents:read, pull_requests:write and
-#     metadata:read, on every PeteDio-Labs repository. Seeded by seed-codex-review-app.sh.
+#     The petedio-codex-review GitHub App. contents:read, pull_requests:write,
+#     metadata:read, checks:read and statuses:read, on every PeteDio-Labs repository.
+#     Seeded by seed-codex-review-app.sh.
 #   kv/services/codex-plane      -> api_key                            (optional)
 #     The `codex` Plane user's token. Seeded by seed-codex-plane-token.sh.
 #   kv/services/pete-bot         -> notify_bearer_token                (optional)
