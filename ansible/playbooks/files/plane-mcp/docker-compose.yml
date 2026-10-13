@@ -17,10 +17,13 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     # LAN-reachable because cloudflared runs on LXC 112, a DIFFERENT host — a
-    # 127.0.0.1 bind here would be unreachable by the tunnel. Caddy's Access-JWT
-    # check is what actually gates this, not the bind address.
+    # 127.0.0.1 bind here would be unreachable by the tunnel. Caddy checks no Access
+    # JWT: it swaps in a PAT for any request that reaches it. The origin firewall,
+    # plane-mcp-firewall.service, is the boundary, so it runs before Docker starts.
+    # 0.0.0.0 publishes on IPv4 only. A bare "8790:8790" also publishes [::]:8790,
+    # which the IPv4-only firewall before PET-610's fix did not cover.
     # :8790 is Pedro's site (mcp.pdlab.dev), :8791 is Tom's (mcp-tom.pdlab.dev, PET-610).
-    ports: ["8790:8790", "8791:8791"]
+    ports: ["0.0.0.0:8790:8790", "0.0.0.0:8791:8791"]
     depends_on: [plane-mcp]
     networks: [mcp]
 
