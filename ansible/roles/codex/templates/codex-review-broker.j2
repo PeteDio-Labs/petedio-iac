@@ -6,10 +6,10 @@
 # Built from roles/claude-code's claude-code-push-broker, with three differences:
 #
 #   · The App can read and comment, and nothing more: contents:read, pull_requests:write,
-#     metadata:read, checks:read and statuses:read. A token request names no permissions, so
-#     each token holds the App's whole set. It cannot push, and it holds no `workflows`
-#     permission. Without write access to a repository, its review never counts toward
-#     branch protection.
+#     metadata:read, actions:read, checks:read and statuses:read. A token request names no
+#     permissions, so each token holds the App's whole set. It cannot push, and it holds no
+#     `workflows` permission. Without write access to a repository, its review never counts
+#     toward branch protection.
 #   · The App is installed on every repository in {{ codex_github_org }}, so the broker
 #     keeps no allow-list. GitHub refuses any repository outside the org.
 #   · This file is root-owned under /usr/local/bin, so a run cannot rewrite it.
