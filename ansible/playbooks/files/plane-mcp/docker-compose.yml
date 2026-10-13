@@ -1,0 +1,28 @@
+# Remote MCP for Plane (PET-292). Separate stack from /opt/plane on purpose:
+# the tracker must not be restarted to change anything here.
+services:
+  plane-mcp:
+    image: makeplane/plane-mcp-server:v0.3.0 # pinned: an unpinned re-resolve is a
+    container_name: plane-mcp                # silent upstream change to the tracker
+    restart: unless-stopped
+    env_file: [./plane-mcp.env]
+    expose: ["8211"] # loopback-only via caddy; never published to the LAN
+    networks: [mcp]
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: plane-mcp-caddy
+    restart: unless-stopped
+    env_file: [./plane-mcp.env]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    # LAN-reachable because cloudflared runs on LXC 112, a DIFFERENT host — a
+    # 127.0.0.1 bind here would be unreachable by the tunnel. Caddy's Access-JWT
+    # check is what actually gates this, not the bind address.
+    # :8790 is Pedro's site (mcp.pdlab.dev), :8791 is Tom's (mcp-tom.pdlab.dev, PET-610).
+    ports: ["8790:8790", "8791:8791"]
+    depends_on: [plane-mcp]
+    networks: [mcp]
+
+networks:
+  mcp: {}

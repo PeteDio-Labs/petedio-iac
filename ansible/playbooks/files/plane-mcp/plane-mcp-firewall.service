@@ -1,0 +1,27 @@
+[Unit]
+# Published Docker ports bypass INPUT, so the shim on :8790 and :8791 would otherwise be
+# reachable by anything on the LAN — and each port holds a Plane PAT. Restrict both to the
+# cloudflared tunnel host (LXC 112), which is the only legitimate client. :8791 is Tom's
+# site (PET-610).
+#
+# iptables rules do not survive a reboot and netfilter-persistent is not installed
+# here, so this unit is the persistence. Idempotent: -C tests before inserting.
+Description=Restrict plane-mcp shim (:8790, :8791) to the cloudflared tunnel host
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '\
+  iptables -C DOCKER-USER -p tcp --dport 8790 -s 192.168.50.112 -j RETURN 2>/dev/null || \
+  iptables -I DOCKER-USER 1 -p tcp --dport 8790 -s 192.168.50.112 -j RETURN; \
+  iptables -C DOCKER-USER -p tcp --dport 8790 -j DROP 2>/dev/null || \
+  iptables -I DOCKER-USER 2 -p tcp --dport 8790 -j DROP; \
+  iptables -C DOCKER-USER -p tcp --dport 8791 -s 192.168.50.112 -j RETURN 2>/dev/null || \
+  iptables -I DOCKER-USER 1 -p tcp --dport 8791 -s 192.168.50.112 -j RETURN; \
+  iptables -C DOCKER-USER -p tcp --dport 8791 -j DROP 2>/dev/null || \
+  iptables -I DOCKER-USER 2 -p tcp --dport 8791 -j DROP'
+
+[Install]
+WantedBy=multi-user.target
