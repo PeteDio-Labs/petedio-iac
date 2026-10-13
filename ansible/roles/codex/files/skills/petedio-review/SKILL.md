@@ -159,8 +159,14 @@ checked**, and don't escalate on it alone:
   run. For example, `sync` from `plane-sync.yml` updates Plane and tests nothing.
 
 With no validation CI, a test result claimed in the PR body is unverified. Say so, and
-weigh the diff on its own. A read that GitHub denies, such as "Resource not accessible
-by integration", is a gap.
+weigh the diff on its own.
+
+The CI evidence is the two checks reads and the two required-check reads in step 1 of
+gathering. A denied read of one of them, such as "Resource not accessible by
+integration", is a gap. Once they succeed, don't read check runs, commit statuses or
+Actions runs to confirm them. Read a run only to explain a failed, pending or skipped
+check. When GitHub denies that read, name the check it leaves unexplained. That denial
+isn't a gap in the CI evidence.
 
 ### Sensitive areas
 
@@ -207,7 +213,7 @@ purpose explains it and the review finds no blocking defect.
 If missing access or evidence prevents a complete review, use **Escalate to Pedro**
 unless a known P0 or P1 already requires **Changes requested**. State what you could
 not check. Never give **No blocking findings** after an incomplete review. No required
-checks and no validation CI are not missing evidence (PET-609).
+checks, no validation CI and a denied run read are not missing evidence (PET-609).
 
 ## Post the review
 
