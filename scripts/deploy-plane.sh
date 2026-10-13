@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # deploy-plane.sh — resolve Plane's secrets from Vault and run configure-plane.yml
-# against LXC 235.
+# against LXC 235. The playbook has two plays: Plane in /opt/plane, and the MCP shim in
+# /opt/plane-mcp (PET-292, codified by PET-610).
 #
 # Operator run. Resolves under the ansible AppRole and passes as no_log extra-vars:
 #   kv/db/plane        password    -> plane_db_password   (the database owner on 231)
@@ -9,6 +10,7 @@
 #   kv/services/plane  secret_key_minio -> plane_minio_secret_key
 #   kv/services/plane  live_secret_key  -> plane_live_secret_key  (LIVE_SERVER_SECRET_KEY)
 #   kv/services/plane  mq_password      -> plane_mq_password      (bundled RabbitMQ)
+#   kv/services/plane  api_key          -> plane_mcp_api_key      (the MCP shim's Plane PAT, PET-610)
 #   AppRole creds: $SECRETS_DIR/ansible.{role_id,secret_id} (gitignored .secrets/)
 #
 # Manual-validation-first (standing convention, PET-266): this script IS the
@@ -56,7 +58,9 @@ LIVE_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=live_secret_key kv/servi
   || die "cannot read kv/services/plane field 'live_secret_key'."
 MQ_PW="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=mq_password kv/services/plane)" \
   || die "cannot read kv/services/plane field 'mq_password'."
-echo "  resolved 6 secrets (values not printed)"
+MCP_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=api_key kv/services/plane)" \
+  || die "cannot read kv/services/plane field 'api_key'."
+echo "  resolved 7 secrets (values not printed)"
 
 step "Preflight: is 235 up and does it have the container features?"
 ssh -i ~/.ssh/id_ed25519_ansible -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 \
@@ -77,17 +81,23 @@ cleanup(){ rm -rf "$VARS_DIR"; }
 trap cleanup EXIT INT TERM
 VARS_FILE="$VARS_DIR/plane-vars.json"
 (umask 077; : > "$VARS_FILE")
-python3 - "$VARS_FILE" "$DB_PW" "$SECRET_KEY" "$MINIO_AK" "$MINIO_SK" "$LIVE_KEY" "$MQ_PW" <<'PYEOF'
-import json, sys
-path, db, sec, ak, sk, live, mq = sys.argv[1:8]
-with open(path, "w") as fh:
+# The secrets reach python through its environment, not its argv. Arguments show in `ps`
+# to every local user; /proc/<pid>/environ is readable only by the process owner. The same
+# 2026-08-13 lesson, applied to this hop (PET-610).
+PL_DB="$DB_PW" PL_SEC="$SECRET_KEY" PL_AK="$MINIO_AK" PL_SK="$MINIO_SK" \
+PL_LIVE="$LIVE_KEY" PL_MQ="$MQ_PW" PL_MCP="$MCP_KEY" \
+  python3 - "$VARS_FILE" <<'PYEOF'
+import json, os, sys
+env = os.environ
+with open(sys.argv[1], "w") as fh:
     json.dump({
-        "plane_db_password": db,
-        "plane_secret_key": sec,
-        "plane_minio_access_key": ak,
-        "plane_minio_secret_key": sk,
-        "plane_live_secret_key": live,
-        "plane_mq_password": mq,
+        "plane_db_password": env["PL_DB"],
+        "plane_secret_key": env["PL_SEC"],
+        "plane_minio_access_key": env["PL_AK"],
+        "plane_minio_secret_key": env["PL_SK"],
+        "plane_live_secret_key": env["PL_LIVE"],
+        "plane_mq_password": env["PL_MQ"],
+        "plane_mcp_api_key": env["PL_MCP"],
     }, fh)
 PYEOF
 

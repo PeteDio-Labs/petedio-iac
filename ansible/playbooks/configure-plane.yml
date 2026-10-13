@@ -172,3 +172,136 @@
         msg: >-
           Plane {{ plane_version }} up on http://192.168.50.235:{{ plane_web_port }}
           and {{ plane_public_url }} (Access) · db={{ pg_db }}@{{ pg_host }} · bucket={{ minio_bucket }}@245
+
+# ---- The MCP shim: /opt/plane-mcp (PET-292, codified by PET-610) -------------------------
+#
+# PET-292 built this stack by hand on 2026-08-14. PET-610 moved it here unchanged: on
+# 2026-10-13 the three files under files/plane-mcp/ hashed identical to the live ones, and
+# templates/plane-mcp.env.j2 rendered identical to the live env file. Check the live host
+# before you edit either; a hand edit on 235 since then is drift this play would revert.
+#
+# ⚠ A SEPARATE COMPOSE PROJECT, ON PURPOSE. The tracker must never restart to change the MCP,
+# so this play never touches /opt/plane, and the play above never touches /opt/plane-mcp.
+# Do not merge the two compose files for tidiness (vault/Hosts/235-plane.md).
+#
+# ⚠ THE FIREWALL IS LOAD-BEARING. Caddy publishes :8790 on the LAN because cloudflared runs on
+# LXC 112, another host, and the env file holds Pedro's Plane PAT. Published Docker ports skip
+# INPUT, so the rule lives in DOCKER-USER, and plane-mcp-firewall.service re-applies it at boot
+# because netfilter-persistent is not installed here. Test both directions after a change:
+# healthz returns 000 from the LAN and 200 from 192.168.50.112.
+- name: Configure the Plane MCP shim (LXC 235)
+  hosts: plane
+  become: true
+
+  vars:
+    plane_mcp_dir: /opt/plane-mcp
+    plane_host_ip: 192.168.50.235
+    plane_web_port: 8080
+    plane_workspace_slug: petedio
+    plane_mcp_port: 8790
+    plane_mcp_tunnel_host: 192.168.50.112
+
+  pre_tasks:
+    - name: Fail early if the MCP's Plane PAT was not passed in
+      ansible.builtin.assert:
+        that:
+          - plane_mcp_api_key | default('') | length > 0
+        fail_msg: >-
+          Missing plane_mcp_api_key. Run this via scripts/deploy-plane.sh, which reads
+          kv/services/plane field api_key from Vault and passes it as a no_log extra-var.
+      no_log: true
+
+  tasks:
+    - name: Create the MCP directory
+      ansible.builtin.file:
+        path: "{{ plane_mcp_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # The firewall goes in before the stack comes up, so a fresh host never publishes the
+    # PAT-holding port to the LAN, even for the seconds between the two.
+    - name: Install the unit that restricts the MCP port to the tunnel host
+      ansible.builtin.copy:
+        src: files/plane-mcp/plane-mcp-firewall.service
+        dest: /etc/systemd/system/plane-mcp-firewall.service
+        owner: root
+        group: root
+        mode: "0644"
+      register: plane_mcp_fw_unit
+
+    # A oneshot with RemainAfterExit stays "active" after the rules it set are gone, so a
+    # changed unit must restart to apply. Its inserts test with -C first, so a restart adds
+    # no duplicate.
+    - name: Enable and apply the MCP firewall unit
+      ansible.builtin.systemd:
+        name: plane-mcp-firewall.service
+        enabled: true
+        daemon_reload: "{{ plane_mcp_fw_unit is changed }}"
+        state: "{{ 'restarted' if plane_mcp_fw_unit is changed else 'started' }}"
+
+    - name: Install the MCP compose file
+      ansible.builtin.copy:
+        src: files/plane-mcp/docker-compose.yml
+        dest: "{{ plane_mcp_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Install the Caddyfile that swaps the Access token for the Plane PAT
+      ansible.builtin.copy:
+        src: files/plane-mcp/Caddyfile
+        dest: "{{ plane_mcp_dir }}/Caddyfile"
+        owner: root
+        group: root
+        mode: "0644"
+      register: plane_mcp_caddyfile
+
+    - name: Render plane-mcp.env from Vault-supplied values
+      ansible.builtin.template:
+        src: templates/plane-mcp.env.j2
+        dest: "{{ plane_mcp_dir }}/plane-mcp.env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    # Compose recreates a container whose compose entry or env file changed. It does not see
+    # a change to the bind-mounted Caddyfile, which the next task handles.
+    - name: Bring the MCP stack up
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ plane_mcp_dir }}"
+      register: plane_mcp_up
+      changed_when: >-
+        'Started' in plane_mcp_up.stderr or 'Created' in plane_mcp_up.stderr
+        or 'Recreated' in plane_mcp_up.stderr
+
+    # The Caddyfile sets `admin off`, so Caddy cannot reload in place. A restart re-binds the
+    # file, which the copy above replaced with a new inode. A task, not a handler: the
+    # health wait below must see the restarted Caddy.
+    - name: Restart Caddy when its Caddyfile changed  # noqa: no-handler
+      ansible.builtin.command:
+        cmd: docker compose restart caddy
+        chdir: "{{ plane_mcp_dir }}"
+      when: plane_mcp_caddyfile is changed
+      changed_when: true
+
+    - name: Wait for the shim to answer on the host
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ plane_mcp_port }}/healthz"
+        status_code: 200
+        timeout: 5
+      register: plane_mcp_health
+      retries: 12
+      delay: 5
+      until: plane_mcp_health is succeeded
+
+    - name: Assert DOCKER-USER admits only the tunnel host to the MCP port
+      ansible.builtin.command:
+        cmd: "iptables -C DOCKER-USER {{ item }}"
+      loop:
+        - "-p tcp --dport {{ plane_mcp_port }} -s {{ plane_mcp_tunnel_host }} -j RETURN"
+        - "-p tcp --dport {{ plane_mcp_port }} -j DROP"
+      changed_when: false
