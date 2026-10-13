@@ -1,27 +1,27 @@
 [Unit]
-# Published Docker ports bypass INPUT, so the shim on :8790 and :8791 would otherwise be
-# reachable by anything on the LAN — and each port holds a Plane PAT. Restrict both to the
-# cloudflared tunnel host (LXC 112), which is the only legitimate client. :8791 is Tom's
-# site (PET-610).
+# The shim on :8790 and :8791 holds a Plane PAT per port, and it must answer only the
+# cloudflared tunnel host (LXC 112). /usr/local/sbin/plane-mcp-firewall sets the rules and
+# explains them.
 #
-# iptables rules do not survive a reboot and netfilter-persistent is not installed
-# here, so this unit is the persistence. Idempotent: -C tests before inserting.
-Description=Restrict plane-mcp shim (:8790, :8791) to the cloudflared tunnel host
-After=docker.service
-Requires=docker.service
+# FAIL CLOSED. The unit runs before docker.service, and docker.service requires it through
+# the RequiredBy= symlink below. When the rules cannot be set, Docker does not start, so no
+# port is ever published unguarded. That takes the Plane tracker down with it, on purpose.
+#
+# ⚠ NEVER restart or stop this unit. Docker requires it, so a stop or restart propagates to
+# docker.service and restarts every container on 235, the tracker included. RefuseManualStop
+# blocks both. To re-apply the rules, run `systemctl reload plane-mcp-firewall`, which does
+# not propagate. iptables rules do not survive a reboot and netfilter-persistent is not
+# installed here, so this unit is the persistence.
+Description=Restrict the plane-mcp shim (:8790, :8791) to the cloudflared tunnel host
+Before=docker.service
+RefuseManualStop=yes
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c '\
-  iptables -C DOCKER-USER -p tcp --dport 8790 -s 192.168.50.112 -j RETURN 2>/dev/null || \
-  iptables -I DOCKER-USER 1 -p tcp --dport 8790 -s 192.168.50.112 -j RETURN; \
-  iptables -C DOCKER-USER -p tcp --dport 8790 -j DROP 2>/dev/null || \
-  iptables -I DOCKER-USER 2 -p tcp --dport 8790 -j DROP; \
-  iptables -C DOCKER-USER -p tcp --dport 8791 -s 192.168.50.112 -j RETURN 2>/dev/null || \
-  iptables -I DOCKER-USER 1 -p tcp --dport 8791 -s 192.168.50.112 -j RETURN; \
-  iptables -C DOCKER-USER -p tcp --dport 8791 -j DROP 2>/dev/null || \
-  iptables -I DOCKER-USER 2 -p tcp --dport 8791 -j DROP'
+ExecStart=/usr/local/sbin/plane-mcp-firewall
+ExecReload=/usr/local/sbin/plane-mcp-firewall
 
 [Install]
+RequiredBy=docker.service
 WantedBy=multi-user.target

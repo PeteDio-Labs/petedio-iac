@@ -188,12 +188,14 @@
 # for mcp-tom.pdlab.dev (PET-610). Each route's Access policy admits one email, so each port
 # acts as one Plane user.
 #
-# ⚠ THE FIREWALL IS LOAD-BEARING. Caddy publishes both ports on the LAN because cloudflared
-# runs on LXC 112, another host, and the env file holds both PATs. Published Docker ports skip
-# INPUT, so the rules live in DOCKER-USER, and plane-mcp-firewall.service re-applies them at
-# boot because netfilter-persistent is not installed here. The unit task runs before
-# `compose up`, so a new port is closed before Docker publishes it. Test both directions on
-# each port after a change: healthz returns 000 from the LAN and 200 from 192.168.50.112.
+# ⚠ THE FIREWALL IS THE BOUNDARY. Caddy publishes both ports on the LAN because cloudflared
+# runs on LXC 112, another host, and Caddy checks no Access JWT: it swaps in a PAT for any
+# request that reaches it. /usr/local/sbin/plane-mcp-firewall drops every other source in the
+# raw table, over IPv4 and IPv6, ahead of Docker's DNAT. plane-mcp-firewall.service runs it
+# before docker.service, and docker.service requires it, so a boot fails closed. Never
+# restart or stop the unit, because that restarts Docker and the tracker with it; this play
+# reloads it. Test both directions on each port after a change: healthz returns 000 from the
+# LAN over IPv4 and IPv6, and 200 from 192.168.50.112.
 - name: Configure the Plane MCP shim (LXC 235)
   hosts: plane
   become: true
@@ -231,7 +233,16 @@
 
     # The firewall goes in before the stack comes up, so a fresh host never publishes the
     # PAT-holding port to the LAN, even for the seconds between the two.
-    - name: Install the unit that restricts the MCP port to the tunnel host
+    - name: Install the script that restricts the MCP ports to the tunnel host
+      ansible.builtin.template:
+        src: templates/plane-mcp-firewall.sh.j2
+        dest: /usr/local/sbin/plane-mcp-firewall
+        owner: root
+        group: root
+        mode: "0755"
+      register: plane_mcp_fw_script
+
+    - name: Install the unit that runs it before Docker
       ansible.builtin.copy:
         src: files/plane-mcp/plane-mcp-firewall.service
         dest: /etc/systemd/system/plane-mcp-firewall.service
@@ -240,15 +251,35 @@
         mode: "0644"
       register: plane_mcp_fw_unit
 
+    # The systemd module skips `enable` for a unit that is already enabled, so it would never
+    # add the docker.service.requires symlink to a host that ran the older unit. reenable
+    # rebuilds the links from the current [Install] section.
+    - name: Rebuild the firewall unit's install links  # noqa: no-handler command-instead-of-module
+      ansible.builtin.command:
+        cmd: systemctl reenable plane-mcp-firewall.service
+      when: plane_mcp_fw_unit is changed
+      changed_when: true
+
     # A oneshot with RemainAfterExit stays "active" after the rules it set are gone, so a
-    # changed unit must restart to apply. Its inserts test with -C first, so a restart adds
-    # no duplicate.
-    - name: Enable and apply the MCP firewall unit
+    # change must re-run the script. Reload, never restart: docker.service requires this
+    # unit, so a restart would restart Docker and the tracker, and RefuseManualStop refuses it
+    # anyway. On a host where the unit is inactive, `reloaded` starts it.
+    - name: Apply the MCP firewall
       ansible.builtin.systemd:
         name: plane-mcp-firewall.service
         enabled: true
         daemon_reload: "{{ plane_mcp_fw_unit is changed }}"
-        state: "{{ 'restarted' if plane_mcp_fw_unit is changed else 'started' }}"
+        state: >-
+          {{ 'reloaded' if (plane_mcp_fw_unit is changed or plane_mcp_fw_script is changed)
+          else 'started' }}
+
+    # With no state, the module only reads the unit's properties.
+    - name: Assert docker.service requires the MCP firewall
+      ansible.builtin.systemd:
+        name: docker.service
+      register: plane_mcp_docker_unit
+      failed_when: >-
+        'plane-mcp-firewall.service' not in plane_mcp_docker_unit.status.Requires | default('') | split
 
     - name: Install the MCP compose file
       ansible.builtin.copy:
@@ -310,12 +341,22 @@
       delay: 5
       until: plane_mcp_health is succeeded
 
-    - name: Assert DOCKER-USER admits only the tunnel host to both MCP ports
+    - name: Assert the raw table admits only the tunnel host to both MCP ports
       ansible.builtin.command:
-        cmd: "iptables -C DOCKER-USER {{ item }}"
+        cmd: "{{ item }}"
       loop:
-        - "-p tcp --dport {{ plane_mcp_port }} -s {{ plane_mcp_tunnel_host }} -j RETURN"
-        - "-p tcp --dport {{ plane_mcp_port }} -j DROP"
-        - "-p tcp --dport {{ plane_mcp_tom_port }} -s {{ plane_mcp_tunnel_host }} -j RETURN"
-        - "-p tcp --dport {{ plane_mcp_tom_port }} -j DROP"
+        - "iptables -t raw -C PREROUTING ! -i lo -p tcp --dport {{ plane_mcp_port }} ! -s {{ plane_mcp_tunnel_host }} -j DROP"
+        - "iptables -t raw -C PREROUTING ! -i lo -p tcp --dport {{ plane_mcp_tom_port }} ! -s {{ plane_mcp_tunnel_host }} -j DROP"
+        - "ip6tables -t raw -C PREROUTING ! -i lo -p tcp --dport {{ plane_mcp_port }} -j DROP"
+        - "ip6tables -t raw -C PREROUTING ! -i lo -p tcp --dport {{ plane_mcp_tom_port }} -j DROP"
       changed_when: false
+
+    # The bind in docker-compose.yml is IPv4-only. An IPv6 listener means it regressed.
+    - name: Assert neither MCP port listens on IPv6
+      ansible.builtin.command:
+        cmd: "ss -Hltn '( sport = :{{ plane_mcp_port }} or sport = :{{ plane_mcp_tom_port }} )'"
+      register: plane_mcp_listeners
+      changed_when: false
+      failed_when: >-
+        plane_mcp_listeners.rc != 0 or '[' in plane_mcp_listeners.stdout
+        or plane_mcp_listeners.stdout_lines | length == 0

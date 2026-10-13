@@ -56,9 +56,10 @@ module "cloudflare_ingress" {
     # its own, which is exactly what Managed OAuth requires of an origin.
     #
     # Why the origin is a LAN address and not loopback: cloudflared runs on LXC 112, a
-    # DIFFERENT host, so a 127.0.0.1 bind on 235 would be unreachable. Caddy's Access-JWT
-    # check is what gates this, not the bind address (the MCP server itself is loopback-only
-    # behind Caddy and is never published to the LAN).
+    # DIFFERENT host, so a 127.0.0.1 bind on 235 would be unreachable. Caddy checks no
+    # Access JWT, so the origin firewall on 235 (plane-mcp-firewall.service) is the
+    # boundary: it admits only 112 to :8790 and :8791. The MCP server itself is never
+    # published; only Caddy reaches it.
     #
     # access_emails is the WHOLE authorization boundary here. The shim holds a service PAT,
     # so anyone who passes Access acts as its owner in Plane — keep this list to one person.
