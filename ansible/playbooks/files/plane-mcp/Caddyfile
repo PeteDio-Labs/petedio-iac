@@ -39,3 +39,31 @@
 		respond "not found" 404
 	}
 }
+
+# Tom's site (PET-610), the same shim with Tom's PAT. mcp-tom.pdlab.dev reaches it through
+# the tunnel, and Access admits only Tom's email. Plane scopes every call to Tom's own roles,
+# so this port can do only what Tom can do in the web app. Keep it a copy of :8790 with one
+# difference, the PAT.
+:8791 {
+	log {
+		output stdout
+		format console
+	}
+
+	@mcp path /mcp /mcp/*
+	handle @mcp {
+		uri replace /mcp /http/api-key/mcp
+		reverse_proxy plane-mcp:8211 {
+			header_up Authorization "Bearer {env.PLANE_TOM_API_KEY}"
+			header_up X-Workspace-slug {env.PLANE_WORKSPACE_SLUG}
+		}
+	}
+
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	handle {
+		respond "not found" 404
+	}
+}

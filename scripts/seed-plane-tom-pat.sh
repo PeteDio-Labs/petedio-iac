@@ -14,10 +14,13 @@
 # THE ORDER:
 #   1. Pedro creates Tom's Authentik user and invites Tom to petedio as a Member. Tom signs
 #      in to Plane once, which creates his Plane user.
-#   2. this script --email <Tom's email>
-#   3. The PR that adds :8791 merges, then ./scripts/apply-vault-config.sh, so the ansible
-#      AppRole can read kv/services/plane-tom.
-#   4. ./scripts/deploy-plane.sh, so the :8791 Caddy site holds the token.
+#   2. The PR that adds :8791 and mcp-tom.pdlab.dev merges.
+#   3. this script --email <Tom's email>
+#   4. ./scripts/deploy-plane.sh, so the :8791 Caddy site holds the token. The deploy reads
+#      this path and stops when it is absent, so step 3 comes first.
+# No Vault policy change is needed. The ansible policy that deploy-plane.sh logs in under
+# already reads kv/data/services/*. plane-ci, infra-reconcile and claude-ops each name the
+# exact path kv/data/services/plane, so none of them can read kv/services/plane-tom.
 # After --rotate, the old token stays valid. Run step 4, then this script --revoke-older.
 #
 #   Vault token: $VAULT_TOKEN, else the macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM.
@@ -324,8 +327,6 @@ if [ "${OLDER:-0}" != "0" ]; then
 fi
 cat <<NOTE
   Next, in this order:
-    1. Merge the PR that adds :8791, then run ./scripts/apply-vault-config.sh, so the ansible
-       AppRole can read $PATH_KV.
-    2. ./scripts/deploy-plane.sh, so the :8791 Caddy site holds the token.
-    3. After a rotation only: ./scripts/seed-plane-tom-pat.sh --revoke-older
+    1. ./scripts/deploy-plane.sh, so the :8791 Caddy site holds the token.
+    2. After a rotation only: ./scripts/seed-plane-tom-pat.sh --revoke-older
 NOTE

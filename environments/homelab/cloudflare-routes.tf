@@ -80,6 +80,24 @@ module "cloudflare_ingress" {
       }
     }
 
+    # Tom's Plane MCP (PET-610), a copy of mcp.pdlab.dev with a different origin port and email.
+    # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
+    # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same
+    # rule applies as above: access_emails is the whole boundary, so keep it to Tom alone, and
+    # keep mcp.pdlab.dev to Pedro alone.
+    "mcp-tom.pdlab.dev" = {
+      service       = "http://192.168.50.235:8791"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["tsilveri406@gmail.com"]
+
+      managed_oauth = {
+        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        access_token_lifetime = "15m"
+        session_duration      = "168h"
+      }
+    }
+
     # petedio-usaa (PET-590), the savings and trip tracker on usaa-238. The origin is a LAN
     # address because cloudflared runs on LXC 112, a different host. Access is the gate, with
     # the Authentik IdP, and the two emails are the whole allow-list: Pedro and Sonia.

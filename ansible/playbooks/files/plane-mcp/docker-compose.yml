@@ -19,7 +19,8 @@ services:
     # LAN-reachable because cloudflared runs on LXC 112, a DIFFERENT host — a
     # 127.0.0.1 bind here would be unreachable by the tunnel. Caddy's Access-JWT
     # check is what actually gates this, not the bind address.
-    ports: ["8790:8790"]
+    # :8790 is Pedro's site (mcp.pdlab.dev), :8791 is Tom's (mcp-tom.pdlab.dev, PET-610).
+    ports: ["8790:8790", "8791:8791"]
     depends_on: [plane-mcp]
     networks: [mcp]
 

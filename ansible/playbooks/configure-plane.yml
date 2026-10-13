@@ -184,11 +184,16 @@
 # so this play never touches /opt/plane, and the play above never touches /opt/plane-mcp.
 # Do not merge the two compose files for tidiness (vault/Hosts/235-plane.md).
 #
-# ⚠ THE FIREWALL IS LOAD-BEARING. Caddy publishes :8790 on the LAN because cloudflared runs on
-# LXC 112, another host, and the env file holds Pedro's Plane PAT. Published Docker ports skip
-# INPUT, so the rule lives in DOCKER-USER, and plane-mcp-firewall.service re-applies it at boot
-# because netfilter-persistent is not installed here. Test both directions after a change:
-# healthz returns 000 from the LAN and 200 from 192.168.50.112.
+# TWO SITES, ONE STACK. :8790 swaps in Pedro's PAT for mcp.pdlab.dev. :8791 swaps in Tom's PAT
+# for mcp-tom.pdlab.dev (PET-610). Each route's Access policy admits one email, so each port
+# acts as one Plane user.
+#
+# ⚠ THE FIREWALL IS LOAD-BEARING. Caddy publishes both ports on the LAN because cloudflared
+# runs on LXC 112, another host, and the env file holds both PATs. Published Docker ports skip
+# INPUT, so the rules live in DOCKER-USER, and plane-mcp-firewall.service re-applies them at
+# boot because netfilter-persistent is not installed here. The unit task runs before
+# `compose up`, so a new port is closed before Docker publishes it. Test both directions on
+# each port after a change: healthz returns 000 from the LAN and 200 from 192.168.50.112.
 - name: Configure the Plane MCP shim (LXC 235)
   hosts: plane
   become: true
@@ -199,16 +204,20 @@
     plane_web_port: 8080
     plane_workspace_slug: petedio
     plane_mcp_port: 8790
+    plane_mcp_tom_port: 8791
     plane_mcp_tunnel_host: 192.168.50.112
 
   pre_tasks:
-    - name: Fail early if the MCP's Plane PAT was not passed in
+    - name: Fail early if either MCP site's Plane PAT was not passed in
       ansible.builtin.assert:
         that:
           - plane_mcp_api_key | default('') | length > 0
+          - plane_mcp_tom_api_key | default('') | length > 0
+          - plane_mcp_tom_api_key != plane_mcp_api_key
         fail_msg: >-
-          Missing plane_mcp_api_key. Run this via scripts/deploy-plane.sh, which reads
-          kv/services/plane field api_key from Vault and passes it as a no_log extra-var.
+          Missing plane_mcp_api_key or plane_mcp_tom_api_key, or both hold the same PAT.
+          Run this via scripts/deploy-plane.sh, which reads kv/services/plane and
+          kv/services/plane-tom field api_key from Vault and passes them as no_log extra-vars.
       no_log: true
 
   tasks:
@@ -288,20 +297,25 @@
       when: plane_mcp_caddyfile is changed
       changed_when: true
 
-    - name: Wait for the shim to answer on the host
+    - name: Wait for both shim sites to answer on the host
       ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ plane_mcp_port }}/healthz"
+        url: "http://127.0.0.1:{{ item }}/healthz"
         status_code: 200
         timeout: 5
+      loop:
+        - "{{ plane_mcp_port }}"
+        - "{{ plane_mcp_tom_port }}"
       register: plane_mcp_health
       retries: 12
       delay: 5
       until: plane_mcp_health is succeeded
 
-    - name: Assert DOCKER-USER admits only the tunnel host to the MCP port
+    - name: Assert DOCKER-USER admits only the tunnel host to both MCP ports
       ansible.builtin.command:
         cmd: "iptables -C DOCKER-USER {{ item }}"
       loop:
         - "-p tcp --dport {{ plane_mcp_port }} -s {{ plane_mcp_tunnel_host }} -j RETURN"
         - "-p tcp --dport {{ plane_mcp_port }} -j DROP"
+        - "-p tcp --dport {{ plane_mcp_tom_port }} -s {{ plane_mcp_tunnel_host }} -j RETURN"
+        - "-p tcp --dport {{ plane_mcp_tom_port }} -j DROP"
       changed_when: false
