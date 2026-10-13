@@ -11,8 +11,8 @@
 # token lives an hour.
 #
 # ⚠ THE APP DECIDES WHAT gh CAN DO. The token holds contents:read, pull_requests:write,
-# metadata:read, actions:read, checks:read and statuses:read, so a push, a merge, a workflow
-# edit or a workflow rerun fails at GitHub. This wrapper also
+# metadata:read and checks:read, so a push, a merge, a workflow edit or a workflow rerun
+# fails at GitHub. This wrapper also
 # refuses an approval, a merge and a sign-in, because the reviewer's verdict is a comment.
 set -euo pipefail
 

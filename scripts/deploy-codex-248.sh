@@ -4,8 +4,7 @@
 #
 #   kv/services/codex-review-app -> app_id, installation_id, app_pem   (optional)
 #     The petedio-codex-review GitHub App. contents:read, pull_requests:write,
-#     metadata:read, actions:read, checks:read and statuses:read, on every PeteDio-Labs
-#     repository.
+#     metadata:read and checks:read, on every PeteDio-Labs repository.
 #     Seeded by seed-codex-review-app.sh.
 #   kv/services/codex-plane      -> api_key                            (optional)
 #     The `codex` Plane user's token. Seeded by seed-codex-plane-token.sh.

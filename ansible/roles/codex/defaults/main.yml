@@ -53,8 +53,8 @@ codex_authorized_keys:
 # the files on disk as they are, so a plain `ansible-playbook` run never wipes them.
 #
 #   kv/services/codex-review-app -> the petedio-codex-review GitHub App: contents:read,
-#     pull_requests:write, metadata:read, actions:read, checks:read and statuses:read,
-#     installed on every PeteDio-Labs repository.
+#     pull_requests:write, metadata:read and checks:read, installed on every PeteDio-Labs
+#     repository.
 #     With no contents:write, its review cannot count toward branch protection.
 #   kv/services/codex-plane      -> the `codex` Plane user's API token. Member on PET.
 #
