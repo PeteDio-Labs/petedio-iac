@@ -133,6 +133,15 @@
 # --- The Remote Control server ------------------------------------------------------------------
 # The PET-431/PET-499 shape tasks/claude-ops.yml follows: the unit lands always, and starts only
 # once the consent and this directory's trust are on disk.
+# Not every base image ships /usr/local/libexec, and nothing else in the role creates it.
+- name: Create the PM seat's wrapper directory
+  ansible.builtin.file:
+    path: "{{ claude_ops_pm_serve_bin | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Install the PM seat's server wrapper
   ansible.builtin.template:
     src: claude-ops-pm-serve.j2
