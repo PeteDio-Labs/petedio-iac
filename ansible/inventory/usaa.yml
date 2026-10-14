@@ -1,0 +1,20 @@
+# usaa — petedio-usaa, the savings and trip tracker over the USAA ledger (PET-590).
+#
+# ⚠ SPLIT OUT OF hosts.yml ON PURPOSE, like media-dash.yml and palworld.yml, so an
+# unrelated edit to hosts.yml cannot reach this host and an edit here cannot reach any
+# other. ansible.cfg loads the whole inventory/ DIRECTORY, so this file needs no
+# registration. `ansible-playbook` exits 0 when a play matches zero hosts, which is why
+# the group name below must match `hosts: usaa` in configure-usaa.yml.
+---
+all:
+  children:
+    # LXC 238 on pve03, declared in environments/homelab/usaa.tf. root over the
+    # ansible-automation key Terraform installs (var.ssh_public_key), as on every other
+    # TF-created guest here.
+    usaa:
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
+      hosts:
+        usaa-238:
+          ansible_host: 192.168.50.238

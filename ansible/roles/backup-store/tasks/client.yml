@@ -132,10 +132,44 @@
     pvesm add dir {{ backup_store_pve_storage_id }}
     --path {{ backup_store_client_mount }}
     --content backup
+    --is_mountpoint yes
     --prune-backups keep-daily={{ backup_store_keep_daily }},keep-weekly={{ backup_store_keep_weekly }}
   when: backup_store_pve_storage_id not in (backup_pvesm.stdout | default(''))
   register: backup_storage_added
   changed_when: backup_storage_added.rc == 0
+
+# ⚠ THE NFS ASSERT ABOVE RUNS ONLY WHEN THIS ROLE DOES, NOT AT BOOT. The mount is
+# nofail, so a boot that cannot reach ollama-host leaves the mount point an ordinary
+# directory on the root disk. Without is_mountpoint, Proxmox reports that directory
+# as an active store and vzdump writes every nightly archive into it. pve03 did this
+# on 2026-09-04. pve02 did it from 2026-09-14 until its root disk held 0 bytes free
+# and three containers were stuck on `lock: snapshot-delete` (PET-529).
+#
+# With is_mountpoint set, Proxmox reports the store inactive while the path is not a
+# mount point, and vzdump fails instead. The option lives in the cluster-wide
+# /etc/pve/storage.cfg, so the first node sets it and the second reads it back as set.
+- name: Read the store's Proxmox config
+  ansible.builtin.command: pvesh get /storage/{{ backup_store_pve_storage_id }} --output-format json
+  register: backup_storage_cfg
+  changed_when: false
+
+- name: Make Proxmox treat an unmounted store as offline
+  when:
+    - not (backup_storage_cfg.skipped | default(false))
+    - (backup_storage_cfg.stdout | from_json).is_mountpoint | default('no') | string | lower in ['no', '0', 'false', '']
+  ansible.builtin.command: pvesm set {{ backup_store_pve_storage_id }} --is_mountpoint yes
+  changed_when: true
+
+# is_mountpoint must not take a mounted store offline. The NFS assert above proved the
+# mount on this node, so anything but `active` here is the option misbehaving.
+- name: Prove Proxmox still reports the mounted store as active
+  ansible.builtin.command: pvesm status --storage {{ backup_store_pve_storage_id }}
+  register: backup_storage_status
+  changed_when: false
+  failed_when: >-
+    backup_storage_status.rc != 0
+    or (backup_storage_status.stdout_lines | length) < 2
+    or backup_storage_status.stdout_lines[1].split()[2] != 'active'
 
 # noqa reason: the suggested rewrite joins the {%- %} tags onto the prose lines, which in
 # a >- folded block turns a readable conditional into one unbroken line. The `-` markers

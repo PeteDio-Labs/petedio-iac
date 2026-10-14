@@ -11,7 +11,8 @@
 # Inputs, all via ENVIRONMENT (never argv, never workflow interpolation — the
 # branch name is attacker-controlled on a public repo, see the injection note in
 # .github/workflows/plane-sync.yml):
-#   PLANE_BASE_URL     e.g. https://plane.pdlab.dev  (or the LAN address)
+#   PLANE_BASE_URL     the LAN address, http://192.168.50.235:8080. Not https://plane.pdlab.dev:
+#                      Cloudflare Access answers a PAT call there with a sign-in redirect (PET-610)
 #   PLANE_WORKSPACE    workspace slug
 #   PLANE_PROJECT_ID   project UUID
 #   PLANE_API_KEY      PAT from Vault kv/services/plane
@@ -24,8 +25,8 @@
 # refused with a warning and no PATCH. A person moves an item backward by hand.
 #
 # PARTIAL MERGES (PET-490): a HEAD_REF of `pet-<n>-part-<slug>` delivers part of the
-# item, so PLANE_TRANSITION=done on it moves the item to In Review, not Done. The
-# claude loop names its branches this way, so its PRs never close an item.
+# item, so PLANE_TRANSITION=done on it moves the item to In Review, not Done. Use it
+# when the item stays open after the merge, such as for a deploy Pedro still owes.
 #
 # ADVISORY BY DESIGN: every failure path exits 0 with a ::warning:: annotation.
 # Plane is a homelab LXC — it being down must never block a merge across nine

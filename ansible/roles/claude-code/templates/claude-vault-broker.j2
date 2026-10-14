@@ -4,7 +4,7 @@
 # and the only thing that ever holds a token for {{ claude_vault_repo }} (PET-498).
 #
 # ⚠ THIS IS THE FIRST CREDENTIAL ON 247 THAT THE SESSION USER CAN READ. Every other secret
-# here — the loop's App key, the Plane PAT, the workspace mirror's App key — is 0400 root
+# here — the workspace mirror's App key among them — is 0400 root
 # behind a 0500 root broker, and a session running as {{ claude_user }} with no sudo (PET-408)
 # can reach none of them. This one is different, deliberately, because the direction of the
 # work is different: the mirror only FETCHES, and root can do that into a bare mirror the
@@ -12,8 +12,7 @@
 # session. A credential the session cannot read is a credential the session cannot push with.
 #
 # ⚠ SO EVERY PROCESS RUNNING AS {{ claude_user }} CAN PUSH TO THE VAULT. Every Remote Control
-# session on this host, and the work loop's `claude -p` as well if claude_loop_enable is ever
-# set, can run this script and mint a token for {{ claude_vault_repo }}. The 0400 on the key
+# session on this host can run this script and mint a token for {{ claude_vault_repo }}. The 0400 on the key
 # and the 0500 on this file keep OTHER users out. They cannot keep {{ claude_user }} out,
 # because {{ claude_user }} is the user this design hands the credential to. Do not read those
 # modes as a boundary they are not.
@@ -26,12 +25,10 @@
 # repository, and cannot act as Pedro. Both halves — one installed repository, those two
 # permissions — hold in the GitHub UI, where nothing in this repo would notice them changing.
 #
-# ⚠ THIS IS NOT THE LOOP'S APP AND NOT THE MIRROR'S, AND MUST NOT BECOME EITHER. The loop's
-# App carries contents:write and pull_requests:write on petedio-iac; the mirror's is read-only
-# on petedio-workspace and is read by ROOT. Pointing this at {{ claude_loop_conf_dir }} or at
-# {{ claude_workspace_mirror_conf_dir }} would hand a session a credential for petedio-iac, or
-# would put a root-owned key behind a script the session can rewrite. Three Apps, three Vault
-# paths, three directories, three brokers.
+# ⚠ THIS IS NOT THE MIRROR'S APP, AND MUST NOT BECOME IT. The mirror's is read-only on
+# petedio-workspace and is read by ROOT. Pointing this at {{ claude_workspace_mirror_conf_dir }}
+# would put a root-owned key behind a script the session can rewrite. Separate Apps, Vault
+# paths, directories and brokers.
 #
 # WHY A BROKER AND NOT A TOKEN ON DISK. The session user can read the key, so this buys less
 # than the mirror's broker does — but it still buys the two things worth having. A token is
@@ -70,8 +67,8 @@ die() { printf 'claude-vault-broker: %s\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------------- mint
 #
-# Body carried over from claude-workspace-mirror-broker, which carried it from
-# claude-loop-broker. Three things in it are load-bearing and were paid for once already:
+# Body carried over from claude-workspace-mirror-broker, which carried it from the retired
+# work loop's broker. Three things in it are load-bearing and were paid for once already:
 #
 #   · The JWT window is 540s (iat back-dated 60s, exp 480s out) under GitHub's HARD 600s
 #     exp-iat ceiling. It was exactly 600 once — zero margin, and a latent mint failure the

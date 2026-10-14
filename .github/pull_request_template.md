@@ -1,7 +1,7 @@
 <!--
   petedio-iac PR template (PET-149). The verification-evidence block below is the SINGLE
   place the reviewer (PET-135) and Pedro read to judge a PR — fill it; don't make them
-  re-derive it. Delete guidance comments as you go. Loop PRs MUST arrive with this filled.
+  re-derive it. Delete guidance comments as you go. Every PR MUST arrive with this filled.
 -->
 
 ## What & why
@@ -18,14 +18,14 @@ Closes **PET-____**.
 
 ## Verification evidence
 
-> The loop verifies what's cheap on-host; the **authoritative** `plan`/`--check` and every
+> The author verifies what's cheap locally; the **authoritative** `plan`/`--check` and every
 > apply are the operator's (hard rules). Fill every row — "n/a" is a valid answer, blank is not.
 
 **Terraform** (if any `*.tf` changed; else "no `.tf` changed"):
 - `terraform fmt -check -recursive`: <!-- pass / fail -->
 - `terraform validate`: <!-- pass / fail / n/a — note which workspace(s): homelab, vault-config -->
 - **Plan impact** (add/change/destroy): <!-- e.g. "0/0/0 — no .tf changed" · "move-only (0/0/0)" ·
-  "TF changed → operator runs the authoritative plan (loop has no backend creds); see the
+  "TF changed → operator runs the authoritative plan (the author may lack backend creds); see the
   apply-on-merge log". An empty/no-op plan where a change was intended is a FAILURE, not a pass. -->
 
 **Ansible** (if any playbook/role changed; else "no Ansible changed"):
@@ -47,7 +47,7 @@ Closes **PET-____**.
 
 ## Manual steps for Pedro
 
-<!-- Anything the loop can't safely do: terraform apply/import/state, Vault-config apply,
+<!-- Anything the author can't safely do: terraform apply/import/state, Vault-config apply,
      SSH/Ansible against live hosts, repo-settings or network changes, MinIO bucket creation,
      etc. Write the exact commands. "None" if there are none. -->
 

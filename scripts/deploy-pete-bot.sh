@@ -61,13 +61,16 @@ PB_TOKEN="$(read_field kv/services/pete-bot discord_token)"
 PB_CLIENT="$(read_field kv/services/pete-bot discord_client_id)"
 PB_OWNER="$(read_field kv/services/pete-bot owner_user_id)"
 PB_BEARER="$(read_field kv/services/pete-bot alert_bearer_token)"
+# Required (PET-584): the bearer notify-pedro sends to /v1/notify. To mint it, run
+# scripts/seed-pete-bot-notify-token.sh.
+PB_NOTIFY_BEARER="$(read_field kv/services/pete-bot notify_bearer_token)"
 # Optional (PET-395): the token /update dispatches with. Absent leaves /update saying it
 # is not configured, rather than failing the whole deploy.
 PB_UPDATES_TOKEN="$(vault kv get -field=github_updates_token kv/services/pete-bot 2>/dev/null || true)"
 if [ -n "$PB_UPDATES_TOKEN" ]; then
-  echo "  resolved 5 values, including the /update token"
+  echo "  resolved 6 values, including the /update token"
 else
-  echo "  resolved 4 values; no github_updates_token, so /update will say it is not configured"
+  echo "  resolved 5 values; no github_updates_token, so /update will say it is not configured"
 fi
 
 if [ "$BUILD" = "1" ]; then
@@ -92,7 +95,7 @@ trap 'rm -rf "$TMP"' EXIT
 # reach python through the ENVIRONMENT, never argv.
 OUT="$TMP/extra.json" \
 PB_TOKEN="$PB_TOKEN" PB_CLIENT="$PB_CLIENT" PB_OWNER="$PB_OWNER" \
-PB_BEARER="$PB_BEARER" BIN="$BIN" \
+PB_BEARER="$PB_BEARER" PB_NOTIFY_BEARER="$PB_NOTIFY_BEARER" BIN="$BIN" \
 PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
 python3 -c '
 import json, os
@@ -102,6 +105,7 @@ json.dump({
     "pete_bot_discord_client_id":os.environ["PB_CLIENT"],
     "pete_bot_owner_user_id":    os.environ["PB_OWNER"],
     "pete_bot_alert_bearer":     os.environ["PB_BEARER"],
+    "pete_bot_notify_bearer":    os.environ["PB_NOTIFY_BEARER"],
     "pete_bot_github_updates_token": os.environ.get("PB_UPDATES_TOKEN", ""),
 }, open(os.environ["OUT"], "w"))
 '

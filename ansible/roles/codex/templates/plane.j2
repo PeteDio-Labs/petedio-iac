@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+# {{ ansible_managed }}
+# plane (roles/codex, PET-553): read a Plane work item, and post a comment on one, as the
+# `codex` Plane user. Two commands, and nothing else:
+#
+#   plane get PET-553                    the item, its state, its description and comments
+#   plane comment PET-553 < body.html    post the HTML on stdin as a comment
+#
+# The token is {{ codex_plane_conf_dir }}/api_key, 0400 {{ codex_user }}. It belongs to the
+# `codex` Plane user, Member on PET, so a comment shows Codex as its author. The guest
+# firewall in codex.tf lets this host reach {{ codex_plane_url }} and nothing else on the LAN.
+#
+# ⚠ PLANE STORES comment_html EXACTLY AS SENT (PET-479). Send raw tags with escaped body
+# text. This command reads the comment back and fails when the stored value does not start
+# with a tag, because the create call returns 201 either way.
+#
+# Exit 0 on success, 1 on a refusal or an API error, 2 on a usage error.
+import html
+import json
+import re
+import sys
+import urllib.error
+import urllib.request
+
+BASE = "{{ codex_plane_url }}/api/v1/workspaces/{{ codex_plane_workspace }}"
+KEY_FILE = "{{ codex_plane_conf_dir }}/api_key"
+IDENT = re.compile(r"\A[A-Z][A-Z0-9]*-[0-9]+\Z")
+MAX_BODY = 64 * 1024
+
+
+def die(msg, code=1):
+    print(f"plane: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def api_key():
+    try:
+        with open(KEY_FILE, encoding="utf-8") as f:
+            key = f.read().strip()
+    except OSError as e:
+        die(f"cannot read {KEY_FILE} ({e.strerror}). Run scripts/deploy-codex-248.sh.")
+    if not key:
+        die(f"{KEY_FILE} is empty. Run scripts/deploy-codex-248.sh.")
+    return key
+
+
+def call(method, path, body=None):
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(BASE + path, data=data, method=method)
+    req.add_header("X-API-Key", api_key())
+    req.add_header("Accept", "application/json")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")[:300]
+        die(f"{method} {path} returned HTTP {e.code}: {detail}")
+    except urllib.error.URLError as e:
+        die(f"cannot reach {BASE}: {e.reason}")
+
+
+def item(ident):
+    if not IDENT.match(ident):
+        die(f"'{ident}' is not a work-item identifier such as PET-553.", 2)
+    return call("GET", f"/work-items/{ident}/")
+
+
+def text(fragment):
+    # A plain-text view of stored HTML, for reading in a terminal.
+    fragment = re.sub(r"<\s*(br|/p|/li|/h[1-6])\s*/?>", "\n", fragment or "", flags=re.I)
+    fragment = re.sub(r"<\s*li[^>]*>", "- ", fragment, flags=re.I)
+    return html.unescape(re.sub(r"<[^>]+>", "", fragment)).strip()
+
+
+def results(page):
+    return page.get("results", page) if isinstance(page, dict) else page
+
+
+def get(ident):
+    wi = item(ident)
+    pid, wid = wi["project"], wi["id"]
+    states = {s["id"]: s["name"] for s in results(call("GET", f"/projects/{pid}/states/"))}
+    people = {m["id"]: m.get("display_name") or m.get("email")
+              for m in results(call("GET", f"/projects/{pid}/members/"))}
+    comments = results(call("GET", f"/projects/{pid}/work-items/{wid}/comments/?per_page=100"))
+    comments.sort(key=lambda c: c.get("created_at") or "")
+
+    print(f"{ident}: {wi.get('name')}")
+    print(f"State: {states.get(wi.get('state'), wi.get('state'))}")
+    print()
+    print(text(wi.get("description_html")) or "(no description)")
+    for c in comments:
+        who = people.get(c.get("actor") or c.get("created_by"), "unknown")
+        print()
+        print(f"--- {who}, {c.get('created_at', '')[:16].replace('T', ' ')}Z")
+        print(text(c.get("comment_html")))
+
+
+def comment(ident):
+    body = sys.stdin.read()
+    if not body.strip():
+        die("refusing an empty comment. Pipe the HTML on stdin.", 2)
+    if len(body.encode()) > MAX_BODY:
+        die(f"refusing a comment over {MAX_BODY} bytes.", 2)
+    if not body.lstrip().startswith("<"):
+        die("refusing: the comment must be HTML that starts with a tag, such as <p>.", 2)
+    if "\x00" in body:
+        die("refusing: the comment holds a NUL character, which Plane rejects.", 2)
+    wi = item(ident)
+    pid, wid = wi["project"], wi["id"]
+    made = call("POST", f"/projects/{pid}/work-items/{wid}/comments/",
+                {"comment_html": body.strip()})
+    back = call("GET", f"/projects/{pid}/work-items/{wid}/comments/{made['id']}/")
+    if not (back.get("comment_html") or "").startswith("<"):
+        die(f"comment {made['id']} was stored without a leading tag. Read it on the item.")
+    print(f"Posted comment {made['id']} on {ident}.")
+
+
+def main(argv):
+    if len(argv) == 3 and argv[1] == "get":
+        get(argv[2])
+    elif len(argv) == 3 and argv[1] == "comment":
+        comment(argv[2])
+    else:
+        die("usage: plane get PET-<n> | plane comment PET-<n> < body.html", 2)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

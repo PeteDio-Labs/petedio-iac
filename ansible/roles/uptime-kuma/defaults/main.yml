@@ -257,6 +257,42 @@ uptime_kuma_monitors:
     port: 53
     description: "Router resolver at 192.168.50.1. The isolated DNS fault probe."
 
+  # -- the house's public IPv4 (PET-588) ---------------------------------------
+  # Blue Ridge hands the Nest Wifi its public address on a 24-hour DHCP lease, and
+  # Plex remote access depends on the port forward to it (PET-587). This goes DOWN
+  # when ipify returns any other address. It is the one monitor that depends on an
+  # outside service, so an ipify outage also reads as DOWN. Kuma's DOWN message
+  # quotes the body, which tells a new address apart from an ipify fault.
+  # To accept a new address, change the keyword here and redeploy.
+  - name: public-ip
+    type: keyword
+    url: "https://api.ipify.org"
+    keyword: "24.115.142.74"
+    interval: 300
+    retry_interval: 60
+    description: "House public IPv4. DOWN means the address changed or ipify failed."
+
+# ------------------------------------------------------ push monitors (PET-529) --
+# One push monitor per Proxmox node. roles/backup-store installs a daily check on each
+# node that pushes its verdict here: up when the night's archives landed, down with
+# the reason when they did not. The monitor also goes down when no push arrives for
+# 26 hours, which covers a node or timer that stops running.
+#
+# A monitor is declared only for a node whose token is supplied, so a run without
+# the tokens leaves these monitors as they are. scripts/deploy-uptime-kuma.sh reads
+# the tokens from Vault kv/services/backup-health; scripts/seed-backup-health-vault.sh
+# mints them. The same tokens reach the nodes through scripts/deploy-backup-store.sh.
+uptime_kuma_backup_push_tokens: {}
+uptime_kuma_backup_push_monitors:
+  - name: backups-pve02
+    node: pve02
+    description: "Daily backup-health push from pve02: archives landed, root below 85%, no locks."
+  - name: backups-pve03
+    node: pve03
+    description: "Daily backup-health push from pve03: archives landed, root below 85%, no locks."
+# 26 hours: the check runs daily at 06:00 with up to two minutes of jitter.
+uptime_kuma_backup_push_interval: 93600
+
 # ------------------------------------------------------- backup to the HDD --
 # The database lives on an SD card (mmcblk0p2) and this box has no local disk —
 # no USB device is attached. At 18 monitors x 20s that is ~78k row writes a day,

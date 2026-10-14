@@ -1,0 +1,32 @@
+---
+# configure-pve-firewall.yml — turn the Proxmox datacenter firewall on, so the guest rules
+# Terraform declares take effect, and keep every node's own host firewall off (PET-553).
+#
+# The first guest with rules is codex-248 (environments/homelab/codex.tf). Until this play
+# runs, its rules sit in /etc/pve/firewall/248.fw and filter nothing.
+#
+# WHY ANSIBLE. The datacenter switch needs Sys.Modify on /, which the CI token lacks. The
+# nodes' root SSH has it.
+#
+# ⚠ EVERY CLUSTER NODE MUST BE IN THIS PLAY. The role writes each node's host.fw with
+# `enable: 0` before it flips the switch, then refuses to flip it while any node the cluster
+# lists has no such file. A node left out would start dropping its own SSH, web UI and
+# corosync traffic.
+#
+# To preview it, then run it:
+#
+#   ansible-playbook playbooks/configure-pve-firewall.yml --check --diff
+#   ansible-playbook playbooks/configure-pve-firewall.yml
+#
+# To undo it, run it with the switch off. The host.fw files stay, and are harmless:
+#
+#   ansible-playbook playbooks/configure-pve-firewall.yml -e pve_firewall_cluster_enable=false
+#
+# After either, run iac/scripts/lab-verify.sh.
+
+- name: Turn the datacenter firewall on, with every host firewall off
+  hosts: proxmox:pve_new
+  become: true
+
+  roles:
+    - pve-firewall

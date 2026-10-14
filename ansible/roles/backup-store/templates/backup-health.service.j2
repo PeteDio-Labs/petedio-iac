@@ -1,0 +1,17 @@
+# Managed by Ansible: roles/backup-store/templates/backup-health.service.j2.
+[Unit]
+Description=Check that the night's backups landed on {{ backup_store_pve_storage_id }} (PET-529)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=BACKUP_HEALTH_STORE={{ backup_store_pve_storage_id }}
+Environment=BACKUP_HEALTH_MNT={{ backup_store_client_mount }}
+Environment=BACKUP_HEALTH_MAX_AGE_H={{ backup_store_health_max_age_h }}
+Environment=BACKUP_HEALTH_ROOT_MAX={{ backup_store_health_root_max_pct }}
+# The leading dash lets the unit start without the file. The check then fails its push
+# step and says why, instead of the unit refusing to start with no journal verdict.
+EnvironmentFile=-/etc/backup-health.env
+ExecStart=/usr/local/sbin/backup-health
+TimeoutStartSec=300

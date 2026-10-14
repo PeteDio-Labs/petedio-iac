@@ -31,12 +31,13 @@
 # template must exist on pve03's `local` storage or apply-on-merge fails at create:
 #   pveam update && pveam download local debian-13-standard_13.6-1_amd64.tar.zst
 #
-# NO out-of-band post-create step, DELIBERATELY. Nothing here runs Docker, so this host
-# needs no `features{}` (nesting/keyctl) and no device passthrough — the two things a
-# Proxmox API token cannot set (hardcoded root@pam check, docs/GOTCHAS.md). Claude Code is
-# a Node process; containerizing it would buy nothing and would cost a scripts/lxc-features
-# step on every rebuild. Keep it that way: if something here ever seems to want Docker,
-# that is the moment to re-read this paragraph.
+# ONE post-create step: nesting, for systemd. A Proxmox API token cannot set `features{}`
+# (hardcoded root@pam check, docs/GOTCHAS.md), so this resource leaves them out. Debian 13's
+# systemd 257 needs `nesting=1` for tmp.mount, dev-mqueue.mount and run-lock.mount, so
+# ansible/playbooks/configure-lxc-features.yml declares 247 as nesting only, and a rebuild
+# runs it, then `pct reboot 247` (PET-557). Nothing here runs Docker, so there is no keyctl
+# and no device passthrough. Claude Code is a Node process; containerizing it would buy
+# nothing. If something here ever seems to want Docker, re-read this paragraph.
 #
 # NO CLOUDFLARE ROUTE AND NO UFW RULE, DELIBERATELY. Remote Control never opens an inbound
 # port. The session registers with the Anthropic API over outbound HTTPS and polls for
@@ -44,31 +45,13 @@
 # is both the most remotely-accessible box in the lab and the one exposing the least.
 # SSH to it over the tailnet (pete-pi-1 advertises 192.168.50.0/24), as with plane-235.
 #
-# ⚠ THE "NO OUTBOUND CREDENTIAL" CLAIM ABOVE HOLDS ONLY WHILE THE WORK LOOP IS OFF
-# (PET-399). `claude_loop_enable` adds a timer that takes one labelled Plane work item and
-# opens a DRAFT pull request, and that needs two secrets on the box: the Plane PAT CI
-# already uses, and a GitHub App key with contents:write + pull_requests:write on this
-# repo. They land root-owned 0400 in /etc/claude-loop and are reachable only by root,
-# because sessions here run in bypassPermissions and would otherwise read them straight out
-# of a unit's /proc/<pid>/environ.
+# ⚠ THE WORK LOOP IS RETIRED (PET-399, retired by PET-547). Its timer, its GitHub App and
+# its root-owned key in /etc/claude-loop are gone, and the claude-code role removes what it
+# once installed. The history is docs/GOTCHAS.md and vault/Systems/claude-loop.md.
 #
-# The loop's timer therefore runs as ROOT and drops to `claude` with runuser for the
-# session, rather than running as `claude` and reaching up through sudo (PET-408). There is
-# no sudo on this host at all — a grant to that UID is also a grant to every session on it.
-#
-# So this host still opens no inbound port, and still holds no Vault credential — the
-# deploy wrapper does the Vault reading from the operator's machine. What it holds is a
-# path to a one-hour GitHub token. The only thing stopping that token merging its own pull
-# request is `required_approving_review_count: 1` on `main`, which a GitHub App cannot
-# satisfy for its own PR. Lowering that count to zero is what makes this host dangerous,
-# not the loop.
-#
-# ⚠ `enforce_admins` STAYS FALSE, and is not the missing half of that control. Turning it
-# on deadlocked the whole repo for an hour on 2026-09-12 (PET-399): in a one-person org,
-# an author cannot approve their own PR, so with the admin bypass gone there is nobody
-# left who can approve anything and NOTHING can merge. It only ever constrained Pedro, who
-# is not the identity this control exists for.
-# roles/claude-code/README.md and docs/runbooks/claude-loop.md.
+# ⚠ `enforce_admins` STAYS FALSE. Turning it on deadlocked the whole repo for an hour on
+# 2026-09-12 (PET-399): in a one-person org, an author cannot approve their own PR, so with
+# the admin bypass gone nobody can approve anything and NOTHING can merge.
 #
 # APPLYING THIS FILE DOES NOT GIVE YOU A WORKING HOST, and no play can finish the job
 # either. Remote Control requires an interactive claude.ai login — it refuses API keys and

@@ -39,10 +39,13 @@ cd "$(dirname "$0")/.."
 [ -d "$ROOT" ] || { echo "no such root: $ROOT" >&2; exit 1; }
 
 if [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
+  # Pin the homelab CA: the root token must never go to an unverified endpoint (PET-538).
+  export VAULT_CACERT="${VAULT_CACERT:-$PWD/environments/homelab/vault-ca.crt}"
+  [ -f "$VAULT_CACERT" ] || { echo "Vault CA cert not found at $VAULT_CACERT" >&2; exit 1; }
   ROOT_TOKEN="$(security find-generic-password -s vault-root-token -a vault-223 -w 2>/dev/null)" || {
     echo "no Vault root token in the Keychain (vault-root-token / vault-223)" >&2; exit 1; }
   vget() {
-    curl -sk -m 10 -H "X-Vault-Token: $ROOT_TOKEN" \
+    curl -sS --cacert "$VAULT_CACERT" -m 10 -H "X-Vault-Token: $ROOT_TOKEN" \
       "https://192.168.50.223:8200/v1/kv/data/iac/$1" 2>/dev/null \
       | python3 -c "import sys,json;print((json.load(sys.stdin).get('data',{}).get('data') or {}).get('$2',''))"
   }
@@ -56,7 +59,6 @@ if [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
   export TF_VAR_cloudflare_tunnel_id="$(vget cloudflare tunnel_id)"
   export TF_VAR_cloudflare_palworld_tunnel_id="$(vget cloudflare palworld_tunnel_id)"
   export VAULT_ADDR="https://192.168.50.223:8200"; export VAULT_TOKEN="$ROOT_TOKEN"
-  export VAULT_SKIP_VERIFY=true
   # Match CI, or the pool resource shows a spurious destroy.
   export TF_VAR_manage_resource_pool=true
   [ -n "$AWS_ACCESS_KEY_ID" ] || { echo "could not read MinIO keys from Vault" >&2; exit 1; }

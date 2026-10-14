@@ -12,3 +12,8 @@ output "access_application_ids" {
   description = "Map of gated hostname -> Cloudflare Access application id."
   value       = { for h, a in cloudflare_zero_trust_access_application.route : h => a.id }
 }
+
+output "access_application_auds" {
+  description = "Map of gated hostname -> Cloudflare Access application audience (AUD) tag. An app verifying the Cf-Access-Jwt-Assertion JWT checks its `aud` claim against this."
+  value       = { for h, a in cloudflare_zero_trust_access_application.route : h => a.aud }
+}

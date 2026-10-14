@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+# {{ ansible_managed }}
+# notify-pedro (roles/notify-pedro, PET-584): DM Pedro through pete-bot's POST /v1/notify.
+# It is the first way a session on this host reaches him.
+#
+#   notify-pedro "PET-584 is ready for your merge word"
+#   notify-pedro --from claude-247-vault "..."   the bold first line; defaults to user@host
+#   echo "a longer note" | notify-pedro -
+#   notify-pedro --check                          prove the token, and send nothing
+#
+# Lead with what Pedro acts on, in one or two lines. Never put a secret in the text,
+# because Discord keeps it, and don't DM routine progress.
+#
+# The token is ~/.config/notify-pedro/token, 0400, landed from Vault by
+# {{ notify_pedro_deploy_script }}. It opens /v1/notify and nothing else.
+#
+# Exit 0 on delivery, with the message id on stdout. Exit 1 when pete-bot refuses, 2 on a
+# usage error, and 3 when pete-bot cannot be reached.
+import argparse
+import getpass
+import json
+import os
+import pwd
+import socket
+import sys
+import urllib.error
+import urllib.request
+
+URL = "{{ notify_pedro_url }}"
+# From the password database, not $HOME: `runuser` keeps root's HOME.
+TOKEN_FILE = os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".config/notify-pedro/token")
+DEPLOY = "{{ notify_pedro_deploy_script }}"
+# pete-bot's limits. Checked here too, so a long message fails before it leaves the host.
+MAX_FROM = 100
+MAX_MESSAGE = 1800
+
+
+def die(msg, code=1):
+    print(f"notify-pedro: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def token():
+    try:
+        with open(TOKEN_FILE, encoding="utf-8") as f:
+            value = f.read().strip()
+    except OSError as e:
+        die(f"cannot read {TOKEN_FILE} ({e.strerror}). Ask Pedro to run {DEPLOY}.")
+    if not value:
+        die(f"{TOKEN_FILE} is empty. Ask Pedro to run {DEPLOY}.")
+    return value
+
+
+def post(body):
+    req = urllib.request.Request(URL, data=json.dumps(body).encode(), method="POST")
+    req.add_header("Authorization", "Bearer " + token())
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode(errors="replace"))
+        except ValueError:
+            detail = {}
+        return e.code, detail if isinstance(detail, dict) else {}
+    except OSError as e:  # URLError, a timeout, or a reset mid-read
+        die(f"cannot reach {URL} ({getattr(e, 'reason', e)}). pete-bot may be down.", 3)
+    try:
+        body = json.loads(raw.decode(errors="replace"))
+    except ValueError:
+        body = {}
+    return status, body if isinstance(body, dict) else {}
+
+
+def main():
+    p = argparse.ArgumentParser(prog="notify-pedro", description="DM Pedro through pete-bot.")
+    p.add_argument("--from", dest="sender", default=f"{getpass.getuser()}@{socket.gethostname()}",
+                   help="the sender line, 1-100 characters")
+    p.add_argument("--check", action="store_true", help="prove the token, and send nothing")
+    p.add_argument("message", nargs="*", help="the text, or - to read it from stdin")
+    a = p.parse_args()
+
+    if a.check:
+        # pete-bot checks the bearer before the body. An empty body answers 400 with a good
+        # token and 401 with a bad one, and sends nothing either way.
+        status, _ = post({})
+        if status == 400:
+            print("notify-pedro: pete-bot accepts the token. Nothing was sent.")
+            return
+        if status == 401:
+            die(f"pete-bot refused the token. Ask Pedro to run {DEPLOY}.")
+        die(f"pete-bot answered HTTP {status}, not the 400 a good token gets.")
+
+    # Stdin only on an explicit -, so a session that forgets the text gets a usage error
+    # instead of a command that waits on an open pipe until its timeout.
+    text = sys.stdin.read() if a.message == ["-"] else " ".join(a.message)
+    text = text.strip()
+    sender = a.sender.strip()
+    if not text:
+        die("no message. Pass it as arguments, or pass - and pipe it in.", 2)
+    if not 1 <= len(sender) <= MAX_FROM:
+        die(f"--from must be 1-{MAX_FROM} characters.", 2)
+    if len(text) > MAX_MESSAGE:
+        die(f"the message is {len(text)} characters, and the limit is {MAX_MESSAGE}.", 2)
+
+    status, body = post({"from": sender, "message": text})
+    if status == 200 and body.get("messageId"):
+        print(f"delivered, messageId {body['messageId']}")
+        return
+    if status == 401:
+        die(f"pete-bot refused the token. Ask Pedro to run {DEPLOY}.")
+    detail = f"{body.get('error', '')} {body.get('detail', '')}".strip()[:300]
+    die(f"pete-bot answered HTTP {status}: {detail or 'no detail'}")
+
+
+if __name__ == "__main__":
+    main()

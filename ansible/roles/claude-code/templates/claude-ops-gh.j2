@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+{{ ansible_managed | comment }}
+# claude-ops-gh — run gh as the claude-ops App, for one command (PET-531).
+#
+#   {{ claude_ops_gh }} pr create --draft --fill
+#   {{ claude_ops_gh }} pr view 123
+#
+# The wrapper mints an installation token through {{ claude_ops_github_broker }} and runs gh
+# with GH_TOKEN set in that one process's environment. Nothing logs gh in, and nothing writes
+# a token to ~/.config/gh/hosts.yml, to a file or to argv. The token lives an hour and dies
+# with the command that used it.
+#
+# ⚠ THE APP DECIDES WHAT gh CAN DO, NOT THIS SCRIPT. The token reaches whatever repository
+# under {{ claude_ops_github_org }} the App is installed on, with contents:write,
+# pull_requests:write and workflows:write. Anything outside that — another organization, a
+# merge into a protected `main` — fails at GitHub with a 403 or a 404. Pedro decides every
+# merge (this repo's CLAUDE.md): this wrapper never runs `gh pr merge`; nothing enforces that
+# beyond the same discipline every other session on this host holds itself to.
+#
+# ⚠ ~/.local/bin IS NOT ON THE REMOTE CONTROL UNIT'S PATH. Call this by its full path.
+set -euo pipefail
+
+ORG={{ claude_ops_github_org }}
+
+die() { printf 'claude-ops-gh: %s\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" -ne 0 ] || die "refusing to run as root."
+[ "$(id -un)" = "{{ claude_ops_user }}" ] || die "must run as {{ claude_ops_user }}, not $(id -un)."
+command -v gh >/dev/null || die "gh is not in PATH."
+
+# `gh auth login` and `gh auth setup-git` would write a credential to disk, and `gh auth token`
+# prints one. Only `gh auth status` is harmless, and it is useful to see which identity answers.
+if [ "${1:-}" = auth ] && [ "${2:-}" != status ]; then
+  die "refusing 'gh auth ${2:-}'. This wrapper supplies a token per command; nothing logs in."
+fi
+
+# `gh auth status --show-token` and `-t` print the minted token, so every argument after
+# `status` is checked, not only the first. `-t` can hide in a cluster such as `-at`, so any
+# single-dash cluster holding a `t` is refused, except `-h<host>`, whose value follows the h.
+if [ "${1:-}" = auth ]; then
+  for a in "${@:3}"; do
+    case "$a" in
+      --show-token|--show-token=*)
+        die "refusing 'gh auth status $a'. It prints the token this wrapper minted." ;;
+      --*|-h*) ;;
+      -*t*)
+        die "refusing 'gh auth status $a'. It prints the token this wrapper minted." ;;
+    esac
+  done
+fi
+
+# WHICH REPOSITORY. Unlike claude-gh, there is no fixed allow-list to check a remote against:
+# claude-ops's App can be installed on any repository under $ORG. So when GH_REPO is unset and
+# no -R or --repo is passed, the wrapper reads the clone's origin and sets GH_REPO from it
+# whenever that origin names a repository under $ORG — the mint itself is what refuses a
+# repository the App is not actually installed on.
+if [ -z "${GH_REPO:-}" ]; then
+  explicit=0
+  for a in "$@"; do
+    case "$a" in -R|--repo|--repo=*|-R?*) explicit=1 ;; esac
+  done
+  if [ "$explicit" -eq 0 ]; then
+    origin_url="$(git remote get-url origin 2>/dev/null || true)"
+    case "$origin_url" in
+      https://github.com/"$ORG"/*|git@github.com:"$ORG"/*)
+        name="${origin_url##*/}"
+        name="${name%.git}"
+        export GH_REPO="$ORG/$name"
+        ;;
+    esac
+  fi
+fi
+
+token="$({{ claude_ops_github_broker }} mint-token)" || die "the broker could not mint a token."
+GH_TOKEN="$token" GH_HOST=github.com GH_PROMPT_DISABLED=1 exec gh "$@"

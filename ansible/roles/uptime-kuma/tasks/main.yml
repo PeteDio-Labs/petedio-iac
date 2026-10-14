@@ -238,6 +238,23 @@
     state: directory
     mode: "0755"
 
+# Push monitors exist only for nodes whose token was supplied. The token is the
+# monitor's whole secret, so this task logs nothing.
+- name: Declare a backup push monitor for each node with a token
+  ansible.builtin.set_fact:
+    uptime_kuma_push_declared: >-
+      {{ (uptime_kuma_push_declared | default([])) + [item | combine({
+           'type': 'push',
+           'push_token': uptime_kuma_backup_push_tokens[item.node],
+           'interval': uptime_kuma_backup_push_interval,
+           'max_retries': 0,
+         })] }}
+  loop: "{{ uptime_kuma_backup_push_monitors }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: uptime_kuma_backup_push_tokens[item.node] | default('') | length > 0
+  no_log: true
+
 # The config file carries the admin password, so it is root-only and is removed
 # again below — it exists for the duration of one command and never appears in
 # the process table.
@@ -258,7 +275,7 @@
       status_page_slug: "{{ uptime_kuma_status_page_slug }}"
       status_page_title: "{{ uptime_kuma_status_page_title }}"
       api_key_name: "{{ uptime_kuma_api_key_name }}"
-      monitors: "{{ uptime_kuma_monitors }}"
+      monitors: "{{ uptime_kuma_monitors + (uptime_kuma_push_declared | default([])) }}"
       notifications: "{{ uptime_kuma_notifications }}"
   no_log: true
 

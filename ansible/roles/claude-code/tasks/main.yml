@@ -3,9 +3,10 @@
 # Remote Control sessions. Idempotent: apt/key/repo/user/clone all converge, and the npm
 # install runs only when the binary is missing (see its comment).
 #
-# NO PRECONDITION ON THE NODE. Unlike plane-235 or openfaas-241 there is no
-# scripts/lxc-features-247.sh to run first: nothing here needs nesting or keyctl, because
-# nothing here runs Docker.
+# NO SCRIPT ON THE NODE. Unlike plane-235 or openfaas-241 there is no
+# scripts/lxc-features-247.sh to run first, and no keyctl, because nothing here runs
+# Docker. The container's `nesting=1`, which systemd 257 needs for its mounts, comes from
+# playbooks/configure-lxc-features.yml (PET-557).
 #
 # WHAT THIS PLAY CANNOT DO. Remote Control needs a real claude.ai login, and there is no
 # unattended path to one — API keys and `claude setup-token` tokens are both refused by the
@@ -128,8 +129,8 @@
     # follow: yes, and this task runs as ROOT while the path lives inside a home the
     # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
     # any file on the host becomes claude-owned on the next play run. That is the one
-    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
-    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    # move that would reach /etc/claude-workspace-mirror/app.pem, which the mirror's design
+    # keeps unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
     follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
@@ -158,9 +159,9 @@
 # atomically. A session could swap .bashrc for a symlink in the window between the two
 # tasks. That needs winning a race inside a play run whose timing the session does not
 # control, so it is far smaller than what this closes — but it is narrowed, not shut.
-# The full fix is to stop root writing into that home at all: move the loop's state to a
-# root-created /var/lib/claude-loop with only the leaf owned by the session user. That is
-# a bigger change than the one this guard belongs to (PET-410).
+# The full fix is to stop root writing into that home at all, and keep any root-written
+# state under a root-created directory in /var/lib. That is a bigger change than the one
+# this guard belongs to (PET-410).
 - name: Check .bashrc is a real file before root writes to it
   ansible.builtin.stat:
     path: "{{ claude_home }}/.bashrc"
@@ -227,8 +228,8 @@
     # follow: yes, and this task runs as ROOT while the path lives inside a home the
     # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
     # any file on the host becomes claude-owned on the next play run. That is the one
-    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
-    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    # move that would reach /etc/claude-workspace-mirror/app.pem, which the mirror's design
+    # keeps unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
     follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
@@ -301,6 +302,15 @@
   ansible.builtin.include_tasks: pve.yml
   when: claude_pve_audit_enable | bool
 
+# --- claude-ops: a second, privileged session user (PET-531) --------------------------------
+# Pedro's Remote Control sessions, never the loop and never Bobbert — a distinct Unix user
+# with its own Vault token, its own GitHub App, its own IaC toolchain install and SSH to the
+# Proxmox nodes. tasks/claude-ops.yml carries the design; defaults/main.yml carries why it is
+# a second user rather than a widened `claude`.
+- name: Deliver the claude-ops user and its Remote Control session
+  ansible.builtin.include_tasks: claude-ops.yml
+  when: claude_ops_enable | bool
+
 # --- Claude Code settings ------------------------------------------------------------------
 # SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles
 # and one-time prompts land here — so an Ansible-owned copy would silently revert choices
@@ -321,8 +331,8 @@
     # follow: yes, and this task runs as ROOT while the path lives inside a home the
     # `claude` user owns. Replace the path with a symlink and root chowns the TARGET:
     # any file on the host becomes claude-owned on the next play run. That is the one
-    # move that would reach /etc/claude-loop/app.pem, which the loop design claims is
-    # unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
+    # move that would reach /etc/claude-workspace-mirror/app.pem, which the mirror's design
+    # keeps unreachable. ansible.builtin.copy already defaults to follow: false; file does not.
     follow: false
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
@@ -342,6 +352,22 @@
         defaultMode: "{{ claude_permission_mode }}"
       env:
         TZ: "{{ claude_timezone }}"
+
+# claude-remote-ops.service belongs to claude-ops (tasks/claude-ops.yml), not to this list —
+# see the reconcile's comment below. Refuse the collision unconditionally, whether or not
+# claude_ops_enable is set, because host_vars can add a session named "ops" on a run that
+# never touches claude-ops.yml at all, and the two units would then fight over one unit file.
+# claude-remote-pm.service (PET-619, tasks/claude-ops-pm.yml) is claude-ops's too, for the
+# same reason.
+- name: Refuse a claude_remote_sessions entry named "ops" or "pm" (claude-ops owns those units)
+  ansible.builtin.assert:
+    that:
+      - "'ops' not in (claude_remote_sessions | map(attribute='name') | list)"
+      - "'pm' not in (claude_remote_sessions | map(attribute='name') | list)"
+    fail_msg: >-
+      claude_remote_sessions has an entry named "ops" or "pm". Those names render
+      claude-remote-ops.service and claude-remote-pm.service, which tasks/claude-ops.yml and
+      tasks/claude-ops-pm.yml own for claude-ops's own Remote Control units — rename this entry.
 
 # --- The Remote Control servers --------------------------------------------------------------
 # One unit per project directory, rendered from claude_remote_sessions.
@@ -402,12 +428,20 @@
   register: claude_units_present
 
 - name: Work out which units are no longer declared
+  # ⚠ claude-remote-ops.service is excluded by name, not folded into claude_remote_sessions
+  # (PET-531): that list, and this reconcile, belong to `claude`. claude-ops's single unit is
+  # delivered by tasks/claude-ops.yml under its own flag, so this reconcile must never treat
+  # an absent claude-ops delivery (claude_ops_enable: false) as a reason to delete a unit it
+  # does not own. The companion assert below keeps the two mechanisms from ever colliding on
+  # the same unit file. claude-remote-pm.service (PET-619) is excluded for the same reason:
+  # tasks/claude-ops-pm.yml delivers it under claude_ops_pm_enable.
   ansible.builtin.set_fact:
     claude_units_stale: >-
       {{ claude_units_present.files | map(attribute='path') | map('basename') | list
          | difference(claude_remote_sessions | map(attribute='name')
                       | map('regex_replace', '^', 'claude-remote-')
-                      | map('regex_replace', '$', '.service') | list) }}
+                      | map('regex_replace', '$', '.service') | list)
+         | difference(['claude-remote-ops.service', 'claude-remote-pm.service']) }}
 
 - name: Stop and disable the undeclared remote-control units
   ansible.builtin.systemd:
@@ -571,14 +605,8 @@
     or (claude_remote_consent.rc | default(1) == 0
         and item.name in claude_sessions_trusted | default([]))
 
-# --- The ticket-driven work loop (PET-399) --------------------------------------------
-# Split into its own file because it is a second, separable thing this host does: the
-# remote-control servers above answer a human, and the loop below answers a label. Kept in
-# THIS role rather than a sibling because it needs claude_user, claude_home,
-# claude_workspace and claude_npm_prefix — four variables a second role would duplicate and
-# drift the day one of them changes.
-#
-# Imported, not included, so ansible-lint and --syntax-check read it on every run whether
-# or not the loop is enabled.
-- name: Install the ticket-driven work loop
-  ansible.builtin.import_tasks: loop.yml
+# --- The retired ticket-driven work loop (PET-399, retired by PET-547) ------------------
+# Pedro decommissioned the loop on 2026-09-30. This removes what the role used to install
+# for it, so a host converged before PET-547 keeps none of it.
+- name: Remove the retired ticket-driven work loop
+  ansible.builtin.import_tasks: loop-retired.yml

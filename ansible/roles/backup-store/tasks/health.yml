@@ -1,0 +1,53 @@
+---
+# backup-health: a daily check that the night's archives reached the share (PET-529).
+# Every guard in client.yml and jobs.yml is about configuration. This one reads the
+# outcome, because pve02's store was configured correctly for two weeks while every
+# archive landed on its root disk.
+- name: Install the backup-health check
+  ansible.builtin.copy:
+    src: backup-health
+    dest: /usr/local/sbin/backup-health
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the backup-health units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - backup-health.service
+    - backup-health.timer
+  register: backup_store_health_units
+
+# The push URL carries the token, so the file is root-only and never logged.
+- name: Write the Kuma push URL for this node
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible: roles/backup-store/tasks/health.yml. Source: Vault kv/services/backup-health.
+      BACKUP_HEALTH_PUSH_URL={{ backup_store_health_kuma_url }}/api/push/{{ backup_store_health_push_tokens[inventory_hostname] }}
+    dest: /etc/backup-health.env
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: backup_store_health_push_tokens[inventory_hostname] | default('') | length > 0
+
+- name: Say when no push token was supplied
+  ansible.builtin.debug:
+    msg: >-
+      No Kuma push token for {{ inventory_hostname }}. The check still runs, but it
+      fails its push step until scripts/deploy-backup-store.sh supplies one.
+  when: backup_store_health_push_tokens[inventory_hostname] | default('') | length == 0
+
+# In check mode a first install writes no unit file, so systemd has nothing to enable.
+- name: Enable the backup-health timer
+  ansible.builtin.systemd_service:
+    name: backup-health.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ backup_store_health_units is changed }}"
+  when: not (ansible_check_mode and backup_store_health_units is changed)

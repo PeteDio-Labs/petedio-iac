@@ -32,6 +32,8 @@
   loop:
     - "{{ claude_iac_tools_dir }}"
     - "{{ claude_iac_tools_dir }}/terraform-{{ claude_terraform_version }}"
+    - "{{ claude_iac_tools_dir }}/vault-{{ claude_vault_cli_version }}"
+    - "{{ claude_iac_tools_dir }}/bun-{{ claude_bun_version }}"
 
 # --- terraform ------------------------------------------------------------------------------
 # The release zip, checked against the pinned sha256. get_url refuses a download whose
@@ -57,6 +59,53 @@
     group: root
     creates: "{{ claude_iac_tools_dir }}/terraform-{{ claude_terraform_version }}/terraform"
 
+# --- Vault CLI (PET-531) ---------------------------------------------------------------------
+# Not gated on claude_ops_enable — see defaults/main.yml. claude-ops renews its own Vault
+# token with this binary; `claude` gets it too, unused until something reads it.
+
+- name: Download the pinned Vault CLI release
+  ansible.builtin.get_url:
+    url: >-
+      https://releases.hashicorp.com/vault/{{ claude_vault_cli_version }}/vault_{{
+      claude_vault_cli_version }}_linux_amd64.zip
+    dest: "{{ claude_iac_tools_dir }}/vault_{{ claude_vault_cli_version }}_linux_amd64.zip"
+    checksum: "sha256:{{ claude_vault_cli_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Unpack the Vault CLI
+  ansible.builtin.unarchive:
+    src: "{{ claude_iac_tools_dir }}/vault_{{ claude_vault_cli_version }}_linux_amd64.zip"
+    dest: "{{ claude_iac_tools_dir }}/vault-{{ claude_vault_cli_version }}"
+    remote_src: true
+    owner: root
+    group: root
+    creates: "{{ claude_iac_tools_dir }}/vault-{{ claude_vault_cli_version }}/vault"
+
+# --- Bun (PET-531) -----------------------------------------------------------------------------
+# The workspace repo's own tooling rule: Bun, never npm/yarn/pnpm (this file's root CLAUDE.md).
+# claude-ops's workspace clone is petedio-workspace, which is a Bun project.
+
+- name: Download the pinned Bun release
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/oven-sh/bun/releases/download/bun-v{{ claude_bun_version }}/bun-linux-x64.zip
+    dest: "{{ claude_iac_tools_dir }}/bun-{{ claude_bun_version }}-linux-x64.zip"
+    checksum: "sha256:{{ claude_bun_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Unpack Bun
+  ansible.builtin.unarchive:
+    src: "{{ claude_iac_tools_dir }}/bun-{{ claude_bun_version }}-linux-x64.zip"
+    dest: "{{ claude_iac_tools_dir }}/bun-{{ claude_bun_version }}"
+    remote_src: true
+    owner: root
+    group: root
+    creates: "{{ claude_iac_tools_dir }}/bun-{{ claude_bun_version }}/bun-linux-x64/bun"
+
 # --- ansible-core and ansible-lint ------------------------------------------------------------
 
 - name: Install the pinned ansible-core and ansible-lint into their venv
@@ -77,6 +126,8 @@
     force: true
   loop:
     - { name: terraform, src: "{{ claude_iac_tools_dir }}/terraform-{{ claude_terraform_version }}/terraform" }
+    - { name: vault, src: "{{ claude_iac_tools_dir }}/vault-{{ claude_vault_cli_version }}/vault" }
+    - { name: bun, src: "{{ claude_iac_tools_dir }}/bun-{{ claude_bun_version }}/bun-linux-x64/bun" }
     - { name: ansible, src: "{{ claude_iac_tools_dir }}/ansible/bin/ansible" }
     - { name: ansible-playbook, src: "{{ claude_iac_tools_dir }}/ansible/bin/ansible-playbook" }
     - { name: ansible-galaxy, src: "{{ claude_iac_tools_dir }}/ansible/bin/ansible-galaxy" }
@@ -104,6 +155,8 @@
     - { name: terraform, cmd: /usr/local/bin/terraform version -json }
     - { name: ansible-lint, cmd: /usr/local/bin/ansible-lint --version }
     - { name: shellcheck, cmd: /usr/bin/shellcheck --version }
+    - { name: vault, cmd: /usr/local/bin/vault version }
+    - { name: bun, cmd: /usr/local/bin/bun --version }
   loop_control:
     label: "{{ item.name }}"
   register: claude_iac_tools_versions
@@ -118,6 +171,8 @@
       - claude_iac_tools_versions.results[1].stdout is search('ansible-lint ' ~ claude_ansible_lint_version ~ ' ')
       - claude_iac_tools_versions.results[1].stdout is search('ansible-core:' ~ claude_ansible_core_version ~ ' ')
       - claude_iac_tools_versions.results[2].stdout is search('version. ' ~ claude_shellcheck_version.split('-') | first ~ '$', multiline=True)
+      - claude_iac_tools_versions.results[3].stdout is search('^Vault v' ~ claude_vault_cli_version)
+      - claude_iac_tools_versions.results[4].stdout is search('^' ~ claude_bun_version ~ '$', multiline=True)
     fail_msg: >-
       The IaC toolchain on {{ inventory_hostname }} does not match the pins in
       roles/claude-code/defaults/main.yml. Read the output above.

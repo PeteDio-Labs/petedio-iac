@@ -1,0 +1,20 @@
+{{ ansible_managed | comment }}
+# claude-ops's SSH client config (PET-531): the Proxmox nodes as root, since neither node has
+# an operator account, and codex-248 as codex, where a forced command lets this key queue a
+# review and nothing else (PET-591). StrictHostKeyChecking=accept-new trusts a node's key on the
+# first connection and pins it after that — neither failing cold on an unknown host nor
+# silently accepting a changed one.
+#
+# The private half of {{ claude_ops_ssh_key }} was generated ON THIS HOST, as
+# {{ claude_ops_user }}, and never leaves it: not into Vault, not into CI, not into a
+# Terraform state. scripts/seed-claude-ops-ssh.sh reads back the PUBLIC half only and
+# authorizes it on pve02 (PeteDio-Labs cluster filesystem propagates it to pve03).
+{% for t in claude_ops_ssh_targets %}
+Host {{ t.name }}
+    HostName {{ t.host }}
+    User {{ t.user | default('root') }}
+    IdentityFile {{ claude_ops_ssh_key }}
+    IdentitiesOnly yes
+    StrictHostKeyChecking accept-new
+    UserKnownHostsFile {{ claude_ops_home }}/.ssh/known_hosts
+{% endfor %}

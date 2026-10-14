@@ -1,0 +1,321 @@
+---
+# codex tasks (PET-553) — put the Codex CLI on LXC 248 and leave it ready for one operator
+# step: the OpenAI sign-in. Idempotent: apt, the user, the pinned download and the config
+# files all converge.
+#
+# ONE PRECONDITION ON THE NODE: `nesting=1`, declared in roles/lxc-features. Codex
+# sandboxes its commands with bubblewrap, which creates a user namespace. Proxmox's
+# AppArmor profile denies that (userns_create) unless nesting is on, because PVE adds
+# `allow userns,` only then. Nothing here runs Docker, so the container needs no keyctl.
+#
+# WHAT THIS PLAY CANNOT DO. Codex signs in to a ChatGPT account, and only a person can
+# approve that. The play prints the step and leaves the rest of the host ready. It does not
+# fail on a missing sign-in: no service here waits on one.
+#
+# WHAT THIS PLAY DELIBERATELY DOES NOT DO. It never logs `gh` in. The reviewer's GitHub
+# identity is its own read-and-comment App, which tasks/reviewer.yml lands from Vault.
+
+- name: Install base packages and dev tooling
+  ansible.builtin.apt:
+    name:
+      - bubblewrap
+      - ca-certificates
+      - curl
+      - git
+      - gnupg
+      - jq
+      - less
+      - make
+      - python3
+      - ripgrep
+      - tmux
+      - unzip
+    state: present
+    update_cache: true
+
+- name: Ensure the apt keyring directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+# --- GitHub CLI --------------------------------------------------------------------------
+# ⚠ INSTALLED AND LEFT UNAUTHENTICATED. Never run `gh auth login` on this host: the token it
+# writes carries Pedro's permissions, and every run here can read it. The reviewer's GitHub
+# identity is its own App, used through codex-gh (tasks/reviewer.yml).
+
+- name: Add the GitHub CLI apt signing key
+  ansible.builtin.get_url:
+    url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+    dest: /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    mode: "0644"
+
+- name: Add the GitHub CLI apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg]
+      https://cli.github.com/packages stable main
+    filename: github-cli
+    state: present
+
+- name: Install the GitHub CLI
+  ansible.builtin.apt:
+    name: gh
+    state: present
+    update_cache: true
+
+# --- The session user --------------------------------------------------------------------
+
+- name: Create the session user
+  ansible.builtin.user:
+    name: "{{ codex_user }}"
+    home: "{{ codex_home }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+# authorized_keys holds one line per key, so a key in both lists would keep whichever
+# options the last task wrote. CHECK BEFORE EITHER KEY TASK: the shell-key task replaces a
+# restricted line with an unrestricted one, so an assert after it would fail with the gate
+# key's `restrict,command=` already stripped.
+- name: Refuse a key that is both a shell key and a gate key
+  ansible.builtin.assert:
+    that: >-
+      (codex_authorized_keys | map('split') | map(attribute=1) | list)
+      | intersect(codex_review_gate_keys | map('split') | map(attribute=1) | list)
+      | length == 0
+    fail_msg: >-
+      A key is in both codex_authorized_keys and codex_review_gate_keys. Keep it in one list.
+    quiet: true
+
+- name: Authorize the operator SSH keys for the session user
+  ansible.posix.authorized_key:
+    user: "{{ codex_user }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ codex_authorized_keys }}"
+
+# Install the gate before its keys, so no run leaves a key whose forced command is missing.
+- name: Install the review gate
+  ansible.builtin.template:
+    src: codex-review-gate.j2
+    dest: /usr/local/bin/codex-review-gate
+    owner: root
+    group: root
+    mode: "0755"
+
+# The options belong to these keys alone. A key in codex_authorized_keys keeps its shell.
+- name: Authorize the review-gate keys for the session user
+  ansible.posix.authorized_key:
+    user: "{{ codex_user }}"
+    key: "{{ item }}"
+    key_options: 'restrict,command="/usr/local/bin/codex-review-gate"'
+    state: present
+  loop: "{{ codex_review_gate_keys }}"
+
+# --- The Codex CLI -----------------------------------------------------------------------
+# The release's codex-package, checked against its published sha256. defaults/main.yml says
+# why the package and not the bare binary. Each version unpacks to its own directory, and
+# the symlink picks one, so an upgrade or a rollback is a change to codex_version alone.
+
+- name: Create the Codex version directory
+  ansible.builtin.file:
+    path: "/usr/local/lib/codex/{{ codex_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the Codex release
+  ansible.builtin.get_url:
+    url: "{{ codex_url }}"
+    dest: "/usr/local/lib/codex/{{ codex_version }}/{{ codex_asset }}.tar.gz"
+    checksum: "sha256:{{ codex_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Unpack the Codex binary
+  ansible.builtin.unarchive:
+    src: "/usr/local/lib/codex/{{ codex_version }}/{{ codex_asset }}.tar.gz"
+    dest: "/usr/local/lib/codex/{{ codex_version }}"
+    remote_src: true
+    creates: "/usr/local/lib/codex/{{ codex_version }}/bin/codex"
+    owner: root
+    group: root
+
+# 0.159.3 was first installed from the bare-binary asset, into the same directory.
+- name: Remove the bare-binary install
+  ansible.builtin.file:
+    path: "/usr/local/lib/codex/{{ codex_version }}/{{ item }}"
+    state: absent
+  loop:
+    - codex-x86_64-unknown-linux-musl
+    - codex-x86_64-unknown-linux-musl.tar.gz
+
+- name: Link the pinned Codex version onto the PATH
+  ansible.builtin.file:
+    src: "/usr/local/lib/codex/{{ codex_version }}/bin/codex"
+    dest: /usr/local/bin/codex
+    state: link
+    force: true
+
+- name: Read the installed Codex version
+  ansible.builtin.command: /usr/local/bin/codex --version
+  register: codex_installed_version
+  changed_when: false
+  failed_when: codex_version not in codex_installed_version.stdout
+  # Under --check on a first run, the binary is not there yet.
+  when: not ansible_check_mode
+
+# Codex signs in without it, and then fails every tool call. Nothing else would notice.
+- name: Check for the code-mode host beside the binary
+  ansible.builtin.stat:
+    path: "/usr/local/lib/codex/{{ codex_version }}/bin/codex-code-mode-host"
+  register: codex_code_mode_host
+
+- name: Refuse an install that cannot run a command
+  ansible.builtin.assert:
+    that: codex_code_mode_host.stat.executable | default(false)
+    fail_msg: >-
+      /usr/local/lib/codex/{{ codex_version }}/bin/codex-code-mode-host is missing, so every
+      Codex tool call fails. Install the codex-package asset, not the bare binary.
+    quiet: true
+  when: not ansible_check_mode
+
+# --- Configuration -----------------------------------------------------------------------
+# The defaults and the limits live under /etc/codex, root-owned, so a run cannot rewrite
+# them. ~/.codex belongs to the session user, because Codex writes its sign-in, its
+# sessions and its logs there.
+
+# The sandbox's precondition, checked where it fails. Without `nesting=1`, every command
+# Codex runs fails with "bwrap: Creating new namespace failed: Permission denied".
+- name: Check that the container can create a user namespace
+  ansible.builtin.command: unshare --user true
+  register: codex_userns
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Refuse to leave a host whose sandbox cannot start
+  ansible.builtin.assert:
+    that: codex_userns.rc == 0
+    fail_msg: >-
+      `unshare --user` failed ({{ codex_userns.stderr | default('') }}), so the Codex sandbox
+      cannot start. Declare `nesting: "1"` for this container in
+      roles/lxc-features/defaults/main.yml, run configure-lxc-features.yml, and restart it.
+    quiet: true
+
+- name: Create the Codex system config directory
+  ansible.builtin.file:
+    path: /etc/codex
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the Codex system defaults
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: /etc/codex/config.toml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Write the Codex admin requirements
+  ansible.builtin.template:
+    src: requirements.toml.j2
+    dest: /etc/codex/requirements.toml
+    owner: root
+    group: root
+    mode: "0644"
+
+# Reads both Plus windows without starting a run, so a caller can refuse to spend the last
+# of the allowance. The limits are root-owned, in the script itself.
+- name: Install the quota check
+  ansible.builtin.template:
+    src: codex-quota.j2
+    dest: /usr/local/bin/codex-quota
+    owner: root
+    group: root
+    mode: "0755"
+
+# Reviews spend one allowance, so codex-review runs them in series behind a lock.
+- name: Install the review runner
+  ansible.builtin.template:
+    src: codex-review.j2
+    dest: /usr/local/bin/codex-review
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create the session user's Codex home
+  ansible.builtin.file:
+    path: "{{ codex_home }}/.codex"
+    state: directory
+    # follow: false, for the reason roles/claude-code gives (PET-410): this task runs as
+    # root on a path the session user owns, and a symlink there would hand that user the
+    # target.
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0700"
+
+# AGENTS.md is guidance, not a boundary: the session user owns the directory it sits in and
+# can replace it. The boundaries are the guest firewall, requirements.toml and the GitHub
+# App's permissions.
+- name: Write the worker's AGENTS.md
+  ansible.builtin.template:
+    src: AGENTS.md.j2
+    dest: "{{ codex_home }}/.codex/AGENTS.md"
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0644"
+
+# The review skill (PET-553) is guidance too, for the same reason. Codex loads it only when a
+# prompt names $petedio-review, because agents/openai.yaml turns implicit invocation off.
+- name: Create the review skill's directories
+  ansible.builtin.file:
+    path: "{{ codex_home }}/.codex/{{ item }}"
+    state: directory
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0755"
+  loop:
+    - skills
+    - skills/petedio-review
+    - skills/petedio-review/agents
+
+- name: Install the review skill
+  ansible.builtin.copy:
+    src: "skills/petedio-review/{{ item }}"
+    dest: "{{ codex_home }}/.codex/skills/petedio-review/{{ item }}"
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0644"
+  loop:
+    - SKILL.md
+    - agents/openai.yaml
+
+- name: Create the work directory
+  ansible.builtin.file:
+    path: "{{ codex_home }}/work"
+    state: directory
+    follow: false
+    owner: "{{ codex_user }}"
+    group: "{{ codex_user }}"
+    mode: "0755"
+
+# --- The reviewer's identities (PET-553) ---------------------------------------------
+
+- name: Configure the reviewer's GitHub and Plane identities
+  ansible.builtin.include_tasks: reviewer.yml
+
+# --- Sign-in state -----------------------------------------------------------------------
+
+- name: Check for the OpenAI sign-in
+  ansible.builtin.stat:
+    path: "{{ codex_home }}/.codex/auth.json"
+  register: codex_auth

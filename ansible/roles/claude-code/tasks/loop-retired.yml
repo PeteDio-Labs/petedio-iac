@@ -1,0 +1,51 @@
+---
+# claude-code / removes the retired ticket-driven work loop (PET-399, retired by PET-547).
+#
+# Pedro decommissioned the loop on 2026-09-30. The GitHub App it pushed with,
+# petedio-claude-loop, is uninstalled and deleted at GitHub, which is what revokes its key.
+# Deleting the key file here revokes nothing; these tasks clear what the role used to
+# install, so no host converged before PET-547 keeps a loop nobody maintains.
+#
+# Reconcile what you removed, not only what you add: without these tasks a host keeps the
+# units, the root-owned key and the broker forever, because nothing would overwrite them.
+# Delete this file once no host carries the loop — lab-verify.sh reports the units' absence.
+
+- name: Check for the retired loop's timer and service
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/claude-loop.{{ item }}"
+  register: claude_loop_retired_units
+  loop:
+    - timer
+    - service
+
+# Stop the service as well as the timer, so a tick that is running when this play arrives
+# ends before its files go. Gated on the unit file: the systemd module fails on a unit it
+# cannot find, and a host that never had the loop has nothing to stop.
+- name: Stop and disable the retired loop's units
+  ansible.builtin.systemd:
+    name: "claude-loop.{{ item.item }}"
+    state: stopped
+    enabled: false
+  loop: "{{ claude_loop_retired_units.results }}"
+  loop_control:
+    label: "claude-loop.{{ item.item }}"
+  when: item.stat.exists
+
+# ⚠ {{ claude_home }}/loop sits in a home the session user owns, so a session could replace
+# it with a symlink. `state: absent` unlinks a symlink rather than following it, and removes
+# a real directory without following the links inside it, so root deletes nothing outside it.
+- name: Remove the retired loop's units, binaries, key, state and clone
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/claude-loop.timer
+    - /etc/systemd/system/claude-loop.service
+    - /usr/local/sbin/claude-loop-tick
+    - /usr/local/sbin/claude-loop-broker
+    - /usr/local/share/claude-loop
+    - /etc/claude-loop
+    - /var/lib/claude-loop
+    - /etc/sudoers.d/claude-loop
+    - "{{ claude_home }}/loop"
+  notify: Reload systemd

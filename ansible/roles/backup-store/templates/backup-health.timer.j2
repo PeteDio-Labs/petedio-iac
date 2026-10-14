@@ -1,0 +1,12 @@
+# Managed by Ansible: roles/backup-store/templates/backup-health.timer.j2.
+[Unit]
+Description=Daily check that the night's backups landed (PET-529)
+
+[Timer]
+OnCalendar={{ backup_store_health_oncalendar }}
+# Catch up after a reboot, so a node that was down at 06:00 still reports.
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

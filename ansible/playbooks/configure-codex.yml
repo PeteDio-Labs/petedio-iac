@@ -1,0 +1,52 @@
+---
+# configure-codex.yml — the Codex CLI on LXC 248 (codex.tf), for the PET-549 proof of
+# concept. Everything the host needs is in roles/codex.
+#
+# ONE NODE-SIDE PRECONDITION: `nesting=1` on the container, which roles/lxc-features
+# declares. Without it the Codex sandbox cannot start, and the role fails on that check.
+#
+# THE SIGN-IN CANNOT BE INJECTED. Codex signs in to a ChatGPT account through a device
+# code that a person approves. The play leaves the host ready and prints the step.
+#
+# ⚠ RUN configure-pve-firewall.yml FIRST, ONCE. Until the datacenter firewall is on, the
+# guest rules in codex.tf do nothing, and this host can reach the whole LAN.
+#
+# Manual-validation-first (PET-266): run this by hand and get it green before any
+# CD-on-merge workflow is wired to it. Nothing in .github/workflows watches this play or
+# inventory/codex.yml.
+#
+#   ansible-playbook playbooks/configure-codex.yml
+#
+# THE REVIEWER'S IDENTITIES COME FROM VAULT (PET-553). Run scripts/deploy-codex-248.sh to
+# land or rotate the GitHub App, the Plane token and the notify-pedro token (PET-584). A
+# plain run leaves all three as they are.
+#
+# Full sequence: ansible/roles/codex/README.md.
+
+- name: Configure the Codex worker (LXC 248)
+  hosts: codex
+  become: true
+
+  roles:
+    - codex
+    # The command a review session runs to DM Pedro (PET-584). codex.tf opens pete-bot's
+    # one port for it above the LAN reject.
+    - role: notify-pedro
+      vars:
+        notify_pedro_users: ["{{ codex_user }}"]
+        notify_pedro_deploy_script: scripts/deploy-codex-248.sh
+
+  post_tasks:
+    - name: Report the sign-in step
+      ansible.builtin.debug:
+        msg:
+          - "Codex {{ codex_version }} is installed. The one step left is the OpenAI sign-in:"
+          - "1. ssh {{ codex_user }}@{{ ansible_host | default('192.168.50.248') }}"
+          - "2. codex login --device-auth   # open the URL it prints, and enter the code"
+          - "3. codex login status          # reads 'Logged in using ChatGPT'"
+      when: not codex_auth.stat.exists
+
+    - name: Report the sign-in on disk
+      ansible.builtin.debug:
+        msg: "Codex {{ codex_version }} is installed, and {{ codex_home }}/.codex/auth.json exists."
+      when: codex_auth.stat.exists

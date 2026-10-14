@@ -3,11 +3,10 @@
 # kv/services/claude-vault-push, so claude-247 can push to the vault repo under its own
 # identity (PET-498).
 #
-# WHY A THIRD APP. claude-247 already holds two GitHub identities: the work loop's App
-# (contents:write, pull_requests:write, on petedio-iac, kv/services/claude-loop) and the
-# workspace mirror's App (contents:read, metadata:read, on petedio-workspace,
-# kv/services/claude-workspace-mirror). Neither reaches petedio-vault, and widening either
-# one would hand it a repository it has no reason to touch. petedio-vault-247 is installed on
+# WHY ITS OWN APP. The workspace mirror's App (contents:read, metadata:read, on
+# petedio-workspace, kv/services/claude-workspace-mirror) does not reach petedio-vault, and
+# widening it would hand it a repository it has no reason to touch. The work loop's App was
+# the other identity here until PET-547 retired it. petedio-vault-247 is installed on
 # petedio-vault alone, with contents:write to push and metadata:read because GitHub requires
 # it on every install — nothing else.
 #
@@ -23,9 +22,9 @@
 # key and asking what the token can reach. A widened install is caught here, not after a host
 # has been pushing with it for a week.
 #
-# WHY IT ALSO CHECKS THE OTHER TWO APPS. This App's id must match neither the loop's App id
-# nor the mirror's. Both are read from Vault, live, not pinned in this script — pinning them
-# would mean the check silently stops working the day either App is rotated.
+# WHY IT ALSO CHECKS THE MIRROR'S APP. This App's id must not match the mirror's. It is read
+# from Vault, live, not pinned in this script — pinning it would mean the check silently
+# stops working the day that App is rotated.
 #
 # WHAT THIS DOES NOT DO. It does not create the App, generate its key, or install it on the
 # repository — those are browser steps on the App's GitHub settings page. It does not deliver
@@ -53,7 +52,6 @@ export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
 export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 VAULT_PATH="kv/services/claude-vault-push"
-LOOP_VAULT_PATH="kv/services/claude-loop"
 MIRROR_VAULT_PATH="kv/services/claude-workspace-mirror"
 ORG="PeteDio-Labs"
 REPO="petedio-vault"
@@ -127,7 +125,7 @@ echo "  app_id=$APP_ID  installation_id=$INSTALLATION_ID"
 # ---------------------------------------------------------------------- vault
 step "Authenticating to Vault"
 # Authenticated here, ahead of the id-collision checks below — earlier than the sibling
-# scripts do it. Those checks read the loop's and the mirror's app_id from Vault, and a read
+# scripts do it. That check reads the mirror's app_id from Vault, and a read
 # that fails because Vault is sealed must never be mistaken for "no conflict found".
 [ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'.
   This is almost always a path problem, not a Vault problem — run the script from inside the
@@ -141,8 +139,8 @@ vault token lookup >/dev/null 2>&1 || die "Vault rejected the token, or $VAULT_A
   Check both before assuming either: ./scripts/pet-secrets doctor reports whether Vault is
   sealed and whether the Keychain still holds the bootstrap chain."
 
-step "Checking this App id against the loop's and the mirror's"
-# CONDITION 4: this App's id must equal neither the loop's app_id nor the mirror's. Each
+step "Checking this App id against the mirror's"
+# CONDITION 4: this App's id must not equal the mirror's app_id. The
 # check reads the other path's app_id from Vault; a read that FAILS — sealed Vault, revoked
 # token, network fault — dies with that fact, rather than being read as "no conflict found".
 refuse_shared_app_id() {
@@ -161,9 +159,8 @@ refuse_shared_app_id() {
   This path needs a second App: contents:write and metadata:read on $REPO alone, installed
   under its own id. Create it, install it on $REPO, and re-run with its key."
 }
-refuse_shared_app_id "$LOOP_VAULT_PATH" "the work loop"
 refuse_shared_app_id "$MIRROR_VAULT_PATH" "the workspace mirror"
-echo "  app $APP_ID matches neither the loop's app_id nor the mirror's."
+echo "  app $APP_ID does not match the mirror's app_id."
 
 # ---------------------------------------------------------------- scope proof
 step "Asking GitHub what this App's own key proves"

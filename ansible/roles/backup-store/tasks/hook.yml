@@ -1,0 +1,22 @@
+---
+# A vzdump hook that saves the Palworld world and warns players before a backup
+# (PET-539). On 2026-09-29 pve03's stop-mode job took CT 234 down mid-session with no
+# warning, and the palworld unit is disabled by design, so the game stayed off.
+#
+# It goes in /etc/vzdump.conf, not on the job, so it covers a manual `vzdump 234` as
+# well as the nightly run, on whichever node holds the guest.
+- name: Install the vzdump hook
+  ansible.builtin.template:
+    src: vzdump-hook.j2
+    dest: "{{ backup_store_hook_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Point vzdump at the hook
+  ansible.builtin.lineinfile:
+    path: /etc/vzdump.conf
+    regexp: '^\s*#?\s*script:'
+    line: "script: {{ backup_store_hook_path }}"
+    create: true
+    mode: "0644"

@@ -184,8 +184,10 @@ if [ -z "$PGNODE" ]; then bad "postgres" "guest 231 not found on any node"; else
     || bad "postgres" "not accepting on $PGNODE"
 fi
 # Vault speaks HTTPS. The same path over http returns a bare 400 that reads as a
-# broken server and is not.
-SEAL=$(on $PVE02 "curl -sk -m 8 https://192.168.50.223:8200/v1/sys/seal-status | grep -o '\"sealed\":[a-z]*'")
+# broken server and is not. The Mac pins the homelab CA rather than asking pve02 to
+# skip verification, so a spoofed endpoint cannot report "unsealed" (PET-538).
+VAULT_CA="$(dirname "$0")/../environments/homelab/vault-ca.crt"
+SEAL=$(curl -sS --cacert "$VAULT_CA" -m 8 https://192.168.50.223:8200/v1/sys/seal-status 2>/dev/null | grep -o '"sealed":[a-z]*')
 [ "$SEAL" = '"sealed":false' ] && ok "vault unsealed" || bad "vault" "${SEAL:-unreachable}"
 
 sec "The media pipeline, end to end"
@@ -338,6 +340,36 @@ BKOK=$(printf '%s\n' "$LASTBK" | grep -m1 '^ok ' || true)
 if [ -n "$BKOK" ]; then ok "kuma backup wrote" "${BKOK#ok }"
 elif [ -z "$LASTBK" ]; then bad "kuma backup" "no run recorded on the Pi"
 else bad "kuma backup" "$(printf '%s\n' "$LASTBK" | tail -1)"; fi
+
+# ⚠ A STORE CAN BE ACTIVE WITH NOTHING MOUNTED ON IT. From 2026-09-14 to 2026-09-28 pve02's
+# share was unmounted, vzdump wrote every archive to the root disk until it filled, and three
+# guests stayed locked. Proxmox reported the store active throughout (PET-529). Each node runs
+# backup-health at 06:00, which checks the mount, root use, archive age and locks, and pushes
+# to Kuma. Read that run's verdict line, then check the mount live, since a verdict is a day old.
+sec "Backups land off-node"
+for n in $PVE02 $PVE03; do
+  if [ "$n" = "$PVE03" ]; then SUDO=sudo; else SUDO=; fi
+  # An empty InvocationID means the unit never ran. Skip the journal read then, because a
+  # match on an empty field value is not a match on nothing.
+  HV=$(on "$n" "I=\$(systemctl show -p InvocationID --value backup-health.service); [ -n \"\$I\" ] && $SUDO journalctl -o cat --no-pager _SYSTEMD_INVOCATION_ID=\$I 2>/dev/null")
+  HVLINE=$(printf '%s\n' "$HV" | grep -m1 -E '^(ok|FAIL) backup-health' || true)
+  case "$HVLINE" in
+    "ok backup-health"*)   ok "backup-health $n" "last run passed" ;;
+    "FAIL backup-health"*) bad "backup-health $n" "${HVLINE#FAIL backup-health: }" ;;
+    *)
+      if [ -z "$HV" ]; then bad "backup-health $n" "no run recorded; is backup-health.timer installed?"
+      else bad "backup-health $n" "no verdict line; last: $(printf '%s\n' "$HV" | tail -1)"; fi ;;
+  esac
+  FS=$(on "$n" "findmnt -no FSTYPE --mountpoint /mnt/ollama-backups")
+  case "$FS" in
+    nfs*) ok "backup share mounted on $n" "$FS" ;;
+    *)    bad "backup share mounted on $n" "got '${FS:-nothing}'; vzdump would write to the root disk" ;;
+  esac
+  RP=$(on "$n" "df --output=pcent / | tail -1" | tr -dc '0-9')
+  if [ -z "$RP" ]; then bad "root disk on $n" "could not read df"
+  elif [ "$RP" -lt 85 ]; then ok "root disk on $n" "${RP}% used"
+  else bad "root disk on $n" "${RP}% used, limit 85%"; fi
+done
 
 # ⚠ CHECK EVERY RUNNER, AND CHECK THE SPREAD.
 #
@@ -662,92 +694,21 @@ else
     done
   fi
 
-  # ── The ticket-driven work loop (PET-399) ─────────────────────────────────
-  # ⚠ THIS BLOCK EXISTS TO SEPARATE "ran and found nothing" FROM "did not run".
-  # Those are the two states a scheduled job most often conflates, and this repo
-  # has shipped that conflation six times (PET-298, PET-317, PET-360, PET-363,
-  # PET-372, PET-374). A loop that opens pull requests is the last place to
-  # start: a silent one looks exactly like an idle one.
-  #
-  # So every line below prints the timestamp and the outcome, a heartbeat that
-  # is merely OLD is a failure rather than a quiet pass, and the staleness
-  # threshold is read out of the heartbeat itself (the tick writes the
-  # max_age_sec its unit was given) rather than guessed from an OnCalendar
-  # expression this script would have to parse and would eventually parse wrong.
-  #
-  # Paths are hardcoded to their role defaults, like the claude binary above. The
-  # heartbeat moved to the root-owned claude_loop_state_dir (PET-441); pct exec
-  # reads it as root, so its 0644 mode needs no privilege here. If you move either
-  # in the role, move it here.
-  LOOPTIMER=$(pct_on "$CNODE" 247 "sh -c 'ls -1 /etc/systemd/system/claude-loop.timer 2>/dev/null'" | tr -d '\r')
-  if [ -z "$LOOPTIMER" ]; then
-    # The loop is a separate opt-in from the remote-control servers, so its
-    # absence is "not installed", not drift.
-    skip "work loop" "claude-loop.timer is not on the host — not installed"
-  else
-    LOOPEN=$(pct_on "$CNODE" 247 "systemctl is-enabled claude-loop.timer" | tr -d '\r')
-    LOOPHB=$(pct_on "$CNODE" 247 "sh -c 'cat /var/lib/claude-loop/last-tick.json 2>/dev/null'" | tr -d '\r')
-    LOOPINFO=$(HB="$LOOPHB" python3 -c '
-import datetime, json, os
-raw = os.environ["HB"].strip()
-if not raw:
-    print("missing - - -1 -1 -1 -1 - - no heartbeat file"); raise SystemExit
-try:
-    d = json.loads(raw)
-except Exception:
-    print("unparseable - - -1 -1 -1 -1 - - the heartbeat is not JSON"); raise SystemExit
-ts = d.get("ts", "")
-try:
-    when = datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
-    age = int((datetime.datetime.now(datetime.timezone.utc) - when).total_seconds())
-except Exception:
-    age = -1
-# Space-separated with the free-text detail LAST, so bash `read` can take the
-# rest of the line into it without quoting games.
-print(" ".join(str(x) for x in [
-    "ok", d.get("outcome", "?"), ts or "-", age, d.get("max_age_sec", 3900),
-    d.get("examined", -1), d.get("eligible", -1), d.get("item") or "-",
-    d.get("pr") or "-", (d.get("detail") or "-").replace("\n", " "),
-]))
-')
-    read -r LST LOUT LTS LAGE LMAX LEX LEL LITEM LPR LDET <<EOF
-$LOOPINFO
-EOF
-
-    if [ "$LOOPEN" != "enabled" ]; then
-      # Off by default and documented as such, so this is a skip — but say WHICH
-      # disabled state, and when it last ran, or "disabled" and "broken" read the
-      # same in a --quiet run.
-      if [ "$LST" = ok ]; then
-        skip "work loop" "timer is ${LOOPEN:-unknown} — off; last tick $LTS ($LOUT)"
+  # ── The retired work loop (PET-399, retired by PET-547) ──────────────────
+  # The claude-code role removes the loop's units and its key directory. Check that they
+  # are gone. The EXAMINED marker separates "read the host and found nothing" from "could
+  # not read the host": without it, a failed pct exec prints nothing and reads as absent.
+  LOOPLEFT=$(pct_on "$CNODE" 247 "sh -c 'ls -1d /etc/systemd/system/claude-loop.timer /etc/systemd/system/claude-loop.service /etc/claude-loop 2>/dev/null; echo EXAMINED'" | tr -d '\r')
+  case "$LOOPLEFT" in
+    *EXAMINED*)
+      LOOPLEFT=$(printf '%s\n' "$LOOPLEFT" | grep -v '^EXAMINED$' | paste -sd' ' -)
+      if [ -z "$LOOPLEFT" ]; then
+        ok "retired work loop absent" "no claude-loop.{timer,service} and no /etc/claude-loop"
       else
-        skip "work loop" "timer is ${LOOPEN:-unknown} — off, and has never ticked"
-      fi
-    elif [ "$LST" != ok ]; then
-      bad "work loop" "timer is enabled but $LDET — it has never completed a tick"
-    elif [ "$LAGE" -lt 0 ]; then
-      bad "work loop" "heartbeat has no readable timestamp (ts='$LTS')"
-    elif [ "$LAGE" -gt "$LMAX" ]; then
-      # Distinguish "systemd never fired it" from "systemd fired it and the tick
-      # wrote nothing" — the same distinction the rest of this file insists on,
-      # one level down. They need different fixes.
-      LTRIG=$(pct_on "$CNODE" 247 "systemctl show claude-loop.timer -p LastTriggerUSec --value" | tr -d '\r')
-      bad "work loop" "timer enabled, last tick $LTS (${LAGE}s ago, limit ${LMAX}s) — the loop did not run. systemd last triggered it: ${LTRIG:-never}"
-    else
-      case "$LOUT" in
-        no-work) ok   "work loop" "ticked $LTS — 0 eligible of $LEX examined" ;;
-        worked)  ok   "work loop" "ticked $LTS — $LITEM → $LPR" ;;
-        skipped) ok   "work loop" "ticked $LTS — $LITEM already had a branch on origin" ;;
-        busy)    ok   "work loop" "ticked $LTS — a previous tick was still running" ;;
-        # The timer is healthy and a human has deliberately parked the loop. That
-        # is neither a pass nor a failure, and it must be visible: a PAUSED
-        # sentinel nobody remembers setting is how a loop stays silently off.
-        paused)  skip "work loop" "ticked $LTS — PAUSED sentinel is set; the timer runs, the loop parks" ;;
-        failed)  bad  "work loop" "ticked $LTS — failed: $LDET" ;;
-        *)       bad  "work loop" "ticked $LTS — unknown outcome '$LOUT' (this script and the tick disagree)" ;;
-      esac
-    fi
-  fi
+        bad "retired work loop absent" "still on 247: $LOOPLEFT — run ansible-claude-247.yml"
+      fi ;;
+    *) bad "retired work loop absent" "could not read 247 through pct exec — examined nothing" ;;
+  esac
 fi
 
 printf "\n\033[1m%d passed, %d failed, %d skipped\033[0m\n" "$PASS" "$FAIL" "$SKIP"

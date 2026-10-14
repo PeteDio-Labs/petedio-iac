@@ -94,6 +94,16 @@ section heading. History sections for systems that are gone get no rule.
     that mattered. **When two hosts differ in the thing you suspect but agree on the
     outcome, check what else differs before discarding the hypothesis.**
 
+- **A new `proxmox-lxc` module also goes in `pool_lxc_members`, and nothing fails when it
+  doesn't** (PET-590, PET-592). `environments/homelab/pool.tf` maps every container's
+  `vm_id` into the `homelab` pool. A module left out of the map plans clean, applies clean and
+  drifts silently, because the pool's only job is to account for every container. It drifted
+  three times: authentik-119 and runner-233, then tailscale-244 and minio-data-245, then
+  usaa-238, which Codex caught on round 2 of
+  [petedio-iac#424](https://github.com/PeteDio-Labs/petedio-iac/pull/424). Add the entry in the
+  same PR as the module, along with the container's `lxc-features` entry, and count modules
+  against map entries before you ask for review.
+
 - **The loop reads live LXC config read-only — never with the mutation token.** Brownfield
   captures need the running `pct config` so the import plans as a no-op; the loop is
   author-only and must not guess specs on live hosts. `scripts/proxmox-ro-config.sh
@@ -218,6 +228,17 @@ section heading. History sections for systems that are gone get no rule.
   (NFS export mounts), not Proxmox image volumes — Proxmox would have tried to carve
   VM disks into a filesystem. Filesystem-mount LVs → register as a `dir` storage on
   the mountpoint, not as `lvm`.
+
+- **A `dir` storage on an NFS mount point without `is_mountpoint` fills the node's root
+  disk when the mount drops (PET-529).** The backup share mounts with `nofail`, so a boot
+  that cannot reach ollama-host leaves `/mnt/ollama-backups` an ordinary directory, and
+  Proxmox still reports `ollama-backups` as `active`. vzdump wrote every nightly archive there
+  from 2026-09-14 until pve02's root disk held 0 bytes free. The full disk then left 110, 233
+  and 236 on `lock: snapshot-delete`, so their backups failed too. `roles/backup-store` asserts
+  the mount is NFS, but only when the role runs, never at boot. With `is_mountpoint yes`,
+  Proxmox reports the store inactive while the path isn't mounted, and the job fails instead.
+  The one-time cleanup was `scripts/pve02-rescue-stranded-backups.sh`. It reads the stranded
+  files through a bind mount of `/`, because a mount over the directory hides them.
 
 - **pve02 is the homelab NFS file server — it is load-bearing, not idle.** Since the
   2026-09-04 rebuild it exports exactly two things, `/mnt/media` and `/mnt/downloads`, to
@@ -937,11 +958,12 @@ one for the syntax while the text lived only in `CLAUDE.md`.
   rewrite, and out of managed settings, which would also strip the connectors from the
   Remote Control sessions on the host.
 
-- **Nothing about this host needs `features{}`** — no Docker, so no nesting, no keyctl, and
-  no `scripts/lxc-features-<id>.sh` step on the node. Worth stating because the reflex on
-  this cluster is that every app LXC needs the root@pam dance. It is also worth *keeping*
-  true: the day something here wants Docker is the day this host gains an out-of-band step
-  that every rebuild has to remember.
+- **This host needs `nesting=1` for systemd, and no `keyctl`, because nothing here runs
+  Docker.** Debian 13 ships systemd 257, which fails `tmp.mount`, `dev-mqueue.mount` and
+  `run-lock.mount` without nesting. `playbooks/configure-lxc-features.yml` declares 247 as
+  nesting only and converges it, and the flag takes effect after a `pct reboot 247`
+  (PET-557). There is still no `scripts/lxc-features-<id>.sh` step. Keep `keyctl` off: the
+  day something here wants Docker is the day this host gains a second feature to remember.
 
 - **Remote Control opens no inbound port.** The session registers with the Anthropic API
   over outbound HTTPS and polls it, so the most remotely-reachable box in the lab needs no
@@ -1015,6 +1037,10 @@ one for the syntax while the text lived only in `CLAUDE.md`.
   for the old string and move the notifies in the same commit — `Restart zot` alone has four.
 
 ## A sudoers grant belongs to the UID, not to the process you wrote it for (PET-408)
+
+> **History.** `PET-547` retired the PET-399 work loop on 2026-09-30, and
+> `roles/claude-code/tasks/loop-retired.yml` removes its files. The rule applies to any
+> program that starts a session.
 
 - **If a program runs a `claude -p` session as its own user, that session inherits every
   sudo grant the program has.** The PET-399 loop shipped with `/etc/sudoers.d/claude-loop`
@@ -1383,6 +1409,9 @@ green. One of five is not a dry run.
 
 ## The test suite needs `flock`, which macOS does not ship
 
+> **History.** `PET-547` deleted `scripts/test-claude-loop-tick.sh` with the work loop. The
+> rule applies to any script with a GNU-only dependency: preflight it.
+
 `scripts/test-claude-loop-tick.sh` reports **52 passed / 0 failed** on 247 and **18 passed /
 29 failed** on a Mac. Every one of those failures is `flock: command not found` — the tick
 cannot take its lock, so every scenario parks as `busy`.
@@ -1426,7 +1455,11 @@ earlier. A tolerant step first silently swallows an outage. Never put `ignoreNot
 
 `contents: write` is not enough; GitHub gates workflow files separately.
 
-**For the claude-loop App this is a feature — do not grant it (PET-425).** The loop's session
+> **History.** `PET-547` retired the claude-loop App on 2026-09-30. The same boundary holds
+> for the `claude` session Apps on 247, which lack `workflows` on purpose. Only claude-ops's
+> App holds it, for Pedro's own sessions (PET-531).
+
+**For the claude-loop App this was a feature — do not grant it (PET-425).** The loop's session
 takes its instructions from a Plane work item any org member can write, and a session that
 can edit `.github/workflows/**` can change what runs on the self-hosted runner or alter a
 required check, arriving as a PR that looks like ordinary work. GitHub is enforcing a

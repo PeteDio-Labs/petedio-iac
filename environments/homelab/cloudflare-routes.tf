@@ -56,9 +56,10 @@ module "cloudflare_ingress" {
     # its own, which is exactly what Managed OAuth requires of an origin.
     #
     # Why the origin is a LAN address and not loopback: cloudflared runs on LXC 112, a
-    # DIFFERENT host, so a 127.0.0.1 bind on 235 would be unreachable. Caddy's Access-JWT
-    # check is what gates this, not the bind address (the MCP server itself is loopback-only
-    # behind Caddy and is never published to the LAN).
+    # DIFFERENT host, so a 127.0.0.1 bind on 235 would be unreachable. Caddy checks no
+    # Access JWT, so the origin firewall on 235 (plane-mcp-firewall.service) is the
+    # boundary: it admits only 112 to :8790 and :8791. The MCP server itself is never
+    # published; only Caddy reaches it.
     #
     # access_emails is the WHOLE authorization boundary here. The shim holds a service PAT,
     # so anyone who passes Access acts as its owner in Plane — keep this list to one person.
@@ -79,6 +80,61 @@ module "cloudflare_ingress" {
         session_duration      = "168h"
       }
     }
+
+    # Tom's Plane MCP (PET-610), a copy of mcp.pdlab.dev with a different origin port and email.
+    # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
+    # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same
+    # rule applies as above: access_emails is the whole boundary, so keep it to Tom alone, and
+    # keep mcp.pdlab.dev to Pedro alone.
+    "mcp-tom.pdlab.dev" = {
+      service       = "http://192.168.50.235:8791"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["tsilveri406@gmail.com"]
+
+      managed_oauth = {
+        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        access_token_lifetime = "15m"
+        session_duration      = "168h"
+      }
+    }
+
+    # petedio-usaa (PET-590), the savings and trip tracker on usaa-238. The origin is a LAN
+    # address because cloudflared runs on LXC 112, a different host. Access is the gate, with
+    # the Authentik IdP, and the two emails are the whole allow-list: Pedro and Sonia.
+    # PET-599 renamed both hostnames from usaa to savings; the moved blocks below keep the
+    # Access application, and so its audience tag.
+    "savings.pdlab.dev" = {
+      service       = "http://192.168.50.238:8080"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com", "soniasdelgadillo@gmail.com"]
+    }
+
+    # The Plane board (PET-610), so Tom can work in it from outside the lab. The origin is
+    # Plane's own proxy on plane-235, a LAN address because cloudflared runs on LXC 112.
+    # Access is the gate, with the Authentik IdP, and the two emails are the whole allow-list:
+    # Pedro and Tom. Only the app is routed. Attachments live in MinIO on 245, which stays
+    # private, so uploads and file views work on the LAN and the tailnet only.
+    #
+    # This is a different route from mcp.pdlab.dev above. That one holds Pedro's PAT, so it
+    # stays a one-person list. Here, each person signs in to Plane as themselves.
+    "plane.pdlab.dev" = {
+      service       = "http://192.168.50.235:8080"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com", "tsilveri406@gmail.com"]
+    }
+
+    # Batsy (Sonia's agent) posts USAA totals here from outside the lab, so Access is OFF for
+    # this hostname and the app's bearer check (kv/services/usaa batsy_bearer_token) is the
+    # gate. Only this one path is routed. The ingress rule matches hostname AND path, so every
+    # other path on this hostname falls through to the tunnel's catch-all 404, and the app
+    # also refuses non-feed paths on this Host. `path` is a regex, hence the anchors.
+    "savings-feed.pdlab.dev" = {
+      service = "http://192.168.50.238:8080"
+      path    = "^/api/v1/totals$"
+    }
   }
 }
 
@@ -97,6 +153,26 @@ import {
 import {
   to = module.cloudflare_ingress.cloudflare_dns_record.route["seer.pdlab.dev"]
   id = "${local.cloudflare_zone_id}/553f672178651906b01c66cdca2c9de7"
+}
+
+# PET-599: rename the savings tracker's hostnames in place. Without these, the apply destroys
+# and recreates each resource. A recreated Access application mints a different audience tag,
+# and the app rejects every JWT until deploy-usaa.sh lands the new one.
+moved {
+  from = module.cloudflare_ingress.cloudflare_zero_trust_access_application.route["usaa.pdlab.dev"]
+  to   = module.cloudflare_ingress.cloudflare_zero_trust_access_application.route["savings.pdlab.dev"]
+}
+moved {
+  from = module.cloudflare_ingress.cloudflare_zero_trust_access_policy.route["usaa.pdlab.dev"]
+  to   = module.cloudflare_ingress.cloudflare_zero_trust_access_policy.route["savings.pdlab.dev"]
+}
+moved {
+  from = module.cloudflare_ingress.cloudflare_dns_record.route["usaa.pdlab.dev"]
+  to   = module.cloudflare_ingress.cloudflare_dns_record.route["savings.pdlab.dev"]
+}
+moved {
+  from = module.cloudflare_ingress.cloudflare_dns_record.route["usaa-feed.pdlab.dev"]
+  to   = module.cloudflare_ingress.cloudflare_dns_record.route["savings-feed.pdlab.dev"]
 }
 
 # ============================================================================================

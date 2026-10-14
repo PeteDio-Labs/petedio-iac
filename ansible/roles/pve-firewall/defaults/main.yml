@@ -1,0 +1,9 @@
+---
+# The datacenter firewall switch. On, so a guest that carries a firewall config (codex-248,
+# PET-553) is filtered. Every node's own host firewall stays off; see tasks/main.yml.
+pve_firewall_cluster_enable: true
+
+# How long to wait for pve-firewall to read the new config. It recompiles about every
+# 10 seconds, so 6 tries 5 seconds apart covers three cycles.
+pve_firewall_status_retries: 6
+pve_firewall_status_delay: 5

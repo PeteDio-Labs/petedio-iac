@@ -3,10 +3,10 @@
 # kv/services/claude-code-push, so a session on claude-247 can push branches to three code
 # repositories and open pull requests on them (PET-507).
 #
-# WHY A FOURTH APP. claude-247 already holds three GitHub identities: the work loop's App
-# (kv/services/claude-loop), the workspace mirror's read-only App
-# (kv/services/claude-workspace-mirror) and the vault push App (kv/services/claude-vault-push).
-# The loop's key is root's, and a session must never read it. The mirror's App cannot write.
+# WHY ITS OWN APP. claude-247 holds two other session identities: the workspace mirror's
+# read-only App (kv/services/claude-workspace-mirror) and the vault push App
+# (kv/services/claude-vault-push). The work loop's App was a third until PET-547 retired it.
+# The mirror's App cannot write.
 # The vault App reaches petedio-vault alone. petedio-code-247 is installed on petedio-iac,
 # petedio-media-iac and petedio-workspace, with contents:write to push, pull_requests:write to
 # open pull requests, and metadata:read because GitHub requires it on every install.
@@ -22,8 +22,8 @@
 # GitHub what the token can reach, before it writes. A widened install is caught here, not
 # after a host has been pushing with it for a week.
 #
-# WHY IT CHECKS THE OTHER THREE APPS. This App's id must match none of the loop's, the
-# mirror's or the vault App's. Each is read from Vault, live, so the check survives rotation.
+# WHY IT CHECKS THE OTHER TWO APPS. This App's id must match neither the mirror's nor the
+# vault App's. Each is read from Vault, live, so the check survives rotation.
 #
 # WHAT THIS DOES NOT DO. It does not create the App, generate its key or install it. Those are
 # browser steps on the App's GitHub settings page. scripts/deploy-claude-247.sh delivers the
@@ -50,7 +50,6 @@ export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
 export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 VAULT_PATH="kv/services/claude-code-push"
-LOOP_VAULT_PATH="kv/services/claude-loop"
 MIRROR_VAULT_PATH="kv/services/claude-workspace-mirror"
 VAULT_APP_VAULT_PATH="kv/services/claude-vault-push"
 ORG="PeteDio-Labs"
@@ -141,8 +140,8 @@ vault token lookup >/dev/null 2>&1 || die "Vault rejected the token, or $VAULT_A
   Check both before assuming either: ./scripts/pet-secrets doctor reports whether Vault is
   sealed and whether the Keychain still holds the bootstrap chain."
 
-step "Checking this App id against the other three Apps on claude-247"
-# CONDITION 4: this App's id must equal none of the other three app_ids. Each
+step "Checking this App id against the other two Apps on claude-247"
+# CONDITION 4: this App's id must equal neither of the other two app_ids. Each
 # check reads the other path's app_id from Vault; a read that FAILS — sealed Vault, revoked
 # token, network fault — dies with that fact, rather than being read as "no conflict found".
 refuse_shared_app_id() {
@@ -161,10 +160,9 @@ refuse_shared_app_id() {
   This path needs its own App: $WANT_PERMS on the three code repositories, installed
   under its own id. Create it, install it, and re-run with its key."
 }
-refuse_shared_app_id "$LOOP_VAULT_PATH" "the work loop"
 refuse_shared_app_id "$MIRROR_VAULT_PATH" "the workspace mirror"
 refuse_shared_app_id "$VAULT_APP_VAULT_PATH" "the vault push"
-echo "  app $APP_ID matches none of the loop's, the mirror's or the vault push App's app_id."
+echo "  app $APP_ID matches neither the mirror's nor the vault push App's app_id."
 
 # ---------------------------------------------------------------- scope proof
 step "Asking GitHub what this App's own key proves"

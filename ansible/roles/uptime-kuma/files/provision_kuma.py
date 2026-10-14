@@ -19,7 +19,15 @@ import time
 
 from uptime_kuma_api import UptimeKumaApi, MonitorType, NotificationType, UptimeKumaException
 
-TYPES = {"http": MonitorType.HTTP, "port": MonitorType.PORT, "dns": MonitorType.DNS}
+TYPES = {
+    "http": MonitorType.HTTP, "port": MonitorType.PORT, "dns": MonitorType.DNS,
+    # A push monitor waits for the checked host to call in, and goes DOWN when no
+    # call arrives within its interval (PET-529, the nightly backup check).
+    "push": MonitorType.PUSH,
+    # A keyword monitor is an HTTP check that also needs a string in the body. It
+    # watches the house's public IPv4 through api.ipify.org (PET-588).
+    "keyword": MonitorType.KEYWORD,
+}
 
 # Declared-field -> Kuma socket-field. Kuma is inconsistent about case and this
 # table is the single place that knows it.
@@ -32,6 +40,8 @@ FIELD_MAP = {
     "dns_resolve_server": "dns_resolve_server",
     "dns_resolve_type": "dns_resolve_type",
     "description": "description",
+    "push_token": "pushToken",
+    "keyword": "keyword",
 }
 
 
@@ -54,9 +64,11 @@ def build_kwargs(spec, cfg):
     kw = {
         "type": TYPES[spec["type"]],
         "name": spec["name"],
-        "interval": cfg["interval"],
-        "maxretries": cfg["max_retries"],
-        "retryInterval": cfg["retry_interval"],
+        # A monitor may override the timing. A daily push monitor needs an interval
+        # longer than a day, and no retries, so a pushed DOWN alerts at once.
+        "interval": spec.get("interval", cfg["interval"]),
+        "maxretries": spec.get("max_retries", cfg["max_retries"]),
+        "retryInterval": spec.get("retry_interval", cfg["retry_interval"]),
     }
     for declared, kuma in FIELD_MAP.items():
         if declared in spec:
@@ -64,7 +76,7 @@ def build_kwargs(spec, cfg):
     # Only 2xx counts as UP unless a monitor says otherwise. This is what makes
     # a sealed Vault (503) record as DOWN rather than as a probe error.
     kw.setdefault("accepted_statuscodes", ["200-299"])
-    if kw["type"] != MonitorType.HTTP:
+    if kw["type"] not in (MonitorType.HTTP, MonitorType.KEYWORD):
         kw.pop("accepted_statuscodes", None)
     return kw
 
@@ -179,7 +191,13 @@ def main():
             kw = build_kwargs(spec, cfg)
             try:
                 if name not in by_name:
-                    api.add_monitor(**kw)
+                    # ⚠ uptime-kuma-api 1.2.1's add_monitor takes no pushToken argument
+                    # and gives a push monitor a random one. edit_monitor passes any
+                    # field through, so create first, then set the declared token.
+                    token = kw.pop("pushToken", None)
+                    added = api.add_monitor(**kw)
+                    if token:
+                        api.edit_monitor(added["monitorID"], pushToken=token)
                     result["created"].append(name)
                 else:
                     delta = drifted(by_name[name], kw)

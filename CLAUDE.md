@@ -31,20 +31,18 @@ TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API token
   and "0 stale because the query returned nothing" must not look alike. If you relax a
   gate, replace the signal you removed; a warning does not colour a check.
 - **Verify before done:** `terraform fmt`/`validate`/`plan` — and *read the actual plan* (a green check ≠ a good plan; an empty plan block is a failure). **Never `apply` by hand.**
-- **Declare it, don't run it — IaC over hand fixes.** When a repair can be expressed as config, express it as config; the blocks to reach for, and their two real limits, are in `docs/GOTCHAS.md`, "Declare it, don't run it". `removed { … lifecycle { destroy = false } }` replaces `terraform state rm` and **skips the refresh** for that resource, which is what lets it forget a guest on a node that no longer resolves. `import { to = … id = … }` replaces `terraform import`; `moved` replaces a rename-shaped `state mv`. Write a script only for what the language genuinely cannot say, and record the refusal verbatim in it — `removed` addresses a *resource*, never one instance of a `for_each`, and it cannot be paired with `import` to repoint an address the config still declares. `scripts/tf-state-repoint-pve01.sh` predates this rule; it is a one-shot repair for the rack loss, not a pattern to copy.
+- **Declare it, don't run it — IaC over hand fixes.** When a repair can be expressed as config, express it as config; the blocks to reach for, and their two real limits, are in `docs/GOTCHAS.md`, "Declare it, don't run it". `removed { … lifecycle { destroy = false } }` replaces `terraform state rm` and **skips the refresh** for that resource, which is what lets it forget a guest on a node that no longer resolves. `import { to = … id = … }` replaces `terraform import`; `moved` replaces a rename-shaped `state mv`. Write a script only for what the language genuinely cannot say, and record the refusal verbatim in it — `removed` addresses a *resource*, never one instance of a `for_each`, and it cannot be paired with `import` to repoint an address the config still declares. `scripts/tf-state-repoint-node.sh` is that residue; the one-shot pve01 repair it generalized was removed in `PET-538`.
   - ⚠ **That script is scoped to `environments/homelab` in this repo only.** It repaired this state on 2026-09-04 and left `petedio-media-iac`'s state naming the dead node, which is why every media apply reported `1 to change` for a day (PET-332). A repair script's blast radius is the directory it `cd`s into — check whether a sibling state has the same damage.
 - Minimal impact, root-cause, no temp hacks. Plan first for non-trivial (3+ step / architectural) work; if something goes sideways, STOP and re-plan.
 
-## There is one autonomous loop, and it ships off
+## There is no autonomous loop
 The agent fleet on LXC 242 was retired on 2026-07-21 (PET-265) and the host destroyed on 2026-08-24 (PET-307); see `vault/Systems/agent-fleet-retired.md`. `roles/agent-loop` and the `agent-loop` section of `GOTCHAS.md` are history.
 
-**PET-399 revived the shape, deliberately and narrowly.** A timer on claude-247 takes one Plane work item carrying `agent-ready`, runs `claude -p` against it, and opens a **draft** PR closed by a table diffing what the item asked for against what shipped. It is `claude_loop_enable`, it defaults to false, and it stays false until an operator runs a tick by hand and reads the result. Read `docs/runbooks/claude-loop.md` before turning it on.
+The ticket-driven work loop on claude-247 (PET-399) was retired on 2026-09-30 (PET-547). Its GitHub App is deleted, `roles/claude-code/tasks/loop-retired.yml` removes what the role once installed, and `vault/Systems/claude-loop.md` holds the history. Two rules outlive it: **every PR is reviewed by a person, and Pedro is the only merger.** The lessons that held the loop up still apply to any automation here:
 
-So the old sentence "every clone is interactive" is no longer true, and two that matter still are: **every PR is reviewed by a person, and Pedro is the only merger.** The loop cannot merge, and that is a property of `main` requiring a review it cannot supply — not of the loop's good behaviour. Three things held it up, and each is worth knowing before you touch this:
-
-- **A sudo grant belongs to the UID, not to your process.** The loop's session runs as the same user as the tick, so any grant the tick holds, an injected work item holds too (PET-408). The tick runs as root and drops privilege instead; this host has no sudo.
-- **Branch protection caps merging, not pushing or PR-opening.** Opening a PR is itself a trigger, so "the bot cannot merge" was never the whole story (PET-407).
-- **A work item is untrusted input.** Its text reaches a shell and a session. Treat anything driven by a tracker as attacker-influenceable.
+- **A sudo grant belongs to the UID, not to your process.** A session that runs as the same user inherits every grant that user holds (PET-408).
+- **Branch protection caps merging, not pushing or PR-opening.** Opening a PR is itself a trigger (PET-407).
+- **A work item is untrusted input.** Treat anything driven by a tracker as attacker-influenceable.
 
 ## Session cost
 

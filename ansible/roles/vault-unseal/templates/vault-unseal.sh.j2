@@ -28,6 +28,7 @@ seal_state() {
 
 seal_state
 case $? in
+  0) ;;                                              # sealed: submit and verify
   1) exit 0 ;;                                        # already open, nothing to say
   2) log "UNREACHABLE — $ADDR did not answer; is 223 up?"; exit 1 ;;
 esac
@@ -43,7 +44,7 @@ log "sealed — unsealing"
 #   2. A body keeps the key out of `ps`, out of shell history, and out of any
 #      remote shell's record.
 if ! printf '{"key":"%s"}' "$(tr -d '\r\n' < "$KEY_FILE")" \
-     | curl -sS --cacert "$CACERT" --max-time 10 --request PUT --data @- \
+     | curl -fsS --cacert "$CACERT" --max-time 10 --request PUT --data @- \
        "$ADDR/v1/sys/unseal" >/dev/null 2>&1; then
   log "FAILED — the unseal request did not complete"
   exit 1
@@ -51,9 +52,11 @@ fi
 
 # Submitting a key is not the same as opening the vault. A wrong key, or a
 # threshold above one, leaves it sealed and the request still returns cleanly.
-if seal_state; then
-  log "FAILED — still sealed after submitting the key; check the key and the unseal threshold"
-  exit 1
-fi
-
-log "unsealed"
+seal_state
+case $? in
+  0) log "FAILED — still sealed after submitting the key; check the key and the unseal threshold"
+     exit 1 ;;
+  1) log "unsealed" ;;
+  *) log "UNREACHABLE — $ADDR did not return a valid seal status after submitting the key"
+     exit 1 ;;
+esac

@@ -1,0 +1,30 @@
+# {{ ansible_managed }}
+# System defaults for the Codex CLI on {{ inventory_hostname }} (roles/codex, PET-553).
+# A user's ~/.codex/config.toml and command-line flags override these.
+# /etc/codex/requirements.toml limits what they may choose.
+
+# Unattended: `codex exec` never stops to ask. The sandbox is the limit instead.
+approval_policy = "never"
+
+# Writes inside the working directory and /tmp only. Network access is allowed from the
+# sandbox, and the guest firewall decides where it may go.
+sandbox_mode = "workspace-write"
+
+# The ChatGPT sign-in lands in ~/.codex/auth.json. The host has no keyring daemon.
+# ⚠ Keep every top-level key above the first [table]. TOML assigns a key to the table
+# above it, and Codex ignores a key it finds in the wrong table, with only a warning.
+cli_auth_credentials_store = "file"
+
+# The account is ChatGPT Plus, so every run spends a 5-hour and a weekly allowance that
+# Pedro's own Codex use shares. defaults/main.yml says why this model and effort. A run that
+# needs more raises either with `-c`.
+model = "{{ codex_model }}"
+model_reasoning_effort = "{{ codex_reasoning_effort }}"
+
+[sandbox_workspace_write]
+network_access = true
+
+# Fast mode is on by default. The model catalog says its tier runs at 2x speed with
+# increased usage, which a Plus allowance cannot spare.
+[features]
+fast_mode = false

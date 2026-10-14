@@ -27,8 +27,9 @@
 vault_unseal_addr: "https://192.168.50.223:8200"
 
 # The repo ships the CA that signed Vault's certificate, so the timer verifies TLS
-# rather than skipping it. `pet-secrets` uses `curl -k` because it runs interactively
-# on a trusted LAN; a daemon that runs unattended every five minutes should not.
+# rather than skipping it. The Mac agent's `pet-secrets` pins the same file with
+# `--cacert` (PET-532). Never send the unseal key with `curl -k`: the key is the whole
+# secret, and an unverified endpoint receives it.
 vault_unseal_cacert_src: "{{ playbook_dir }}/../../environments/homelab/vault-ca.crt"
 vault_unseal_cacert: /etc/vault-unseal/vault-ca.crt
 
