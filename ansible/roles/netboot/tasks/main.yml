@@ -1,4 +1,9 @@
 ---
+# Close the window before anything that can fail. See close-window.yml.
+- name: Close any open install window
+  ansible.builtin.include_tasks: close-window.yml
+  when: not netboot_enabled | bool
+
 - name: Install dnsmasq, iPXE, nginx and the ISO tools
   ansible.builtin.apt:
     name:
@@ -112,10 +117,12 @@
     state: started
     enabled: true
 
-# ⚠ dnsmasq runs only inside an install window. See netboot_enabled in defaults.
+# ⚠ dnsmasq runs only inside an install window. See netboot_enabled in defaults. The
+# window closed at the top of this file; this task still runs on that path because apt
+# starts and enables dnsmasq when it first installs it.
 - name: Set dnsmasq to match netboot_enabled
   ansible.builtin.systemd_service:
-    name: dnsmasq
+    name: "{{ netboot_dnsmasq_service }}"
     state: "{{ 'started' if netboot_enabled | bool else 'stopped' }}"
     enabled: "{{ netboot_enabled | bool }}"
 

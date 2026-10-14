@@ -1,11 +1,11 @@
-# netboot (LXC 238): the network-boot server that installs Proxmox VE on ollama-host
+# netboot (LXC 239): the network-boot server that installs Proxmox VE on ollama-host
 # (.12) to make it pve04 (PET-528).
 #
-# WHY 238 / .238, AND WHY pve02
+# WHY 239 / .239, AND WHY pve02
 #
-# 238 is the next free number in the 23x apps block, and VMID = last IP octet, as
-# everywhere else here. It can't be .12: ollama-host holds that address and is the machine
-# this server boots. It sits on pve02 by Pedro's decision, so the netboot server doesn't
+# 239 is the next free number in the 23x apps block, and VMID = last IP octet, as
+# everywhere else here. usaa-238 holds 238 (PET-590). It can't be .12: ollama-host holds
+# that address and is the machine this server boots. It sits on pve02 by Pedro's decision, so the netboot server doesn't
 # share a node with pve03, which stages the ollama-host backups during the rebuild.
 #
 # WHAT IT SERVES. dnsmasq in proxy-DHCP mode answers PXE requests from an allowlist of MAC
@@ -32,9 +32,9 @@
 module "netboot" {
   source = "../../modules/proxmox-lxc"
 
-  vm_id        = 238
-  hostname     = "netboot-238"
-  ipv4_address = "192.168.50.238/24"
+  vm_id        = 239
+  hostname     = "netboot-239"
+  ipv4_address = "192.168.50.239/24"
 
   # The disk holds the 1.7 GB installer ISO, its extracted kernel and initrd, and the
   # packages. nginx serves the ISO with sendfile, so memory doesn't scale with its size.
