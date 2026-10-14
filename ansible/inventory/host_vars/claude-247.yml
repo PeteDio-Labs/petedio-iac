@@ -85,3 +85,8 @@ claude_pve_audit_enable: true
 # (claude_ops_github_identity_present), and starts the unit only after the login, the
 # Remote Control consent and the directory trust are on disk.
 claude_ops_enable: true
+
+# PET-619: turns on the PM seat, claude-ops's second Remote Control unit, serving the
+# petedio-pm clone. The role clones it only once the claude-ops App can read the repo, and
+# starts the unit only after that directory's trust is on disk.
+claude_ops_pm_enable: true

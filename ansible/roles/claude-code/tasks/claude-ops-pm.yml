@@ -1,0 +1,202 @@
+# claude-ops-pm.yml — the PM seat: a second claude-ops Remote Control server (PET-619).
+# Included from tasks/claude-ops.yml behind claude_ops_pm_enable, after that file's own unit,
+# so the App credential facts and the Remote Control consent check are already set.
+#
+# WHY A SECOND claude-ops UNIT. The PM seat coordinates the VET and GOOF worker sessions, and
+# its rules live in its own repo's CLAUDE.md. A session spawned under the workspace unit would
+# load the workspace's homelab rules instead. claude-ops, not claude, because the seat pushes
+# its pick-up note with the claude-ops App, which the broker allows anywhere in the org.
+#
+# The clone is SEEDED, NEVER UPDATED, for the reason tasks/claude-ops.yml gives for its own:
+# a fast-forward could move `main` out from under a session mid-task.
+---
+# noqa reason: `ansible.builtin.git` has no ls-remote; see tasks/claude-ops.yml.
+- name: Check whether the claude-ops App can read the PM repo  # noqa: command-instead-of-python
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      git {{ claude_ops_github_git_opts }}
+      ls-remote --heads https://github.com/{{ claude_ops_pm_repo }}.git HEAD
+  environment:
+    HOME: "{{ claude_ops_home }}"
+    GIT_TERMINAL_PROMPT: "0"
+  register: claude_ops_pm_probe
+  changed_when: false
+  failed_when: false
+  when: claude_ops_github_creds_on_disk | bool
+
+- name: Record whether the PM clone can proceed in this run
+  ansible.builtin.set_fact:
+    claude_ops_pm_ready: >-
+      {{ (claude_ops_github_creds_on_disk | bool)
+         and (claude_ops_pm_probe.rc | default(1)) == 0 }}
+
+- name: Report why the PM clone cannot converge in this run
+  ansible.builtin.debug:
+    msg:
+      - "The {{ claude_ops_pm_dest }} clone did not converge: the claude-ops App cannot read {{ claude_ops_pm_repo }}."
+      - "Create the repo, add it to the App's installation, then re-run. The unit below still lands."
+  when: not claude_ops_pm_ready | bool
+
+# noqa reason: the same code-execution hazard tasks/claude-ops.yml names for its own clone.
+- name: Clone the PM repo, as claude-ops  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      git {{ claude_ops_github_git_opts }}
+      clone https://github.com/{{ claude_ops_pm_repo }}.git
+      {{ claude_ops_workspace }}/{{ claude_ops_pm_dest }}
+    creates: "{{ claude_ops_workspace }}/{{ claude_ops_pm_dest }}/.git"
+  environment:
+    HOME: "{{ claude_ops_home }}"
+    GIT_TERMINAL_PROMPT: "0"
+  when: claude_ops_pm_ready | bool
+
+# The helper lives in the clone's own config so a session pushes with a plain `git push`. The
+# empty value comes FIRST to reset the list, for the reason tasks/claude-ops.yml measured.
+- name: Read the PM clone's credential helper list
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      git -C {{ claude_ops_workspace }}/{{ claude_ops_pm_dest }}
+      config --local --get-all credential.helper
+  environment:
+    HOME: "{{ claude_ops_home }}"
+  register: claude_ops_pm_helper_existing
+  changed_when: false
+  failed_when: false
+  when: claude_ops_pm_ready | bool
+
+- name: Point the PM clone's credential helper at the broker
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_ops_user }}"
+      - --
+      - git
+      - -C
+      - "{{ claude_ops_workspace }}/{{ claude_ops_pm_dest }}"
+      - config
+      - --local
+      - --replace-all
+      - credential.helper
+      - "{{ item.value }}"
+      - "{{ item.pattern }}"
+  environment:
+    HOME: "{{ claude_ops_home }}"
+  changed_when: true
+  loop:
+    - { value: "", pattern: "^$" }
+    - { value: "{{ claude_ops_github_broker }}", pattern: "." }
+  loop_control:
+    label: "{{ item.value or '(reset)' }}"
+  when:
+    - claude_ops_pm_ready | bool
+    - claude_ops_pm_helper_existing.stdout_lines | default([]) != ['', claude_ops_github_broker]
+
+- name: Read the PM clone's remaining git settings
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      git -C {{ claude_ops_workspace }}/{{ claude_ops_pm_dest }}
+      config --local --get {{ item.key }}
+  environment:
+    HOME: "{{ claude_ops_home }}"
+  register: claude_ops_pm_settings
+  changed_when: false
+  failed_when: false
+  loop:
+    - { key: credential.useHttpPath, value: "true" }
+    - { key: user.name, value: claude-ops-247 }
+    - { key: user.email, value: claude-ops-247@users.noreply.github.com }
+  loop_control:
+    label: "{{ item.key }}"
+  when: claude_ops_pm_ready | bool
+
+- name: Set the PM clone's remaining git settings
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      git -C {{ claude_ops_workspace }}/{{ claude_ops_pm_dest }}
+      config --local {{ item.item.key }} {{ item.item.value }}
+  environment:
+    HOME: "{{ claude_ops_home }}"
+  changed_when: true
+  loop: "{{ claude_ops_pm_settings.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - claude_ops_pm_ready | bool
+    - item.stdout | default('') != item.item.value
+
+# --- The Remote Control server ------------------------------------------------------------------
+# The PET-431/PET-499 shape tasks/claude-ops.yml follows: the unit lands always, and starts only
+# once the consent and this directory's trust are on disk.
+- name: Install the PM seat's server wrapper
+  ansible.builtin.template:
+    src: claude-ops-pm-serve.j2
+    dest: "{{ claude_ops_pm_serve_bin }}"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render the PM seat's Remote Control unit
+  ansible.builtin.template:
+    src: claude-remote-pm.service.j2
+    dest: /etc/systemd/system/claude-remote-pm.service
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers so the PM unit is on disk before it is started
+  ansible.builtin.meta: flush_handlers
+
+- name: Check the PM directory's trust is on disk
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - "{{ claude_ops_user }}"
+      - --
+      - jq
+      - -e
+      - --arg
+      - d
+      - "{{ claude_ops_workspace }}/{{ claude_ops_pm_dest }}"
+      - '.projects[$d].hasTrustDialogAccepted == true'
+      - "{{ claude_ops_home }}/.claude.json"
+  register: claude_ops_pm_trust
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Report that the PM unit awaits the trust dialog
+  ansible.builtin.debug:
+    msg: >-
+      claude-remote-pm.service is installed but not started: consent
+      rc={{ claude_ops_remote_consent.rc | default('not run') }}, trust
+      rc={{ claude_ops_pm_trust.rc | default('not run') }}. As root, run
+      `runuser -u {{ claude_ops_user }} -- bash -lc "cd {{ claude_ops_workspace }}/{{ claude_ops_pm_dest }} && {{ claude_ops_npm_prefix }}/bin/claude"`,
+      accept the trust dialog, `/exit`, then re-run scripts/deploy-claude-247.sh, or start the unit by hand.
+  when: >-
+    (claude_ops_remote_consent.rc | default(1)) != 0
+    or (claude_ops_pm_trust.rc | default(1)) != 0
+
+- name: Clear a tripped start limit on claude-remote-pm before starting
+  ansible.builtin.command:
+    cmd: systemctl reset-failed claude-remote-pm.service
+  when:
+    - (claude_ops_remote_consent.rc | default(1)) == 0
+    - (claude_ops_pm_trust.rc | default(1)) == 0
+  changed_when: false
+  failed_when: false
+
+- name: Enable and start the PM seat's Remote Control server
+  ansible.builtin.systemd:
+    name: claude-remote-pm.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - (claude_ops_remote_consent.rc | default(1)) == 0
+    - (claude_ops_pm_trust.rc | default(1)) == 0

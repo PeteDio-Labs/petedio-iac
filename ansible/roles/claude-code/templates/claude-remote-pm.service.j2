@@ -1,0 +1,38 @@
+{{ ansible_managed | comment }}
+# claude-ops's Remote Control server for the PM seat (PET-619), serving
+# {{ claude_ops_workspace }}/{{ claude_ops_pm_dest }}.
+#
+# A SIBLING OF claude-remote-ops.service.j2. Every load-bearing property that file and
+# claude-remote.service.j2 document holds here unchanged: no telemetry opt-outs, the bounded
+# Restart=always, the DNS wait gate. Two things differ. ExecStart runs a wrapper that resumes
+# the last session before it starts a fresh one (templates/claude-ops-pm-serve.j2), and the
+# unit skips its start when the checkout is missing, rather than failing on CHDIR five times.
+
+[Unit]
+Description=Claude Code Remote Control server (claude-ops PM seat)
+Documentation=https://code.claude.com/docs/en/remote-control
+After=network-online.target
+Wants=network-online.target
+ConditionPathIsDirectory={{ claude_ops_workspace }}/{{ claude_ops_pm_dest }}
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User={{ claude_ops_user }}
+Group={{ claude_ops_user }}
+WorkingDirectory={{ claude_ops_workspace }}/{{ claude_ops_pm_dest }}
+Environment=HOME={{ claude_ops_home }}
+Environment=PATH={{ claude_ops_npm_prefix }}/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart={{ claude_ops_pm_serve_bin }}
+Restart=always
+# claude can write /tmp, and claude-ops must not read or run anything claude plants there.
+PrivateTmp=true
+RestartSec=30
+ExecStartPre=/bin/sh -c 'if ! /usr/bin/getent ahosts api.anthropic.com >/dev/null; then echo "No answer for api.anthropic.com; holding the start until the resolver answers."; until /usr/bin/getent ahosts api.anthropic.com >/dev/null; do sleep 5; done; echo "The resolver answered; starting."; fi'
+TimeoutStartSec=10min
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

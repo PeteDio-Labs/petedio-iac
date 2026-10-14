@@ -1,0 +1,34 @@
+#!/bin/bash
+{{ ansible_managed | comment }}
+# claude-ops-pm-serve: the PM seat's Remote Control server (PET-619), run as
+# {{ claude_ops_user }} by claude-remote-pm.service.
+#
+# RESUME FIRST, THEN START FRESH. `claude remote-control --continue` reattaches to the session
+# this directory last recorded, but only within roughly 4 hours; past that it exits with an
+# error. So the first attempt resumes, and only a failed resume starts a fresh session. A fresh
+# session loses nothing durable: the seat keeps its state in notes/pick-up.md.
+#
+# FORWARD THE STOP. The unit keeps KillMode=mixed like its siblings, so systemd sends SIGTERM
+# to this script alone. The resume attempt runs in the background, so `wait` returns on the
+# signal and the trap passes it on. The fresh start is an `exec` and receives it directly.
+set -u
+
+claude={{ claude_ops_npm_prefix }}/bin/claude
+# Every flag goes AFTER `remote-control`: see the header of claude-remote.service.j2.
+flags=(--permission-mode {{ claude_ops_permission_mode }} --remote-control-session-name-prefix {{ claude_ops_pm_remote_name }})
+
+"$claude" remote-control --continue "${flags[@]}" &
+pid=$!
+trap 'kill -TERM "$pid" 2>/dev/null; wait "$pid"; exit 143' TERM INT
+wait "$pid"
+rc=$?
+trap - TERM INT
+
+if [ "$rc" -eq 0 ]; then
+  exit 0
+fi
+
+echo "No session to resume (exit $rc); starting a fresh one."
+# same-dir: the seat is one checkout on main, so a session writes its pick-up note where the
+# next one reads it, not on a worktree's side branch.
+exec "$claude" remote-control --spawn same-dir "${flags[@]}"
