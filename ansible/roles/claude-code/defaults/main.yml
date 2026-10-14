@@ -576,11 +576,16 @@ claude_ops_ssh_key: "{{ claude_ops_home }}/.ssh/id_ed25519"
 
 # StrictHostKeyChecking=accept-new: trust a node's key on the first connection and pin it
 # after that, rather than either failing cold on an unknown host or accepting a changed one
-# silently. root, because there is no operator account on either Proxmox node — the same
-# posture ansible/inventory reaches them with.
+# silently. `user` defaults to root, because there is no operator account on either Proxmox
+# node — the same posture ansible/inventory reaches them with.
+#
+# codex-248 takes the same key as codex. roles/codex authorizes it there with a forced
+# command, codex-review-gate, so `ssh codex-248 codex-review <repo> <pr> <effort>` queues a
+# review and every other request is refused (PET-591).
 claude_ops_ssh_targets:
   - { name: pve02, host: 192.168.50.11 }
   - { name: pve03, host: 192.168.50.10 }
+  - { name: codex-248, host: 192.168.50.248, user: codex }
 
 # --- The Remote Control server ------------------------------------------------------------
 # ONE unit, ONE directory: the petedio-workspace clone above. Not an entry in

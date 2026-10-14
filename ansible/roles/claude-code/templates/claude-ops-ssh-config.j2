@@ -1,6 +1,7 @@
 {{ ansible_managed | comment }}
-# claude-ops's SSH client config (PET-531): the Proxmox nodes only, as root, since neither
-# node has an operator account. StrictHostKeyChecking=accept-new trusts a node's key on the
+# claude-ops's SSH client config (PET-531): the Proxmox nodes as root, since neither node has
+# an operator account, and codex-248 as codex, where a forced command lets this key queue a
+# review and nothing else (PET-591). StrictHostKeyChecking=accept-new trusts a node's key on the
 # first connection and pins it after that — neither failing cold on an unknown host nor
 # silently accepting a changed one.
 #
@@ -11,7 +12,7 @@
 {% for t in claude_ops_ssh_targets %}
 Host {{ t.name }}
     HostName {{ t.host }}
-    User root
+    User {{ t.user | default('root') }}
     IdentityFile {{ claude_ops_ssh_key }}
     IdentitiesOnly yes
     StrictHostKeyChecking accept-new
