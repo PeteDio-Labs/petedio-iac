@@ -18,6 +18,11 @@
 #
 # BOUNDED RESTART. An expired login makes the CLI exit at once. Five exits within five minutes
 # end this script with exit 5 instead of looping forever.
+#
+# A DEAD SERVER'S SESSIONS GO WITH IT. When a server exits, this script stops the session
+# processes it leaves behind, then starts the next server. The next server's `--continue`
+# reattaches the session, so a survivor would be a second process on it. The cost is any turn
+# that was in flight when the server died.
 param(
     [string]$WorkDir = (Join-Path $env:USERPROFILE 'goofy-skate'),
     [string]$NamePrefix = 'Pete-AI',
@@ -86,12 +91,46 @@ $common = @('--permission-mode', $PermissionMode,
             '--remote-control-session-name-prefix', $NamePrefix,
             '--debug-file', (Join-Path $logDir 'claude-debug.log'))
 
+# Quote one argument by the Windows command-line rules. Windows PowerShell 5.1 joins an
+# -ArgumentList array with spaces and no quoting, so a value with a space splits in two.
+function ConvertTo-ArgToken([string]$Value) {
+    if ($Value -and $Value -notmatch '[\s"]') { return $Value }
+    $escaped = $Value -replace '(\\*)"', '$1$1\"'   # double the backslashes before a quote, escape it
+    $escaped = $escaped -replace '(\\+)$', '$1$1'   # double a trailing run before the closing quote
+    return '"' + $escaped + '"'
+}
+
+# Stop what a server left behind. Windows doesn't reparent orphans, so a session process still
+# names the dead server as its parent. The CreationDate check skips a process that reused a PID.
+function Stop-Descendants([int]$RootId, [datetime]$NotBefore) {
+    $all = @(Get-CimInstance Win32_Process)
+    $queue = New-Object System.Collections.Generic.Queue[int]
+    $queue.Enqueue($RootId)
+    while ($queue.Count -gt 0) {
+        $parent = $queue.Dequeue()
+        foreach ($child in $all | Where-Object { $_.ParentProcessId -eq $parent -and $_.CreationDate -ge $NotBefore }) {
+            $queue.Enqueue([int]$child.ProcessId)
+            Write-Log ("Stopping pid {0}, left behind by server pid {1}: {2}" -f $child.ProcessId, $RootId, $child.CommandLine)
+            Stop-Process -Id $child.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Invoke-Claude([string]$Label, [string[]]$Arguments) {
-    $p = Start-Process -FilePath $claude -ArgumentList $Arguments -WorkingDirectory $WorkDir `
-        -NoNewWindow -Wait -PassThru -RedirectStandardInput $noInput `
+    $argLine = ($Arguments | ForEach-Object { ConvertTo-ArgToken $_ }) -join ' '
+    $notBefore = (Get-Date).AddSeconds(-1)
+    # No -Wait: in 5.1 it waits for the whole process tree, so a surviving session process would
+    # hold this call open after the server died, and the loop would never restart it.
+    $p = Start-Process -FilePath $claude -ArgumentList $argLine -WorkingDirectory $WorkDir `
+        -NoNewWindow -PassThru -RedirectStandardInput $noInput `
         -RedirectStandardOutput (Join-Path $logDir "run-$Label.out.log") `
         -RedirectStandardError (Join-Path $logDir "run-$Label.err.log")
-    return $p.ExitCode
+    # 5.1 reports no ExitCode unless the handle is opened before the process exits.
+    $null = $p.Handle
+    $p.WaitForExit()
+    $rc = $p.ExitCode
+    Stop-Descendants $p.Id $notBefore
+    return $rc
 }
 
 $exits = New-Object System.Collections.Generic.List[datetime]

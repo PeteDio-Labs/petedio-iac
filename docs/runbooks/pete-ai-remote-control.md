@@ -83,19 +83,22 @@ the copy in `%LOCALAPPDATA%`, never the checkout.
 
 ## Stop the server
 
-Stopping the task ends PowerShell and `conhost.exe`, but the CLI it started can outlive them.
-To stop the server, stop the task, then stop the CLI process:
+Stopping the task ends PowerShell and `conhost.exe`, but the server and its session processes
+can outlive them. To stop the server, stop the task, then stop those processes:
 
 ```powershell
 Stop-ScheduledTask -TaskName 'Claude Remote Control'
 Get-CimInstance Win32_Process -Filter "Name='claude.exe'" |
     Where-Object { $_.ExecutablePath -ieq "$env:USERPROFILE\.local\bin\claude.exe" -and
-                   $_.CommandLine -match '\sremote-control(\s|$)' } |
+                   $_.CommandLine -match '\sremote-control(\s|$)|\s--sdk-url\s' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId }
 ```
 
-The filter matches only the CLI's `remote-control` processes. It leaves the desktop app and
-your interactive sessions running.
+The filter matches the CLI's `remote-control` server and the session processes it spawns, which
+carry `--sdk-url`. It leaves the desktop app and your interactive sessions running.
+
+When the server exits on its own, the serve script stops the session processes it leaves
+behind before it starts the next server. `serve.log` records each one it stops.
 
 To keep the server from starting at your next logon, disable the task:
 
