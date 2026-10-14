@@ -600,3 +600,10 @@
   when:
     - (claude_ops_remote_consent.rc | default(1)) == 0
     - (claude_ops_remote_trust.rc | default(1)) == 0
+
+# --- The PM seat (PET-619) ---------------------------------------------------------------------
+# A second claude-ops Remote Control server, for the project-manager seat. Included last, so
+# the App credential facts and the consent check above are already set.
+- name: Deliver the PM seat's clone and Remote Control server
+  ansible.builtin.include_tasks: claude-ops-pm.yml
+  when: claude_ops_pm_enable | bool
