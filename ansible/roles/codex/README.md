@@ -23,6 +23,7 @@ reviews it with comments, and Pedro decides the merge. Pedro chose that split on
 | Read code and comment on pull requests, and nothing more | The `petedio-codex-review` App's permissions | Pedro, in GitHub |
 | Comment on a Plane work item as `codex`, never as Pedro | The `codex` Plane user, Member on PET | Pedro, in Plane |
 | What the worker is told | `~/.codex/AGENTS.md` | The session user. It is guidance, not a boundary |
+| A key in `codex_review_gate_keys` runs `codex-review <repo> <pr-number> <low\|medium\|high>` for an allowlisted repo, and nothing else (`PET-591`) | `/usr/local/bin/codex-review-gate`, root-owned, and the key's `restrict` and `command=` options | A merged Ansible change |
 
 ## Bring the host up
 

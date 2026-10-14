@@ -81,6 +81,36 @@
     state: present
   loop: "{{ codex_authorized_keys }}"
 
+# authorized_keys holds one line per key, so a key in both lists would keep whichever
+# options the last task wrote.
+- name: Refuse a key that is both a shell key and a gate key
+  ansible.builtin.assert:
+    that: >-
+      (codex_authorized_keys | map('split') | map(attribute=1) | list)
+      | intersect(codex_review_gate_keys | map('split') | map(attribute=1) | list)
+      | length == 0
+    fail_msg: >-
+      A key is in both codex_authorized_keys and codex_review_gate_keys. Keep it in one list.
+    quiet: true
+
+# Install the gate before its keys, so no run leaves a key whose forced command is missing.
+- name: Install the review gate
+  ansible.builtin.template:
+    src: codex-review-gate.j2
+    dest: /usr/local/bin/codex-review-gate
+    owner: root
+    group: root
+    mode: "0755"
+
+# The options belong to these keys alone. A key in codex_authorized_keys keeps its shell.
+- name: Authorize the review-gate keys for the session user
+  ansible.posix.authorized_key:
+    user: "{{ codex_user }}"
+    key: "{{ item }}"
+    key_options: 'restrict,command="/usr/local/bin/codex-review-gate"'
+    state: present
+  loop: "{{ codex_review_gate_keys }}"
+
 # --- The Codex CLI -----------------------------------------------------------------------
 # The release's codex-package, checked against its published sha256. defaults/main.yml says
 # why the package and not the bare binary. Each version unpacks to its own directory, and

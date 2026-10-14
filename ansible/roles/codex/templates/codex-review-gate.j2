@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#
+# {{ ansible_managed }}
+#
+# codex-review-gate (roles/codex, PET-591): the forced command for each key in
+# codex_review_gate_keys. sshd runs it in place of whatever the client asked for, and puts
+# the client's request in SSH_ORIGINAL_COMMAND. The gate runs exactly one shape of request:
+#
+#   codex-review <repo> <pr-number> <low|medium|high>
+#
+# <repo> must be on the allowlist below (codex_review_gate_repos). The gate passes the three
+# matched words to codex-review as separate arguments and never hands the request to a
+# shell. It refuses anything else, including an empty request, which is an interactive login.
+# The key's `restrict` option already refuses a pty and every kind of forwarding.
+#
+# Every request is logged to the journal under the tag codex-review-gate, accepted or not.
+#
+# Exit 2 on a refusal. Otherwise the exit status is codex-review's.
+set -euo pipefail
+
+request="${SSH_ORIGINAL_COMMAND-}"
+# The journal gets printable characters only, and at most 200 of them.
+logged="${request//[^[:print:]]/?}"
+logged="${logged:0:200}"
+client="${SSH_CLIENT:-unknown}"
+client="${client%% *}"
+
+refuse() {
+  logger -t codex-review-gate -- "refused from $client: $1: '$logged'" || true
+  printf 'codex-review-gate: %s\n' "$1" >&2
+  printf 'codex-review-gate: this key runs only: codex-review <repo> <pr-number> <low|medium|high>\n' >&2
+  exit 2
+}
+
+[ -n "$request" ] || refuse "an interactive login is not allowed"
+
+# bash matches ^ and $ at the ends of the whole string, and no class here admits a space,
+# a newline or a shell metacharacter, so a match is exactly three plain words.
+pattern='^codex-review ([a-z0-9-]+) ([1-9][0-9]{0,5}) (low|medium|high)$'
+[[ "$request" =~ $pattern ]] || refuse "the request does not match the allowed command"
+repo="${BASH_REMATCH[1]}"
+pr="${BASH_REMATCH[2]}"
+effort="${BASH_REMATCH[3]}"
+
+case "$repo" in
+{% for r in codex_review_gate_repos %}
+  {{ r }}) ;;
+{% endfor %}
+  *) refuse "'$repo' is not on the review allowlist" ;;
+esac
+
+logger -t codex-review-gate -- "accepted from $client: codex-review $repo $pr $effort" || true
+exec /usr/local/bin/codex-review "$repo" "$pr" "$effort"
