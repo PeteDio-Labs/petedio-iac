@@ -8,25 +8,29 @@
 #   claude-remote-serve.sh --check    run the preflight checks only, then exit
 #
 # Written for /bin/bash 3.2, the bash macOS ships. Logs go to ~/Library/Logs/claude-remote/:
-# serve.log (this script), run-resume.log and run-fresh.log (the CLI's output) and
-# claude-debug.log (the CLI's debug file).
+# serve.log (this script), run-server.log (the CLI's output) and claude-debug.log (the CLI's
+# debug file).
 #
 # FAIL LOUDLY BEFORE STARTING. A server with no terminal hangs on any interactive prompt (247
 # hung for two days on 2026-09-12). So this script refuses to start, with a non-zero exit and a
 # line in serve.log, until the Remote Control consent and the folder's trust prompt are answered
 # by hand. It never answers them itself.
 #
-# RESUME FIRST, THEN START FRESH. `remote-control --continue` reattaches to the session this
-# folder last recorded, but only within roughly 4 hours. With nothing to resume, it prints "No
-# recent session found" and exits 1 (measured on 247, 2026-10-14). Its exit code is not
-# trusted, so any exit of the resume attempt starts a fresh server.
+# NO --continue. A plain `remote-control` start brings back every session the last server in
+# this folder served, within about 4 hours. `--continue` brings back only the first one, can't
+# be combined with --spawn, and runs until that session ends, so it would hold off the
+# worktree server (Codex on PET-622, from code.claude.com/docs/en/remote-control).
+#
+# ONE WRAPPER AT A TIME. A lock directory, taken before the DNS wait and held until exit, stops
+# two wrappers from both starting a server. A stale lock, whose pid no longer runs this script,
+# is removed.
 #
 # WAIT ON THE SERVER'S PID ALONE. Each CLI run starts in the background and `wait` takes its
 # pid, so a session child that outlives the server can't hold the loop.
 #
 # STOP A DEAD SERVER'S SESSIONS. Each server runs in its own process group. When it exits, the
 # session processes it spawned (`claude --print --sdk-url ...`) can outlive it, and the next
-# server's --continue would reattach their session beside them. So this script logs each
+# server would bring their sessions back beside them. So this script logs each
 # survivor in that group, sends it SIGTERM, and then SIGKILL after 5 seconds. A turn in flight
 # is lost. The log names each survivor by pid and executable name only, because a session's
 # command line can carry a token. The group is the boundary: a pattern such as `--sdk-url`
@@ -65,7 +69,8 @@ log="$logdir/serve.log"
 
 say() { printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$log"; }
 
-# Best effort, and never fatal: a give-up that can't send its DM must still exit 5.
+# Best effort, and never fatal: a give-up that can't send its DM must still exit 5. The bearer
+# reaches curl through a config on stdin, never through its arguments, which `ps` shows.
 alert() {
   osascript -e "display notification \"$1\" with title \"Mac Remote Control\"" >/dev/null 2>&1 || true
   local tok
@@ -74,10 +79,12 @@ alert() {
     say "ALERT not sent to pete-bot: no notify token (is Vault sealed?)."
     return 0
   fi
+  local body
   # shellcheck disable=SC2016 # $m is a jq variable, not a shell one.
-  if "$jq" -n --arg m "$1" '{from: "Mac Remote Control", message: $m}' \
-      | curl -sS -m 10 -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
-          --data-binary @- "$notify_url" 2>>"$log" | grep -q messageId; then
+  body="$("$jq" -cn --arg m "$1" '{from: "Mac Remote Control", message: $m}')"
+  if printf 'header = "Authorization: Bearer %s"\n' "$tok" \
+      | curl -sS -m 10 -K - -H 'Content-Type: application/json' --data-binary "$body" \
+          "$notify_url" 2>>"$log" | grep -q messageId; then
     say "ALERT sent to pete-bot."
   else
     say "ALERT not confirmed by pete-bot: no messageId in its reply."
@@ -119,6 +126,22 @@ if $check_only; then
   echo "claude-remote-serve: preflight passed."
   exit 0
 fi
+
+lock="$logdir/serve.lock"
+take_lock() {
+  mkdir "$lock" 2>/dev/null && echo $$ >"$lock/pid"
+}
+if ! take_lock; then
+  holder="$(cat "$lock/pid" 2>/dev/null)"
+  if [ -n "$holder" ] && ps -o command= -p "$holder" 2>/dev/null | grep -qF "$(basename "$0")"; then
+    say "Another wrapper holds $lock (pid $holder). Exiting."
+    exit 0
+  fi
+  say "Removing a stale lock (pid ${holder:-none})."
+  rm -rf "$lock"
+  take_lock || { say "Another wrapper took $lock first. Exiting."; exit 0; }
+fi
+trap '[ "$(cat "$lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$lock"' EXIT
 
 # Wait for DNS, so a network that comes up after login doesn't fail the agent.
 deadline=$(( $(date +%s) + dns_wait_s ))
@@ -187,14 +210,11 @@ run() {
 
 exits=""
 while :; do
-  say "Resume attempt: remote-control --continue"
-  run resume --continue
-  say "The resume attempt ended (exit $rc). Starting a fresh server."
+  say "Starting the server: remote-control --spawn $spawn"
+  run server --spawn "$spawn"
+  say "The server ended (exit $rc)."
 
-  run fresh --spawn "$spawn"
-  say "The fresh server ended (exit $rc)."
-
-  # One exit per cycle, counted after the fresh server ends, inside a sliding window.
+  # Count each exit inside a sliding window.
   now=$(date +%s)
   kept=""
   for t in $exits $now; do
@@ -204,7 +224,7 @@ while :; do
   # shellcheck disable=SC2086 # split on purpose: one word per exit time.
   set -- $exits
   if [ $# -ge $max_exits ]; then
-    msg="The Mac's Remote Control server exited $max_exits times in $((window_s / 60)) minutes and stopped. Read ~/Library/Logs/claude-remote/run-fresh.log; an expired login is the usual cause."
+    msg="The Mac's Remote Control server exited $max_exits times in $((window_s / 60)) minutes and stopped. Read ~/Library/Logs/claude-remote/run-server.log; an expired login is the usual cause."
     alert "$msg"
     fail 5 "$msg"
   fi

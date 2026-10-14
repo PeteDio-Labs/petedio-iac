@@ -124,6 +124,9 @@ expect KeepAlive false
 expect LimitLoadToSessionType Aqua
 expect EnvironmentVariables.HOME "$HOME"
 expect EnvironmentVariables.PATH "$path_env"
+expect ExitTimeOut 30
+expect StandardOutPath "$logdir/launchd.log"
+expect StandardErrorPath "$logdir/launchd.log"
 
 want="$(shasum -a 256 "$src" | cut -d' ' -f1)"
 got="$(shasum -a 256 "$dest" | cut -d' ' -f1)"

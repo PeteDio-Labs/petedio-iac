@@ -18,13 +18,14 @@ git worktree. It is the macOS counterpart of `claude-ops-pm` on claude-247
 
 1. **Refuses to start until a person answers both prompts.** A server with no terminal hangs on
    a prompt, so the preflight reads `~/.claude.json` for the consent and the folder's trust.
-2. **Runs one server per user.** If a `claude remote-control` process already runs, the wrapper
-   exits 0.
+2. **Runs one server per user.** If a `claude remote-control` process already runs, or another
+   wrapper holds `serve.lock` in the log folder, the wrapper exits 0.
 3. **Waits for DNS** to resolve `api.anthropic.com`, for up to 10 minutes.
 4. **Holds off system sleep** with `caffeinate -s` while it runs. On AC power, an idle Mac
    stays awake. Closing the lid still sleeps it.
-5. **Resumes, then starts fresh.** It runs `remote-control --continue` first. When that exits,
-   for any reason, it starts a fresh server with `--spawn worktree`.
+5. **Starts the server with `--spawn worktree`.** A plain start brings back every session the
+   last server served, for about 4 hours after it stopped. The wrapper never passes
+   `--continue`, which brings back only one session and can't be combined with `--spawn`.
 6. **Stops a dead server's sessions.** Each server runs in its own process group. When the
    server exits, the wrapper logs and stops what is left in that group.
 7. **Gives up visibly.** After 5 exits in 5 minutes, it exits 5, shows a macOS notification and
@@ -74,8 +75,7 @@ To update the wrapper after a change merges, pull `main` and run the installer a
 | File | What writes it |
 |---|---|
 | `serve.log` | The wrapper: starts, exits, survivors, alerts and failures |
-| `run-resume.log` | The CLI's output from the last `--continue` attempt |
-| `run-fresh.log` | The CLI's output from the last fresh server |
+| `run-server.log` | The CLI's output from the last server |
 | `claude-debug.log` | The CLI's `--debug-file` |
 | `launchd.log` | Anything the wrapper prints before its own log opens |
 
@@ -118,7 +118,7 @@ the desktop app's sessions.
 
 The wrapper exits 5 and stays down until the next login or install. To recover:
 
-1. Read `run-fresh.log`. A login error means you need to sign in again: run `claude` in a
+1. Read `run-server.log`. A login error means you need to sign in again: run `claude` in a
    terminal and run `/login`.
 2. Run the preflight with `--check`.
 3. Run the installer.
