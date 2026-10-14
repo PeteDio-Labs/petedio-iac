@@ -43,7 +43,7 @@ if ($Uninstall) {
         Stop-WithError "the task '$taskName' is still registered after Unregister-ScheduledTask."
     }
     Write-Output "Removed the task '$taskName'. Logs stay in $installDir."
-    Write-Output "A running server outlives the task. To stop it, see the runbook's 'Stop the server' section."
+    Write-Output "The serve script stops its server within 10 seconds. If one still runs, see the runbook's 'Stop the server' section."
     exit 0
 }
 

@@ -83,22 +83,33 @@ the copy in `%LOCALAPPDATA%`, never the checkout.
 
 ## Stop the server
 
-Stopping the task ends PowerShell and `conhost.exe`, but the server and its session processes
-can outlive them. To stop the server, stop the task, then stop those processes:
+To stop the server, stop the task:
 
 ```powershell
 Stop-ScheduledTask -TaskName 'Claude Remote Control'
-Get-CimInstance Win32_Process -Filter "Name='claude.exe'" |
-    Where-Object { $_.ExecutablePath -ieq "$env:USERPROFILE\.local\bin\claude.exe" -and
-                   $_.CommandLine -match '\sremote-control(\s|$)|\s--sdk-url\s' } |
+```
+
+`Stop-ScheduledTask` ends `conhost.exe`, the task's own process, and leaves the serve script
+running. The script checks its console host every 5 seconds. When the host is gone, it stops the
+server and its session processes, writes a line to `serve.log`, and exits. Allow 10 seconds.
+
+If a server still runs after that, stop the serve script and the CLI's processes directly:
+
+```powershell
+Get-CimInstance Win32_Process |
+    Where-Object { ($_.Name -eq 'powershell.exe' -and $_.CommandLine -match 'claude-remote-serve\.ps1') -or
+                   ($_.ExecutablePath -ieq "$env:USERPROFILE\.local\bin\claude.exe" -and
+                    $_.CommandLine -match '\sremote-control(\s|$)|\s--sdk-url\s') } |
     ForEach-Object { Stop-Process -Id $_.ProcessId }
 ```
 
-The filter matches the CLI's `remote-control` server and the session processes it spawns, which
-carry `--sdk-url`. It leaves the desktop app and your interactive sessions running.
+The filter matches the serve script, the CLI's `remote-control` server, and the session
+processes the server spawns, which carry `--sdk-url`. It leaves the desktop app and your
+interactive sessions running.
 
 When the server exits on its own, the serve script stops the session processes it leaves
-behind before it starts the next server. `serve.log` records each one it stops.
+behind before it starts the next server. `serve.log` records the PID and executable name of
+each one it stops, never the command line, which can carry a token.
 
 To keep the server from starting at your next logon, disable the task:
 

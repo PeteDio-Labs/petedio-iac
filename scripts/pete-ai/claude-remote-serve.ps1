@@ -23,6 +23,11 @@
 # processes it leaves behind, then starts the next server. The next server's `--continue`
 # reattaches the session, so a survivor would be a second process on it. The cost is any turn
 # that was in flight when the server died.
+#
+# STOPPING THE TASK STOPS THE SCRIPT. Stop-ScheduledTask ends conhost.exe, the task's own
+# process, and leaves this script running. On 2026-10-14 an orphaned copy kept looping, and every
+# launch failed with 0xC0000142 because its console was gone. So the script watches its console
+# host: when the host is gone, it stops the server and its session processes, then exits 0.
 param(
     [string]$WorkDir = (Join-Path $env:USERPROFILE 'goofy-skate'),
     [string]$NamePrefix = 'Pete-AI',
@@ -48,7 +53,24 @@ function Stop-WithError([int]$Code, [string]$Message) {
     exit $Code
 }
 
-Write-Log "Starting: workdir=$WorkDir prefix=$NamePrefix mode=$PermissionMode spawn=$Spawn"
+# The console host that started this script: conhost.exe under the task, or your shell when you
+# run it by hand. Holding its handle makes HasExited exact even if Windows reuses the PID.
+$hostId = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+$hostProc = Get-Process -Id $hostId -ErrorAction SilentlyContinue
+if ($hostProc) { $null = $hostProc.Handle }
+
+function Test-HostGone {
+    return (-not $hostProc) -or $hostProc.HasExited
+}
+
+function Exit-IfHostGone {
+    if (Test-HostGone) {
+        Write-Log "The console host (pid $hostId) is gone, so the task was stopped; exiting."
+        exit 0
+    }
+}
+
+Write-Log "Starting: workdir=$WorkDir prefix=$NamePrefix mode=$PermissionMode spawn=$Spawn host=$hostId"
 
 # Preflight. Each check names what it read, so "not found" and "not checked" can't look alike.
 if (-not (Test-Path $claude)) { Stop-WithError 1 "no Claude CLI at $claude" }
@@ -128,7 +150,15 @@ function Invoke-Claude([string]$Label, [string[]]$Arguments) {
         -RedirectStandardError (Join-Path $logDir "run-$Label.err.log")
     # 5.1 reports no ExitCode unless the handle is opened before the process exits.
     $null = $p.Handle
-    $p.WaitForExit()
+    # Check the console host every 5 seconds, so Stop-ScheduledTask stops the server too.
+    while (-not $p.WaitForExit(5000)) {
+        if (Test-HostGone) {
+            Write-Log "The console host (pid $hostId) is gone, so the task was stopped; stopping server pid $($p.Id)."
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Stop-Descendants $p.Id $notBefore
+            Exit-IfHostGone
+        }
+    }
     $rc = $p.ExitCode
     Stop-Descendants $p.Id $notBefore
     return $rc
@@ -136,9 +166,11 @@ function Invoke-Claude([string]$Label, [string[]]$Arguments) {
 
 $exits = New-Object System.Collections.Generic.List[datetime]
 while ($true) {
+    Exit-IfHostGone
     Write-Log 'Resume attempt: remote-control --continue'
     $rc = Invoke-Claude 'resume' (@('remote-control', '--continue') + $common)
     Write-Log "The resume attempt ended (exit $rc); starting a fresh server."
+    Exit-IfHostGone
 
     $rc = Invoke-Claude 'fresh' (@('remote-control', '--spawn', $Spawn) + $common)
     Write-Log "The fresh server ended (exit $rc)."
