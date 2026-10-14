@@ -2,8 +2,8 @@
 # configure-usaa.yml — deploy petedio-usaa on usaa-238 as one systemd service (PET-590).
 #
 # petedio-usaa (repo PeteDio-Labs/petedio-usaa, private) is a savings and trip tracker over
-# the USAA bank ledger. It serves HTTP on :8080 behind Cloudflare Access at usaa.pdlab.dev,
-# and accepts Batsy's totals on usaa-feed.pdlab.dev (cloudflare-routes.tf). Its state is the
+# the USAA bank ledger. It serves HTTP on :8080 behind Cloudflare Access at savings.pdlab.dev,
+# and accepts Batsy's totals on savings-feed.pdlab.dev (cloudflare-routes.tf). Its state is the
 # `usaa` database on postgres-rds-231 (databases.tf); the host keeps only the binary, the
 # env file and /var/lib/usaa for the import's scratch copy.
 #
@@ -12,7 +12,7 @@
 # `--target=bun-linux-x64`.
 #
 # NOT A SECRET, BUT REQUIRED: usaa_access_aud, the Access application audience tag for
-# usaa.pdlab.dev, from the Terraform output of the same name. The app checks it on the
+# savings.pdlab.dev, from the Terraform output of the same name. The app checks it on the
 # Cf-Access-Jwt-Assertion JWT; without it a token issued for any other Access app in the
 # team would pass. scripts/deploy-usaa.sh reads it with `terraform output`.
 #
@@ -46,8 +46,8 @@
     usaa_db_name: usaa
     usaa_db_user: usaa
     usaa_access_team_domain: petedillo-labs.cloudflareaccess.com
-    usaa_public_origin: https://usaa.pdlab.dev
-    usaa_feed_host: usaa-feed.pdlab.dev
+    usaa_public_origin: https://savings.pdlab.dev
+    usaa_feed_host: savings-feed.pdlab.dev
     # Who may sign in, and who sees the ledger. The email is the identity Access asserts.
     usaa_viewers:
       pedelgadillo@gmail.com: { name: Pedro, ledger: true }

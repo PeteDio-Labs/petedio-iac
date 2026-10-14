@@ -12,7 +12,7 @@
 # nothing.
 #
 # It also reads the usaa_access_aud Terraform output (the Access application audience tag
-# for usaa.pdlab.dev, which the app checks on the Cf-Access-Jwt-Assertion JWT). That is an
+# for savings.pdlab.dev, which the app checks on the Cf-Access-Jwt-Assertion JWT). That is an
 # identifier, not a secret, and it goes in the same extra-vars file to keep argv clean. The
 # state backend is MinIO, so the script reads kv/iac/minio as apply-vault-config.sh does.
 set -euo pipefail

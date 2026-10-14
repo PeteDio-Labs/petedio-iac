@@ -16,10 +16,10 @@ bucket (see [usaa-statement-backup.md](usaa-statement-backup.md)).
 | Service | `usaa.service` runs `/opt/usaa/bin/petedio-usaa serve` as user `usaa` on `:8080` |
 | Config | `/etc/usaa/usaa.env` (root:usaa 0640), data dir `/var/lib/usaa` (0750 usaa) |
 | Database | `usaa` on postgres-rds-231, role `usaa`, password at `kv/db/usaa` field `password` |
-| `usaa.pdlab.dev` | Cloudflare Access with the Authentik IdP, allow-list Pedro and Sonia |
-| `usaa-feed.pdlab.dev` | no Access, one path `/api/v1/totals`, gated by the app's bearer check |
+| `savings.pdlab.dev` | Cloudflare Access with the Authentik IdP, allow-list Pedro and Sonia |
+| `savings-feed.pdlab.dev` | no Access, one path `/api/v1/totals`, gated by the app's bearer check |
 
-Batsy, Sonia's agent, posts totals to `usaa-feed.pdlab.dev` from outside the lab. The
+Batsy, Sonia's agent, posts totals to `savings-feed.pdlab.dev` from outside the lab. The
 bearer is `kv/services/usaa` field `batsy_bearer_token`. Every other path on that hostname
 gets the tunnel's catch-all 404, and the app also refuses non-feed paths on that Host.
 
@@ -151,7 +151,7 @@ rm -f /tmp/usaa.db
 
 The ledger is financial data. The bucket keeps the only durable copy, so a stray copy on
 238 adds exposure and nothing else. Check the import landed by signing in at
-`usaa.pdlab.dev` as Pedro, the only viewer with ledger access.
+`savings.pdlab.dev` as Pedro, the only viewer with ledger access.
 
 ⚠ **Copy `usaa.db` out of the bucket with `mc cp`. Never `mc mirror --remove`.** The
 `--remove` flag deletes objects absent from the source, so a half-populated local directory
