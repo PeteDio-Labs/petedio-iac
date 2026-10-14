@@ -601,3 +601,16 @@ claude_ops_permission_mode: auto
 # start. `same-dir` exists for the vault clone's own reasons (see the comment above
 # claude_remote_sessions) that do not apply to claude-ops's single workspace checkout.
 claude_ops_spawn: worktree
+
+# --- The PM seat (PET-619) ------------------------------------------------------------------
+# A second claude-ops Remote Control server, for the project-manager seat that coordinates
+# the VET and GOOF worker sessions. tasks/claude-ops-pm.yml carries the design.
+#
+# DEFAULT FALSE, like every other delivery in this role. host_vars/claude-247.yml turns it on.
+# It is read only inside tasks/claude-ops.yml, so claude_ops_enable must be true as well.
+claude_ops_pm_enable: false
+claude_ops_pm_repo: PeteDio-Labs/petedio-pm
+claude_ops_pm_dest: petedio-pm
+claude_ops_pm_remote_name: pm
+# Root-owned, so a session cannot rewrite what the unit runs at its next start.
+claude_ops_pm_serve_bin: /usr/local/libexec/claude-ops-pm-serve
