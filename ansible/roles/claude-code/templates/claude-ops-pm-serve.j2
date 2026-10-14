@@ -5,8 +5,11 @@
 #
 # RESUME FIRST, THEN START FRESH. `claude remote-control --continue` reattaches to the session
 # this directory last recorded, but only within roughly 4 hours; past that it exits with an
-# error. So the first attempt resumes, and only a failed resume starts a fresh session. A fresh
-# session loses nothing durable: the seat keeps its state in notes/pick-up.md.
+# error. So the first attempt resumes, and ANY exit of that attempt starts a fresh session. The
+# exit code is not trusted: whether `--continue` exits non-zero with nothing to resume is
+# unmeasured, and a wrapper that read 0 as "done" would exit, restart every 30 seconds and trip
+# the unit's start limit. A fresh session loses nothing durable: the seat keeps its state in
+# notes/pick-up.md.
 #
 # FORWARD THE STOP. The unit keeps KillMode=mixed like its siblings, so systemd sends SIGTERM
 # to this script alone. The resume attempt runs in the background, so `wait` returns on the
@@ -24,11 +27,7 @@ wait "$pid"
 rc=$?
 trap - TERM INT
 
-if [ "$rc" -eq 0 ]; then
-  exit 0
-fi
-
-echo "No session to resume (exit $rc); starting a fresh one."
+echo "The resume attempt ended (exit $rc); starting a fresh session."
 # same-dir: the seat is one checkout on main, so a session writes its pick-up note where the
 # next one reads it, not on a worktree's side branch.
 exec "$claude" remote-control --spawn same-dir "${flags[@]}"
