@@ -92,7 +92,10 @@ jobs:
         id: scope
         run: |
           set -euo pipefail
-          find playbooks -name '*.yml' -type f | sort > /tmp/playbooks.txt
+          # playbooks/files and playbooks/templates hold assets the plays copy, such as the
+          # plane-mcp docker-compose.yml (PET-610). They are not plays.
+          find playbooks -name '*.yml' -type f -not -path 'playbooks/files/*' \
+            -not -path 'playbooks/templates/*' | sort > /tmp/playbooks.txt
           # Only the top level is a suite to RUN; tests/cases/* are includes, and counting
           # them here would make the run step's own count guard unsatisfiable.
           find tests -maxdepth 1 -name '*.yml' -type f | sort > /tmp/tests.txt

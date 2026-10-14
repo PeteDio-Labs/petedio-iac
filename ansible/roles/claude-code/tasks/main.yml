@@ -357,14 +357,17 @@
 # see the reconcile's comment below. Refuse the collision unconditionally, whether or not
 # claude_ops_enable is set, because host_vars can add a session named "ops" on a run that
 # never touches claude-ops.yml at all, and the two units would then fight over one unit file.
-- name: Refuse a claude_remote_sessions entry named "ops" (PET-531 owns that unit)
+# claude-remote-pm.service (PET-619, tasks/claude-ops-pm.yml) is claude-ops's too, for the
+# same reason.
+- name: Refuse a claude_remote_sessions entry named "ops" or "pm" (claude-ops owns those units)
   ansible.builtin.assert:
     that:
       - "'ops' not in (claude_remote_sessions | map(attribute='name') | list)"
+      - "'pm' not in (claude_remote_sessions | map(attribute='name') | list)"
     fail_msg: >-
-      claude_remote_sessions has an entry named "ops". That name renders
-      claude-remote-ops.service, which tasks/claude-ops.yml also owns for claude-ops's own
-      Remote Control unit — rename this entry.
+      claude_remote_sessions has an entry named "ops" or "pm". Those names render
+      claude-remote-ops.service and claude-remote-pm.service, which tasks/claude-ops.yml and
+      tasks/claude-ops-pm.yml own for claude-ops's own Remote Control units — rename this entry.
 
 # --- The Remote Control servers --------------------------------------------------------------
 # One unit per project directory, rendered from claude_remote_sessions.
@@ -430,14 +433,15 @@
   # delivered by tasks/claude-ops.yml under its own flag, so this reconcile must never treat
   # an absent claude-ops delivery (claude_ops_enable: false) as a reason to delete a unit it
   # does not own. The companion assert below keeps the two mechanisms from ever colliding on
-  # the same unit file.
+  # the same unit file. claude-remote-pm.service (PET-619) is excluded for the same reason:
+  # tasks/claude-ops-pm.yml delivers it under claude_ops_pm_enable.
   ansible.builtin.set_fact:
     claude_units_stale: >-
       {{ claude_units_present.files | map(attribute='path') | map('basename') | list
          | difference(claude_remote_sessions | map(attribute='name')
                       | map('regex_replace', '^', 'claude-remote-')
                       | map('regex_replace', '$', '.service') | list)
-         | difference(['claude-remote-ops.service']) }}
+         | difference(['claude-remote-ops.service', 'claude-remote-pm.service']) }}
 
 - name: Stop and disable the undeclared remote-control units
   ansible.builtin.systemd:

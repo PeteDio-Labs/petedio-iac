@@ -23,6 +23,7 @@ reviews it with comments, and Pedro decides the merge. Pedro chose that split on
 | Read code and comment on pull requests, and nothing more | The `petedio-codex-review` App's permissions | Pedro, in GitHub |
 | Comment on a Plane work item as `codex`, never as Pedro | The `codex` Plane user, Member on PET | Pedro, in Plane |
 | What the worker is told | `~/.codex/AGENTS.md` | The session user. It is guidance, not a boundary |
+| A key in `codex_review_gate_keys` runs `codex-review <repo> <pr-number> <low\|medium\|high>` for an allowlisted repo, and nothing else (`PET-591`) | `/usr/local/bin/codex-review-gate`, root-owned, and the key's `restrict` and `command=` options | A merged Ansible change |
 
 ## Bring the host up
 
@@ -121,7 +122,7 @@ Pedro runs. Nothing places either one by hand.
 
 | Identity | Vault path | Seeded by | On the host |
 |---|---|---|---|
-| The `petedio-codex-review` GitHub App: contents read, pull requests write, metadata read, on every PeteDio-Labs repository | `kv/services/codex-review-app` | `scripts/seed-codex-review-app.sh <pem>` | `~/.config/codex-review/`, `0400` |
+| The `petedio-codex-review` GitHub App: contents read, pull requests write, metadata read and checks read, on every PeteDio-Labs repository | `kv/services/codex-review-app` | `scripts/seed-codex-review-app.sh <pem>` | `~/.config/codex-review/`, `0400` |
 | The `codex` Plane user's API token | `kv/services/codex-plane` | `scripts/seed-codex-plane-token.sh`, which reads the clipboard | `~/.config/plane/api_key`, `0400` |
 
 Each seed script checks the credential before it writes. The App script requires the exact
@@ -138,6 +139,16 @@ run. A plain `ansible-playbook` run carries no identity and leaves both files as
 Without `contents:write`, the App's review never counts toward branch protection, and it
 cannot push. `codex-gh` also refuses an approval and a merge.
 
+The App reads checks because a private repository shows them to no other token
+(`PET-609`). Without that access, the reviewer can't read CI, and it escalates for lack of
+CI evidence. The access stays read-only, because write access would let the App post its
+own passing result.
+
+The reviewer reads CI with a GraphQL rollup query, which the `petedio-review` skill
+holds. `codex-gh pr checks` also reads each check's workflow run, which needs an Actions
+permission that the App doesn't hold. On a private repository, it fails with "Resource not
+accessible by integration".
+
 ## Review a pull request
 
 Every run starts with `codex-quota`. As `codex`, in `~/work`:
@@ -150,7 +161,7 @@ The run uses these tools, which `AGENTS.md` describes:
 
 | Tool | What it does |
 |---|---|
-| `codex-gh` | Runs `gh` with a 1-hour installation token. `pr view`, `pr diff`, `pr checks` and `pr review --comment` |
+| `codex-gh` | Runs `gh` with a 1-hour installation token. `pr view`, `pr diff`, `api graphql` for CI, and `pr review --comment` |
 | `git` | Fetches over HTTPS with a read-only token narrowed to one repository, through `/etc/gitconfig` |
 | `plane get PET-<n>` | Prints the item, its state, its description and its comments |
 | `plane comment PET-<n> < body.html` | Posts HTML as `codex`, then reads it back |

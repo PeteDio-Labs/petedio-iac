@@ -3,9 +3,19 @@
 # kv/services/codex-review-app, so Codex on codex-248 can read pull requests and post comment
 # reviews (PET-553). Modeled on seed-claude-code-app.sh.
 #
-# WHAT THE APP MAY DO. contents:read, pull_requests:write and metadata:read, installed on
-# every PeteDio-Labs repository. Pedro chose "All repositories" on 2026-10-01, so a repository
-# created later is reviewable without a re-install.
+# WHAT THE APP MAY DO. contents:read, pull_requests:write, metadata:read and checks:read,
+# installed on every PeteDio-Labs repository. Pedro chose "All repositories" on 2026-10-01,
+# so a repository created later is reviewable without a re-install.
+#
+# WHY IT READS CHECKS (PET-609). On a private repository, GitHub shows a pull request's
+# check runs only to a token that holds checks:read. Without it, the reviewer can't read CI,
+# and it escalates for lack of CI evidence. A public repository shows them to any token.
+# The reviewer reads them with a GraphQL rollup query, in the petedio-review skill.
+# `codex-gh pr checks` also reads each check's workflow run, which needs actions:read, so
+# the reviewer doesn't use it.
+#
+# ⚠ READ, NEVER WRITE, ON CHECKS. checks:write would let the App post its own passing result
+# on a pull request.
 #
 # ⚠ NO contents:write AND NO `workflows`, ON PURPOSE. Without write access, the App's review
 # cannot satisfy branch protection's required approval, and it cannot push. Codex comments;
@@ -44,7 +54,7 @@ VAULT_PATH="kv/services/codex-review-app"
 ORG="PeteDio-Labs"
 APP_SLUG="${APP_SLUG:-petedio-codex-review}"
 # The whole permission set, as GitHub reports it: sorted key=value pairs, comma-joined.
-WANT_PERMS="contents=read,metadata=read,pull_requests=write"
+WANT_PERMS="checks=read,contents=read,metadata=read,pull_requests=write"
 # The four claude-247 Apps. This App must be none of them.
 OTHER_APPS=(
   "kv/services/claude-workspace-mirror|the workspace mirror"

@@ -12,9 +12,10 @@ allowance nears its limit. If a run starts without it, stop and say so.
 
 ## What you may do
 
-- Read the pull request and its repository: `codex-gh pr view`, `codex-gh pr diff` and
-  `codex-gh pr checks`, with `--repo {{ codex_github_org }}/<repo>`. To read more than the
-  diff, clone the repository into `~/work`. `git` fetches with a read-only token.
+- Read the pull request and its repository: `codex-gh pr view` and `codex-gh pr diff`,
+  with `--repo {{ codex_github_org }}/<repo>`. To read CI, run the rollup query in the
+  `petedio-review` skill. `codex-gh pr checks` fails on a private repository. To read more
+  than the diff, clone the repository into `~/work`. `git` fetches with a read-only token.
 - Read the Plane work item the pull request names: `plane get PET-<n>`.
 - Post your review as a comment review: `codex-gh pr review <n> --repo
   {{ codex_github_org }}/<repo> --comment --body-file <file>`.

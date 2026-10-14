@@ -47,13 +47,40 @@ codex_allowed_sandbox_modes:
 codex_authorized_keys:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEgSIpFv6ipc5B3CATvK1CIqul0hG6MSUT0cR5TqhAX4 pedro@type-shit"
 
+# --- The review gate (PET-591) ------------------------------------------------------------
+# Keys that may queue a review and do nothing else. Each is authorized for the session user
+# with `restrict` (no pty and no forwarding) and a forced command, codex-review-gate. The gate
+# runs `codex-review <repo> <pr-number> <low|medium|high>` for a repo on the allowlist below
+# and refuses every other request. Pedro allowed this on 2026-10-14; he still decides every
+# merge.
+#
+# claude-ops on claude-247 generated its key on that host (roles/claude-code), and the
+# private half never leaves it.
+codex_review_gate_keys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID0KsS3gtk3bU5H7I6qdbcX/C9coc+obxEj+ho5P2Zz7 claude-ops@claude-247"
+
+# Every active PeteDio-Labs repo (Pedro, 2026-10-14). It leaves out the archived co-latro
+# repos and the hostless resume-builder and water-fast.
+codex_review_gate_repos:
+  - petedio-iac
+  - petedio-media-iac
+  - petedio-workspace
+  - petedio-vault
+  - petedio-media-control
+  - pete-bot
+  - petedio-palworld-panel
+  - petedio-search
+  - petedio-usaa
+  - petedio-pm
+
 # --- The reviewer's identities (PET-553) -------------------------------------------------
 # Codex reviews. Claude implements, and Pedro merges. Two identities let it do that, and
 # scripts/deploy-codex-248.sh passes both in from Vault. A run that passes neither leaves
 # the files on disk as they are, so a plain `ansible-playbook` run never wipes them.
 #
 #   kv/services/codex-review-app -> the petedio-codex-review GitHub App: contents:read,
-#     pull_requests:write and metadata:read, installed on every PeteDio-Labs repository.
+#     pull_requests:write, metadata:read and checks:read, installed on every PeteDio-Labs
+#     repository.
 #     With no contents:write, its review cannot count toward branch protection.
 #   kv/services/codex-plane      -> the `codex` Plane user's API token. Member on PET.
 #

@@ -11,7 +11,8 @@
 # Inputs, all via ENVIRONMENT (never argv, never workflow interpolation — the
 # branch name is attacker-controlled on a public repo, see the injection note in
 # .github/workflows/plane-sync.yml):
-#   PLANE_BASE_URL     e.g. https://plane.pdlab.dev  (or the LAN address)
+#   PLANE_BASE_URL     the LAN address, http://192.168.50.235:8080. Not https://plane.pdlab.dev:
+#                      Cloudflare Access answers a PAT call there with a sign-in redirect (PET-610)
 #   PLANE_WORKSPACE    workspace slug
 #   PLANE_PROJECT_ID   project UUID
 #   PLANE_API_KEY      PAT from Vault kv/services/plane
