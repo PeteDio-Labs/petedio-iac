@@ -46,31 +46,55 @@ for t in vault ansible-playbook python3; do command -v "$t" >/dev/null || die "$
 [ "$BUILD" = "1" ] && { command -v bun >/dev/null || die "bun not in PATH (or pass --no-build)."; }
 
 step "Credentials"
-if [ -z "${VAULT_TOKEN:-}" ]; then
+# The Vault token comes from $VAULT_TOKEN, else the macOS Keychain. The script never
+# prompts for it, so a paste never lands in a terminal's scrollback.
+if [ -z "${VAULT_TOKEN:-}" ] && command -v security >/dev/null; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
-if [ -z "${VAULT_TOKEN:-}" ]; then
-  [ -t 0 ] || die "no VAULT_TOKEN, no Keychain item, and stdin is not a terminal."
-  read -rsp "Vault token: " VAULT_TOKEN; echo
-fi
+[ -n "${VAULT_TOKEN:-}" ] \
+  || die "no VAULT_TOKEN and no Keychain item '$VAULT_TOKEN_KEYCHAIN_ITEM'. Export VAULT_TOKEN, then run this again."
 export VAULT_TOKEN
-vault token lookup >/dev/null 2>&1 || die "Vault token invalid, or Vault is sealed/unreachable."
+vault token lookup >/dev/null 2>&1 \
+  || die "the Vault token is invalid, or Vault is sealed. Run scripts/pet-secrets doctor."
 
-read_field(){ vault kv get -field="$2" "$1" 2>/dev/null || die "cannot read $1 field '$2'."; }
-PB_TOKEN="$(read_field kv/services/pete-bot discord_token)"
-PB_CLIENT="$(read_field kv/services/pete-bot discord_client_id)"
-PB_OWNER="$(read_field kv/services/pete-bot owner_user_id)"
-PB_BEARER="$(read_field kv/services/pete-bot alert_bearer_token)"
+# ⚠ ONE READ OF THE WHOLE PATH. A per-field `vault kv get ... || true` turns a 403, a
+# timeout or a sealed Vault into "this optional field is absent", and the deploy then
+# ships the bot with that feature quietly off. A failed read stops here instead, and an
+# optional field is empty only when the path really lacks it.
+SNAPSHOT="$(vault kv get -format=json kv/services/pete-bot 2>/dev/null)" \
+  || die "cannot read kv/services/pete-bot. Run scripts/pet-secrets doctor."
+# field NAME prints one field of $SNAPSHOT. The value reaches python through the
+# environment, never argv, and returns into a variable.
+field(){ SNAPSHOT="$SNAPSHOT" python3 -c '
+import json, os, sys
+print((json.loads(os.environ["SNAPSHOT"])["data"]["data"] or {}).get(sys.argv[1], ""))' "$1"; }
+need(){ local v; v="$(field "$1")"; [ -n "$v" ] || die "kv/services/pete-bot has no field '$1'."; printf '%s' "$v"; }
+PB_TOKEN="$(need discord_token)"
+PB_CLIENT="$(need discord_client_id)"
+PB_OWNER="$(need owner_user_id)"
+PB_BEARER="$(need alert_bearer_token)"
 # Required (PET-584): the bearer notify-pedro sends to /v1/notify. To mint it, run
 # scripts/seed-pete-bot-notify-token.sh.
-PB_NOTIFY_BEARER="$(read_field kv/services/pete-bot notify_bearer_token)"
+PB_NOTIFY_BEARER="$(need notify_bearer_token)"
 # Optional (PET-395): the token /update dispatches with. Absent leaves /update saying it
 # is not configured, rather than failing the whole deploy.
-PB_UPDATES_TOKEN="$(vault kv get -field=github_updates_token kv/services/pete-bot 2>/dev/null || true)"
+PB_UPDATES_TOKEN="$(field github_updates_token)"
+# Optional (PET-617), together or not at all: the gateway's Anthropic key and pm-agent's
+# bearer. Absent leaves the gateway off. scripts/seed-llm-gateway.sh writes both, and the
+# play refuses one without the other.
+PB_ANTHROPIC_KEY="$(field anthropic_api_key)"
+PB_GATEWAY_PM_AGENT="$(field gateway_token_pm_agent)"
+unset SNAPSHOT
+echo "  resolved the 5 required values"
 if [ -n "$PB_UPDATES_TOKEN" ]; then
-  echo "  resolved 6 values, including the /update token"
+  echo "  /update: token present"
 else
-  echo "  resolved 5 values; no github_updates_token, so /update will say it is not configured"
+  echo "  /update: no github_updates_token, so /update will say it is not configured"
+fi
+if [ -n "$PB_ANTHROPIC_KEY" ]; then
+  echo "  gateway: key present, so the play requires llm: on"
+else
+  echo "  gateway: no anthropic_api_key, so the gateway stays off"
 fi
 
 if [ "$BUILD" = "1" ]; then
@@ -97,6 +121,7 @@ OUT="$TMP/extra.json" \
 PB_TOKEN="$PB_TOKEN" PB_CLIENT="$PB_CLIENT" PB_OWNER="$PB_OWNER" \
 PB_BEARER="$PB_BEARER" PB_NOTIFY_BEARER="$PB_NOTIFY_BEARER" BIN="$BIN" \
 PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
+PB_ANTHROPIC_KEY="$PB_ANTHROPIC_KEY" PB_GATEWAY_PM_AGENT="$PB_GATEWAY_PM_AGENT" \
 python3 -c '
 import json, os
 json.dump({
@@ -107,6 +132,8 @@ json.dump({
     "pete_bot_alert_bearer":     os.environ["PB_BEARER"],
     "pete_bot_notify_bearer":    os.environ["PB_NOTIFY_BEARER"],
     "pete_bot_github_updates_token": os.environ.get("PB_UPDATES_TOKEN", ""),
+    "pete_bot_anthropic_api_key": os.environ.get("PB_ANTHROPIC_KEY", ""),
+    "pete_bot_gateway_token_pm_agent": os.environ.get("PB_GATEWAY_PM_AGENT", ""),
 }, open(os.environ["OUT"], "w"))
 '
 
