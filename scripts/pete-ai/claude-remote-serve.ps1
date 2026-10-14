@@ -110,7 +110,8 @@ function Stop-Descendants([int]$RootId, [datetime]$NotBefore) {
         $parent = $queue.Dequeue()
         foreach ($child in $all | Where-Object { $_.ParentProcessId -eq $parent -and $_.CreationDate -ge $NotBefore }) {
             $queue.Enqueue([int]$child.ProcessId)
-            Write-Log ("Stopping pid {0}, left behind by server pid {1}: {2}" -f $child.ProcessId, $RootId, $child.CommandLine)
+            # The name only, never CommandLine: a session's command can carry a token.
+            Write-Log ("Stopping pid {0} ({1}, parent pid {2}), left behind by server pid {3}" -f $child.ProcessId, $child.Name, $parent, $RootId)
             Stop-Process -Id $child.ProcessId -Force -ErrorAction SilentlyContinue
         }
     }
