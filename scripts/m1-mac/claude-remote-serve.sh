@@ -28,9 +28,11 @@
 # session processes it spawned (`claude --print --sdk-url ...`) can outlive it, and the next
 # server's --continue would reattach their session beside them. So this script logs each
 # survivor in that group, sends it SIGTERM, and then SIGKILL after 5 seconds. A turn in flight
-# is lost. The group is the boundary: a pattern such as `--sdk-url` would also match the
-# desktop app's and the terminal's sessions. On a stop, launchd sends SIGTERM to this script,
-# and the trap passes it to the whole group.
+# is lost. The log names each survivor by pid and executable name only, because a session's
+# command line can carry a token. The group is the boundary: a pattern such as `--sdk-url`
+# would also match the desktop app's and the terminal's sessions. On a stop, launchd sends
+# SIGTERM to this script, and the trap passes it to the whole group. Never start the server
+# with setsid or nohup, which would move it out of that group.
 #
 # BOUNDED RESTART, AND A GIVE-UP THAT STAYS VISIBLE. An expired login makes the CLI exit at
 # once. Five cycles within five minutes end this script with exit 5. The LaunchAgent sets
@@ -131,14 +133,34 @@ caffeinate -s -w $$ &
 flags=(--permission-mode "$mode" --remote-control-session-name-prefix "$prefix" --debug-file "$logdir/claude-debug.log")
 
 pid=""
-trap 'say "Stopping on a signal."; [ -n "$pid" ] && kill -TERM -- "-$pid" 2>/dev/null && wait "$pid"; exit 143' TERM INT
+
+# stop_all: on launchd's SIGTERM, stop the server's whole group, and SIGKILL it after 10
+# seconds. launchd's own group kill can't reach a server in its own group, and it SIGKILLs this
+# script after ExitTimeOut (30 s), so a server that ignores SIGTERM must not hold the trap.
+stop_all() {
+  say "Stopping on a signal."
+  if [ -n "$pid" ]; then
+    kill -TERM -- "-$pid" 2>/dev/null
+    local i=0
+    while pgrep -g "$pid" >/dev/null && [ "$i" -lt 10 ]; do
+      sleep 1
+      i=$((i + 1))
+    done
+    if pgrep -g "$pid" >/dev/null; then
+      say "The server's group ignored SIGTERM. Sending SIGKILL to process group $pid."
+      kill -KILL -- "-$pid" 2>/dev/null
+    fi
+  fi
+  exit 143
+}
+trap stop_all TERM INT
 
 # reap <pgid>: stop whatever is left in a dead server's process group, and log each process.
 reap() {
   local left
   left="$(pgrep -g "$1")" || return 0
   for p in $left; do
-    say "A survivor of the server outlives it: pid $p, $(ps -o command= -p "$p" | cut -c1-160)"
+    say "A survivor of the server outlives it: pid $p, $(ps -o ucomm= -p "$p")"
   done
   kill -TERM -- "-$1" 2>/dev/null
   sleep 5
