@@ -21,9 +21,11 @@
 # be combined with --spawn, and runs until that session ends, so it would hold off the
 # worktree server (Codex on PET-622, from code.claude.com/docs/en/remote-control).
 #
-# ONE WRAPPER AT A TIME. A lock directory, taken before the DNS wait and held until exit, stops
-# two wrappers from both starting a server. A stale lock, whose pid no longer runs this script,
-# is removed.
+# ONE WRAPPER AT A TIME. Before the DNS wait, this script opens serve.lock on fd 9 and takes a
+# kernel flock on it through /usr/bin/perl, since macOS has no flock command. The lock belongs
+# to the open file, which this script keeps until it exits, so the kernel drops it when the
+# script dies, and no stale lock is left to reclaim. A second wrapper fails the flock and exits
+# 0. Each server starts with fd 9 closed, so a server can't hold the lock.
 #
 # WAIT ON THE SERVER'S PID ALONE. Each CLI run starts in the background and `wait` takes its
 # pid, so a session child that outlives the server can't hold the loop.
@@ -63,6 +65,7 @@ cycle_pause_s="${CLAUDE_REMOTE_CYCLE_PAUSE_S:-30}"
 max_exits=5
 window_s=300
 jq=/usr/bin/jq
+perl=/usr/bin/perl
 
 mkdir -p "$logdir"
 log="$logdir/serve.log"
@@ -104,6 +107,7 @@ say "Starting: workdir=$workdir prefix=$prefix mode=$mode spawn=$spawn check_onl
 
 # Preflight. Each check names what it read, so "not found" and "not checked" can't look alike.
 [ -x "$jq" ] || fail 1 "no jq at $jq"
+[ -x "$perl" ] || fail 1 "no perl at $perl"
 [ -x "$claude" ] || fail 1 "no Claude CLI at $claude"
 [ -d "$workdir" ] || fail 1 "no working folder at $workdir"
 [ -f "$config" ] || fail 2 "no $config. Sign in to the Claude CLI first."
@@ -128,20 +132,15 @@ if $check_only; then
 fi
 
 lock="$logdir/serve.lock"
-take_lock() {
-  mkdir "$lock" 2>/dev/null && echo $$ >"$lock/pid"
-}
-if ! take_lock; then
-  holder="$(cat "$lock/pid" 2>/dev/null)"
-  if [ -n "$holder" ] && ps -o command= -p "$holder" 2>/dev/null | grep -qF "$(basename "$0")"; then
-    say "Another wrapper holds $lock (pid $holder). Exiting."
-    exit 0
-  fi
-  say "Removing a stale lock (pid ${holder:-none})."
-  rm -rf "$lock"
-  take_lock || { say "Another wrapper took $lock first. Exiting."; exit 0; }
-fi
-trap '[ "$(cat "$lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$lock"' EXIT
+exec 9>>"$lock" || fail 1 "cannot open $lock"
+# perl locks fd 9's open file and exits. The lock stays, because this script holds fd 9.
+# shellcheck disable=SC2016 # $f is a perl variable, not a shell one.
+"$perl" -MFcntl=:flock -e 'open(my $f, ">>&=", 9) or exit 2; flock($f, LOCK_EX | LOCK_NB) or exit 1; exit 0'
+case $? in
+  0) say "Holding $lock." ;;
+  1) say "Another wrapper holds $lock. Exiting."; exit 0 ;;
+  *) fail 1 "cannot lock $lock with $perl" ;;
+esac
 
 # Wait for DNS, so a network that comes up after login doesn't fail the agent.
 deadline=$(( $(date +%s) + dns_wait_s ))
@@ -150,7 +149,7 @@ until dscacheutil -q host -a name api.anthropic.com | grep -q 'ip.*_address'; do
   sleep 10
 done
 
-caffeinate -s -w $$ &
+caffeinate -s -w $$ 9>&- &
 
 # Every flag goes AFTER `remote-control`: a global flag before it stops the CLI from starting.
 flags=(--permission-mode "$mode" --remote-control-session-name-prefix "$prefix" --debug-file "$logdir/claude-debug.log")
@@ -199,7 +198,7 @@ run() {
   local label="$1"
   shift
   set -m
-  (cd "$workdir" && exec "$claude" remote-control "$@" "${flags[@]}") </dev/null >"$logdir/run-$label.log" 2>&1 &
+  (cd "$workdir" && exec "$claude" remote-control "$@" "${flags[@]}") </dev/null 9>&- >"$logdir/run-$label.log" 2>&1 &
   pid=$!
   set +m
   wait "$pid"
