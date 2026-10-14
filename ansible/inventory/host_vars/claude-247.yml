@@ -14,6 +14,12 @@
 # the full bootstrap.
 claude_remote_enable: true
 
+# PET-620: claude-ops serves this host's only Remote Control server, claude-remote-ops.
+# Both users sign in to Pedro's claude.ai account, so the session picker listed 247 twice.
+# An empty list makes the role stop, disable and delete claude-remote-iac, -workspace and
+# -vault. It never touches claude-remote-ops.service, which tasks/claude-ops.yml owns.
+claude_remote_sessions: []
+
 # petedio-workspace is private. The play delivers it through a root-owned bare mirror that
 # fetches over a GitHub App token, Contents and Metadata read-only, installed on that one
 # repository (PET-480, PET-481, re-routed by PET-493).
