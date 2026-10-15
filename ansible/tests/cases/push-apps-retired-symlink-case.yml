@@ -1,0 +1,91 @@
+# The symlink case for tests/push-apps-retired.yml. A session owns the home these paths sit
+# in, so it can replace one with a link to a file it wants root to delete. Root must remove
+# the link, or the directory holding a link, and leave every target where it was.
+---
+- name: Name the paths and the targets outside them
+  ansible.builtin.set_fact:
+    link_root: "{{ scratch.path }}/symlinks"
+    link_paths:
+      vault_conf: "{{ scratch.path }}/symlinks/home/.config/claude-vault"
+      vault_broker: "{{ scratch.path }}/symlinks/bin/claude-vault-broker"
+      push_conf: "{{ scratch.path }}/symlinks/home/.config/claude-code-push"
+      push_broker: "{{ scratch.path }}/symlinks/bin/claude-code-push-broker"
+      push_gh: "{{ scratch.path }}/symlinks/bin/claude-gh"
+    link_targets:
+      dir: "{{ scratch.path }}/symlinks/outside/dir"
+      dir_file: "{{ scratch.path }}/symlinks/outside/dir/keep.txt"
+      file: "{{ scratch.path }}/symlinks/outside/keep-file.txt"
+      inner: "{{ scratch.path }}/symlinks/outside/keep-inner.txt"
+
+- name: Make the parent directories and the outside directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ link_root }}/home/.config"
+    - "{{ link_root }}/bin"
+    - "{{ link_paths.push_conf }}"
+    - "{{ link_targets.dir }}"
+
+- name: Make the outside files a careless delete would take
+  ansible.builtin.copy:
+    dest: "{{ item }}"
+    content: "keep\n"
+    mode: "0600"
+  loop:
+    - "{{ link_targets.dir_file }}"
+    - "{{ link_targets.file }}"
+    - "{{ link_targets.inner }}"
+
+# vault_conf is itself a link to a directory; the brokers and the wrapper are links to a
+# file; push_conf is a real directory holding a link to a file.
+- name: Plant the links
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    state: link
+  loop:
+    - { src: "{{ link_targets.dir }}", dest: "{{ link_paths.vault_conf }}" }
+    - { src: "{{ link_targets.file }}", dest: "{{ link_paths.vault_broker }}" }
+    - { src: "{{ link_targets.file }}", dest: "{{ link_paths.push_broker }}" }
+    - { src: "{{ link_targets.file }}", dest: "{{ link_paths.push_gh }}" }
+    - { src: "{{ link_targets.inner }}", dest: "{{ link_paths.push_conf }}/app.pem" }
+
+- name: Run the task file with both features off
+  ansible.builtin.include_tasks: ../../roles/claude-code/tasks/push-apps-retired.yml
+  vars:
+    claude_vault_enable: false
+    claude_code_push_enable: false
+    claude_vault_conf_dir: "{{ link_paths.vault_conf }}"
+    claude_vault_broker: "{{ link_paths.vault_broker }}"
+    claude_code_push_conf_dir: "{{ link_paths.push_conf }}"
+    claude_code_push_broker: "{{ link_paths.push_broker }}"
+    claude_code_push_gh: "{{ link_paths.push_gh }}"
+
+# follow: false, so a link that survived reads as present rather than as its target.
+- name: Read the removed paths back
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop: "{{ link_paths.values() | list }}"
+  register: link_gone
+
+- name: Read the targets back
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ link_targets.values() | list }}"
+  register: link_kept
+
+- name: Assert the links went and the targets stayed
+  vars:
+    left: "{{ link_gone.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+    lost: "{{ link_kept.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+  ansible.builtin.assert:
+    that:
+      - left | length == 0
+      - lost | length == 0
+    fail_msg: "symlinks: paths left={{ left }}, targets lost={{ lost }}."
+    success_msg: >-
+      symlinks: removed all {{ link_gone.results | length }} paths and kept all
+      {{ link_kept.results | length }} targets.
