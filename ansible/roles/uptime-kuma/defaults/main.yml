@@ -293,6 +293,48 @@ uptime_kuma_backup_push_monitors:
 # 26 hours: the check runs daily at 06:00 with up to two minutes of jitter.
 uptime_kuma_backup_push_interval: 93600
 
+# ------------------------------------------------- maintenance windows (PET-635) --
+# pve03's nightly backup runs at 02:45 in `mode: stop`, so every guest on the node goes
+# down in turn for about nine minutes. Without a window, each one paged Pedro through
+# pete-bot every night.
+#
+# A window puts its monitors in MAINTENANCE, and Kuma 1.23 sends nothing for
+# MAINTENANCE -> UP. It does send MAINTENANCE -> DOWN, so a guest that is still down
+# when the window closes alerts as usual. That is the only backup-night message Pedro
+# gets: a failed job shows in the 06:00 backup-health push to backups-pve03, and a hung
+# job keeps its guests down past the window's end.
+#
+# The window is a fixed clock window, not one the vzdump hook opens and closes. A
+# hook-driven window would need Kuma's admin password on pve03, because uptime-kuma-api
+# logs in only with it. The cost is drift as the job grows, so backup-health fails when
+# pve03's job runs longer than backup_store_jobs' max_minutes, which leaves 5 minutes of
+# this window to spare. To widen the window, change both values.
+#
+# `monitors` names every monitor whose guest the job stops. To add a guest on pve03 that
+# has a monitor, add its name here, or it alerts every night. The provisioner fails on a
+# name that matches no monitor, so a rename cannot drop a guest from the window quietly.
+# pve03's own monitor and backups-pve03 stay outside it: the node does not stop.
+# `timezone` matches the node's clock, which runs the 02:45 schedule.
+uptime_kuma_maintenances:
+  - title: pve03-nightly-backup
+    description: "pve03's 02:45 vzdump job stops each guest in turn (PET-635)."
+    cron: "40 2 * * *"
+    duration_minutes: 35
+    timezone: America/New_York
+    monitors:
+      - seerr          # 101
+      - flaresolverr   # 102
+      - sonarr         # 104
+      - radarr         # 105
+      - prowlarr       # 109
+      - authentik      # 119
+      - minio          # 221
+      - vault          # 223, sealed until the Pi's watcher unseals it
+      - postgres       # 231
+      - plane          # 235
+      - mtrace         # 237
+      - minio-data     # 245
+
 # ------------------------------------------------------- backup to the HDD --
 # The database lives on an SD card (mmcblk0p2) and this box has no local disk —
 # no USB device is attached. At 18 monitors x 20s that is ~78k row writes a day,
