@@ -306,9 +306,10 @@ uptime_kuma_backup_push_interval: 93600
 #
 # The window is a fixed clock window, not one the vzdump hook opens and closes. A
 # hook-driven window would need Kuma's admin password on pve03, because uptime-kuma-api
-# logs in only with it. The cost is drift as the job grows, so backup-health fails when
-# pve03's job runs longer than backup_store_jobs' max_minutes, which leaves 5 minutes of
-# this window to spare. To widen the window, change both values.
+# logs in only with it. The cost is drift as the job grows, so the 06:00 backup-health
+# run fails when pve03's job ran longer than backup_store_jobs' max_minutes, 5 minutes
+# short of this window's end. It warns the morning after, not during the run. To widen
+# the window, change both values.
 #
 # `monitors` names every monitor whose guest the job stops. To add a guest on pve03 that
 # has a monitor, add its name here, or it alerts every night. The provisioner fails on a

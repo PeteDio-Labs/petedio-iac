@@ -170,10 +170,24 @@ def load_health():
     return mod
 
 
+def fake_tasks(tasks):
+    """Answer like /nodes/{node}/tasks: running tasks only for source=active or all."""
+    def pvesh(path, *args):
+        source = args[args.index("--source") + 1] if "--source" in args else "archive"
+        if source == "all":
+            return tasks
+        if source == "active":
+            return [t for t in tasks if "endtime" not in t]
+        if source == "archive":
+            return [t for t in tasks if "endtime" in t]
+        raise ValueError(f"unknown source {source!r}")
+    return pvesh
+
+
 def run_duration(tasks, max_min):
     bh = load_health()
     bh.MAX_JOB_MIN = max_min
-    bh.pvesh = lambda path, *args: tasks
+    bh.pvesh = fake_tasks(tasks)
     bh.check_job_duration()
     return bh.problems
 
@@ -193,6 +207,9 @@ def test_health():
           f"a later short manual backup does not hide the long nightly run: {p}")
     p = run_duration([{"starttime": int(now - 40 * 60)}], 25)
     check(len(p) == 1 and "still running" in p[0], f"a run with no end fails: {p}")
+    p = run_duration([run(night - 86400 + 3600, 9), {"starttime": int(night)}], 25)
+    check(len(p) == 1 and "still running" in p[0],
+          f"a running job beside a finished one still fails (the query asks for all): {p}")
     check(run_duration([run(now - 30 * 3600, 60)], 25) == [],
           "a run older than the archive age limit is ignored")
     check(run_duration([], 25) == [], "no run to time adds no problem (check_archives owns it)")

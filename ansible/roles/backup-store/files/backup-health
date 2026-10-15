@@ -182,11 +182,15 @@ def check_job_duration():
 
     Uptime Kuma silences this node's guests for a fixed window around the nightly job.
     A job that runs past the window's end pages Pedro for every guest it has not reached
-    yet, so this fails first, while the window can still be widened.
+    yet. MAX_JOB_MIN sits below the window's end, so a run that grows into the margin
+    fails this check the morning after, before a longer run breaks the window.
     """
     if MAX_JOB_MIN <= 0:
         return
-    tasks = pvesh(f"/nodes/{NODE}/tasks", "--typefilter", "vzdump", "--limit", "20")
+    # The endpoint lists only finished tasks unless asked for all, and a job still
+    # running at 06:00 is the hang this check exists to catch.
+    tasks = pvesh(f"/nodes/{NODE}/tasks", "--typefilter", "vzdump", "--source", "all",
+                  "--limit", "20")
     since = time.time() - MAX_AGE_H * 3600
     runs = sorted((t for t in tasks if t.get("starttime", 0) >= since),
                   key=lambda t: t["starttime"])

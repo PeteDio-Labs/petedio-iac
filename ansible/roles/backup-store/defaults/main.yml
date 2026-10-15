@@ -130,10 +130,11 @@ backup_store_jobs:
     #     single thing the host exists to provide (PET-396, PET-403).
     exclude: [247]
     # The longest the job may run, in minutes. Uptime Kuma silences pve03's guests from
-    # 02:40 to 03:15 (uptime_kuma_maintenances in roles/uptime-kuma, PET-635), and
-    # backup-health fails when a run takes longer than this, while 5 minutes of the
-    # window remain. To widen the window, change both values. A job without this key
-    # is not timed.
+    # 02:40 to 03:15 (uptime_kuma_maintenances in roles/uptime-kuma, PET-635). The
+    # 06:00 backup-health run fails when a run took longer than this, which leaves a
+    # 5-minute margin before the window's end. The warning comes the morning after a
+    # run that grew into the margin, not during the run. To widen the window, change
+    # both values. A job without this key is not timed.
     max_minutes: 25
 
 # ----------------------------------------------------------- vzdump hook ----
