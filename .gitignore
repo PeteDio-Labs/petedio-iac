@@ -24,3 +24,6 @@ plan.txt
 # Python bytecode caches (scripts/*.py are run directly, never imported as a package)
 __pycache__/
 *.py[cod]
+
+# ansible-lint and ansible-playbook write a working-directory lock here (PET-643).
+ansible/.ansible/

@@ -55,7 +55,10 @@ claude_workspace_mirror_enable: true
 # Run scripts/deploy-claude-247.sh, which reads kv/services/claude-vault-push from Vault; a
 # bare play run leaves the clone as it found it. roles/claude-code/README.md has the design,
 # the trust step and the rotation.
-claude_vault_enable: true
+# PET-643: retired on 2026-10-15. No session runs as `claude` since PET-620, and the one
+# session kept here pushes notes with the claude-ops App. tasks/push-apps-retired.yml removes
+# the key, the broker and the wrapper. Pedro deletes petedio-vault-247 at GitHub.
+claude_vault_enable: false
 
 # A session here pushes branches to petedio-iac, petedio-media-iac and petedio-workspace and
 # opens pull requests on them (PET-507), so 247 implements instead of handing work to the Mac.
@@ -71,7 +74,9 @@ claude_vault_enable: true
 # Run scripts/deploy-claude-247.sh, which reads kv/services/claude-code-push from Vault; a
 # bare play run lands no key, and configures the clones only once one is on disk. roles/claude-code/README.md has
 # the design and the rotation.
-claude_code_push_enable: true
+# PET-643: retired on 2026-10-15, for the reason claude_vault_enable gives above. Pedro
+# deletes petedio-code-247 at GitHub.
+claude_code_push_enable: false
 
 # terraform, ansible-core, ansible-lint and shellcheck at the CI pins (PET-508), so a session
 # here verifies the IaC it writes instead of handing it to the Mac. The role's default is

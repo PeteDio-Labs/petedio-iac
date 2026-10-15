@@ -610,3 +610,9 @@
 # for it, so a host converged before PET-547 keeps none of it.
 - name: Remove the retired ticket-driven work loop
   ansible.builtin.import_tasks: loop-retired.yml
+
+# --- The retired push Apps of the `claude` user (PET-498 and PET-507, retired by PET-643) --
+# Pedro retired both on 2026-10-15. Each block removes its key, broker and wrapper only while
+# its feature is off, so turning one back on is not undone by this file.
+- name: Remove the retired push credentials of the session user
+  ansible.builtin.import_tasks: push-apps-retired.yml
