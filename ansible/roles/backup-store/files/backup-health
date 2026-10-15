@@ -24,6 +24,7 @@
 #   BACKUP_HEALTH_MAX_AGE_H   newest archive age limit      (26)
 #   BACKUP_HEALTH_ROOT_MAX    root disk use limit, percent  (85)
 #   BACKUP_HEALTH_MIN_GUESTS  fewest guests the job covers  (1)
+#   BACKUP_HEALTH_MAX_JOB_MIN longest the last vzdump run may take, minutes (0, unchecked)
 #   BACKUP_HEALTH_PUSH_URL    Kuma push URL, without query
 #   BACKUP_HEALTH_NO_PUSH=1   run the checks, never push (for testing)
 #
@@ -45,6 +46,7 @@ MNT = os.environ.get("BACKUP_HEALTH_MNT", "/mnt/ollama-backups")
 MAX_AGE_H = float(os.environ.get("BACKUP_HEALTH_MAX_AGE_H", "26"))
 ROOT_MAX = float(os.environ.get("BACKUP_HEALTH_ROOT_MAX", "85"))
 MIN_GUESTS = int(os.environ.get("BACKUP_HEALTH_MIN_GUESTS", "1"))
+MAX_JOB_MIN = float(os.environ.get("BACKUP_HEALTH_MAX_JOB_MIN", "0"))
 PUSH_URL = os.environ.get("BACKUP_HEALTH_PUSH_URL", "").strip()
 NO_PUSH = os.environ.get("BACKUP_HEALTH_NO_PUSH", "0") == "1"
 NODE = socket.gethostname().split(".")[0]
@@ -67,9 +69,9 @@ def fail(msg):
     problems.append(msg)
 
 
-def pvesh(path):
+def pvesh(path, *args):
     out = subprocess.run(
-        ["pvesh", "get", path, "--output-format", "json"],
+        ["pvesh", "get", path, *args, "--output-format", "json"],
         check=True, capture_output=True, text=True, timeout=60,
     )
     return json.loads(out.stdout)
@@ -175,6 +177,43 @@ def check_archives(ids, all_guests):
         ok(f"all {len(ids)} covered guests have an archive under {MAX_AGE_H:.0f} h old")
 
 
+def check_job_duration():
+    """Fail when the node's last vzdump run outgrew its Kuma maintenance window (PET-635).
+
+    Uptime Kuma silences this node's guests for a fixed window around the nightly job.
+    A job that runs past the window's end pages Pedro for every guest it has not reached
+    yet. MAX_JOB_MIN sits below the window's end, so a run that grows into the margin
+    fails this check the morning after, before a longer run breaks the window.
+    """
+    if MAX_JOB_MIN <= 0:
+        return
+    # The endpoint lists only finished tasks unless asked for all, and a job still
+    # running at 06:00 is the hang this check exists to catch.
+    tasks = pvesh(f"/nodes/{NODE}/tasks", "--typefilter", "vzdump", "--source", "all",
+                  "--limit", "20")
+    since = time.time() - MAX_AGE_H * 3600
+    runs = sorted((t for t in tasks if t.get("starttime", 0) >= since),
+                  key=lambda t: t["starttime"])
+    print(f"     read {len(tasks)} vzdump tasks, {len(runs)} in the last {MAX_AGE_H:.0f} h",
+          flush=True)
+    if not runs:
+        # check_archives already fails a night with no backup, so this only reports.
+        print("     no vzdump run to time", flush=True)
+        return
+    # Time every run, not only the newest: a short manual backup after the night's job
+    # would otherwise hide a nightly run that outgrew the window.
+    longest = max(runs, key=lambda t: t.get("endtime", time.time()) - t["starttime"])
+    mins = (longest.get("endtime", time.time()) - longest["starttime"]) / 60
+    if not longest.get("endtime"):
+        fail(f"a vzdump job started {mins:.0f} min ago and is still running "
+             f"(limit {MAX_JOB_MIN:.0f} min)")
+    elif mins <= MAX_JOB_MIN:
+        ok(f"the longest vzdump job took {mins:.0f} min (limit {MAX_JOB_MIN:.0f} min)")
+    else:
+        fail(f"a vzdump job took {mins:.0f} min, over the {MAX_JOB_MIN:.0f} min "
+             f"the Kuma maintenance window allows; widen it (PET-635)")
+
+
 def check_locks(all_guests):
     locked = [f"{v} {n} ({lock})" for v, (_, n, lock) in sorted(all_guests.items()) if lock]
     if locked:
@@ -221,6 +260,7 @@ def main():
         if ids:
             check_archives(ids, all_guests)
         check_locks(all_guests)
+        check_job_duration()
     except (subprocess.SubprocessError, ValueError, KeyError) as e:
         fail(f"could not read the node's guests or jobs: {e}")
 
