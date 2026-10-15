@@ -1,0 +1,38 @@
+---
+# claude-code / removes the `claude` user's two push credentials (PET-643).
+#
+# Pedro retired the vault push App (petedio-vault-247, PET-498) and the code-push App
+# (petedio-code-247, PET-507) on 2026-10-15. No Remote Control session runs as `claude` since
+# PET-620, and the one session kept on this host runs as claude-ops with its own App. A key
+# that no session uses is still readable by every process running as `claude`.
+#
+# Deleting the files here revokes nothing: Pedro deletes each App at GitHub, which revokes its
+# key. These tasks clear what tasks/vault.yml and tasks/code-push.yml installed, so a host
+# converged before PET-643 keeps no key nobody maintains. Each block runs only when its
+# feature is off, so a host that turns one back on is never fighting this file.
+#
+# What stays: the clones. Their credential helper still names the deleted broker, so a push
+# from one fails closed with "credential helper not found" instead of reaching GitHub.
+#
+# ⚠ Both directories sit in a home the session user owns, so a session could replace one with
+# a symlink. `state: absent` unlinks a symlink rather than following it, and removes a real
+# directory without following the links inside it, so root deletes nothing outside it.
+
+- name: Remove the retired vault push App's key, identity and broker
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ claude_vault_conf_dir }}"
+    - "{{ claude_vault_broker }}"
+  when: not (claude_vault_enable | bool)
+
+- name: Remove the retired code-push App's key, identity, broker and gh wrapper
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ claude_code_push_conf_dir }}"
+    - "{{ claude_code_push_broker }}"
+    - "{{ claude_code_push_gh }}"
+  when: not (claude_code_push_enable | bool)
