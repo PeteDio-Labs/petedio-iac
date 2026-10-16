@@ -18,8 +18,10 @@
 #
 # Four subcommands, the same shape as claude-code-push-broker:
 #
-#   mint-token [repo]  prints ONE installation token, good for an hour, narrowed to `repo`
-#                      when one is given.
+#   mint-token [--read-only] [repo]
+#                      prints ONE installation token, good for an hour, narrowed to `repo`
+#                      when one is given. --read-only narrows it to contents:read,
+#                      pull_requests:read and metadata:read (PET-617).
 #   get                speaks git's credential-helper protocol on stdin and stdout.
 #   store, erase       accepted and ignored.
 set -euo pipefail
@@ -33,17 +35,31 @@ die() { printf 'claude-ops-github-broker: %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -ne 0 ] || die "refusing to run as root. $CONF_DIR belongs to {{ claude_ops_user }}, and root running git in the session's clone is code execution as root."
 [ "$(id -un)" = "{{ claude_ops_user }}" ] || die "must run as {{ claude_ops_user }}, not $(id -un). Only {{ claude_ops_user }} can read $CONF_DIR."
-[ $# -ge 1 ] && [ $# -le 2 ] || die "usage: $(basename "$0") mint-token [repo] | get | store | erase"
+USAGE="usage: $(basename "$0") mint-token [--read-only] [repo] | get | store | erase"
+[ $# -ge 1 ] && [ $# -le 3 ] || die "$USAGE"
+
+# The permissions a --read-only token asks for. Each is the read level of one the App holds.
+# GitHub refuses a mint that asks for a permission the installation lacks, so checks:read and
+# actions:read cannot be added here without first adding them to the App.
+READ_ONLY_PERMISSIONS='{"contents":"read","pull_requests":"read","metadata":"read"}'
 
 # ---------------------------------------------------------------------------------- mint
 #
 # Carried over from claude-code-push-broker unchanged: a 540s JWT window under GitHub's 600s
 # ceiling, the JWT built on the fly, the PEM read by path, and stdin never carrying a secret.
+#
+# ⚠ --read-only FAILS CLOSED ON THE RESPONSE, NOT ONLY THE REQUEST. GitHub echoes the
+# permissions it granted. If any of them is above "read", the token is discarded and the mint
+# fails, so a change in how GitHub treats the request can't hand out a write token.
 mint() {
-  local repo="${1:-}" body='{}'
-  if [ -n "$repo" ]; then
-    body="$(printf '{"repositories":["%s"]}' "$repo")"
-  fi
+  local mode="$1" repo="${2:-}" body
+  body="$(MODE="$mode" REPO="$repo" PERMS="$READ_ONLY_PERMISSIONS" python3 -c 'import json, os
+b = {}
+if os.environ["REPO"]:
+    b["repositories"] = [os.environ["REPO"]]
+if os.environ["MODE"] == "read-only":
+    b["permissions"] = json.loads(os.environ["PERMS"])
+print(json.dumps(b))')"
 
   # shellcheck source=/dev/null
   . "$CONF_DIR/github.env"
@@ -69,19 +85,37 @@ mint() {
     --data-binary "$body" \
     "https://api.github.com/app/installations/${GITHUB_INSTALLATION_ID}/access_tokens")"
 
-  token="$(printf '%s' "$resp" | python3 -c 'import sys,json
+  token="$(printf '%s' "$resp" | MODE="$mode" python3 -c 'import sys, json, os
 try:
-    print(json.load(sys.stdin).get("token") or "")
+    r = json.load(sys.stdin)
 except Exception:
-    print("")')"
-  [ -n "$token" ] || die "mint failed${repo:+ for $repo}. GitHub said: $(printf '%s' "$resp" | head -c 200)"
+    r = {}
+granted = r.get("permissions") or {}
+if os.environ["MODE"] == "read-only" and (not granted or any(v != "read" for v in granted.values())):
+    print("")
+else:
+    print(r.get("token") or "")')"
+  [ -n "$token" ] || die "mint failed${repo:+ for $repo}${mode:+ ($mode)}. GitHub said: $(printf '%s' "$resp" | python3 -c 'import sys, json
+try:
+    r = json.load(sys.stdin)
+    print(json.dumps({"message": r.get("message"), "permissions": r.get("permissions")}))
+except Exception:
+    print("a response that is not JSON")')"
   printf '%s\n' "$token"
 }
 
 case "$1" in
 
 mint-token)
-  mint "${2:-}"
+  shift
+  mode='write'
+  if [ "${1:-}" = --read-only ]; then
+    mode=read-only
+    shift
+  fi
+  [ $# -le 1 ] || die "$USAGE"
+  case "${1:-}" in -*) die "unknown option '$1'. $USAGE" ;; esac
+  mint "$mode" "${1:-}"
   ;;
 
 # ----------------------------------------------------------------------------------- get
@@ -114,7 +148,7 @@ get)
   esac
   case "$repo" in */*|'') die "refusing: path '$path' does not name one repository." ;; esac
 
-  token="$(mint "$repo")" || die "could not mint a token for $ORG/$repo. The App may not be installed there."
+  token="$(mint write "$repo")" || die "could not mint a token for $ORG/$repo. The App may not be installed there."
   # x-access-token is GitHub's fixed username for an installation token.
   printf 'username=x-access-token\npassword=%s\n' "$token"
   ;;
