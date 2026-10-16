@@ -68,6 +68,14 @@ TIER2_PATTERNS = [
     ("**/*.tfstate", "touches Terraform state"),
     ("**/*.tfstate.backup", "touches Terraform state"),
     ("**/.terraform.lock.hcl", "changes provider pinning"),
+    # These rules decide what pete-bot's merge desk merges without a person (PET-645). A
+    # change to them is a change to that gate, so a person reviews it.
+    ("scripts/pr-blast-radius.py", "changes the rules that decide what merges without a person"),
+    # A seed script places a credential when Pedro runs it. Nothing runs it on merge, but
+    # what it writes is a secret, so a person reads it first (PET-645).
+    ("scripts/seed-*", "changes how a credential is placed"),
+    ("scripts/reseed-*", "changes how a credential is placed"),
+    ("scripts/vault-seed.sh", "changes how a credential is placed"),
 ]
 
 TIER1_PATTERNS = [
