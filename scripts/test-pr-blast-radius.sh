@@ -126,6 +126,13 @@ check 1 "scripts do not run themselves on merge"   "$PLAIN" scripts/lab-verify.s
 check 2 "a seed script places a credential"        "$PLAIN" scripts/seed-pete-bot-desk-app.sh
 check 2 "a reseed script places a credential"      "$PLAIN" scripts/reseed-minio-vault.sh
 check 2 "the tier rules gate the merge desk"       "$PLAIN" scripts/pr-blast-radius.py
+check 2 "a root CLAUDE.md is a merge guard"        "$PLAIN" CLAUDE.md
+check 2 "a nested CLAUDE.md is a merge guard"      "$PLAIN" .claude/CLAUDE.md
+check 2 "Claude settings hold permissions"         "$PLAIN" .claude/settings.json
+check 2 "a Claude hook runs on every session"      "$PLAIN" .claude/hooks/guard.sh
+check 2 "a Claude rule loads by path"              "$PLAIN" .claude/rules/terraform.md
+check 2 "the working agreement sets merge rules"   "$PLAIN" Claude/working-agreement.md
+check 0 "a skill stays prose"                      "$PLAIN" .claude/skills/pet/SKILL.md
 check 2 "a workflow edit moves the trust boundary" "$PLAIN" .github/workflows/ci.yml
 check 2 "a composite action is the same boundary"  "$PLAIN" .github/actions/x/action.yml
 check 2 "Vault roles and policies"                 "$PLAIN" vault-config/auth.tf

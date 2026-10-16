@@ -50,6 +50,9 @@
     # 2026-10-16). Moving to `on` is a decision, so it is a reviewed change to this line.
     pete_bot_desk_mode: dry-run
     pete_bot_desk_repos: petedio-workspace,petedio-vault,petedio-pm
+    # Repos that run no PR validation, by decision. Only there may a head with no check merge
+    # without a tap; anywhere else an empty check list may be CI that never started.
+    pete_bot_desk_no_ci_repos: petedio-workspace,petedio-vault,petedio-pm
     pete_bot_desk_authors: petedillo
     pete_bot_codex_host: 192.168.50.248
     pete_bot_desk_ready: >-
