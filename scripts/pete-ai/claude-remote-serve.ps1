@@ -4,24 +4,27 @@
 #
 #   claude-remote-serve.ps1 [-WorkDir <dir>] [-NamePrefix <name>] [-PermissionMode <mode>] [-Spawn <mode>]
 #
-# Logs go to %LOCALAPPDATA%\claude-remote\: serve.log (this script), run-*.log (the CLI's
-# output for the last resume and fresh attempt) and claude-debug.log (the CLI's debug file).
+# Logs go to %LOCALAPPDATA%\claude-remote\: serve.log (this script), run-server.out.log and
+# run-server.err.log (the CLI's output from the last server) and claude-debug.log (the CLI's
+# debug file).
 #
 # FAIL LOUDLY BEFORE STARTING. A unit with no terminal hangs on any interactive prompt (247
 # hung for two days on 2026-09-12). So this script refuses to start, with a non-zero exit and a
 # line in serve.log, until the Remote Control consent and the folder's trust prompt are answered
 # by hand. It does not answer them itself.
 #
-# RESUME FIRST, THEN START FRESH. `remote-control --continue` reattaches to the session this
-# directory last recorded, but only within roughly 4 hours. Its exit code is not trusted (see
-# claude-ops-pm-serve.j2), so any exit of the resume attempt starts a fresh server.
+# NO --continue (PET-624). A plain `remote-control` start brings back every session the last
+# server in this folder served, within about 4 hours. `--continue` brings back only the session
+# the server started with, can't be combined with --spawn, and runs until that session ends, so
+# it held off the spawn server and left every other session offline
+# (code.claude.com/docs/en/remote-control).
 #
 # BOUNDED RESTART. An expired login makes the CLI exit at once. Five exits within five minutes
 # end this script with exit 5 instead of looping forever.
 #
 # A DEAD SERVER'S SESSIONS GO WITH IT. When a server exits, this script stops the session
-# processes it leaves behind, then starts the next server. The next server's `--continue`
-# reattaches the session, so a survivor would be a second process on it. The cost is any turn
+# processes it leaves behind, then starts the next server. The next server brings the session
+# back, so a survivor would be a second process on it. The cost is any turn
 # that was in flight when the server died.
 #
 # STOPPING THE TASK STOPS THE SCRIPT. Stop-ScheduledTask ends conhost.exe, the task's own
@@ -167,19 +170,15 @@ function Invoke-Claude([string]$Label, [string[]]$Arguments) {
 $exits = New-Object System.Collections.Generic.List[datetime]
 while ($true) {
     Exit-IfHostGone
-    Write-Log 'Resume attempt: remote-control --continue'
-    $rc = Invoke-Claude 'resume' (@('remote-control', '--continue') + $common)
-    Write-Log "The resume attempt ended (exit $rc); starting a fresh server."
-    Exit-IfHostGone
-
-    $rc = Invoke-Claude 'fresh' (@('remote-control', '--spawn', $Spawn) + $common)
-    Write-Log "The fresh server ended (exit $rc)."
+    Write-Log "Starting the server: remote-control --spawn $Spawn"
+    $rc = Invoke-Claude 'server' (@('remote-control', '--spawn', $Spawn) + $common)
+    Write-Log "The server ended (exit $rc)."
 
     $now = Get-Date
     $exits.Add($now)
     $exits.RemoveAll([Predicate[datetime]] { param($t) $t -lt $now.AddMinutes(-5) }) | Out-Null
     if ($exits.Count -ge 5) {
-        Stop-WithError 5 ("the server exited 5 times in 5 minutes. Read run-fresh.err.log and " +
+        Stop-WithError 5 ("the server exited 5 times in 5 minutes. Read run-server.err.log and " +
             "claude-debug.log; an expired login is the usual cause.")
     }
     Start-Sleep -Seconds 30

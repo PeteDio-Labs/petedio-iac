@@ -3,31 +3,21 @@
 # claude-ops-pm-serve: the PM seat's Remote Control server (PET-619), run as
 # {{ claude_ops_user }} by claude-remote-pm.service.
 #
-# RESUME FIRST, THEN START FRESH. `claude remote-control --continue` reattaches to the session
-# this directory last recorded, but only within roughly 4 hours; past that it exits with an
-# error. So the first attempt resumes, and ANY exit of that attempt starts a fresh session. The
-# exit code is not trusted: whether `--continue` exits non-zero with nothing to resume is
-# unmeasured, and a wrapper that read 0 as "done" would exit, restart every 30 seconds and trip
-# the unit's start limit. A fresh session loses nothing durable: the seat keeps its state in
-# notes/pick-up.md.
+# NO --continue (PET-624). A plain `remote-control` start brings back every session the last
+# server in this directory served, within about 4 hours. `--continue` brings back only the
+# session the server started with, can't be combined with --spawn, and runs until that session
+# ends, so it held off the spawn server and left every other session offline
+# (code.claude.com/docs/en/remote-control). Past the 4 hours, the server starts with no
+# sessions, and the seat loses nothing durable: it keeps its state in the vault's pick-up note.
 #
-# FORWARD THE STOP. The unit keeps KillMode=mixed like its siblings, so systemd sends SIGTERM
-# to this script alone. The resume attempt runs in the background, so `wait` returns on the
-# signal and the trap passes it on. The fresh start is an `exec` and receives it directly.
+# THE STOP REACHES THE CLI DIRECTLY. The server is an `exec`, so it replaces this script and
+# receives systemd's SIGTERM itself, as it does in claude-remote-ops.service.
 set -u
 
 claude={{ claude_ops_npm_prefix }}/bin/claude
 # Every flag goes AFTER `remote-control`: see the header of claude-remote.service.j2.
 flags=(--permission-mode {{ claude_ops_permission_mode }} --remote-control-session-name-prefix {{ claude_ops_pm_remote_name }})
 
-"$claude" remote-control --continue "${flags[@]}" &
-pid=$!
-trap 'kill -TERM "$pid" 2>/dev/null; wait "$pid"; exit 143' TERM INT
-wait "$pid"
-rc=$?
-trap - TERM INT
-
-echo "The resume attempt ended (exit $rc); starting a fresh session."
 # same-dir: the seat is one checkout on main, so a session writes its pick-up note where the
 # next one reads it, not on a worktree's side branch.
 exec "$claude" remote-control --spawn same-dir "${flags[@]}"
