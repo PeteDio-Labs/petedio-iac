@@ -58,8 +58,8 @@ module "cloudflare_ingress" {
     # Why the origin is a LAN address and not loopback: cloudflared runs on LXC 112, a
     # DIFFERENT host, so a 127.0.0.1 bind on 235 would be unreachable. Caddy checks no
     # Access JWT, so the origin firewall on 235 (plane-mcp-firewall.service) is the
-    # boundary: it admits only 112 to :8790 and :8791. The MCP server itself is never
-    # published; only Caddy reaches it.
+    # boundary: it admits only 112 to :8790 and to each member's port. The MCP server itself
+    # is never published; only Caddy reaches it.
     #
     # access_emails is the WHOLE authorization boundary here. The shim holds a service PAT,
     # so anyone who passes Access acts as its owner in Plane — keep this list to one person.
@@ -99,6 +99,23 @@ module "cloudflare_ingress" {
       }
     }
 
+    # Sonia's Plane MCP (PET-650), the same shape as mcp-tom.pdlab.dev. The origin is the :8792
+    # site of the Caddy shim, which swaps in Sonia's PAT from kv/services/plane-sonia, so every
+    # call acts as Sonia. She is a workspace Admin on Pedro's word, so this route can do what an
+    # Admin can. access_emails is the whole boundary: keep it to Sonia alone.
+    "mcp-sonia.pdlab.dev" = {
+      service       = "http://192.168.50.235:8792"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["soniasdelgadillo@gmail.com"]
+
+      managed_oauth = {
+        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        access_token_lifetime = "15m"
+        session_duration      = "168h"
+      }
+    }
+
     # petedio-usaa (PET-590), the savings and trip tracker on usaa-238. The origin is a LAN
     # address because cloudflared runs on LXC 112, a different host. Access is the gate, with
     # the Authentik IdP, and the two emails are the whole allow-list: Pedro and Sonia.
@@ -113,8 +130,8 @@ module "cloudflare_ingress" {
 
     # The Plane board (PET-610), so Tom can work in it from outside the lab. The origin is
     # Plane's own proxy on plane-235, a LAN address because cloudflared runs on LXC 112.
-    # Access is the gate, with the Authentik IdP, and the two emails are the whole allow-list:
-    # Pedro and Tom. Only the app is routed. Attachments live in MinIO on 245, which stays
+    # Access is the gate, with the Authentik IdP, and the emails are the whole allow-list:
+    # Pedro, Tom and Sonia (PET-650). Only the app is routed. Attachments live in MinIO on 245, which stays
     # private, so uploads and file views work on the LAN and the tailnet only.
     #
     # This is a different route from mcp.pdlab.dev above. That one holds Pedro's PAT, so it
@@ -123,7 +140,7 @@ module "cloudflare_ingress" {
       service       = "http://192.168.50.235:8080"
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
-      access_emails = ["pedelgadillo@gmail.com", "tsilveri406@gmail.com"]
+      access_emails = ["pedelgadillo@gmail.com", "tsilveri406@gmail.com", "soniasdelgadillo@gmail.com"]
     }
 
     # Batsy (Sonia's agent) posts USAA totals here from outside the lab, so Access is OFF for

@@ -1,5 +1,5 @@
 [Unit]
-# The shim on :8790 and :8791 holds a Plane PAT per port, and it must answer only the
+# The shim on :8790 and each member's port holds a Plane PAT per port, and it must answer only the
 # cloudflared tunnel host (LXC 112). /usr/local/sbin/plane-mcp-firewall sets the rules and
 # explains them.
 #
@@ -12,7 +12,7 @@
 # blocks both. To re-apply the rules, run `systemctl reload plane-mcp-firewall`, which does
 # not propagate. iptables rules do not survive a reboot and netfilter-persistent is not
 # installed here, so this unit is the persistence.
-Description=Restrict the plane-mcp shim (:8790, :8791) to the cloudflared tunnel host
+Description=Restrict the plane-mcp shim's ports to the cloudflared tunnel host
 Before=docker.service
 RefuseManualStop=yes
 
