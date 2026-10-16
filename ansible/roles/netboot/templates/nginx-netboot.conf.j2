@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# Serves the iPXE menu, the installer kernel and initrd, and the ISO (PET-528).
+server {
+    listen 80 default_server;
+    server_name _;
+    root {{ netboot_root }}/http;
+
+    sendfile on;
+    tcp_nopush on;
+    autoindex on;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}

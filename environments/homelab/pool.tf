@@ -60,6 +60,7 @@ locals {
     claude     = module.claude_code.vm_id
     codex      = module.codex.vm_id
     usaa       = module.usaa.vm_id
+    netboot    = module.netboot.vm_id
   } : {}
 
   # LXCs that exist on the cluster but have NO Terraform module here, so there is

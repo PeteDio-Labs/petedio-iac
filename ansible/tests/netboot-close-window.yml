@@ -1,0 +1,80 @@
+# netboot-close-window.yml — roles/netboot/tasks/close-window.yml, and where main.yml runs it.
+#
+# Runs on localhost, needs no credential, and stops no service. Run it from `ansible/`:
+#
+#   ansible-playbook tests/netboot-close-window.yml
+#
+# WHAT THIS EXISTS TO CATCH. Codex's P1 on c9c0358 (PET-528): closing an install window
+# reruns the whole role with netboot_enabled=false, and the dnsmasq stop came after the apt
+# refresh, the ISO download and the nginx start. A failure in any of those left the window
+# open, and dnsmasq enabled across reboots. The fix closes the window first. These cases
+# prove the three properties that fix depends on:
+#
+#   1. main.yml runs close-window.yml before any other task, on the false path only.
+#   2. The close tolerates a container where dnsmasq isn't installed yet.
+#   3. When a task after it fails, the stop has already been issued.
+#
+# Cases 2 and 3 run close-window.yml for real. Case 2 names a unit that doesn't exist.
+# Case 3 names systemd-journald, a unit every systemd host runs, in check mode, so the
+# module reports the stop it would make and makes none.
+---
+- name: Close the install window first, roles/netboot
+  hosts: localhost
+  gather_facts: false
+  # ansible.cfg sets become for every play. This one reads and checks, and runs unprivileged.
+  become: false
+  vars:
+    role_tasks: "{{ playbook_dir }}/../roles/netboot/tasks"
+  tasks:
+    # --- 1. The order ---------------------------------------------------------------
+    - name: Read the role's task list
+      ansible.builtin.set_fact:
+        netboot_main: "{{ lookup('ansible.builtin.file', role_tasks ~ '/main.yml') | from_yaml }}"
+
+    - name: Case 1, the close runs first and only when the window is off
+      ansible.builtin.assert:
+        that:
+          - netboot_main[0]['ansible.builtin.include_tasks'] | default('') == 'close-window.yml'
+          - netboot_main[0].when | default('') == 'not netboot_enabled | bool'
+          - netboot_main | map('list') | select('contains', 'ansible.builtin.include_tasks') | list | length == 1
+        fail_msg: >-
+          main.yml's first task is "{{ netboot_main[0].name }}", not the close-window include
+          under `not netboot_enabled | bool`. A task that can fail now runs before the window
+          closes, which is the PET-528 P1.
+        success_msg: main.yml closes the window before its first provisioning task.
+
+    # --- 2. dnsmasq not installed yet ---------------------------------------------------
+    - name: Case 2, close a window on a container with no dnsmasq unit
+      ansible.builtin.include_tasks: "{{ role_tasks }}/close-window.yml"
+      vars:
+        netboot_dnsmasq_service: netboot-test-unit-that-does-not-exist
+
+    - name: Case 2, the stop was skipped, not failed
+      ansible.builtin.assert:
+        that:
+          - netboot_window_close is skipped
+        fail_msg: "The close acted on a unit that doesn't exist: {{ netboot_window_close }}"
+        success_msg: The close skips a unit that isn't installed.
+
+    # --- 3. A later task fails ----------------------------------------------------------
+    - name: Case 3, close a running unit, then fail the way a provisioning task would
+      check_mode: true
+      block:
+        - name: Case 3, close the window
+          ansible.builtin.include_tasks: "{{ role_tasks }}/close-window.yml"
+          vars:
+            netboot_dnsmasq_service: systemd-journald
+
+        - name: Case 3, stand in for the apt refresh failing during an outage
+          ansible.builtin.fail:
+            msg: Failed to update apt cache
+      rescue:
+        - name: Case 3, the stop was issued before the failure
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Case 3, stand in for the apt refresh failing during an outage'
+              - netboot_window_close is not skipped
+              - netboot_window_close is changed
+              - netboot_window_close.state == 'stopped'
+            fail_msg: "The close did not stop the unit before the later failure: {{ netboot_window_close }}"
+            success_msg: The window closed before the later task failed.
