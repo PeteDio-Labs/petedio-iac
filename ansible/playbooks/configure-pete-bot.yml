@@ -151,17 +151,26 @@
           -f {{ pete_bot_conf_dir }}/codex_ed25519
         creates: "{{ pete_bot_conf_dir }}/codex_ed25519"
 
+    # In check mode the key above is predicted, not made. The tasks that read it skip a key
+    # that doesn't exist yet in check mode, and fail on one that is missing in a real run.
+    - name: Look for the Codex queue key
+      ansible.builtin.stat:
+        path: "{{ pete_bot_conf_dir }}/codex_ed25519"
+      register: pete_bot_codex_key
+
     - name: Let the service read the Codex queue key
       ansible.builtin.file:
         path: "{{ pete_bot_conf_dir }}/codex_ed25519"
         owner: root
         group: "{{ pete_bot_user }}"
         mode: "0640"
+      when: pete_bot_codex_key.stat.exists or not ansible_check_mode
       # ssh refuses a group-readable key only when the caller owns it. root owns this one.
 
     # ⚠ PINNED ON FIRST DEPLOY, NEVER RE-SCANNED. ssh runs with StrictHostKeyChecking=yes
     # against this file alone, so a changed host key on 248 stops the queue rather than
     # trusting the new one. After a planned rebuild of 248, delete the file and redeploy.
+    # It runs only once the desk App is seeded, so an unseeded deploy never needs 248.
     - name: Pin codex-248's host key
       ansible.builtin.shell:
         cmd: >-
@@ -173,6 +182,7 @@
           && mv {{ pete_bot_conf_dir }}/codex_known_hosts.new {{ pete_bot_conf_dir }}/codex_known_hosts
         executable: /bin/bash
         creates: "{{ pete_bot_conf_dir }}/codex_known_hosts"
+      when: pete_bot_desk_ready | bool
 
     - name: Install the desk's GitHub App key
       ansible.builtin.copy:
@@ -277,12 +287,16 @@
       ansible.builtin.slurp:
         src: "{{ pete_bot_conf_dir }}/codex_ed25519.pub"
       register: pete_bot_codex_pub
+      when: pete_bot_codex_key.stat.exists or not ansible_check_mode
 
     - name: Report the desk, and the key codex-248 must authorize
       ansible.builtin.debug:
         msg:
           - "merge desk: {{ pete_bot_desk_health.json.desk.state | default('not in this binary') }}"
-          - "codex_review_gate_keys entry: {{ pete_bot_codex_pub.content | b64decode | trim }}"
+          - >-
+            codex_review_gate_keys entry:
+            {{ (pete_bot_codex_pub.content | b64decode | trim) if pete_bot_codex_pub.content is defined
+               else 'none yet: check mode predicted the key' }}
 
   handlers:
     - name: Restart pete-bot
