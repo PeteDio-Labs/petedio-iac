@@ -184,9 +184,12 @@
 # so this play never touches /opt/plane, and the play above never touches /opt/plane-mcp.
 # Do not merge the two compose files for tidiness (vault/Hosts/235-plane.md).
 #
-# TWO SITES, ONE STACK. :8790 swaps in Pedro's PAT for mcp.pdlab.dev. :8791 swaps in Tom's PAT
-# for mcp-tom.pdlab.dev (PET-610). Each route's Access policy admits one email, so each port
-# acts as one Plane user.
+# ONE SITE PER PERSON, ONE STACK. :8790 swaps in Pedro's PAT for mcp.pdlab.dev. Each entry in
+# plane_mcp_members gets a site of its own: :8791 swaps in Tom's PAT for mcp-tom.pdlab.dev
+# (PET-610), and :8792 swaps in Sonia's for mcp-sonia.pdlab.dev (PET-650). Each route's Access
+# policy admits one email, so each port acts as one Plane user. To add a person, add an entry
+# here, a port in files/plane-mcp/docker-compose.yml, a name in scripts/deploy-plane.sh and a
+# route in cloudflare-routes.tf.
 #
 # ⚠ THE FIREWALL IS THE BOUNDARY. Caddy publishes both ports on the LAN because cloudflared
 # runs on LXC 112, another host, and Caddy checks no Access JWT: it swaps in a PAT for any
@@ -206,20 +209,34 @@
     plane_web_port: 8080
     plane_workspace_slug: petedio
     plane_mcp_port: 8790
-    plane_mcp_tom_port: 8791
     plane_mcp_tunnel_host: 192.168.50.112
+    # scripts/deploy-plane.sh reads kv/services/plane-<name> field api_key for each entry, and
+    # passes the PATs in plane_mcp_member_keys, keyed on name.
+    plane_mcp_members:
+      - { name: tom, port: 8791 }
+      - { name: sonia, port: 8792 }
+    plane_mcp_ports: "{{ [plane_mcp_port] + plane_mcp_members | map(attribute='port') | list }}"
 
   pre_tasks:
-    - name: Fail early if either MCP site's Plane PAT was not passed in
+    # Two sites that hold one PAT would act as one person under two Access lists, so every PAT
+    # must be distinct.
+    - name: Fail early if any MCP site's Plane PAT was not passed in, or two sites share one
       ansible.builtin.assert:
         that:
           - plane_mcp_api_key | default('') | length > 0
-          - plane_mcp_tom_api_key | default('') | length > 0
-          - plane_mcp_tom_api_key != plane_mcp_api_key
+          - plane_mcp_member_keys | default({}) is mapping
+          - plane_mcp_members | map(attribute='name')
+            | difference(plane_mcp_member_keys | default({}) | list) | length == 0
+          - plane_mcp_member_keys | dict2items | map(attribute='value')
+            | select | list | length == plane_mcp_member_keys | length
+          - ([plane_mcp_api_key] + plane_mcp_member_keys | dict2items | map(attribute='value') | list)
+            | unique | length == plane_mcp_member_keys | length + 1
+          - plane_mcp_ports | unique | length == plane_mcp_ports | length
         fail_msg: >-
-          Missing plane_mcp_api_key or plane_mcp_tom_api_key, or both hold the same PAT.
-          Run this via scripts/deploy-plane.sh, which reads kv/services/plane and
-          kv/services/plane-tom field api_key from Vault and passes them as no_log extra-vars.
+          Missing plane_mcp_api_key or a member's PAT in plane_mcp_member_keys, two sites hold
+          the same PAT, or two sites share a port. Run this via scripts/deploy-plane.sh, which
+          reads kv/services/plane and kv/services/plane-<name> field api_key from Vault and
+          passes them as no_log extra-vars.
       no_log: true
 
   tasks:
@@ -290,8 +307,8 @@
         mode: "0644"
 
     - name: Install the Caddyfile that swaps the Access token for the Plane PAT
-      ansible.builtin.copy:
-        src: files/plane-mcp/Caddyfile
+      ansible.builtin.template:
+        src: templates/plane-mcp-Caddyfile.j2
         dest: "{{ plane_mcp_dir }}/Caddyfile"
         owner: root
         group: root
@@ -328,33 +345,30 @@
       when: plane_mcp_caddyfile is changed
       changed_when: true
 
-    - name: Wait for both shim sites to answer on the host
+    # A member port missing from docker-compose.yml is never published, so this wait fails.
+    - name: Wait for every shim site to answer on the host
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ item }}/healthz"
         status_code: 200
         timeout: 5
-      loop:
-        - "{{ plane_mcp_port }}"
-        - "{{ plane_mcp_tom_port }}"
+      loop: "{{ plane_mcp_ports }}"
       register: plane_mcp_health
       retries: 12
       delay: 5
       until: plane_mcp_health is succeeded
 
-    - name: Assert the raw table admits only the tunnel host to both MCP ports
+    - name: Assert the raw table admits only the tunnel host to every MCP port
       ansible.builtin.command:
-        cmd: "{{ item }}"
-      loop:
-        - "iptables -t raw -C PREROUTING ! -i lo -p tcp --dport {{ plane_mcp_port }} ! -s {{ plane_mcp_tunnel_host }} -j DROP"
-        - "iptables -t raw -C PREROUTING ! -i lo -p tcp --dport {{ plane_mcp_tom_port }} ! -s {{ plane_mcp_tunnel_host }} -j DROP"
-        - "ip6tables -t raw -C PREROUTING ! -i lo -p tcp --dport {{ plane_mcp_port }} -j DROP"
-        - "ip6tables -t raw -C PREROUTING ! -i lo -p tcp --dport {{ plane_mcp_tom_port }} -j DROP"
+        cmd: >-
+          {{ 'iptables' if item.1 == 4 else 'ip6tables' }} -t raw -C PREROUTING ! -i lo -p tcp
+          --dport {{ item.0 }} {{ '! -s ' ~ plane_mcp_tunnel_host if item.1 == 4 else '' }} -j DROP
+      loop: "{{ plane_mcp_ports | product([4, 6]) | list }}"
       changed_when: false
 
     # The bind in docker-compose.yml is IPv4-only. An IPv6 listener means it regressed.
-    - name: Assert neither MCP port listens on IPv6
+    - name: Assert no MCP port listens on IPv6
       ansible.builtin.command:
-        cmd: "ss -Hltn '( sport = :{{ plane_mcp_port }} or sport = :{{ plane_mcp_tom_port }} )'"
+        cmd: "ss -Hltn '( sport = :{{ plane_mcp_ports | join(' or sport = :') }} )'"
       register: plane_mcp_listeners
       changed_when: false
       failed_when: >-

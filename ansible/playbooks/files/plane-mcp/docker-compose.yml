@@ -22,8 +22,10 @@ services:
     # plane-mcp-firewall.service, is the boundary, so it runs before Docker starts.
     # 0.0.0.0 publishes on IPv4 only. A bare "8790:8790" also publishes [::]:8790,
     # which the IPv4-only firewall before PET-610's fix did not cover.
-    # :8790 is Pedro's site (mcp.pdlab.dev), :8791 is Tom's (mcp-tom.pdlab.dev, PET-610).
-    ports: ["0.0.0.0:8790:8790", "0.0.0.0:8791:8791"]
+    # :8790 is Pedro's site (mcp.pdlab.dev), :8791 is Tom's (mcp-tom.pdlab.dev, PET-610),
+    # :8792 is Sonia's (mcp-sonia.pdlab.dev, PET-650). Keep this list equal to the ports in
+    # configure-plane.yml's plane_mcp_members; the play's health wait fails on a missing one.
+    ports: ["0.0.0.0:8790:8790", "0.0.0.0:8791:8791", "0.0.0.0:8792:8792"]
     depends_on: [plane-mcp]
     networks: [mcp]
 
