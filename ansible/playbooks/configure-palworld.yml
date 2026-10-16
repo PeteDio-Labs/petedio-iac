@@ -17,6 +17,15 @@
 #   ansible-playbook playbooks/configure-palworld.yml \
 #     -e '{"palworld_admin_password":"…","palworld_server_password":"…"}'
 #
+# Nightly world backup (PET-382): same pattern, one more pair. A scoped MinIO svcacct
+# for the palworld-backups bucket only — resolve from Vault kv/services/palworld-backups
+# (fields mc_access_key / mc_secret_key) and run once with:
+#   -e '{"palworld_backup_minio_access_key":"…","palworld_backup_minio_secret_key":"…"}'
+# The apply-on-merge runner cannot supply this either (same Vault-role gap as the
+# passwords above), so the converge preserves whatever is already on the host — see
+# roles/palworld/tasks/main.yml. See docs/runbooks/palworld-backup.md for seeding the
+# svcacct and running the restore drill that proves a backup actually restores.
+#
 # Inventory: the `palworld` group -> 192.168.50.234, root over the TF-installed key.
 
 # ⚠ THIS PLAY TARGETS THE NODE, NOT THE GAME HOST, AND IT RUNS FIRST ON PURPOSE.

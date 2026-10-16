@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+# Nightly schedule for palworld-backup.service (PET-382).
+[Unit]
+Description=Nightly Palworld world backup
+
+[Timer]
+OnCalendar={{ palworld_backup_oncalendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
