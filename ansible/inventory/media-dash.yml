@@ -52,5 +52,3 @@ all:
         plex-gpu:                                      # 236, pve02, .86 only (PET-504)
           ansible_host: 192.168.86.236
           mtrace_key_sources: ["192.168.50.237", "192.168.86.44"]
-          # claude-ops on 247 crosses the same NAT, so 236 sees it as .44 too (PET-662).
-          claude_ops_media_key_sources: ["192.168.50.247", "192.168.86.44"]

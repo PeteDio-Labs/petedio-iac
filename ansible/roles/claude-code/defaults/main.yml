@@ -567,8 +567,8 @@ claude_ops_vault_renew_bin: "{{ claude_ops_home }}/.local/bin/claude-ops-vault-r
 claude_ops_vault_renew_oncalendar: "03:00"
 
 # --- SSH to the Proxmox nodes -------------------------------------------------------------
-# Generated ON THE HOST, as claude-ops, so the private half NEVER leaves 247 — not into
-# Vault, not into CI, not into a Terraform state. tasks/claude-ops.yml runs `ssh-keygen`
+# claude_ops_ssh_key is generated ON THE HOST, as claude-ops, so its private half NEVER
+# leaves 247 — not into Vault, not into CI, not into a Terraform state. tasks/claude-ops.yml runs `ssh-keygen`
 # only when the file is absent, so a re-run never overwrites a key pve02 already trusts.
 # scripts/seed-claude-ops-ssh.sh reads back the PUBLIC half only and authorizes it on pve02,
 # which pmxcfs then carries to pve03.
@@ -586,10 +586,11 @@ claude_ops_ssh_targets:
   - { name: pve02, host: 192.168.50.11 }
   - { name: pve03, host: 192.168.50.10 }
   - { name: codex-248, host: 192.168.50.248, user: codex }
-  # The media hosts take claude_ops_media_ssh_key, not the Proxmox key, so revoking media
-  # access never touches the node grant (PET-662). playbooks/authorize-claude-ops-media.yml
-  # authorizes its public half for root on these seven hosts. Addresses follow
-  # petedio-media-iac's ansible/inventory/hosts.yml, which owns them, and inventory/media-dash.yml.
+  # The media hosts take claude_ops_media_ssh_key, a COPY of the Mac's id_ed25519_ansible,
+  # the key Terraform installs for root on every media LXC (PET-662). Pedro chose the copy
+  # over a key generated here. A Mac session places it on his word; this role never sees it.
+  # Until it is placed, `ssh <media host>` fails. Addresses follow petedio-media-iac's
+  # ansible/inventory/hosts.yml, which owns them, and inventory/media-dash.yml for 237.
   - { name: seerr, host: 192.168.50.33, key: "{{ claude_ops_media_ssh_key }}" }            # 101
   - { name: sonarr, host: 192.168.50.15, key: "{{ claude_ops_media_ssh_key }}" }           # 104
   - { name: radarr, host: 192.168.50.16, key: "{{ claude_ops_media_ssh_key }}" }           # 105
@@ -598,9 +599,8 @@ claude_ops_ssh_targets:
   - { name: plex-gpu, host: 192.168.86.236, key: "{{ claude_ops_media_ssh_key }}" }        # 236, .86 only
   - { name: media-dash-237, host: 192.168.50.237, key: "{{ claude_ops_media_ssh_key }}" }  # 237, mtrace
 
-# A second key, generated on the host like claude_ops_ssh_key and for the same reason: the
-# private half never leaves 247 (PET-662).
-claude_ops_media_ssh_key: "{{ claude_ops_home }}/.ssh/id_ed25519_media"
+# Where the Mac session places the copy: owner claude-ops, mode 0600 (PET-662).
+claude_ops_media_ssh_key: "{{ claude_ops_home }}/.ssh/id_ed25519_ansible"
 
 # --- The Remote Control server ------------------------------------------------------------
 # ONE unit, ONE directory: the petedio-workspace clone above. Not an entry in
