@@ -54,4 +54,4 @@ Closes **PET-____**.
 None.
 
 ---
-<sub>Pedro is the only merger. Squash-merge; the apply-on-merge log is the record.</sub>
+<sub>Merges go by tier (`PET-645`): the merge desk takes tiers 0-1, Pedro takes tier 2. Squash-merge; the apply-on-merge log is the record.</sub>

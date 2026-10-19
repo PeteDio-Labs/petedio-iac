@@ -340,6 +340,11 @@ Removing the clone from 247 does not revoke anything.
 
 ## Code push and pull requests (PET-507)
 
+> ⚠ **Corrected 2026-10-19 (cutover).** This section told a 247 session to push branches and open
+> pull requests itself. Cloud project threads now do that. A 247 session runs host steps and
+> posts results on the PR or PET item, and does not push code branches or open PRs. The
+> mechanism below stays installed; the policy above it is retired.
+
 A session here pushes branches to `petedio-iac`, `petedio-media-iac` and `petedio-workspace`,
 and opens pull requests on them. So 247 implements work itself instead of handing a bundle to
 the Mac. It never merges. On `petedio-iac` and `petedio-media-iac`, `main` requires a review
@@ -574,7 +579,7 @@ push from an unattended process cannot touch CI. claude-ops's App carries it bec
 for Pedro's own sessions, not an unattended one — see "Open for Pedro" below for the one
 question this leaves unresolved.
 
-**Pedro decides every merge, same as every other session on this host.**
+**No session on this host merges.** Merges go by tier (`PET-645`): the merge desk takes tiers 0-1, and Pedro takes tier 2.
 `templates/claude-ops-gh.j2` never runs `gh pr merge`; nothing besides that discipline stops
 it, the same as everywhere else in this repo.
 

@@ -21,6 +21,7 @@ TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API token
 
 ## Workflow (trunk-based GitOps)
 - Branch `pet-<n>-<slug>` off **fresh `main`** → PR → **squash-merge**. Mention `PET-<n>` in the PR.
+- **Host sessions never open PRs or push code branches.** A cloud project thread, one per PET item, writes the code, pushes `pet-<n>-<slug>` and opens the PR. A session on 247 or the Mac runs host steps (Codex queueing, `terraform plan` against state, Ansible checks, Proxmox and Vault reads, `lab-verify`) and posts the raw result on the PR or PET item. A defect it finds goes back to the thread. A credential-placing script ships in the thread's PR and is run on Pedro's word in that session's chat (`PET-511`). Read the PET item's description and every comment before you act.
 - CI: **`validate` on PR** (GitHub-hosted, no Vault/LAN/state) and **`plan` + `apply` on merge** (self-hosted runner, LXC 232). There is no plan-on-PR (PET-104/163) — the authoritative plan is your local one or the apply-on-merge log.
 - **Ansible has its own PR check** since PET-397: `ansible-validate.yml` runs `--syntax-check` on every playbook and `ansible-lint` over `roles/`+`playbooks/`, GitHub-hosted and credential-free. The tree lints clean at the `production` profile with no ignore file: the eleven deliberate findings carry `# noqa: <rule>` at their own site with the reason above them. Before PET-397 nothing in CI read the Ansible tree at all.
 - ⚠ **The recurring bug here is a green check over work that never happened.** PET-298,
@@ -38,7 +39,7 @@ TF + Ansible **co-own** these LXCs: Proxmox's `root@pam` check rejects API token
 ## There is no autonomous loop
 The agent fleet on LXC 242 was retired on 2026-07-21 (PET-265) and the host destroyed on 2026-08-24 (PET-307); see `vault/Systems/agent-fleet-retired.md`. `roles/agent-loop` and the `agent-loop` section of `GOTCHAS.md` are history.
 
-The ticket-driven work loop on claude-247 (PET-399) was retired on 2026-09-30 (PET-547). Its GitHub App is deleted, `roles/claude-code/tasks/loop-retired.yml` removes what the role once installed, and `vault/Systems/claude-loop.md` holds the history. Two rules outlive it: **every PR is reviewed by a person, and Pedro is the only merger.** The lessons that held the loop up still apply to any automation here:
+The ticket-driven work loop on claude-247 (PET-399) was retired on 2026-09-30 (PET-547). Its GitHub App is deleted, `roles/claude-code/tasks/loop-retired.yml` removes what the role once installed, and `vault/Systems/claude-loop.md` holds the history. Two rules outlive it: **every PR is reviewed before it merges, and no session merges its own work.** Merges go by tier (`PET-645`): pete-bot's merge desk merges tier 0-1 PRs after CI and a clean Codex review, and Pedro merges tier 2 with one tap (`scripts/pr-blast-radius.py` sets the tier). Until the desk runs in `on` mode, Pedro approves in that PR's project thread, and iac PRs merge with `--admin` on his word. The lessons that held the loop up still apply to any automation here:
 
 - **A sudo grant belongs to the UID, not to your process.** A session that runs as the same user inherits every grant that user holds (PET-408).
 - **Branch protection caps merging, not pushing or PR-opening.** Opening a PR is itself a trigger (PET-407).
