@@ -116,8 +116,18 @@ step "Read $PATH_KV"
 SNAPSHOT=""
 if SNAPSHOT="$(vault kv get -format=json "$PATH_KV" 2>/dev/null)"; then
   VERSION="$(version)" || die "could not parse the read of $PATH_KV."
-elif ERR="$(vault kv metadata get "$PATH_KV" 2>&1 >/dev/null)"; then
+elif META="$(vault kv metadata get -format=json "$PATH_KV" 2>/dev/null)"; then
+  # A deleted current version also fails the data read while its metadata reads fine.
+  if META="$META" python3 -c '
+import json, os, sys
+d = json.loads(os.environ["META"])["data"]
+v = d["versions"].get(str(d["current_version"]), {})
+sys.exit(0 if v.get("deletion_time") or v.get("destroyed") else 1)'; then
+    die "the current version of $PATH_KV is deleted. Undelete or destroy it by hand, then run this again."
+  fi
   die "$PATH_KV has metadata, but the token cannot read its data. Check the token's policy."
+elif ERR="$(vault kv metadata get "$PATH_KV" 2>&1 >/dev/null)"; then
+  die "Vault answered the metadata read of $PATH_KV oddly, so nothing was written."
 else
   case "$ERR" in
     "No value found at "*) VERSION=absent; SNAPSHOT="" ;;
@@ -150,10 +160,12 @@ report(){ if [ "$2" = "0" ]; then echo "  $1: present. Kept."; else echo "  $1: 
 report ask_token "$WRITE_ASK"
 report vault_token "$WRITE_VAULT"
 report vault_deploy_key "$WRITE_KEY"
+CHECK_ONLY=0
 if [ "$WRITE_ASK$WRITE_VAULT$WRITE_KEY" = "000" ]; then
-  unset CUR_ASK CUR_VAULT CUR_KEY SNAPSHOT
+  # Nothing to write, but a run that stopped at the deploy-key check comes back here, so
+  # the key is still checked below before this reports success.
   echo "  nothing to write"
-  exit 0
+  CHECK_ONLY=1
 fi
 
 NEW_ASK="$CUR_ASK"
@@ -162,6 +174,7 @@ NEW_ACCESSOR="$CUR_ACCESSOR"
 NEW_KEY="$CUR_KEY"
 NEW_PUB="$CUR_PUB"
 
+if [ "$CHECK_ONLY" = "0" ]; then
 if [ "$WRITE_ASK" = "1" ]; then
   step "Mint the ask bearer"
   NEW_ASK="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -235,7 +248,10 @@ VAULT_TOKEN="$NEW_VAULT" vault kv metadata get "$PATH_KV" >/dev/null 2>&1 \
 if VAULT_TOKEN="$NEW_VAULT" vault kv get "$PATH_KV" >/dev/null 2>&1; then
   die "the lab-agent token can read secret values. The $POLICY policy grants too much; fix it before you deploy."
 fi
-echo "  the token reads metadata and is refused values"
+# lab-agent's health check lists the folder, so prove the list too.
+VAULT_TOKEN="$NEW_VAULT" vault kv metadata list kv/services/ >/dev/null 2>&1 \
+  || die "the lab-agent token cannot list kv/services/. Check the $POLICY policy."
+echo "  the token lists and reads metadata, and is refused values"
 
 if [ "$WRITE_VAULT" = "1" ] && [ -n "$CUR_ACCESSOR" ] && [ "$CUR_ACCESSOR" != "$NEW_ACCESSOR" ]; then
   # After the write, so a failed write never leaves lab-agent with no working token.
@@ -243,6 +259,7 @@ if [ "$WRITE_VAULT" = "1" ] && [ -n "$CUR_ACCESSOR" ] && [ "$CUR_ACCESSOR" != "$
     && echo "  revoked the previous token, accessor $CUR_ACCESSOR" \
     || echo "  the previous token, accessor $CUR_ACCESSOR, was already gone or could not be revoked. Check: vault token lookup -accessor $CUR_ACCESSOR"
 fi
+fi  # CHECK_ONLY
 
 step "Check the deploy key reads petedio-vault"
 # ⚠ A KEY GITHUB DOES NOT KNOW FAILS THE DEPLOY, NOT THIS SCRIPT. The play clones with it on

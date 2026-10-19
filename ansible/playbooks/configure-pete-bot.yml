@@ -209,6 +209,26 @@
           pete-bot repo first; deploy-pete-bot.sh does it for you.
       when: not pete_bot_artifact.stat.exists
 
+    # ⚠ ONCE INSTALLED, A DEPLOY WITHOUT ITS VALUES IS A FAULT. A Vault refusal or an
+    # outage on the lab-agent paths reads the same as "not seeded": every value empty. On a
+    # 237 that already runs lab-agent, that would blank pete-bot's LAB_ASK_TOKEN and turn
+    # /lab off under a green deploy. Before the first seed the unit does not exist, so a
+    # deploy then still passes.
+    - name: Look for an installed lab-agent unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/lab-agent.service
+      register: lab_agent_unit_file
+
+    - name: Fail when lab-agent is installed but its values did not arrive
+      ansible.builtin.fail:
+        msg: >-
+          lab-agent is installed on this host, but the deploy passed none of its values. Vault
+          refused or could not answer the read of kv/services/lab-agent or
+          kv/services/lab-agent-pve. Run scripts/pet-secrets doctor, then deploy again.
+      when:
+        - lab_agent_unit_file.stat.exists
+        - not (lab_agent_ready | bool)
+
   tasks:
     - name: Create the service account
       ansible.builtin.user:
@@ -327,6 +347,8 @@
           ansible.builtin.user:
             name: "{{ lab_agent_user }}"
             system: true
+            # ssh takes ~ from the passwd entry, not from HOME, so both name the state dir.
+            home: "{{ lab_agent_state_dir }}"
             create_home: false
             shell: /usr/sbin/nologin
             state: present
