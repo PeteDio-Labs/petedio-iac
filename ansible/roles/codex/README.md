@@ -2,8 +2,8 @@
 
 Installs the Codex CLI on `codex-248` and leaves it ready for unattended runs
 (`codex exec`), once a person signs it in to OpenAI. The host is the reviewer for the
-`PET-549` proof of concept: a Claude session implements and opens a pull request, Codex
-reviews it with comments, and Pedro decides the merge. Pedro chose that split on 2026-10-01.
+`PET-549` proof of concept: a Claude project thread implements and opens a pull request, Codex
+reviews it with comments, and the merge goes by tier (`PET-645`). Pedro chose that split on 2026-10-01.
 
 | | |
 |---|---|

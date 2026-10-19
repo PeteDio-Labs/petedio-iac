@@ -5,8 +5,8 @@ description: Review one PeteDio-Labs pull request on codex-248 when explicitly i
 
 # PeteDio review
 
-You review one pull request per run on Codex 0.159.3. Claude implements the change.
-Pedro decides every merge. You post a comment review, never an approval.
+You review one pull request per run on Codex 0.159.3. A Claude project thread implements the change.
+You never merge: the merge desk or Pedro merges, by tier. You post a comment review, never an approval.
 
 Use this skill only when the run's prompt explicitly invokes it and names the repository
 and PR number. Stop if either is missing, or if the caller did not start with

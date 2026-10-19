@@ -139,9 +139,9 @@ here runs Docker.
    > ⚠ **Do not run `gh auth login` on this host.** Step 6 said to, until PET-480.
    > `vault/Claude/claude-247.md` forbids it by name: the OAuth token it writes to
    > `~/.config/gh/hosts.yml` carries Pedro's permissions, under the same user every session
-   > runs as. For `petedio-iac` and `petedio-workspace`, a session here does not push and does
-   > not open pull requests — it writes a branch, and the Mac bundles and pushes it. Step 7
-   > below is the single exception, and it is one repository wide.
+   > runs as. A session here does not push code and does not open pull requests. Since the
+   > 2026-10-19 cutover a project thread writes the code, and no Mac bundle step exists. Step 7
+   > below is history: the vault App it delivers retired in `PET-643`.
 
 7. **Optional — deliver the vault, which a session can push to.** Declare
    `claude_vault_enable: true` in the host's `host_vars`, then seed a **third** App and
@@ -339,6 +339,11 @@ A mint that works and an `ls-remote` that does not means the App is not installe
 Removing the clone from 247 does not revoke anything.
 
 ## Code push and pull requests (PET-507)
+
+> ⚠ **Corrected 2026-10-19 (cutover).** This section told a 247 session to push branches and open
+> pull requests itself. Cloud project threads do that. A 247 session runs host steps and
+> posts results on the PR or PET item, and does not push code branches or open PRs. The
+> mechanism below stays installed; the policy above it is retired.
 
 A session here pushes branches to `petedio-iac`, `petedio-media-iac` and `petedio-workspace`,
 and opens pull requests on them. So 247 implements work itself instead of handing a bundle to
@@ -574,7 +579,7 @@ push from an unattended process cannot touch CI. claude-ops's App carries it bec
 for Pedro's own sessions, not an unattended one — see "Open for Pedro" below for the one
 question this leaves unresolved.
 
-**Pedro decides every merge, same as every other session on this host.**
+**No session on this host merges.** Merges go by tier (`PET-645`): the merge desk takes tiers 0-1, and Pedro takes tier 2.
 `templates/claude-ops-gh.j2` never runs `gh pr merge`; nothing besides that discipline stops
 it, the same as everywhere else in this repo.
 
