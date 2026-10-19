@@ -17,7 +17,9 @@ import json
 import sys
 import time
 
-from uptime_kuma_api import UptimeKumaApi, MonitorType, NotificationType, UptimeKumaException
+from uptime_kuma_api import (
+    MaintenanceStrategy, MonitorType, NotificationType, UptimeKumaApi, UptimeKumaException,
+)
 
 TYPES = {
     "http": MonitorType.HTTP, "port": MonitorType.PORT, "dns": MonitorType.DNS,
@@ -98,6 +100,65 @@ def drifted(existing, wanted):
     return out
 
 
+def maintenance_kwargs(spec):
+    """Turn one declared maintenance window into add_maintenance/edit_maintenance kwargs."""
+    return {
+        "title": spec["title"],
+        "description": spec.get("description", ""),
+        "strategy": MaintenanceStrategy.CRON,
+        "active": True,
+        "cron": spec["cron"],
+        "durationMinutes": int(spec["duration_minutes"]),
+        "timezoneOption": spec["timezone"],
+    }
+
+
+def reconcile_maintenances(api, specs, result):
+    """Create or correct each declared window, then set its monitor list.
+
+    Idempotent by title, like the monitors. A declared monitor name that matches no
+    monitor fails the run: the window would otherwise skip that guest, and the guest
+    would page every night with nothing pointing at why.
+    """
+    if not specs:
+        return
+    monitor_ids = {m["name"]: m["id"] for m in api.get_monitors()}
+    by_title = {m["title"]: m for m in api.get_maintenances()}
+    for spec in specs:
+        title = spec["title"]
+        missing = [n for n in spec["monitors"] if n not in monitor_ids]
+        if missing or not spec["monitors"]:
+            result["failed"].append({
+                "name": f"maintenance:{title}",
+                "error": (f"no monitor named {', '.join(missing)}" if missing
+                          else "declares no monitors"),
+            })
+            continue
+        kw = maintenance_kwargs(spec)
+        try:
+            if title not in by_title:
+                mid = api.add_maintenance(**kw)["maintenanceID"]
+                result["maintenances_created"].append(title)
+            else:
+                mid = by_title[title]["id"]
+                live = by_title[title]
+                delta = [k for k, want in kw.items()
+                         if str(getattr(live.get(k), "value", live.get(k)))
+                         != str(getattr(want, "value", want))]
+                if delta:
+                    api.edit_maintenance(mid, **kw)
+                    result["maintenances_updated"].append({"name": title, "changed": delta})
+            wanted = {monitor_ids[n] for n in spec["monitors"]}
+            have = {m["id"] for m in api.get_monitor_maintenance(mid)}
+            if have != wanted:
+                api.add_monitor_maintenance(mid, [{"id": i} for i in sorted(wanted)])
+                result["maintenances_updated"].append({"name": title, "changed": ["monitors"]})
+            # Say what was examined, so an empty window cannot pass as a quiet one.
+            result["maintenance_monitors"][title] = len(wanted)
+        except (UptimeKumaException, Exception) as exc:  # noqa: BLE001
+            result["failed"].append({"name": f"maintenance:{title}", "error": str(exc)})
+
+
 def main():
     cfg = json.load(open(sys.argv[1]))
     result = {
@@ -105,6 +166,8 @@ def main():
         "failed": [], "warnings": [],
         "notifications_created": [], "notifications_updated": [],
         "notifications_attached": [],
+        "maintenances_created": [], "maintenances_updated": [],
+        "maintenance_monitors": {},
     }
     api = UptimeKumaApi(cfg["url"], timeout=60)
     try:
@@ -208,6 +271,10 @@ def main():
                         result["unchanged"].append(name)
             except (UptimeKumaException, Exception) as exc:  # noqa: BLE001
                 result["failed"].append({"name": name, "error": str(exc)})
+
+        # --- maintenance windows (PET-635) ----------------------------------
+        # After the monitors, so a window can name a monitor this run created.
+        reconcile_maintenances(api, cfg.get("maintenances", []), result)
 
         # --- status page: current state as JSON ----------------------------
         slug = cfg["status_page_slug"]

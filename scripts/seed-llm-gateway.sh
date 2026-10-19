@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# seed-llm-gateway.sh — store the Anthropic API key and pm-agent's gateway bearer in
-# kv/services/pete-bot, as anthropic_api_key and gateway_token_pm_agent (PET-617).
+# seed-llm-gateway.sh — store the Anthropic API key and lab-map's gateway bearer in
+# kv/services/pete-bot, as anthropic_api_key and gateway_token_lab_map (PET-617).
 #
 # WHAT THEY OPEN. pete-bot's gateway on 237 holds the homelab's one Anthropic key and
 # forwards POST /v1/llm/v1/messages with it. Each caller sends its own bearer, and the
-# gateway caps its monthly spend. pm-agent is the first caller. No caller holds the key.
+# gateway caps its monthly spend. The lab-map agent is the one caller. No caller holds
+# the key.
 #
 # WHERE THE VALUES COME FROM. Pedro mints the key in the Anthropic Console and pastes it
 # at this script's hidden prompt, or pipes it on stdin. The script mints the bearer. The
@@ -20,13 +21,14 @@
 #   2. this script
 #   3. scripts/deploy-pete-bot.sh, or pete-bot's deploy.yml PR that reads both fields.
 #      That PR merges only after step 2: its Vault step fails on a missing field.
-#   4. pm-agent's bearer reaches 247 with the pm-agent timer PR, not before.
+#   4. lab-map's bearer reaches the lab-map agent's host with that agent's deploy PR, not
+#      before. PET-617 has not chosen the host yet.
 # A rotation of either field runs steps 3 and 4 again.
 #
 # Usage:
 #   ./scripts/seed-llm-gateway.sh                  # write whichever field is absent
 #   ./scripts/seed-llm-gateway.sh --rotate-key     # replace the Anthropic key
-#   ./scripts/seed-llm-gateway.sh --rotate-token   # replace pm-agent's bearer
+#   ./scripts/seed-llm-gateway.sh --rotate-token   # replace lab-map's bearer
 #   printf '%s' "$KEY" | ./scripts/seed-llm-gateway.sh --rotate-key   # key on stdin
 set -euo pipefail
 umask 077
@@ -37,7 +39,7 @@ for arg in "$@"; do
   case "$arg" in
     --rotate-key) ROTATE_KEY=1 ;;
     --rotate-token) ROTATE_TOKEN=1 ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$arg" >&2; exit 2 ;;
   esac
 done
@@ -46,7 +48,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PATH_KV="kv/services/pete-bot"
 KEY_FIELD="anthropic_api_key"
-TOKEN_FIELD="gateway_token_pm_agent"
+TOKEN_FIELD="gateway_token_lab_map"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 
 export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
@@ -204,6 +206,6 @@ cat <<'NOTE'
   Next, in this order:
     1. Deploy pete-bot: ./scripts/deploy-pete-bot.sh, or merge pete-bot's deploy.yml PR
        that reads both fields. The play fails unless /health reports llm: on.
-    2. pm-agent's bearer reaches 247 with the pm-agent timer PR. After a rotation of the
-       bearer, run ./scripts/deploy-claude-247.sh once that PR has merged.
+    2. lab-map's bearer reaches the lab-map agent's host with that agent's deploy PR.
+       After a rotation of the bearer, run that host's deploy once the PR has merged.
 NOTE

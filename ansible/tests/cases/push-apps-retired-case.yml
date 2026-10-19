@@ -1,0 +1,78 @@
+# One case for tests/push-apps-retired.yml: lay out all five paths, run the task file with
+# the case's two gates, then check which paths remain.
+---
+- name: "Name the five paths — {{ retire_case.name }}"
+  ansible.builtin.set_fact:
+    retire_root: "{{ scratch.path }}/{{ retire_case.name | regex_replace('[^a-z]+', '-') }}"
+
+- name: "Map each path to its place in the scratch tree — {{ retire_case.name }}"
+  ansible.builtin.set_fact:
+    retire_paths:
+      vault_conf: "{{ retire_root }}/home/.config/claude-vault"
+      vault_broker: "{{ retire_root }}/bin/claude-vault-broker"
+      push_conf: "{{ retire_root }}/home/.config/claude-code-push"
+      push_broker: "{{ retire_root }}/bin/claude-code-push-broker"
+      push_gh: "{{ retire_root }}/bin/claude-gh"
+
+- name: "Make the config directories and the bin directory — {{ retire_case.name }}"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ retire_paths.vault_conf }}"
+    - "{{ retire_paths.push_conf }}"
+    - "{{ retire_root }}/bin"
+
+- name: "Put a stand-in key in each config directory — {{ retire_case.name }}"
+  ansible.builtin.copy:
+    dest: "{{ item }}/app.pem"
+    content: "stand-in, not a key\n"
+    mode: "0600"
+  loop:
+    - "{{ retire_paths.vault_conf }}"
+    - "{{ retire_paths.push_conf }}"
+
+- name: "Make each broker and the gh wrapper — {{ retire_case.name }}"
+  ansible.builtin.copy:
+    dest: "{{ item }}"
+    content: "#!/bin/sh\n"
+    mode: "0755"
+  loop:
+    - "{{ retire_paths.vault_broker }}"
+    - "{{ retire_paths.push_broker }}"
+    - "{{ retire_paths.push_gh }}"
+
+- name: "Run the task file — {{ retire_case.name }}"
+  ansible.builtin.include_tasks: ../../roles/claude-code/tasks/push-apps-retired.yml
+  vars:
+    claude_vault_enable: "{{ retire_case.vault_enable }}"
+    claude_code_push_enable: "{{ retire_case.push_enable }}"
+    claude_vault_conf_dir: "{{ retire_paths.vault_conf }}"
+    claude_vault_broker: "{{ retire_paths.vault_broker }}"
+    claude_code_push_conf_dir: "{{ retire_paths.push_conf }}"
+    claude_code_push_broker: "{{ retire_paths.push_broker }}"
+    claude_code_push_gh: "{{ retire_paths.push_gh }}"
+
+- name: "Read each path back — {{ retire_case.name }}"
+  ansible.builtin.stat:
+    path: "{{ retire_paths[item] }}"
+  loop: "{{ retire_paths.keys() | list }}"
+  register: retire_stat
+
+- name: "Assert which paths remain — {{ retire_case.name }}"
+  vars:
+    present: >-
+      {{ retire_stat.results | selectattr('stat.exists') | map(attribute='item') | sort }}
+    absent: >-
+      {{ retire_stat.results | rejectattr('stat.exists') | map(attribute='item') | sort }}
+  ansible.builtin.assert:
+    that:
+      - absent == (retire_case.want_gone | sort)
+      - present == (retire_case.want_kept | sort)
+    fail_msg: >-
+      {{ retire_case.name }}: gone={{ absent }}, kept={{ present }};
+      want gone={{ retire_case.want_gone | sort }}, kept={{ retire_case.want_kept | sort }}.
+    success_msg: >-
+      {{ retire_case.name }}: read {{ retire_stat.results | length }} paths,
+      gone={{ absent }}, kept={{ present }}.

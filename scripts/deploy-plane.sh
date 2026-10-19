@@ -11,8 +11,9 @@
 #   kv/services/plane  live_secret_key  -> plane_live_secret_key  (LIVE_SERVER_SECRET_KEY)
 #   kv/services/plane  mq_password      -> plane_mq_password      (bundled RabbitMQ)
 #   kv/services/plane  api_key          -> plane_mcp_api_key      (the MCP shim's Plane PAT, PET-610)
-#   kv/services/plane-tom api_key       -> plane_mcp_tom_api_key  (Tom's PAT for :8791, PET-610;
-#                                          seeded by scripts/seed-plane-tom-pat.sh)
+#   kv/services/plane-<name> api_key    -> plane_mcp_member_keys[<name>], for each name in
+#                                          MCP_MEMBERS (PET-610, PET-650; each seeded by
+#                                          scripts/seed-plane-member-pat.sh --name <name>)
 #   AppRole creds: $SECRETS_DIR/ansible.{role_id,secret_id} (gitignored .secrets/)
 #
 # Manual-validation-first (standing convention, PET-266): this script IS the
@@ -62,9 +63,17 @@ MQ_PW="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=mq_password kv/services/pla
   || die "cannot read kv/services/plane field 'mq_password'."
 MCP_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=api_key kv/services/plane)" \
   || die "cannot read kv/services/plane field 'api_key'."
-TOM_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=api_key kv/services/plane-tom)" \
-  || die "cannot read kv/services/plane-tom field 'api_key' — run scripts/seed-plane-tom-pat.sh first."
-echo "  resolved 8 secrets (values not printed)"
+# One personal MCP site each. Keep this list equal to plane_mcp_members in configure-plane.yml;
+# the play stops when a member's PAT is missing.
+MCP_MEMBERS="tom sonia"
+for name in $MCP_MEMBERS; do
+  key="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=api_key "kv/services/plane-$name")" \
+    || die "cannot read kv/services/plane-$name field 'api_key' — run scripts/seed-plane-member-pat.sh --name $name first."
+  [ -n "$key" ] || die "kv/services/plane-$name field 'api_key' is empty."
+  export "PL_MEMBER_$name=$key"
+done
+unset key
+echo "  resolved $((7 + $(wc -w <<<"$MCP_MEMBERS"))) secrets (values not printed)"
 
 step "Preflight: is 235 up and does it have the container features?"
 ssh -i ~/.ssh/id_ed25519_ansible -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 \
@@ -89,7 +98,7 @@ VARS_FILE="$VARS_DIR/plane-vars.json"
 # to every local user; /proc/<pid>/environ is readable only by the process owner. The same
 # 2026-08-13 lesson, applied to this hop (PET-610).
 PL_DB="$DB_PW" PL_SEC="$SECRET_KEY" PL_AK="$MINIO_AK" PL_SK="$MINIO_SK" \
-PL_LIVE="$LIVE_KEY" PL_MQ="$MQ_PW" PL_MCP="$MCP_KEY" PL_TOM="$TOM_KEY" \
+PL_LIVE="$LIVE_KEY" PL_MQ="$MQ_PW" PL_MCP="$MCP_KEY" PL_MEMBERS="$MCP_MEMBERS" \
   python3 - "$VARS_FILE" <<'PYEOF'
 import json, os, sys
 env = os.environ
@@ -102,7 +111,7 @@ with open(sys.argv[1], "w") as fh:
         "plane_live_secret_key": env["PL_LIVE"],
         "plane_mq_password": env["PL_MQ"],
         "plane_mcp_api_key": env["PL_MCP"],
-        "plane_mcp_tom_api_key": env["PL_TOM"],
+        "plane_mcp_member_keys": {n: env["PL_MEMBER_" + n] for n in env["PL_MEMBERS"].split()},
     }, fh)
 PYEOF
 

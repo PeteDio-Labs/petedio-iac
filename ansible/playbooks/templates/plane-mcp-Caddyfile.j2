@@ -1,4 +1,5 @@
-# Access-gated shim in front of plane-mcp-server (PET-292).
+# {{ ansible_managed }}
+# Access-gated shim in front of plane-mcp-server (PET-292). Rendered by configure-plane.yml.
 #
 # The MCP server's /http/api-key mount takes the Plane PAT in a header and runs
 # NO OAuth of its own — the only mount compatible with Cloudflare Access Managed
@@ -40,11 +41,12 @@
 	}
 }
 
-# Tom's site (PET-610), the same shim with Tom's PAT. mcp-tom.pdlab.dev reaches it through
-# the tunnel, and Access admits only Tom's email. Plane scopes every call to Tom's own roles,
-# so this port can do only what Tom can do in the web app. Keep it a copy of :8790 with one
-# difference, the PAT.
-:8791 {
+# One site per entry in plane_mcp_members (PET-610, PET-650): the same shim with that person's
+# PAT. mcp-<name>.pdlab.dev reaches it through the tunnel, and Access admits only that
+# person's email. Plane scopes every call to the person's own roles, so the port can do only
+# what they can do in the web app. Each site stays a copy of :8790 with one difference, the PAT.
+{% for m in plane_mcp_members %}
+:{{ m.port }} {
 	log {
 		output stdout
 		format console
@@ -54,7 +56,7 @@
 	handle @mcp {
 		uri replace /mcp /http/api-key/mcp
 		reverse_proxy plane-mcp:8211 {
-			header_up Authorization "Bearer {env.PLANE_TOM_API_KEY}"
+			header_up Authorization "Bearer {env.PLANE_{{ m.name | upper }}_API_KEY}"
 			header_up X-Workspace-slug {env.PLANE_WORKSPACE_SLUG}
 		}
 	}
@@ -67,3 +69,5 @@
 		respond "not found" 404
 	}
 }
+
+{% endfor %}

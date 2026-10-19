@@ -29,11 +29,12 @@ here too: every flag goes after `remote-control`, and no telemetry opt-out varia
 1. It exits 0 if another `claude.exe remote-control` from the CLI path is already running. It
    matches the executable path, because the desktop app's processes are also named `claude.exe`.
 1. It waits up to 10 minutes for `api.anthropic.com` to resolve.
-1. It runs `remote-control --continue` to reattach to the last session. That reattaches only
-   within about 4 hours. When the attempt ends, for any reason, it starts a fresh server with
-   `--spawn worktree`.
-1. When the fresh server exits, the script starts the loop again after 30 seconds. Five exits
-   within five minutes end the script with exit 5.
+1. It starts the server with `remote-control --spawn worktree`. A plain start brings back every
+   session the last server served, for about 4 hours after it stopped. The script never passes
+   `--continue`, which brings back only one session and can't be combined with `--spawn`
+   (`PET-624`).
+1. When the server exits, the script starts it again after 30 seconds. Five exits within five
+   minutes end the script with exit 5.
 
 The task runs with your interactive token. It never stores your password, so it stops when you
 sign out. On failure, Task Scheduler restarts it every minute, up to 3 times.
@@ -126,8 +127,7 @@ All logs are in `%LOCALAPPDATA%\claude-remote\`.
 | File | Contents |
 | --- | --- |
 | `serve.log` | One line for each start, preflight failure, attempt and exit, with the exit code. |
-| `run-resume.out.log`, `run-resume.err.log` | The CLI's output from the last `--continue` attempt. |
-| `run-fresh.out.log`, `run-fresh.err.log` | The CLI's output from the last fresh server. |
+| `run-server.out.log`, `run-server.err.log` | The CLI's output from the last server. |
 | `claude-debug.log` | The CLI's debug file. |
 
 To read the task's own record, run
@@ -141,11 +141,11 @@ script's exit code. `267009` means the task is still running.
 | `serve.log` says `FAIL (exit 2)` and names `remoteDialogSeen` | You haven't answered the consent prompt. Complete step 1 of the setup. |
 | `serve.log` says `FAIL (exit 3)` | `~/.claude.json` doesn't trust the folder. Run `claude` by hand in the folder and accept the trust prompt. |
 | `serve.log` says `FAIL (exit 4)` | `api.anthropic.com` didn't resolve within 10 minutes. Check the network, then start the task. |
-| `serve.log` says `FAIL (exit 5)` | The server exited 5 times in 5 minutes. An expired login is the usual cause. Read `run-fresh.err.log`, sign in with `claude` by hand, then start the task. |
+| `serve.log` says `FAIL (exit 5)` | The server exited 5 times in 5 minutes. An expired login is the usual cause. Read `run-server.err.log`, sign in with `claude` by hand, then start the task. |
 | `serve.log` says a server already runs, and no `Pete-AI` server shows on your phone | A `remote-control` process from the CLI path is stuck, often at a prompt. Stop it, as described in "Stop the server", then start the task. |
 | The task shows **Running**, but `serve.log` has no line for the start | `conhost.exe --headless` didn't start PowerShell. Change the task's action to `powershell.exe -WindowStyle Minimized -NoProfile -ExecutionPolicy Bypass -File <serve script>`, which shows a minimized window instead. |
 | The server disappears after Pete-AI is idle | Pete-AI slept or hibernated. Run `powercfg /query SCHEME_CURRENT SUB_SLEEP` and check that sleep and hibernation on AC are `0`. |
-| Sessions reconnect as new sessions after a restart | `--continue` reattaches only within about 4 hours. Past that, the script starts a fresh server, which is expected. |
+| Sessions reconnect as new sessions after a restart | A plain start brings sessions back only within about 4 hours. Past that, the server starts with no sessions, which is expected. |
 
 Don't set `DISABLE_TELEMETRY`, `DO_NOT_TRACK`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` or
 `DISABLE_GROWTHBOOK` on Pete-AI. Each turns off the feature-flag check that Remote Control

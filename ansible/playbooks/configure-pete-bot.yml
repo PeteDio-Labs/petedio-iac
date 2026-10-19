@@ -46,15 +46,38 @@
     # Optional (PET-395): pete_bot_github_updates_token, for /update. Empty leaves
     # /update answering that it is not configured.
     # Optional (PET-617), set together or not at all: pete_bot_anthropic_api_key and
-    # pete_bot_gateway_token_pm_agent. scripts/seed-llm-gateway.sh writes both.
+    # pete_bot_gateway_token_lab_map. scripts/seed-llm-gateway.sh writes both.
+    #
+    # The merge desk (PET-645). Optional: pete_bot_desk_app_id,
+    # pete_bot_desk_installation_id and pete_bot_desk_app_pem, from kv/services/pete-bot
+    # (scripts/seed-pete-bot-desk-app.sh). Without all three the desk stays off, whatever
+    # pete_bot_desk_mode says, so a deploy before the seed changes nothing.
+    pete_bot_conf_dir: /etc/pete-bot
+    # dry-run approves and merges nothing, and DMs each merge it would make (Pedro,
+    # 2026-10-16). Moving to `on` is a decision, so it is a reviewed change to this line.
+    pete_bot_desk_mode: dry-run
+    pete_bot_desk_repos: petedio-workspace,petedio-vault,petedio-pm
+    # Repos that run no PR validation, by decision. Only there may a head with no check merge
+    # without a tap; anywhere else an empty check list may be CI that never started.
+    pete_bot_desk_no_ci_repos: petedio-workspace,petedio-vault,petedio-pm
+    pete_bot_desk_authors: petedillo
+    pete_bot_codex_host: 192.168.50.248
+    pete_bot_desk_ready: >-
+      {{ (pete_bot_desk_app_id | default('') | string | length > 0)
+         and (pete_bot_desk_installation_id | default('') | string | length > 0)
+         and (pete_bot_desk_app_pem | default('') | length > 0) }}
 
     # Each gateway caller: its bearer, its monthly cap in whole dollars, and the models it
-    # may ask for. The caps are the ration in PET-617's plan v3. A model outside pete-bot's
-    # price table puts the gateway in the misconfigured state, which the check below fails.
+    # may ask for. A model outside pete-bot's price table puts the gateway in the
+    # misconfigured state, which the check below fails.
+    #
+    # The one caller is the lab-map agent. Pedro gave it the API budget on 2026-10-15, in
+    # place of pm-agent (PET-617). Its cap is plan v3's two lab-map lines: $30 for questions
+    # through pete-bot and $10 for the nightly drift batch.
     pete_bot_llm_callers:
-      pm-agent:
-        token: "{{ pete_bot_gateway_token_pm_agent | default('') }}"
-        monthlyCapUsd: 15
+      lab-map:
+        token: "{{ pete_bot_gateway_token_lab_map | default('') }}"
+        monthlyCapUsd: 40
         models: [claude-haiku-4-5]
     # The spend ledger the caps read. It must survive a restart, so it lives in the unit's
     # StateDirectory beside the alert state.
@@ -79,17 +102,17 @@
       # would hide the fail_msg that names the script to run.
 
     # ⚠ BOTH OR NEITHER. A key without a caller leaves the gateway misconfigured, and a
-    # caller without a key leaves it off while pm-agent holds a bearer nothing accepts.
+    # caller without a key leaves it off while lab-map holds a bearer nothing accepts.
     - name: Assert the gateway's key and bearer are set together
       ansible.builtin.assert:
         that:
           - (pete_bot_anthropic_api_key | default('') | length > 0)
-            == (pete_bot_gateway_token_pm_agent | default('') | length > 0)
-          - pete_bot_gateway_token_pm_agent | default('') | length == 0
-            or pete_bot_gateway_token_pm_agent not in
+            == (pete_bot_gateway_token_lab_map | default('') | length > 0)
+          - pete_bot_gateway_token_lab_map | default('') | length == 0
+            or pete_bot_gateway_token_lab_map not in
                [pete_bot_alert_bearer, pete_bot_notify_bearer, pete_bot_github_updates_token | default('')]
         fail_msg: >-
-          kv/services/pete-bot holds only one of anthropic_api_key and gateway_token_pm_agent,
+          kv/services/pete-bot holds only one of anthropic_api_key and gateway_token_lab_map,
           or the gateway bearer repeats another route's. Run scripts/seed-llm-gateway.sh.
 
     - name: Assert the binary was compiled on the controller
@@ -133,6 +156,80 @@
         owner: root
         group: "{{ pete_bot_user }}"
         mode: "0750"
+      notify: Restart pete-bot
+
+    # ── The merge desk (PET-645) ─────────────────────────────────────────────────────
+    # python3-yaml: the desk runs petedio-iac's pr-blast-radius.py, which parses workflows.
+    # openssh-client: the desk queues Codex reviews over ssh to codex-248.
+    - name: Install what the merge desk runs
+      ansible.builtin.apt:
+        name: [python3, python3-yaml, openssh-client]
+        state: present
+        update_cache: true
+        cache_valid_time: 86400
+
+    - name: Create the configuration directory
+      ansible.builtin.file:
+        path: "{{ pete_bot_conf_dir }}"
+        state: directory
+        owner: root
+        group: "{{ pete_bot_user }}"
+        mode: "0750"
+      # ⚠ Owned by root, readable by the service: the process can read its keys and can
+      # replace none of them. The unit's ProtectSystem=strict makes /etc read-only anyway.
+
+    # ⚠ THE KEY IS MADE HERE AND NEVER LEAVES 237. codex-248 authorizes its public half in
+    # roles/codex's codex_review_gate_keys, under a forced command that runs only
+    # `codex-review <repo> <n> <effort>` (PET-591). The play prints the public half below.
+    - name: Generate the Codex queue key
+      ansible.builtin.command:
+        cmd: >-
+          ssh-keygen -q -t ed25519 -N '' -C pete-bot-desk@media-dash-237
+          -f {{ pete_bot_conf_dir }}/codex_ed25519
+        creates: "{{ pete_bot_conf_dir }}/codex_ed25519"
+
+    # In check mode the key above is predicted, not made. The tasks that read it skip a key
+    # that doesn't exist yet in check mode, and fail on one that is missing in a real run.
+    - name: Look for the Codex queue key
+      ansible.builtin.stat:
+        path: "{{ pete_bot_conf_dir }}/codex_ed25519"
+      register: pete_bot_codex_key
+
+    - name: Let the service read the Codex queue key
+      ansible.builtin.file:
+        path: "{{ pete_bot_conf_dir }}/codex_ed25519"
+        owner: root
+        group: "{{ pete_bot_user }}"
+        mode: "0640"
+      when: pete_bot_codex_key.stat.exists or not ansible_check_mode
+      # ssh refuses a group-readable key only when the caller owns it. root owns this one.
+
+    # ⚠ PINNED ON FIRST DEPLOY, NEVER RE-SCANNED. ssh runs with StrictHostKeyChecking=yes
+    # against this file alone, so a changed host key on 248 stops the queue rather than
+    # trusting the new one. After a planned rebuild of 248, delete the file and redeploy.
+    # It runs only once the desk App is seeded, so an unseeded deploy never needs 248.
+    - name: Pin codex-248's host key
+      ansible.builtin.shell:
+        cmd: >-
+          set -o pipefail;
+          ssh-keyscan -T 5 -t ed25519 {{ pete_bot_codex_host }} 2>/dev/null
+          > {{ pete_bot_conf_dir }}/codex_known_hosts.new
+          && grep -q ssh-ed25519 {{ pete_bot_conf_dir }}/codex_known_hosts.new
+          && chmod 0644 {{ pete_bot_conf_dir }}/codex_known_hosts.new
+          && mv {{ pete_bot_conf_dir }}/codex_known_hosts.new {{ pete_bot_conf_dir }}/codex_known_hosts
+        executable: /bin/bash
+        creates: "{{ pete_bot_conf_dir }}/codex_known_hosts"
+      when: pete_bot_desk_ready | bool
+
+    - name: Install the desk's GitHub App key
+      ansible.builtin.copy:
+        content: "{{ pete_bot_desk_app_pem | trim }}\n"
+        dest: "{{ pete_bot_conf_dir }}/desk-app.pem"
+        owner: root
+        group: "{{ pete_bot_user }}"
+        mode: "0640"
+      no_log: true
+      when: pete_bot_desk_ready | bool
       notify: Restart pete-bot
 
     - name: Install the environment file
@@ -208,6 +305,54 @@
     - name: Report what it logged in as
       ansible.builtin.debug:
         msg: "{{ pete_bot_journal.stdout_lines | select('search', 'logged in as') | list }}"
+
+    # The desk starts after the Discord login, and /health says whether it came up. A
+    # misconfigured desk leaves alerts working, so this fails the deploy, where someone
+    # reads it, rather than leaving the reason only in /health.
+    - name: Read the merge desk's state
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ pete_bot_port }}/health"
+        return_content: true
+      register: pete_bot_desk_health
+      retries: 10
+      delay: 2
+      # A binary from before PET-645 reports no `desk`, and a deploy of one must still pass.
+      until: >-
+        pete_bot_desk_health.json is defined
+        and (pete_bot_desk_health.json.desk is not defined
+             or pete_bot_desk_health.json.desk.state in ['off', 'misconfigured', 'running'])
+
+    - name: Fail when the merge desk is misconfigured
+      ansible.builtin.fail:
+        msg: "The merge desk is misconfigured: {{ pete_bot_desk_health.json.desk.reason }}"
+      when: (pete_bot_desk_health.json.desk.state | default('')) == 'misconfigured'
+
+    # Check mode skips the /health read and restarts nothing, so the desk's state is
+    # unknown there. Without the guard, every `--check` run with a seeded App fails here.
+    - name: Fail when the desk App is seeded but the desk did not start
+      ansible.builtin.fail:
+        msg: >-
+          The desk App is seeded, but the desk reports
+          {{ pete_bot_desk_health.json.desk.state | default('nothing: this binary predates the desk') }}.
+      when:
+        - not ansible_check_mode
+        - pete_bot_desk_ready | bool
+        - (pete_bot_desk_health.json.desk.state | default('')) != 'running'
+
+    - name: Read the Codex queue key's public half
+      ansible.builtin.slurp:
+        src: "{{ pete_bot_conf_dir }}/codex_ed25519.pub"
+      register: pete_bot_codex_pub
+      when: pete_bot_codex_key.stat.exists or not ansible_check_mode
+
+    - name: Report the desk, and the key codex-248 must authorize
+      ansible.builtin.debug:
+        msg:
+          - "merge desk: {{ pete_bot_desk_health.json.desk.state | default('not in this binary') }}"
+          - >-
+            codex_review_gate_keys entry:
+            {{ (pete_bot_codex_pub.content | b64decode | trim) if pete_bot_codex_pub.content is defined
+               else 'none yet: check mode predicted the key' }}
 
   handlers:
     - name: Restart pete-bot

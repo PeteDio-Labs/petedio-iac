@@ -79,13 +79,23 @@ PB_NOTIFY_BEARER="$(need notify_bearer_token)"
 # Optional (PET-395): the token /update dispatches with. Absent leaves /update saying it
 # is not configured, rather than failing the whole deploy.
 PB_UPDATES_TOKEN="$(field github_updates_token)"
-# Optional (PET-617), together or not at all: the gateway's Anthropic key and pm-agent's
+# Optional (PET-645): the merge desk's App. All three, or the desk stays off. To seed them,
+# run scripts/seed-pete-bot-desk-app.sh.
+PB_DESK_APP_ID="$(field desk_app_id)"
+PB_DESK_INSTALLATION_ID="$(field desk_installation_id)"
+PB_DESK_APP_PEM="$(field desk_app_pem)"
+# Optional (PET-617), together or not at all: the gateway's Anthropic key and lab-map's
 # bearer. Absent leaves the gateway off. scripts/seed-llm-gateway.sh writes both, and the
 # play refuses one without the other.
 PB_ANTHROPIC_KEY="$(field anthropic_api_key)"
-PB_GATEWAY_PM_AGENT="$(field gateway_token_pm_agent)"
+PB_GATEWAY_LAB_MAP="$(field gateway_token_lab_map)"
 unset SNAPSHOT
 echo "  resolved the 5 required values"
+if [ -n "$PB_DESK_APP_ID" ] && [ -n "$PB_DESK_INSTALLATION_ID" ] && [ -n "$PB_DESK_APP_PEM" ]; then
+  echo "  merge desk: App present"
+else
+  echo "  merge desk: the App is not seeded, so the desk stays off"
+fi
 if [ -n "$PB_UPDATES_TOKEN" ]; then
   echo "  /update: token present"
 else
@@ -121,7 +131,9 @@ OUT="$TMP/extra.json" \
 PB_TOKEN="$PB_TOKEN" PB_CLIENT="$PB_CLIENT" PB_OWNER="$PB_OWNER" \
 PB_BEARER="$PB_BEARER" PB_NOTIFY_BEARER="$PB_NOTIFY_BEARER" BIN="$BIN" \
 PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
-PB_ANTHROPIC_KEY="$PB_ANTHROPIC_KEY" PB_GATEWAY_PM_AGENT="$PB_GATEWAY_PM_AGENT" \
+PB_ANTHROPIC_KEY="$PB_ANTHROPIC_KEY" PB_GATEWAY_LAB_MAP="$PB_GATEWAY_LAB_MAP" \
+PB_DESK_APP_ID="$PB_DESK_APP_ID" PB_DESK_INSTALLATION_ID="$PB_DESK_INSTALLATION_ID" \
+PB_DESK_APP_PEM="$PB_DESK_APP_PEM" \
 python3 -c '
 import json, os
 json.dump({
@@ -133,7 +145,10 @@ json.dump({
     "pete_bot_notify_bearer":    os.environ["PB_NOTIFY_BEARER"],
     "pete_bot_github_updates_token": os.environ.get("PB_UPDATES_TOKEN", ""),
     "pete_bot_anthropic_api_key": os.environ.get("PB_ANTHROPIC_KEY", ""),
-    "pete_bot_gateway_token_pm_agent": os.environ.get("PB_GATEWAY_PM_AGENT", ""),
+    "pete_bot_gateway_token_lab_map": os.environ.get("PB_GATEWAY_LAB_MAP", ""),
+    "pete_bot_desk_app_id":          os.environ.get("PB_DESK_APP_ID", ""),
+    "pete_bot_desk_installation_id": os.environ.get("PB_DESK_INSTALLATION_ID", ""),
+    "pete_bot_desk_app_pem":         os.environ.get("PB_DESK_APP_PEM", ""),
 }, open(os.environ["OUT"], "w"))
 '
 
