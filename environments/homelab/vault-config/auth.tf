@@ -15,6 +15,26 @@ resource "vault_approle_auth_backend_role" "ansible" {
   token_max_ttl  = 3600
 }
 
+# ansible-247 role → ansible-247 policy (PET-674). The AppRole that claude-ops on
+# claude-247 logs in with, so the deploy scripts run there the way they run on the Mac.
+# scripts/seed-claude-ops-ansible-approle.sh mints its secret_id on the Mac and delivers it
+# to claude-ops's iac clone as .secrets/ansible.{role_id,secret_id}. The file names match
+# the Mac's, so no deploy script changes.
+#
+# A role of its own, not a second secret_id on `ansible`: the ansible policy reads
+# kv/admin/*, and ansible-247 does not. Both CIDR lists pin every login and every token to
+# 247's address, so a secret_id copied off the host does not log in anywhere else.
+# The TTLs match `ansible`.
+resource "vault_approle_auth_backend_role" "ansible_247" {
+  backend               = vault_auth_backend.approle.path
+  role_name             = "ansible-247"
+  token_policies        = [vault_policy.ansible_247.name]
+  token_ttl             = 1200
+  token_max_ttl         = 3600
+  secret_id_bound_cidrs = ["192.168.50.247/32"]
+  token_bound_cidrs     = ["192.168.50.247/32"]
+}
+
 # Local Terraform role → terraform policy.
 resource "vault_approle_auth_backend_role" "terraform_local" {
   backend        = vault_auth_backend.approle.path

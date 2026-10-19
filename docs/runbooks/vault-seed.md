@@ -217,6 +217,22 @@ chmod 600 iac/.secrets/*.role_id iac/.secrets/*.secret_id
 > use these AppRole files — it authenticates via the **GitHub OIDC** (`jwt-github`)
 > role once the CI cutover lands (deferred — PET-29).
 
+### The same files on claude-247 (PET-674)
+
+`claude-ops` on 247 runs the deploy scripts from the same two files,
+`.secrets/ansible.{role_id,secret_id}`, in its own iac clone. They belong to the
+`ansible-247` AppRole, not to `ansible`. Its policy is `ansible` without `kv/admin/*`, and
+both CIDR lists pin its logins and tokens to `192.168.50.247/32`.
+
+To place or rotate them, run this on the Mac, on Pedro's word (PET-511):
+
+```bash
+./scripts/seed-claude-ops-ansible-approle.sh            # place, or confirm they log in
+./scripts/seed-claude-ops-ansible-approle.sh --rotate   # replace the secret_id
+```
+
+Never copy the Mac's `secret_id` to 247.
+
 ---
 
 ## Verification

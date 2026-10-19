@@ -122,6 +122,46 @@ resource "vault_policy" "terraform" {
   EOT
 }
 
+# ansible-247: the ansible policy without kv/admin/*, for the AppRole that claude-ops on
+# claude-247 logs in with (PET-674). Pedro asked on 2026-10-19 for 247 to run the deploy
+# scripts the way the Mac does, from .secrets/ansible.{role_id,secret_id}.
+#
+# THIS IS `ansible` BELOW, MINUS TWO BLOCKS. Keep the two in step: a path added to `ansible`
+# for a deploy script belongs here too, or that script fails on 247 alone. The two blocks
+# left out are kv/data/admin/* and kv/metadata/admin/*. That prefix holds the Vault root
+# token and the unseal material, and PET-531 ruled out landing either on 247 by any path
+# (see the claude-ops policy below). No scripts/deploy-*.sh reads kv/admin/*.
+resource "vault_policy" "ansible_247" {
+  name = "ansible-247"
+
+  policy = <<-EOT
+    path "kv/data/iac/*" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/*" {
+      capabilities = ["read"]
+    }
+
+    # kv/db/*: the per-database owner passwords. scripts/deploy-plane.sh reads kv/db/plane.
+    path "kv/data/db/*" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/iac/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/db/*" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
 # ansible: host-config runs read infra + service secrets.
 resource "vault_policy" "ansible" {
   name = "ansible"
