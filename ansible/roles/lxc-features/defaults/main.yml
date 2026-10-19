@@ -113,6 +113,11 @@ lxc_features_declared:
   # by Pedro's decision: nothing here runs Docker, so the container gets no keyctl.
   # Applying it takes a `pct reboot 238` (docs/runbooks/usaa-tracker.md).
   "238": { nesting: "1" }                # usaa-238 — petedio-usaa, sandboxed unit
+  # netboot-239, created by PET-528 on pve02. Debian 13, systemd 257, so its mount units
+  # need nesting. Nesting only: dnsmasq and nginx run as plain units and nothing here runs
+  # Docker, so the container gets no keyctl. Converge this before configure-netboot.yml.
+  # Temporary: delete it with netboot.tf once pve04 joins the cluster.
+  "239": { nesting: "1" }                # netboot-239 — PXE server for the pve04 install
   # Declared but on neither node as of 2026-09-09. Kept so they are configured on
   # the way back rather than remembered: 106's rootfs will not `pct restore`
   # (lxc.idmap), and 244 is absent from both nodes' `pct list`.
