@@ -21,7 +21,8 @@
 # and unit. It answers pete-bot's /lab with read-only lab tools on 127.0.0.1:3016, and calls
 # the gateway above as the lab-map caller. It holds lab-map's bearer, its own ask bearer, a
 # metadata-only Vault token, a read-only Proxmox token and a petedio-vault deploy key. It
-# holds no Discord token, no desk key and no Anthropic key. It is off until
+# holds no Discord token, no desk key and no Anthropic key. It also holds pete-bot's notify
+# bearer, which its nightly drift check (PET-671) DMs with. It is off until
 # kv/services/lab-agent and kv/services/lab-agent-pve are both seeded: run
 # scripts/seed-lab-agent.sh, whose header gives the order.
 #
