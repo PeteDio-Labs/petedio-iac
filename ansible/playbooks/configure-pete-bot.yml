@@ -306,17 +306,16 @@
     # and the desk read below ran before the new process had logged in (PET-617's first
     # gateway deploy, 2026-10-19). The invocation id names this start of the unit only.
     - name: Read the invocation id of the running pete-bot
-      ansible.builtin.command:
-        cmd: systemctl show -p InvocationID --value pete-bot
-      register: pete_bot_invocation
-      changed_when: false
-      failed_when: pete_bot_invocation.rc != 0 or pete_bot_invocation.stdout | length == 0
+      ansible.builtin.systemd_service:
+        name: pete-bot
+      register: pete_bot_unit
+      failed_when: (pete_bot_unit.status.InvocationID | default('')) | length == 0
       when: not ansible_check_mode
 
     - name: Prove it is logged in to Discord, not merely running
       ansible.builtin.command:
         cmd: >-
-          journalctl -u pete-bot _SYSTEMD_INVOCATION_ID={{ pete_bot_invocation.stdout }}
+          journalctl -u pete-bot _SYSTEMD_INVOCATION_ID={{ pete_bot_unit.status.InvocationID }}
           --no-pager -o cat
       when: not ansible_check_mode
       register: pete_bot_journal
