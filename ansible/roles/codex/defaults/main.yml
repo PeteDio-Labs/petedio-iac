@@ -55,9 +55,11 @@ codex_authorized_keys:
 # merge.
 #
 # claude-ops on claude-247 generated its key on that host (roles/claude-code), and the
-# private half never leaves it.
+# private half never leaves it. pete-bot's merge desk on media-dash-237 generated its key in
+# configure-pete-bot.yml, which printed this public half on its 2026-10-19 deploy (PET-645).
 codex_review_gate_keys:
   - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID0KsS3gtk3bU5H7I6qdbcX/C9coc+obxEj+ho5P2Zz7 claude-ops@claude-247"
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMhG5JH8LWqiMMiySgyvhSu7BExDnkDr4kcAPXth/gyp pete-bot-desk@media-dash-237"
 
 # Every active PeteDio-Labs repo (Pedro, 2026-10-14). It leaves out the archived co-latro
 # repos and the hostless resume-builder and water-fast.
