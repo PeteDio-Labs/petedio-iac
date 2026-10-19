@@ -21,6 +21,18 @@
 		format console
 	}
 
+	# pdlab.dev/mcp/plane reaches this site too (PET-667). cloudflared passes the path
+	# through unchanged, so map it to the same mount. It comes first because the @mcp
+	# matcher below also matches /mcp/plane and would rewrite it to the wrong path.
+	@plane path /mcp/plane /mcp/plane/*
+	handle @plane {
+		uri replace /mcp/plane /http/api-key/mcp
+		reverse_proxy plane-mcp:8211 {
+			header_up Authorization "Bearer {env.PLANE_API_KEY}"
+			header_up X-Workspace-slug {env.PLANE_WORKSPACE_SLUG}
+		}
+	}
+
 	# Public path is /mcp; upstream really lives at /http/api-key/mcp.
 	@mcp path /mcp /mcp/*
 	handle @mcp {

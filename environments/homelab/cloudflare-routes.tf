@@ -81,6 +81,29 @@ module "cloudflare_ingress" {
       }
     }
 
+    # The same Plane shim at its one-URL home (PET-667): every MCP server lives under
+    # pdlab.dev/mcp/<name>, one path route and one Access app each. The lab connector
+    # (/mcp/lab) joins later as a sibling, never behind Plane. Caddy on 235 maps
+    # /mcp/plane to the upstream mount, the same as /mcp on mcp.pdlab.dev.
+    #
+    # The same rule as above applies: the shim holds Pedro's PAT, so access_emails stays one
+    # person. Keep mcp.pdlab.dev until the claude.ai connector points here, then remove it.
+    "pdlab.dev/mcp/plane" = {
+      hostname      = "pdlab.dev"
+      path          = "^/mcp/plane(/.*)?$"
+      access_path   = "/mcp/plane"
+      service       = "http://192.168.50.235:8790"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+
+      managed_oauth = {
+        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        access_token_lifetime = "15m"
+        session_duration      = "168h"
+      }
+    }
+
     # Tom's Plane MCP (PET-610), a copy of mcp.pdlab.dev with a different origin port and email.
     # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
     # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same
