@@ -36,9 +36,10 @@ ProtectKernelTunables=true
 RestrictSUIDSGID=true
 LockPersonality=true
 
-# The one writable path, and it is one file (PET-384). Open incidents live here so a
-# restart between a DOWN and its recovery still edits the original DM instead of
-# orphaning it and posting the UP separately.
+# The one writable path. Open incidents live here (PET-384), so a restart between a DOWN
+# and its recovery still edits the original DM instead of orphaning it and posting the UP
+# separately. The gateway's spend ledger lives here too (PET-617), so a restart doesn't
+# reset any caller's cap.
 #
 # ⚠ StateDirectory, NOT ReadWritePaths over the app dir. mtrace's unit does the latter,
 # which lets the service account replace the root-owned binary it executes. systemd
