@@ -24,19 +24,25 @@ pct_on() {  # node, args...
 }
 
 # One probe, run inside the host or guest. Prints: os|upgradable|security|list_age_days|reboot|unattended
+# It prints "ERR <reason>" and exits 1 when it cannot read the patch state, so a failed
+# apt simulation never turns into a "0 upgradable" row.
 PROBE='
 . /etc/os-release
-up=$(apt-get -s dist-upgrade 2>/dev/null | grep -c "^Inst ")
-sec=$(apt-get -s dist-upgrade 2>/dev/null | grep "^Inst " | grep -ci "security")
-age=$(( ( $(date +%s) - $(stat -c %Y /var/lib/apt/periodic/update-success-stamp /var/lib/apt/lists 2>/dev/null | sort -n | tail -1) ) / 86400 ))
+sim=$(apt-get -s dist-upgrade 2>&1) || { echo "ERR apt-simulation"; exit 1; }
+up=$(printf "%s\n" "$sim" | grep -c "^Inst ")
+sec=$(printf "%s\n" "$sim" | grep "^Inst " | grep -ci "security")
+newest=$(stat -c %Y /var/lib/apt/periodic/update-success-stamp /var/lib/apt/lists 2>/dev/null | sort -n | tail -1)
+[ -n "$newest" ] || { echo "ERR apt-list-age"; exit 1; }
+age=$(( ( $(date +%s) - newest ) / 86400 ))
 rb=no; [ -e /var/run/reboot-required ] && rb=yes
 ua=no; dpkg -s unattended-upgrades >/dev/null 2>&1 && ua=yes
 echo "$PRETTY_NAME|$up|$sec|$age|$rb|$ua"
 '
+KERNEL_Q="dpkg-query -W -f '\${Package}\n' 'proxmox-kernel-*-pve-signed' 2>/dev/null | sort -V | tail -1"
 
 report() {  # label, raw probe output
   local label=$1 raw=$2
-  if [ -z "$raw" ] || ! printf '%s' "$raw" | grep -q '|'; then
+  if ! printf '%s' "$raw" | tail -1 | grep -Eq '^[^|]+\|[0-9]+\|[0-9]+\|[0-9]+\|(yes|no)\|(yes|no)$'; then
     UNREADABLE=$((UNREADABLE+1)); printf "  ✗ %-28s unreadable\n" "$label"; return
   fi
   IFS='|' read -r os up sec age rb ua <<<"$(printf '%s' "$raw" | tail -1)"
@@ -49,11 +55,19 @@ report() {  # label, raw probe output
 for n in $PVE02 $PVE03; do
   printf "\n%s\n" "== node $n"
   pv=$(on "$n" "pveversion" | head -1)
-  run=$(on "$n" "uname -r"); inst=$(on "$n" "dpkg -l 'proxmox-kernel-*-pve-signed' 2>/dev/null | awk '/^ii/{print \$2}' | sort -V | tail -1")
-  echo "  $pv | running kernel $run | newest installed ${inst:-unknown}"
+  run=$(on "$n" "uname -r"); inst=$(on "$n" "$KERNEL_Q")
+  if [ -z "$pv" ] || [ -z "$run" ] || [ -z "$inst" ]; then
+    UNREADABLE=$((UNREADABLE+1)); echo "  ✗ $n: could not read pveversion or kernel (pve='${pv:-?}' running='${run:-?}' installed='${inst:-?}')"
+  else
+    echo "  $pv | running kernel $run | newest installed $inst"
+  fi
   report "$n (host)" "$(on "$n" "$PROBE")"
-  ids=$(pct_on "$n" list | awk 'NR>1 && $2=="running"{print $1}')
-  [ -z "$ids" ] && { UNREADABLE=$((UNREADABLE+1)); echo "  ✗ $n: no running guests listed (pct list failed?)"; continue; }
+  # Keep the listing's exit status apart from its content: a node with no running guests is healthy.
+  if ! listing=$(pct_on "$n" list) || [ -z "$listing" ]; then
+    UNREADABLE=$((UNREADABLE+1)); echo "  ✗ $n: pct list failed"; continue
+  fi
+  ids=$(printf '%s\n' "$listing" | awk 'NR>1 && $2=="running"{print $1}')
+  [ -z "$ids" ] && echo "  (no running guests on $n)"
   for id in $ids; do
     name=$(pct_on "$n" "exec $id -- hostname")
     report "$id ${name:-?}" "$(pct_on "$n" "exec $id -- sh -c '$PROBE'")"
