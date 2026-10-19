@@ -1355,8 +1355,9 @@ prompt that blocks the server.
 
 ## `git bundle create - <a>..<sha>` writes a bundle with no refs
 
-Moving a branch between machines that share no remote — 247 has no git credential, so its
-work reaches GitHub by bundle. A revision range with no ref name produces a **valid, empty**
+Moving a branch between machines that share no remote. 247's work once reached GitHub by
+bundle; since the 2026-10-19 cutover a session there writes no code for a PR, so this applies
+only when you move a branch by hand. A revision range with no ref name produces a **valid, empty**
 bundle:
 
 ```bash
