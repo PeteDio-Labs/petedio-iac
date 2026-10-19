@@ -300,9 +300,25 @@
     # Discord websocket handshake takes several seconds longer. Checking once right
     # after the health probe fails a deploy that is about to succeed — it did, by four
     # seconds, the first time this ran.
+    #
+    # ⚠ THIS PROCESS'S JOURNAL, NOT THE LAST THREE MINUTES. A `--since -3min` window also
+    # holds the previous process's login line, so this passed the instant after a restart
+    # and the desk read below ran before the new process had logged in (PET-617's first
+    # gateway deploy, 2026-10-19). The invocation id names this start of the unit only.
+    - name: Read the invocation id of the running pete-bot
+      ansible.builtin.command:
+        cmd: systemctl show -p InvocationID --value pete-bot
+      register: pete_bot_invocation
+      changed_when: false
+      failed_when: pete_bot_invocation.rc != 0 or pete_bot_invocation.stdout | length == 0
+      when: not ansible_check_mode
+
     - name: Prove it is logged in to Discord, not merely running
       ansible.builtin.command:
-        cmd: journalctl -u pete-bot --since -3min --no-pager -o cat
+        cmd: >-
+          journalctl -u pete-bot _SYSTEMD_INVOCATION_ID={{ pete_bot_invocation.stdout }}
+          --no-pager -o cat
+      when: not ansible_check_mode
       register: pete_bot_journal
       changed_when: false
       retries: 15
@@ -325,10 +341,14 @@
       retries: 10
       delay: 2
       # A binary from before PET-645 reports no `desk`, and a deploy of one must still pass.
+      # With the App seeded, `off` is also what the desk reports before startDesk runs, so
+      # only `running` or `misconfigured` ends the wait.
       until: >-
         pete_bot_desk_health.json is defined
         and (pete_bot_desk_health.json.desk is not defined
-             or pete_bot_desk_health.json.desk.state in ['off', 'misconfigured', 'running'])
+             or pete_bot_desk_health.json.desk.state in
+                (['misconfigured', 'running'] if (pete_bot_desk_ready | bool)
+                 else ['off', 'misconfigured', 'running']))
 
     - name: Fail when the merge desk is misconfigured
       ansible.builtin.fail:
