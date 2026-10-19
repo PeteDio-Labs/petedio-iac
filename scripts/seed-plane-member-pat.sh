@@ -1,26 +1,34 @@
 #!/usr/bin/env bash
-# seed-plane-tom-pat.sh — mint Tom's Plane PAT in Plane's Django shell on LXC 235, and store
-# it in kv/services/plane-tom (PET-610). Nobody sees the token: it travels from the api
-# container's stdout into a variable here, and from there into Vault through stdin.
+# seed-plane-member-pat.sh — mint one person's Plane PAT in Plane's Django shell on LXC 235,
+# and store it in kv/services/plane-<name> (PET-610 for Tom, PET-650 generalized it for Sonia).
+# Nobody sees the token: it travels from the api container's stdout into a variable here, and
+# from there into Vault through stdin.
+#
+# WHO. --name picks one entry from the MEMBERS table below. Each entry fixes the token label,
+# the Caddy site and route that use the token, and whether the person may be a workspace
+# Admin. A name outside the table is refused. To add a person, add a row here and an entry
+# in configure-plane.yml's plane_mcp_members.
 #
 # WHY ITS OWN PATH. kv/services/plane holds Pedro's PAT, and the plane-ci role reads that
-# path from a pull_request subject. Tom's token stays out of reach of every CI run.
+# path from a pull_request subject. A member's token stays out of reach of every CI run.
 #
 # WHAT IT STORES: api_key (the PAT), user_email (whose it is) and token_id (Plane's row id,
 # which --revoke-older keeps). A Plane PAT acts as its user, so the script refuses a user who
-# is inactive, a bot, staff, a superuser, the workspace owner, an Admin of petedio, or not a
-# member of petedio. Plane CE ignores a token's workspace field, so Tom's role is the scope.
+# is inactive, a bot, staff, a superuser, the workspace owner, or not a member of petedio.
+# It also refuses an Admin of petedio, unless the member's row allows Admin. Plane CE ignores
+# a token's workspace field, so the person's role is the scope. Sonia's row allows Admin on
+# Pedro's word (PET-650); Tom's does not.
 #
 # THE ORDER:
-#   1. Pedro creates Tom's Authentik user and invites Tom to petedio as a Member. Tom signs
-#      in to Plane once, which creates his Plane user.
-#   2. The PR that adds :8791 and mcp-tom.pdlab.dev merges.
-#   3. this script --email <Tom's email>
-#   4. ./scripts/deploy-plane.sh, so the :8791 Caddy site holds the token. The deploy reads
-#      this path and stops when it is absent, so step 3 comes first.
+#   1. Pedro invites the person to petedio in Plane with their role. The person signs in to
+#      Plane once, which creates their Plane user.
+#   2. The PR that adds their Caddy site and mcp-<name>.pdlab.dev merges.
+#   3. this script --name <name> --email <their email>
+#   4. ./scripts/deploy-plane.sh, so their Caddy site holds the token. The deploy reads every
+#      member's path and stops when one is absent, so step 3 comes first.
 # No Vault policy change is needed. The ansible policy that deploy-plane.sh logs in under
 # already reads kv/data/services/*. plane-ci, infra-reconcile and claude-ops each name the
-# exact path kv/data/services/plane, so none of them can read kv/services/plane-tom.
+# exact path kv/data/services/plane, so none of them can read kv/services/plane-<name>.
 # After --rotate, the old token stays valid. Run step 4, then this script --revoke-older.
 #
 #   Vault token: $VAULT_TOKEN, else the macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM.
@@ -29,21 +37,22 @@
 #   235 refuses it, --via-pve03 runs the same command through `pct exec 235` on pve03.
 #
 # Usage:
-#   ./scripts/seed-plane-tom-pat.sh --email tom@example.com   # mint one when absent, else keep it
-#   ./scripts/seed-plane-tom-pat.sh --rotate                  # replace it
-#   ./scripts/seed-plane-tom-pat.sh --revoke-older            # deactivate every older one
+#   ./scripts/seed-plane-member-pat.sh --name sonia --email a@example.com  # mint one when absent, else keep it
+#   ./scripts/seed-plane-member-pat.sh --name sonia --rotate               # replace it
+#   ./scripts/seed-plane-member-pat.sh --name sonia --revoke-older         # deactivate every older one
 #   Add --via-pve03 to any of these.
 set -euo pipefail
 umask 077
 
-MODE=seed EMAIL="" VIA=direct
+MODE=seed EMAIL="" VIA=direct NAME=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --name) [ $# -ge 2 ] || { echo "--name needs a value" >&2; exit 2; }; NAME="$2"; shift ;;
     --email) [ $# -ge 2 ] || { echo "--email needs a value" >&2; exit 2; }; EMAIL="$2"; shift ;;
     --rotate) MODE=rotate ;;
     --revoke-older) MODE=revoke ;;
     --via-pve03) VIA=pve03 ;;
-    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,43p' "$0"; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
@@ -51,8 +60,16 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PATH_KV="kv/services/plane-tom"
-LABEL="pet-610-mcp-tom"
+# MEMBERS: name -> token label, the route and Caddy port that use the token, and whether a
+# workspace Admin is allowed. Tom's label stays pet-610-mcp-tom, so --revoke-older still finds
+# the tokens minted before PET-650.
+case "$NAME" in
+  tom)   LABEL="pet-610-mcp-tom";   ROUTE="mcp-tom.pdlab.dev";   PORT=8791; ALLOW_ADMIN=0 ;;
+  sonia) LABEL="pet-650-mcp-sonia"; ROUTE="mcp-sonia.pdlab.dev"; PORT=8792; ALLOW_ADMIN=1 ;;
+  "") echo "--name is required: tom or sonia" >&2; exit 2 ;;
+  *) printf 'unknown --name: %s. Add a row to the MEMBERS table first.\n' "$NAME" >&2; exit 2 ;;
+esac
+PATH_KV="kv/services/plane-$NAME"
 PLANE_URL="${PLANE_URL:-http://192.168.50.235:8080}"
 WORKSPACE="petedio"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
@@ -124,7 +141,8 @@ plane(){
   args="$(python3 -c '
 import json, sys
 print(json.dumps(dict(a.split("=", 1) for a in sys.argv[1:])))' "action=$1" "${@:2}" \
-    "email=$EMAIL" "label=$LABEL" "workspace=$WORKSPACE")"
+    "email=$EMAIL" "label=$LABEL" "workspace=$WORKSPACE" "name=$NAME" \
+    "route=$ROUTE" "path=$PATH_KV" "allow_admin=$ALLOW_ADMIN")"
   { printf 'ARGS = %s\n' "$args"; printf '%s\n' "$PLANE_PY"; } | plane_shell \
     | sed -n 's/^SEED-RESULT //p' | tail -n 1
 }
@@ -141,7 +159,7 @@ from plane.db.models import APIToken, User, Workspace, WorkspaceMember
 def out(**kw):
     print("SEED-RESULT " + json.dumps(kw))
 
-def tom():
+def member():
     user = User.objects.filter(email__iexact=ARGS["email"]).first()
     if user is None:
         return None, "Plane has no user with that email. Invite them to petedio, and have them sign in once."
@@ -149,28 +167,28 @@ def tom():
     if not user.is_active or user.is_bot:
         return None, "that Plane user is inactive or a bot."
     if user.is_superuser or user.is_staff:
-        return None, "that Plane user is staff or a superuser, which is wider than Tom needs."
+        return None, "that Plane user is staff or a superuser, which is wider than an MCP route needs."
     if ws.owner_id == user.id:
         return None, "that Plane user owns the workspace. Is this Pedro's email?"
     m = WorkspaceMember.objects.filter(workspace=ws, member=user, is_active=True).first()
     if m is None:
         return None, "that Plane user is not an active member of " + ARGS["workspace"] + "."
-    if m.role >= 20:
+    if m.role >= 20 and ARGS["allow_admin"] != "1":
         return None, "that Plane user is an Admin of " + ARGS["workspace"] + ". Make them a Member, then run this again."
-    return user, {5: "Guest", 15: "Member"}.get(m.role, str(m.role))
+    return user, {5: "Guest", 15: "Member", 20: "Admin"}.get(m.role, str(m.role))
 
 def mine(user):
     return APIToken.objects.filter(user=user, label=ARGS["label"], is_active=True)
 
-user, info = tom()
+user, info = member()
 if user is None:
     out(error=info)
 elif ARGS["action"] == "mint":
     older = mine(user).count()
     t = APIToken.objects.create(
         user=user, user_type=0, label=ARGS["label"],
-        description="Tom's MCP connector at mcp-tom.pdlab.dev. Stored at kv/services/plane-tom "
-                    "by iac/scripts/seed-plane-tom-pat.sh (PET-610).",
+        description="MCP connector for " + ARGS["name"] + " at " + ARGS["route"] + ". Stored at "
+                    + ARGS["path"] + " by iac/scripts/seed-plane-member-pat.sh.",
     )
     out(token=t.token, token_id=str(t.id), role=info, older=older)
 elif ARGS["action"] == "revoke-one":
@@ -244,10 +262,10 @@ if [ -n "$STORED_EMAIL" ]; then
     die "$PATH_KV holds a token for another email. Nothing was changed."
   fi
 fi
-[ -n "$EMAIL" ] || die "the path is empty, so the first seed needs --email <Tom's email>."
+[ -n "$EMAIL" ] || die "the path is empty, so the first seed needs --email <$NAME's email>."
 
 if [ "$MODE" = "revoke" ]; then
-  step "Deactivate Tom's older tokens"
+  step "Deactivate $NAME's older tokens"
   if [ -z "$CURRENT" ] || [ -z "$STORED_ID" ]; then
     die "$PATH_KV holds no api_key and token_id to keep."
   fi
@@ -271,7 +289,7 @@ if [ -n "$CURRENT" ] && [ "$MODE" = "seed" ]; then
   exit 0
 fi
 
-step "Mint Tom's PAT in Plane"
+step "Mint $NAME's PAT in Plane"
 RESULT="$(plane mint)" || die "the Plane call failed."
 [ -n "$RESULT" ] || die "Plane returned no result. Run with --via-pve03 if 235 refused SSH."
 [ -z "$(get error)" ] || die "$(get error)"
@@ -285,7 +303,7 @@ if [ -z "$NEW" ] || [ -z "$NEW_ID" ]; then
 fi
 [ "$NEW" != "$CURRENT" ] || { revoke_minted "$NEW_ID"; die "the minted token repeats the stored one."; }
 
-step "Prove it acts as Tom"
+step "Prove it acts as $NAME"
 read -r WHO STATUS <<<"$(api_check)"
 if [ "$WHO" != "$EMAIL" ] || [ "$STATUS" != "200" ]; then
   revoke_minted "$NEW_ID"
@@ -327,6 +345,6 @@ if [ "${OLDER:-0}" != "0" ]; then
 fi
 cat <<NOTE
   Next, in this order:
-    1. ./scripts/deploy-plane.sh, so the :8791 Caddy site holds the token.
-    2. After a rotation only: ./scripts/seed-plane-tom-pat.sh --revoke-older
+    1. ./scripts/deploy-plane.sh, so the :$PORT Caddy site holds the token.
+    2. After a rotation only: ./scripts/seed-plane-member-pat.sh --name $NAME --revoke-older
 NOTE

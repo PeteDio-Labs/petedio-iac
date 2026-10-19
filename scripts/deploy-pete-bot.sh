@@ -67,6 +67,16 @@ PB_NOTIFY_BEARER="$(read_field kv/services/pete-bot notify_bearer_token)"
 # Optional (PET-395): the token /update dispatches with. Absent leaves /update saying it
 # is not configured, rather than failing the whole deploy.
 PB_UPDATES_TOKEN="$(vault kv get -field=github_updates_token kv/services/pete-bot 2>/dev/null || true)"
+# Optional (PET-645): the merge desk's App. All three, or the desk stays off. To seed them,
+# run scripts/seed-pete-bot-desk-app.sh.
+PB_DESK_APP_ID="$(vault kv get -field=desk_app_id kv/services/pete-bot 2>/dev/null || true)"
+PB_DESK_INSTALLATION_ID="$(vault kv get -field=desk_installation_id kv/services/pete-bot 2>/dev/null || true)"
+PB_DESK_APP_PEM="$(vault kv get -field=desk_app_pem kv/services/pete-bot 2>/dev/null || true)"
+if [ -n "$PB_DESK_APP_ID" ] && [ -n "$PB_DESK_INSTALLATION_ID" ] && [ -n "$PB_DESK_APP_PEM" ]; then
+  echo "  resolved the merge desk's App"
+else
+  echo "  the merge desk's App is not seeded, so the desk stays off"
+fi
 if [ -n "$PB_UPDATES_TOKEN" ]; then
   echo "  resolved 6 values, including the /update token"
 else
@@ -97,6 +107,8 @@ OUT="$TMP/extra.json" \
 PB_TOKEN="$PB_TOKEN" PB_CLIENT="$PB_CLIENT" PB_OWNER="$PB_OWNER" \
 PB_BEARER="$PB_BEARER" PB_NOTIFY_BEARER="$PB_NOTIFY_BEARER" BIN="$BIN" \
 PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
+PB_DESK_APP_ID="$PB_DESK_APP_ID" PB_DESK_INSTALLATION_ID="$PB_DESK_INSTALLATION_ID" \
+PB_DESK_APP_PEM="$PB_DESK_APP_PEM" \
 python3 -c '
 import json, os
 json.dump({
@@ -107,6 +119,9 @@ json.dump({
     "pete_bot_alert_bearer":     os.environ["PB_BEARER"],
     "pete_bot_notify_bearer":    os.environ["PB_NOTIFY_BEARER"],
     "pete_bot_github_updates_token": os.environ.get("PB_UPDATES_TOKEN", ""),
+    "pete_bot_desk_app_id":          os.environ.get("PB_DESK_APP_ID", ""),
+    "pete_bot_desk_installation_id": os.environ.get("PB_DESK_INSTALLATION_ID", ""),
+    "pete_bot_desk_app_pem":         os.environ.get("PB_DESK_APP_PEM", ""),
 }, open(os.environ["OUT"], "w"))
 '
 

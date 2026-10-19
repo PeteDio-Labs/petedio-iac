@@ -1,7 +1,7 @@
 #!/bin/sh
 # {{ ansible_managed }}
 # plane-mcp-firewall: restrict the plane-mcp shim's ports to the cloudflared tunnel host.
-# Rendered by configure-plane.yml (PET-292, PET-610). plane-mcp-firewall.service runs it
+# Rendered by configure-plane.yml (PET-292, PET-610, PET-650). plane-mcp-firewall.service runs it
 # before Docker starts, and again on reload.
 #
 # Each port's Caddy site swaps in a Plane PAT, and Caddy checks no Access JWT, so this
@@ -15,14 +15,14 @@
 #   - `! -i lo` exempts loopback, so the playbook's health checks on 127.0.0.1 still pass.
 #
 # IPv6 gets the same DROP with no allowed source, because the tunnel reaches 235 over IPv4.
-# Compose publishes both ports on IPv4 only, so this is a second line, not the only one.
+# Compose publishes every port on IPv4 only, so this is a second line, not the only one.
 #
 # Idempotent: every insert tests with -C first.
 set -eu
 
 tunnel_host={{ plane_mcp_tunnel_host }}
 
-for port in {{ plane_mcp_port }} {{ plane_mcp_tom_port }}; do
+for port in {{ plane_mcp_ports | join(' ') }}; do
   v4="! -i lo -p tcp --dport $port ! -s $tunnel_host -j DROP"
   v6="! -i lo -p tcp --dport $port -j DROP"
   # shellcheck disable=SC2086 # the rule must split into arguments

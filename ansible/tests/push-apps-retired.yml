@@ -1,0 +1,68 @@
+# push-apps-retired.yml — roles/claude-code/tasks/push-apps-retired.yml, on disposable paths.
+#
+# Runs on localhost, touches nothing outside a temporary directory, needs no credential. Run
+# it from `ansible/`:
+#
+#   ansible-playbook tests/push-apps-retired.yml
+#
+# WHAT THIS EXISTS TO CATCH. The task file runs as root and deletes credential paths that sit
+# in a home the session user owns (PET-643). Three ways it could go wrong, one case each:
+#
+# - A feature that is off keeps its key, so a retired App's key stays readable.
+# - A feature that is on loses its key, because a gate reads `-e var=false` as truthy or
+#   the two gates cross.
+# - A session replaced a path with a symlink to something outside it, and root follows the
+#   link and deletes the target. `state: absent` must unlink the link and stop there.
+---
+- name: Retire the push Apps' paths, roles/claude-code
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Make a scratch directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: push-apps-retired
+      register: scratch
+
+    - name: Run every case, then remove the scratch directory
+      block:
+        - name: Run every case
+          ansible.builtin.include_tasks: cases/push-apps-retired-case.yml
+          loop:
+            - name: both features off
+              vault_enable: false
+              push_enable: false
+              want_gone: [vault_conf, vault_broker, push_conf, push_broker, push_gh]
+              want_kept: []
+
+            - name: both features on
+              vault_enable: true
+              push_enable: true
+              want_gone: []
+              want_kept: [vault_conf, vault_broker, push_conf, push_broker, push_gh]
+
+            # The gates are independent: turning one feature off leaves the other's paths.
+            - name: vault off, code push on
+              vault_enable: false
+              push_enable: true
+              want_gone: [vault_conf, vault_broker]
+              want_kept: [push_conf, push_broker, push_gh]
+
+            # `-e claude_vault_enable=false` arrives as the string "false", which is truthy
+            # without `| bool`.
+            - name: both features off, passed as strings
+              vault_enable: "false"
+              push_enable: "false"
+              want_gone: [vault_conf, vault_broker, push_conf, push_broker, push_gh]
+              want_kept: []
+          loop_control:
+            loop_var: retire_case
+            label: "{{ retire_case.name }}"
+
+        - name: Run the symlink case
+          ansible.builtin.include_tasks: cases/push-apps-retired-symlink-case.yml
+      always:
+        - name: Remove the scratch directory
+          ansible.builtin.file:
+            path: "{{ scratch.path }}"
+            state: absent
