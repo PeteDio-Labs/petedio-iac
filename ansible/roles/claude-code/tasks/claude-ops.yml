@@ -435,6 +435,21 @@
   when: not claude_ops_ssh_key_stat.stat.exists
   changed_when: true
 
+- name: Check whether claude-ops's media SSH key already exists
+  ansible.builtin.stat:
+    path: "{{ claude_ops_media_ssh_key }}"
+    follow: false
+  register: claude_ops_media_ssh_key_stat
+
+# PET-662. A separate key from the Proxmox one, so the media grant revokes on its own.
+- name: Generate claude-ops's media SSH key, as claude-ops
+  ansible.builtin.command:
+    cmd: >-
+      runuser -u {{ claude_ops_user }} --
+      ssh-keygen -t ed25519 -N '' -C claude-ops-media@claude-247 -f {{ claude_ops_media_ssh_key }}
+  when: not claude_ops_media_ssh_key_stat.stat.exists
+  changed_when: true
+
 - name: Install claude-ops's SSH client config for the Proxmox nodes
   ansible.builtin.template:
     src: claude-ops-ssh-config.j2

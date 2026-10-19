@@ -586,6 +586,21 @@ claude_ops_ssh_targets:
   - { name: pve02, host: 192.168.50.11 }
   - { name: pve03, host: 192.168.50.10 }
   - { name: codex-248, host: 192.168.50.248, user: codex }
+  # The media hosts take claude_ops_media_ssh_key, not the Proxmox key, so revoking media
+  # access never touches the node grant (PET-662). playbooks/authorize-claude-ops-media.yml
+  # authorizes its public half for root on these seven hosts. Addresses follow
+  # petedio-media-iac's ansible/inventory/hosts.yml, which owns them, and inventory/media-dash.yml.
+  - { name: seerr, host: 192.168.50.33, key: "{{ claude_ops_media_ssh_key }}" }            # 101
+  - { name: sonarr, host: 192.168.50.15, key: "{{ claude_ops_media_ssh_key }}" }           # 104
+  - { name: radarr, host: 192.168.50.16, key: "{{ claude_ops_media_ssh_key }}" }           # 105
+  - { name: prowlarr, host: 192.168.50.20, key: "{{ claude_ops_media_ssh_key }}" }         # 109
+  - { name: qbittorrent-vpn, host: 192.168.50.21, key: "{{ claude_ops_media_ssh_key }}" }  # 110
+  - { name: plex-gpu, host: 192.168.86.236, key: "{{ claude_ops_media_ssh_key }}" }        # 236, .86 only
+  - { name: media-dash-237, host: 192.168.50.237, key: "{{ claude_ops_media_ssh_key }}" }  # 237, mtrace
+
+# A second key, generated on the host like claude_ops_ssh_key and for the same reason: the
+# private half never leaves 247 (PET-662).
+claude_ops_media_ssh_key: "{{ claude_ops_home }}/.ssh/id_ed25519_media"
 
 # --- The Remote Control server ------------------------------------------------------------
 # ONE unit, ONE directory: the petedio-workspace clone above. Not an entry in
