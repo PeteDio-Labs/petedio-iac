@@ -4,10 +4,10 @@
 #
 # A SIBLING OF claude-remote-ops.service.j2. Every load-bearing property that file and
 # claude-remote.service.j2 document holds here unchanged: no telemetry opt-outs, the bounded
-# Restart=always, the DNS wait gate, the Vault address. Three things differ. ExecStart runs a
-# wrapper that resumes the last session before it starts a fresh one
-# (templates/claude-ops-pm-serve.j2), that wrapper's exit 143 on a stop counts as success, and
-# the unit skips its start when the checkout is missing, rather than failing on CHDIR five times.
+# Restart=always, the DNS wait gate, the Vault address. Two things differ. ExecStart runs a
+# wrapper (templates/claude-ops-pm-serve.j2) that execs a plain `remote-control --spawn
+# same-dir` start, never `--continue` (PET-624), and the unit skips its start when the checkout
+# is missing, rather than failing on CHDIR five times.
 
 [Unit]
 Description=Claude Code Remote Control server (claude-ops PM seat)
@@ -28,8 +28,6 @@ Environment=PATH={{ claude_ops_npm_prefix }}/bin:/usr/local/bin:/usr/bin:/bin
 Environment=VAULT_ADDR={{ claude_ops_vault_addr }}
 Environment=VAULT_CACERT={{ claude_ops_vault_ca_path }}
 ExecStart={{ claude_ops_pm_serve_bin }}
-# The wrapper exits 143 when it forwards a stop during the resume attempt; a stop is not a failure.
-SuccessExitStatus=143
 Restart=always
 # claude can write /tmp, and claude-ops must not read or run anything claude plants there.
 PrivateTmp=true
