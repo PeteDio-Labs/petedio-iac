@@ -46,14 +46,18 @@ module "cloudflare_ingress" {
     # at the bottom of this file. Its connector now runs on the game host itself so the panel
     # can bind loopback only (PET-266).
 
-    # Plane MCP, reachable from the phone (PET-292). This is the FIRST route using
-    # Managed OAuth, and it is a different shape from every entry above: those gate a
-    # BROWSER, this gates an MCP client that speaks OAuth and never renders a page.
+    # Plane MCP, reachable from the phone (PET-292), at pdlab.dev/mcp/plane since PET-667.
+    # Every MCP server lives under pdlab.dev/mcp/<name>, one path route and one Access app
+    # each. The lab connector (/mcp/lab) joins as a sibling, never behind Plane. PET-667
+    # retired the first home of this route, mcp.pdlab.dev, once the connector moved here.
+    #
+    # Managed OAuth gates an MCP client that speaks OAuth and never renders a page, unlike the
+    # browser-gated routes above.
     #
     # Origin is the Caddy shim on plane-235 (:8790), not the MCP server itself. Caddy
-    # swaps Claude's opaque Access token for the Plane PAT — the server's /http/api-key
-    # mount wants the PAT in a header, and it is the only mount that runs no OAuth of
-    # its own, which is exactly what Managed OAuth requires of an origin.
+    # maps /mcp/plane to the server's /http/api-key mount and swaps Claude's opaque Access
+    # token for the Plane PAT. That mount wants the PAT in a header, and it is the only mount
+    # that runs no OAuth of its own, which is what Managed OAuth requires of an origin.
     #
     # Why the origin is a LAN address and not loopback: cloudflared runs on LXC 112, a
     # DIFFERENT host, so a 127.0.0.1 bind on 235 would be unreachable. Caddy checks no
@@ -63,7 +67,10 @@ module "cloudflare_ingress" {
     #
     # access_emails is the WHOLE authorization boundary here. The shim holds a service PAT,
     # so anyone who passes Access acts as its owner in Plane — keep this list to one person.
-    "mcp.pdlab.dev" = {
+    "pdlab.dev/mcp/plane" = {
+      hostname      = "pdlab.dev"
+      path          = "^/mcp/plane(/.*)?$"
+      access_path   = "/mcp/plane"
       service       = "http://192.168.50.235:8790"
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
@@ -81,34 +88,11 @@ module "cloudflare_ingress" {
       }
     }
 
-    # The same Plane shim at its one-URL home (PET-667): every MCP server lives under
-    # pdlab.dev/mcp/<name>, one path route and one Access app each. The lab connector
-    # (/mcp/lab) joins later as a sibling, never behind Plane. Caddy on 235 maps
-    # /mcp/plane to the upstream mount, the same as /mcp on mcp.pdlab.dev.
-    #
-    # The same rule as above applies: the shim holds Pedro's PAT, so access_emails stays one
-    # person. Keep mcp.pdlab.dev until the claude.ai connector points here, then remove it.
-    "pdlab.dev/mcp/plane" = {
-      hostname      = "pdlab.dev"
-      path          = "^/mcp/plane(/.*)?$"
-      access_path   = "/mcp/plane"
-      service       = "http://192.168.50.235:8790"
-      access        = true
-      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
-      access_emails = ["pedelgadillo@gmail.com"]
-
-      managed_oauth = {
-        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
-        access_token_lifetime = "15m"
-        session_duration      = "168h"
-      }
-    }
-
-    # Tom's Plane MCP (PET-610), a copy of mcp.pdlab.dev with a different origin port and email.
+    # Tom's Plane MCP (PET-610), a copy of pdlab.dev/mcp/plane with a different origin port and email.
     # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
     # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same
     # rule applies as above: access_emails is the whole boundary, so keep it to Tom alone, and
-    # keep mcp.pdlab.dev to Pedro alone.
+    # keep pdlab.dev/mcp/plane to Pedro alone.
     "mcp-tom.pdlab.dev" = {
       service       = "http://192.168.50.235:8791"
       access        = true
@@ -157,7 +141,7 @@ module "cloudflare_ingress" {
     # Pedro, Tom and Sonia (PET-650). Only the app is routed. Attachments live in MinIO on 245, which stays
     # private, so uploads and file views work on the LAN and the tailnet only.
     #
-    # This is a different route from mcp.pdlab.dev above. That one holds Pedro's PAT, so it
+    # This is a different route from pdlab.dev/mcp/plane above. That one holds Pedro's PAT, so it
     # stays a one-person list. Here, each person signs in to Plane as themselves.
     "plane.pdlab.dev" = {
       service       = "http://192.168.50.235:8080"
