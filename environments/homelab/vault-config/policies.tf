@@ -316,6 +316,43 @@ resource "vault_policy" "pete_bot_cd" {
     path "kv/metadata/services/pete-bot" {
       capabilities = ["list"]
     }
+
+    # lab-agent shares 237 and this play (PET-670): its ask bearer, its Vault token, the
+    # vault clone's deploy key, and its read-only Proxmox token.
+    path "kv/data/services/lab-agent" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/lab-agent-pve" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+# lab-agent-presence: what lab-agent's vault_presence tool may read (PET-667, PET-670).
+# KV v2 METADATA under services/, and nothing under kv/data/. It can show that a secret
+# exists, its versions and when each was written. It cannot read a value or a field name.
+#
+# ⚠ NO ROLE MINTS THIS. scripts/seed-lab-agent.sh creates one periodic, orphan token with
+# this policy alone, and lab-agent renews it twice a day. A token that lapses fails
+# lab-agent's `secrets` health check; the seed's --rotate-vault-token replaces it.
+resource "vault_policy" "lab_agent_presence" {
+  name = "lab-agent-presence"
+
+  policy = <<-EOT
+    path "kv/metadata/services/" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["read", "list"]
+    }
+
+    # The seed mints the token with -no-default-policy, so renewal is granted here. The
+    # default policy's other grants (cubbyhole, lookup, wrapping) are not needed.
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
   EOT
 }
 

@@ -31,6 +31,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ANSIBLE_DIR="$REPO_ROOT/ansible"
 SRC="${PETE_BOT_SRC:-$REPO_ROOT/../pete-bot}"
 BIN="$SRC/dist/pete-bot"
+LAB_BIN="$SRC/dist/lab-agent"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 
 export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
@@ -90,6 +91,30 @@ PB_DESK_APP_PEM="$(field desk_app_pem)"
 PB_ANTHROPIC_KEY="$(field anthropic_api_key)"
 PB_GATEWAY_LAB_MAP="$(field gateway_token_lab_map)"
 unset SNAPSHOT
+
+# Optional (PET-670): lab-agent's two paths, read whole, like the one above. A path Vault
+# reports absent leaves lab-agent off. Any other failure stops here, so a sealed Vault never
+# reads as "not seeded". The play refuses some lab-agent values without the rest.
+# read_optional PATH prints the path's JSON, or nothing when Vault says it is absent.
+read_optional(){
+  local out err
+  if out="$(vault kv get -format=json "$1" 2>/dev/null)"; then printf '%s' "$out"; return 0; fi
+  err="$(vault kv get "$1" 2>&1 >/dev/null || true)"
+  case "$err" in
+    "No value found at "*) return 0 ;;
+    *) die "cannot read $1: $(printf '%s' "$err" | tr -s '\n' ' ' | cut -c1-200)" ;;
+  esac
+}
+SNAPSHOT="$(read_optional kv/services/lab-agent)"
+LAB_ASK="$(field ask_token 2>/dev/null || true)"
+LAB_VAULT_TOKEN="$(field vault_token 2>/dev/null || true)"
+LAB_DEPLOY_KEY="$(field vault_deploy_key 2>/dev/null || true)"
+SNAPSHOT="$(read_optional kv/services/lab-agent-pve)"
+LAB_PVE_ID="$(field token_id 2>/dev/null || true)"
+LAB_PVE_SECRET="$(field secret 2>/dev/null || true)"
+LAB_PVE_ENDPOINT="$(field endpoint 2>/dev/null || true)"
+LAB_PVE_CA="$(field ca_pem 2>/dev/null || true)"
+unset SNAPSHOT
 echo "  resolved the 5 required values"
 if [ -n "$PB_DESK_APP_ID" ] && [ -n "$PB_DESK_INSTALLATION_ID" ] && [ -n "$PB_DESK_APP_PEM" ]; then
   echo "  merge desk: App present"
@@ -100,6 +125,11 @@ if [ -n "$PB_UPDATES_TOKEN" ]; then
   echo "  /update: token present"
 else
   echo "  /update: no github_updates_token, so /update will say it is not configured"
+fi
+if [ -n "$LAB_ASK" ] && [ -n "$LAB_PVE_SECRET" ]; then
+  echo "  lab-agent: both paths seeded, so the play installs it"
+else
+  echo "  lab-agent: kv/services/lab-agent and kv/services/lab-agent-pve are not both seeded, so it stays off"
 fi
 if [ -n "$PB_ANTHROPIC_KEY" ]; then
   echo "  gateway: key present, so the play requires llm: on"
@@ -116,8 +146,16 @@ if [ "$BUILD" = "1" ]; then
   [ -x "$BIN" ] || die "build produced no $BIN."
   file "$BIN" | grep -qi 'x86-64\|x86_64' || die "built binary is not x86-64 — check the --target."
   printf '  %s (%s)\n' "$BIN" "$(du -h "$BIN" | cut -f1)"
+  # lab-agent is a second entrypoint in the same repo (PET-669), built the same way.
+  if [ -n "$LAB_ASK" ]; then
+    ( cd "$SRC" && bun run build:lab-binary >/dev/null )
+    [ -x "$LAB_BIN" ] || die "build produced no $LAB_BIN."
+    file "$LAB_BIN" | grep -qi 'x86-64\|x86_64' || die "built lab-agent binary is not x86-64 — check the --target."
+    printf '  %s (%s)\n' "$LAB_BIN" "$(du -h "$LAB_BIN" | cut -f1)"
+  fi
 else
   [ -x "$BIN" ] || die "--no-build given but no binary at $BIN."
+  [ -z "$LAB_ASK" ] || [ -x "$LAB_BIN" ] || die "--no-build given but no lab-agent binary at $LAB_BIN."
 fi
 
 step "Deploy to media-dash-237"
@@ -133,7 +171,10 @@ PB_BEARER="$PB_BEARER" PB_NOTIFY_BEARER="$PB_NOTIFY_BEARER" BIN="$BIN" \
 PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
 PB_ANTHROPIC_KEY="$PB_ANTHROPIC_KEY" PB_GATEWAY_LAB_MAP="$PB_GATEWAY_LAB_MAP" \
 PB_DESK_APP_ID="$PB_DESK_APP_ID" PB_DESK_INSTALLATION_ID="$PB_DESK_INSTALLATION_ID" \
-PB_DESK_APP_PEM="$PB_DESK_APP_PEM" \
+PB_DESK_APP_PEM="$PB_DESK_APP_PEM" LAB_BIN="$LAB_BIN" \
+LAB_ASK="$LAB_ASK" LAB_VAULT_TOKEN="$LAB_VAULT_TOKEN" LAB_DEPLOY_KEY="$LAB_DEPLOY_KEY" \
+LAB_PVE_ID="$LAB_PVE_ID" LAB_PVE_SECRET="$LAB_PVE_SECRET" LAB_PVE_ENDPOINT="$LAB_PVE_ENDPOINT" \
+LAB_PVE_CA="$LAB_PVE_CA" \
 python3 -c '
 import json, os
 json.dump({
@@ -149,6 +190,14 @@ json.dump({
     "pete_bot_desk_app_id":          os.environ.get("PB_DESK_APP_ID", ""),
     "pete_bot_desk_installation_id": os.environ.get("PB_DESK_INSTALLATION_ID", ""),
     "pete_bot_desk_app_pem":         os.environ.get("PB_DESK_APP_PEM", ""),
+    "lab_agent_binary_src":          os.environ["LAB_BIN"],
+    "lab_agent_ask_token":           os.environ.get("LAB_ASK", ""),
+    "lab_agent_vault_token":         os.environ.get("LAB_VAULT_TOKEN", ""),
+    "lab_agent_vault_deploy_key":    os.environ.get("LAB_DEPLOY_KEY", ""),
+    "lab_agent_pve_token_id":        os.environ.get("LAB_PVE_ID", ""),
+    "lab_agent_pve_token_secret":    os.environ.get("LAB_PVE_SECRET", ""),
+    "lab_agent_pve_endpoint":        os.environ.get("LAB_PVE_ENDPOINT", ""),
+    "lab_agent_pve_ca_pem":          os.environ.get("LAB_PVE_CA", ""),
 }, open(os.environ["OUT"], "w"))
 '
 
