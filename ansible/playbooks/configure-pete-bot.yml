@@ -283,7 +283,11 @@
           {{ (pete_bot_health.json | default({})).llm | default('absent') }}. Absent means the
           binary predates the gateway. Misconfigured means a bad setting, and the journal
           names it: journalctl -u pete-bot | grep -i gateway.
-      when: pete_bot_anthropic_api_key | default('') | length > 0
+      # Check mode skips the /health read, so its result has no json. Without the guard,
+      # every `--check` run with a seeded key fails here, as the desk's check did (PET-645).
+      when:
+        - not ansible_check_mode
+        - pete_bot_anthropic_api_key | default('') | length > 0
 
     # ⚠ /health only proves the process is up. This proves it reached DISCORD, which is
     # what a bad token, a revoked app or a network egress problem all break while /health
