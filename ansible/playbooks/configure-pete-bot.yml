@@ -64,7 +64,9 @@
     # Repos that run no PR validation, by decision. Only there may a head with no check merge
     # without a tap; anywhere else an empty check list may be CI that never started.
     pete_bot_desk_no_ci_repos: petedio-workspace,petedio-vault,petedio-pm
-    pete_bot_desk_authors: petedillo
+    # petedio-cloud-threads[bot] authors every cloud thread's PR (PET-644). Without it here,
+    # the desk skips them all and each one waits for Pedro (Pedro, 2026-10-19).
+    pete_bot_desk_authors: petedillo,petedio-cloud-threads[bot]
     pete_bot_codex_host: 192.168.50.248
     pete_bot_desk_ready: >-
       {{ (pete_bot_desk_app_id | default('') | string | length > 0)
