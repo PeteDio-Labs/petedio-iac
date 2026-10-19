@@ -276,12 +276,17 @@
         msg: "The merge desk is misconfigured: {{ pete_bot_desk_health.json.desk.reason }}"
       when: (pete_bot_desk_health.json.desk.state | default('')) == 'misconfigured'
 
+    # Check mode skips the /health read and restarts nothing, so the desk's state is
+    # unknown there. Without the guard, every `--check` run with a seeded App fails here.
     - name: Fail when the desk App is seeded but the desk did not start
       ansible.builtin.fail:
         msg: >-
           The desk App is seeded, but the desk reports
           {{ pete_bot_desk_health.json.desk.state | default('nothing: this binary predates the desk') }}.
-      when: (pete_bot_desk_ready | bool) and (pete_bot_desk_health.json.desk.state | default('')) != 'running'
+      when:
+        - not ansible_check_mode
+        - pete_bot_desk_ready | bool
+        - (pete_bot_desk_health.json.desk.state | default('')) != 'running'
 
     - name: Read the Codex queue key's public half
       ansible.builtin.slurp:
