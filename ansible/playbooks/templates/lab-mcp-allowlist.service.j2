@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+# Loads the lab MCP's LAN allowlist (PET-667) before lab-agent starts.
+#
+# ⚠ NO ExecStop, as mtrace-allowlist.service has none: stopping this unit must never open the
+# MCP port to the LAN while lab-agent keeps running.
+[Unit]
+Description=lab MCP LAN allowlist (nftables)
+Before=lab-agent.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ lab_agent_conf_dir }}/lab-mcp-allowlist.nft
+
+[Install]
+WantedBy=multi-user.target

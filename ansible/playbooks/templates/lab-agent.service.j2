@@ -5,8 +5,10 @@
 # and the read-only mirror App's key. It listens on loopback only, and nothing else can write to it.
 [Unit]
 Description=lab-agent — read-only answers about the lab (PET-669)
-After=network-online.target pete-bot.service
+After=network-online.target pete-bot.service lab-mcp-allowlist.service
 Wants=network-online.target
+# The MCP port's allowlist loads first, so lab-agent never listens on it open to the LAN.
+Requires=lab-mcp-allowlist.service
 
 # In [Unit], not [Service], for the reason pete-bot.service gives: under [Service] systemd
 # ignores them and a crash loop never reaches the failed state.

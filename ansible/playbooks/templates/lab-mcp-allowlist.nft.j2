@@ -1,0 +1,20 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# The lab MCP's LAN allowlist (PET-667). Only the tunnel host may reach lab-agent's MCP port.
+#
+# ⚠ ITS OWN TABLE, as mtrace's allowlist on this host is: `table inet lab_mcp_allow` and
+# nothing else. It never touches /etc/nftables.conf, whose default content flushes the whole
+# ruleset. `delete table` at the top makes the file idempotent.
+#
+# lab-agent also refuses every source but the tunnel host, and verifies the Access JWT. This
+# table holds even when lab-agent's own check is wrong.
+table inet lab_mcp_allow
+delete table inet lab_mcp_allow
+
+table inet lab_mcp_allow {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    tcp dport {{ lab_agent_mcp_port }} ip saddr {{ lab_agent_mcp_peer }} accept
+    tcp dport {{ lab_agent_mcp_port }} reject with tcp reset
+  }
+}
