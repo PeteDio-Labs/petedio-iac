@@ -73,8 +73,8 @@ as_ops() { pve03 "pct exec $CT -- runuser -l $OPS_USER -c '$1'"; }
 # The proof, run on 247 as claude-ops. It logs in the way every scripts/deploy-*.sh does:
 # the two values go to `vault write ... -` as JSON on stdin, from the printf builtin, so
 # neither reaches an argument list another user could read with `ps`. It then prints the
-# token's policies and three capabilities, and revokes the token. Exit 0 only when every
-# value matches.
+# token's policies and three capabilities, and revokes the token. Exit 0 only when the revoke
+# succeeds and every value matches; a token the proof cannot revoke is a failure.
 PROOF="cd $IAC_CLONE && export VAULT_ADDR=$VAULT_ADDR VAULT_CACERT=$IAC_CLONE/environments/homelab/vault-ca.crt && \
 rid=\$(cat .secrets/ansible.role_id) && sid=\$(cat .secrets/ansible.secret_id) && \
 t=\$(printf \"{\\\"role_id\\\":\\\"%s\\\",\\\"secret_id\\\":\\\"%s\\\"}\" \"\$rid\" \"\$sid\" | vault write -field=token auth/approle/login - 2>/dev/null) && [ -n \"\$t\" ] || { echo login=refused; exit 1; }; \
@@ -83,7 +83,7 @@ p=\$(VAULT_TOKEN=\$t vault token lookup -format=json | jq -r \".data.policies|so
 s=\$(VAULT_TOKEN=\$t vault token capabilities kv/data/services/plane); \
 a=\$(VAULT_TOKEN=\$t vault token capabilities kv/data/admin/probe); \
 k=\$(VAULT_TOKEN=\$t vault token capabilities kv/data/services/codex-review-app); \
-VAULT_TOKEN=\$t vault token revoke -self >/dev/null 2>&1; \
+VAULT_TOKEN=\$t vault token revoke -self >/dev/null 2>&1 || { echo revoke=failed policies=\$p; exit 1; }; \
 echo login=ok policies=\$p plane=\$s admin=\$a app_key=\$k; \
 [ \"\$p\" = ansible-247,default ] && [ \"\$s\" = read ] && [ \"\$a\" = deny ] && [ \"\$k\" = deny ]"
 
@@ -125,7 +125,7 @@ if as_ops "test -e $DEST/ansible.role_id || test -e $DEST/ansible.secret_id"; th
     fi
   else
     echo "  ${OUT:-no output}"
-    [ "$ROTATE" -eq 1 ] || die "$DEST holds AppRole files that do not log in as $ROLE. Read them on 247, then re-run with --rotate to replace them."
+    [ "$ROTATE" -eq 1 ] || die "$DEST holds AppRole files that fail the proof above. When login=refused, read them on 247, then re-run with --rotate to replace them."
   fi
 fi
 OLD_ACCESSOR=""
