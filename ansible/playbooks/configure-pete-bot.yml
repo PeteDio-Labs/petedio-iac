@@ -51,7 +51,9 @@
     # Pedro moved it to `on` on 2026-10-19, after the desk queued Codex with its own key
     # and Codex reviewed petedio-workspace#153 and petedio-vault#91 (PET-645).
     pete_bot_desk_mode: "on"
-    pete_bot_desk_repos: petedio-workspace,petedio-vault,petedio-pm
+    # petedio-iac joined on 2026-10-19 (Pedro, PET-645). It runs PR CI, so it stays off the
+    # no-CI list below, and its tier-2 paths (Terraform, workflows, guards) wait for a tap.
+    pete_bot_desk_repos: petedio-workspace,petedio-vault,petedio-pm,petedio-iac
     # Repos that run no PR validation, by decision. Only there may a head with no check merge
     # without a tap; anywhere else an empty check list may be CI that never started.
     pete_bot_desk_no_ci_repos: petedio-workspace,petedio-vault,petedio-pm
