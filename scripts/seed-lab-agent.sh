@@ -249,7 +249,7 @@ if VAULT_TOKEN="$NEW_VAULT" vault kv get "$PATH_KV" >/dev/null 2>&1; then
   die "the lab-agent token can read secret values. The $POLICY policy grants too much; fix it before you deploy."
 fi
 # lab-agent's health check lists the folder, so prove the list too.
-VAULT_TOKEN="$NEW_VAULT" vault kv metadata list kv/services/ >/dev/null 2>&1 \
+VAULT_TOKEN="$NEW_VAULT" vault list kv/metadata/services/ >/dev/null 2>&1 \
   || die "the lab-agent token cannot list kv/services/. Check the $POLICY policy."
 echo "  the token lists and reads metadata, and is refused values"
 
