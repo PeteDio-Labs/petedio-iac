@@ -19,10 +19,11 @@ resource "vault_approle_auth_backend_role" "ansible" {
 # claude-247 logs in with, so the deploy scripts run there the way they run on the Mac.
 # scripts/seed-claude-ops-ansible-approle.sh mints its secret_id on the Mac and delivers it
 # to claude-ops's iac clone as .secrets/ansible.{role_id,secret_id}. The file names match
-# the Mac's, so no deploy script changes.
+# the Mac's, so the deploy scripts find them where they look on the Mac.
 #
-# A role of its own, not a second secret_id on `ansible`: the ansible policy reads
-# kv/admin/*, and ansible-247 does not. Both CIDR lists pin every login and every token to
+# A role of its own, not a second secret_id on `ansible`: the ansible policy reads every
+# path under kv/iac, kv/services, kv/db and kv/admin, and ansible-247 reads nine named
+# paths (policies.tf). Both CIDR lists pin every login and every token to
 # 247's address, so a secret_id copied off the host does not log in anywhere else.
 # The TTLs match `ansible`.
 resource "vault_approle_auth_backend_role" "ansible_247" {

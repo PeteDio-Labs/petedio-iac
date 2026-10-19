@@ -36,7 +36,7 @@ for t in vault ansible-playbook python3 bun; do command -v "$t" >/dev/null || di
 [ -f "$RESUME_SRC/package.json" ] || die "app source not at $RESUME_SRC (set RESUME_SRC)."
 
 applogin(){ local rid sid; rid="$(cat "$SECRETS/$1.role_id")"; sid="$(cat "$SECRETS/$1.secret_id")"
-  vault write -field=token auth/approle/login role_id="$rid" secret_id="$sid" 2>/dev/null || die "AppRole login failed for '$1'."; }
+  printf '{"role_id":"%s","secret_id":"%s"}' "$rid" "$sid" | vault write -field=token auth/approle/login - 2>/dev/null || die "AppRole login failed for '$1'."; }
 
 step "Building the app (bun install + bun run build) at $RESUME_SRC"
 (cd "$RESUME_SRC" && bun install && bun run build) || die "build failed."

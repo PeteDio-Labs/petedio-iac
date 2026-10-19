@@ -122,42 +122,66 @@ resource "vault_policy" "terraform" {
   EOT
 }
 
-# ansible-247: the ansible policy without kv/admin/*, for the AppRole that claude-ops on
-# claude-247 logs in with (PET-674). Pedro asked on 2026-10-19 for 247 to run the deploy
-# scripts the way the Mac does, from .secrets/ansible.{role_id,secret_id}.
+# ansible-247: the AppRole policy that claude-ops on claude-247 logs in with (PET-674).
+# Pedro asked on 2026-10-19 for 247 to run the deploy scripts the way the Mac does, from
+# .secrets/ansible.{role_id,secret_id}.
 #
-# THIS IS `ansible` BELOW, MINUS TWO BLOCKS. Keep the two in step: a path added to `ansible`
-# for a deploy script belongs here too, or that script fails on 247 alone. The two blocks
-# left out are kv/data/admin/* and kv/metadata/admin/*. That prefix holds the Vault root
-# token and the unseal material, and PET-531 ruled out landing either on 247 by any path
-# (see the claude-ops policy below). No scripts/deploy-*.sh reads kv/admin/*.
+# EXACT PATHS, NO LIST, NO APP KEYS: the PET-531 boundary the claude-ops policy below keeps.
+# Each path is one that an AppRole deploy script reads and that holds no GitHub App key:
+#   deploy-backup-store.sh     kv/services/backup-health
+#   deploy-minio-data.sh       kv/iac/minio-data-root
+#   deploy-palworld-panel.sh   kv/services/palworld-panel
+#   deploy-plane.sh            kv/db/plane, kv/services/plane, kv/services/plane-<member>
+#   deploy-resume-builder.sh   kv/services/resume-builder
+#   deploy-water-fast.sh       kv/services/water-fast
+# Those scripts run on 247. These stay on the Mac, by design:
+#   deploy-claude-247.sh  reads four App keys (claude-*); see the claude-ops exclusions.
+#   deploy-codex-248.sh   reads kv/services/codex-review-app, the Codex reviewer's App key.
+#   deploy-uptime-kuma.sh needs macOS `security`.
+#   deploy-pete-bot.sh, deploy-usaa.sh, deploy-search.sh, deploy-media-dash.sh log in with
+#     an admin token, not this AppRole.
+# NEVER kv/admin/*: the root token and the unseal material live there.
+#
+# A deploy script that moves to 247, or a Plane member added to MCP_MEMBERS in
+# deploy-plane.sh, needs its path here. That is a reviewable diff, by design.
 resource "vault_policy" "ansible_247" {
   name = "ansible-247"
 
   policy = <<-EOT
-    path "kv/data/iac/*" {
+    path "kv/data/db/plane" {
       capabilities = ["read"]
     }
 
-    path "kv/data/services/*" {
+    path "kv/data/iac/minio-data-root" {
       capabilities = ["read"]
     }
 
-    # kv/db/*: the per-database owner passwords. scripts/deploy-plane.sh reads kv/db/plane.
-    path "kv/data/db/*" {
+    path "kv/data/services/backup-health" {
       capabilities = ["read"]
     }
 
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
+    path "kv/data/services/palworld-panel" {
+      capabilities = ["read"]
     }
 
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
+    path "kv/data/services/plane" {
+      capabilities = ["read"]
     }
 
-    path "kv/metadata/db/*" {
-      capabilities = ["list"]
+    path "kv/data/services/plane-sonia" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane-tom" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/resume-builder" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/water-fast" {
+      capabilities = ["read"]
     }
   EOT
 }

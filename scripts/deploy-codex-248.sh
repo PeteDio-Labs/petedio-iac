@@ -44,8 +44,8 @@ for t in vault jq ansible-playbook; do command -v "$t" >/dev/null || die "$t not
   || die "ansible AppRole creds not in $SECRETS."
 
 step "Reading codex-248's identities from Vault (ansible AppRole)"
-AN_TOKEN="$(vault write -field=token auth/approle/login \
-  role_id="$(cat "$SECRETS/ansible.role_id")" secret_id="$(cat "$SECRETS/ansible.secret_id")" 2>/dev/null)" \
+AN_TOKEN="$(printf '{"role_id":"%s","secret_id":"%s"}' "$(cat "$SECRETS/ansible.role_id")" "$(cat "$SECRETS/ansible.secret_id")" \
+  | vault write -field=token auth/approle/login - 2>/dev/null)" \
   || die "AppRole login failed for 'ansible'. Run ./scripts/pet-secrets doctor to see whether Vault is sealed."
 kvget() { VAULT_TOKEN="$AN_TOKEN" vault kv get -field="$2" "$1" 2>/dev/null || true; }
 

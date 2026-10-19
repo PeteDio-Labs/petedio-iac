@@ -221,8 +221,11 @@ chmod 600 iac/.secrets/*.role_id iac/.secrets/*.secret_id
 
 `claude-ops` on 247 runs the deploy scripts from the same two files,
 `.secrets/ansible.{role_id,secret_id}`, in its own iac clone. They belong to the
-`ansible-247` AppRole, not to `ansible`. Its policy is `ansible` without `kv/admin/*`, and
-both CIDR lists pin its logins and tokens to `192.168.50.247/32`.
+`ansible-247` AppRole, not to `ansible`. Its policy reads nine named paths, the ones the
+AppRole deploy scripts read, with no App key and no `kv/admin/*`. Both CIDR lists pin its
+logins and tokens to `192.168.50.247/32`. The deploy scripts pass the two values to
+`vault write auth/approle/login -` as JSON on stdin, so no other user on 247 can read them
+from the process table.
 
 To place or rotate them, run this on the Mac, on Pedro's word (PET-511):
 

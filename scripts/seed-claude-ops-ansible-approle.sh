@@ -22,13 +22,15 @@
 #   interactive prompt — set one of those first, or this refuses to run.
 #
 # THE SECRET_ID TRAVELS ON STDIN ONLY. It is never an argument, never printed, and never
-# written outside $IAC_CLONE/.secrets/ on 247. The proof at the end logs in on 247 with
-# `role_id=@file secret_id=@file`, prints only the token's policies and capabilities, and
-# revokes the token it made.
+# written outside $IAC_CLONE/.secrets/ on 247. The proof at the end logs in on 247 the way
+# the deploy scripts do, with the values on stdin, prints only the token's policies and
+# capabilities, and revokes the token it made.
 #
 # IDEMPOTENT: when 247 already holds files that log in as ansible-247, this script changes
 # nothing. When they do not log in, it stops; pass --rotate to replace them. --rotate mints a
 # new secret_id, proves it, and then destroys the old one by the accessor this script recorded.
+# When that destroy fails, the run exits non-zero and keeps the old accessor in
+# ansible.secret_id_accessor.old on 247; the next run retries it before anything else.
 #
 # Usage:
 #   ./scripts/seed-claude-ops-ansible-approle.sh [--rotate]
@@ -68,16 +70,36 @@ step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 # The command is a fixed string from this script and never carries a secret.
 as_ops() { pve03 "pct exec $CT -- runuser -l $OPS_USER -c '$1'"; }
 
-# The proof, run on 247 as claude-ops. It logs in from the two files, prints the token's
-# policies and two capabilities, and revokes the token. Exit 0 only when every value matches.
+# The proof, run on 247 as claude-ops. It logs in the way every scripts/deploy-*.sh does:
+# the two values go to `vault write ... -` as JSON on stdin, from the printf builtin, so
+# neither reaches an argument list another user could read with `ps`. It then prints the
+# token's policies and three capabilities, and revokes the token. Exit 0 only when every
+# value matches.
 PROOF="cd $IAC_CLONE && export VAULT_ADDR=$VAULT_ADDR VAULT_CACERT=$IAC_CLONE/environments/homelab/vault-ca.crt && \
-t=\$(vault write -field=token auth/approle/login role_id=@.secrets/ansible.role_id secret_id=@.secrets/ansible.secret_id 2>/dev/null) && [ -n \"\$t\" ] || { echo login=refused; exit 1; }; \
+rid=\$(cat .secrets/ansible.role_id) && sid=\$(cat .secrets/ansible.secret_id) && \
+t=\$(printf \"{\\\"role_id\\\":\\\"%s\\\",\\\"secret_id\\\":\\\"%s\\\"}\" \"\$rid\" \"\$sid\" | vault write -field=token auth/approle/login - 2>/dev/null) && [ -n \"\$t\" ] || { echo login=refused; exit 1; }; \
+unset rid sid; \
 p=\$(VAULT_TOKEN=\$t vault token lookup -format=json | jq -r \".data.policies|sort|join(\\\",\\\")\"); \
 s=\$(VAULT_TOKEN=\$t vault token capabilities kv/data/services/plane); \
 a=\$(VAULT_TOKEN=\$t vault token capabilities kv/data/admin/probe); \
+k=\$(VAULT_TOKEN=\$t vault token capabilities kv/data/services/codex-review-app); \
 VAULT_TOKEN=\$t vault token revoke -self >/dev/null 2>&1; \
-echo login=ok policies=\$p services=\$s admin=\$a; \
-[ \"\$p\" = ansible-247,default ] && [ \"\$s\" = read ] && [ \"\$a\" = deny ]"
+echo login=ok policies=\$p plane=\$s admin=\$a app_key=\$k; \
+[ \"\$p\" = ansible-247,default ] && [ \"\$s\" = read ] && [ \"\$a\" = deny ] && [ \"\$k\" = deny ]"
+
+# Destroy one secret_id by its accessor, and print one verdict: destroyed, absent or failed.
+# Vault answers an accessor it does not hold with "failed to find accessor entry", and that
+# counts as absent. Any other refusal, a sealed Vault included, is a failure.
+destroy_accessor() {
+  local err
+  if err="$(vault write "auth/approle/role/$ROLE/secret-id-accessor/destroy" secret_id_accessor="$1" 2>&1 >/dev/null)"; then
+    echo destroyed
+  elif printf '%s' "$err" | grep -q 'failed to find accessor entry'; then
+    echo absent
+  else
+    echo failed
+  fi
+}
 
 for t in vault jq ssh; do command -v "$t" >/dev/null || die "$t not in PATH"; done
 [ -f "$PVE_SSH_KEY" ] || die "No SSH key at $PVE_SSH_KEY. Set PVE_SSH_KEY to the key root@pve03 accepts."
@@ -97,7 +119,7 @@ if as_ops "test -e $DEST/ansible.role_id || test -e $DEST/ansible.secret_id"; th
   HAVE=1
   if OUT="$(as_ops "$PROOF")"; then
     echo "  $OUT"
-    if [ "$ROTATE" -eq 0 ]; then
+    if [ "$ROTATE" -eq 0 ] && [ -z "$(as_ops "cat $DEST/ansible.secret_id_accessor.old 2>/dev/null" || true)" ]; then
       echo "  The files on CT $CT log in as $ROLE. Nothing to do; pass --rotate to replace the secret_id."
       exit 0
     fi
@@ -110,6 +132,8 @@ OLD_ACCESSOR=""
 if [ "$HAVE" -eq 1 ]; then
   OLD_ACCESSOR="$(as_ops "cat $DEST/ansible.secret_id_accessor 2>/dev/null" || true)"
 fi
+# An accessor a past --rotate replaced but could not destroy. Its secret_id may still log in.
+PENDING="$(as_ops "cat $DEST/ansible.secret_id_accessor.old 2>/dev/null" || true)"
 
 step "Authenticating to Vault"
 [ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'. Run this from inside the repo, or export VAULT_CACERT."
@@ -130,12 +154,30 @@ ROLE_JSON="$(vault read -format=json "auth/approle/role/$ROLE" 2>/dev/null)" \
 [ "$(jq -r '.data.token_bound_cidrs|join(",")' <<<"$ROLE_JSON")" = "$CIDR" ] \
   || die "$ROLE's token_bound_cidrs are not exactly [$CIDR]."
 unset ROLE_JSON
-if vault policy read "$ROLE" | grep -q 'kv/[a-z]*/admin'; then
-  die "Policy $ROLE names kv/admin. It must not; see environments/homelab/vault-config/policies.tf."
-fi
+POLICY="$(vault policy read "$ROLE")" || die "Vault returned no policy named $ROLE."
+case "$POLICY" in
+  *admin*|*'*'*|*codex-review-app*|*claude-*|*'"list"'*)
+    die "Policy $ROLE names kv/admin, a glob, an App key path or a list grant. It must not; see environments/homelab/vault-config/policies.tf." ;;
+esac
+unset POLICY
 ROLE_ID="$(vault read -field=role_id "auth/approle/role/$ROLE/role-id")"
 [ -n "$ROLE_ID" ] || die "Vault returned no role_id for $ROLE."
 echo "  policies=$ROLE, both CIDR lists=$CIDR, no kv/admin path."
+
+if [ -n "$PENDING" ]; then
+  step "Destroying the secret_id a past --rotate left behind (accessor $PENDING)"
+  case "$(destroy_accessor "$PENDING")" in
+    destroyed|absent)
+      as_ops "rm -f $DEST/ansible.secret_id_accessor.old"
+      echo "  gone." ;;
+    failed)
+      die "Vault refused to destroy accessor $PENDING. It stays recorded on CT $CT; re-run this script once Vault answers." ;;
+    *) die "destroy_accessor returned an unknown verdict." ;;
+  esac
+  if [ "$ROTATE" -eq 0 ] && [ "$HAVE" -eq 1 ]; then
+    exit 0
+  fi
+fi
 
 step "Minting a secret_id for $ROLE"
 MINT_JSON="$(vault write -format=json -f "auth/approle/role/$ROLE/secret-id" \
@@ -167,6 +209,11 @@ trap destroy_unless_proven EXIT
 step "Delivering to $DEST on CT $CT (stdin only, never an argument)"
 as_ops "mkdir -p $DEST && chmod 700 $DEST"
 DELIVERED=1
+# Record the accessor being replaced BEFORE its files are overwritten, so a run that dies
+# from here on still leaves a record of the secret_id to destroy.
+if [ -n "$OLD_ACCESSOR" ] && [ "$OLD_ACCESSOR" != "$ACCESSOR" ]; then
+  printf '%s' "$OLD_ACCESSOR" | as_ops "umask 0177 && cat > $DEST/ansible.secret_id_accessor.old"
+fi
 # `cat` reads fd 0 as the container inherits it; CT 247 is unprivileged, so it cannot reopen
 # the host-owned pipe as /dev/stdin (PET-561). Each file is mode 0600 from its first byte, and
 # the mv swaps it into place whole. printf '%s' writes no trailing newline.
@@ -196,12 +243,14 @@ PROVEN=1
 
 if [ -n "$OLD_ACCESSOR" ] && [ "$OLD_ACCESSOR" != "$ACCESSOR" ]; then
   step "Destroying the replaced secret_id"
-  if vault write "auth/approle/role/$ROLE/secret-id-accessor/destroy" secret_id_accessor="$OLD_ACCESSOR" >/dev/null 2>&1; then
-    echo "  destroyed accessor $OLD_ACCESSOR."
-  else
-    echo "  Could not destroy accessor $OLD_ACCESSOR. It may be gone already; check with:"
-    echo "  vault list auth/approle/role/$ROLE/secret-id"
-  fi
+  case "$(destroy_accessor "$OLD_ACCESSOR")" in
+    destroyed) echo "  destroyed accessor $OLD_ACCESSOR." ;;
+    absent)    echo "  accessor $OLD_ACCESSOR was already gone." ;;
+    failed)
+      die "Vault refused to destroy accessor $OLD_ACCESSOR, so the old secret_id may still log in. It stays recorded in $DEST/ansible.secret_id_accessor.old on CT $CT; re-run this script to retry." ;;
+    *) die "destroy_accessor returned an unknown verdict." ;;
+  esac
+  as_ops "rm -f $DEST/ansible.secret_id_accessor.old"
 fi
 
 step "Next"
