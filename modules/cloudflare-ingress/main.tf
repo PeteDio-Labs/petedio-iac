@@ -1,21 +1,37 @@
 # Emits, from var.routes:
 #   - ONE cloudflare_zero_trust_tunnel_cloudflared_config (all ingress rules + 404 catch-all)
 #   - a proxied CNAME per hostname -> the tunnel
-#   - when access=true: a Cloudflare Access application + policy per hostname
+#   - when access=true: a Cloudflare Access application + policy per route
+#
+# A route's map key is its name. Its hostname defaults to the key; set `hostname` to put
+# several path routes on one hostname (PET-667). Every route that shares a hostname must
+# set `path`, and a gated one sets `access_path` so its Access app covers only that path.
 # Provider v5 uses attribute syntax (config = { ingress = [...] }), not nested blocks.
 
 locals {
-  hosts = sort(keys(var.routes)) # stable ordering for the ingress list
+  host_of = { for k, r in var.routes : k => coalesce(r.hostname, k) }
 
-  route_rules = [for h in local.hosts : {
-    hostname = h
-    path     = var.routes[h].path
-    service  = var.routes[h].service
+  # cloudflared takes the first matching rule, so on a shared hostname the path rules sort
+  # ahead of a path-less one. The sort key is "<hostname> <0|1> <name>". The space sorts
+  # below every hostname character, so routes with a unique hostname keep the plain
+  # sort(keys) order they had before PET-667, and the tunnel config plans unchanged.
+  rule_order = [for s in sort([
+    for k, r in var.routes : "${local.host_of[k]} ${r.path == null ? 1 : 0} ${k}"
+  ]) : split(" ", s)[2]]
+
+  route_rules = [for k in local.rule_order : {
+    hostname = local.host_of[k]
+    path     = var.routes[k].path
+    service  = var.routes[k].service
     origin_request = {
-      http_host_header = h
-      no_tls_verify    = var.routes[h].no_tls_verify
+      http_host_header = local.host_of[k]
+      no_tls_verify    = var.routes[k].no_tls_verify
     }
   }]
+
+  # One CNAME per hostname, keyed by the hostname. For a route with no `hostname`, that is
+  # its key, so every existing record keeps its address.
+  hostnames = toset(values(local.host_of))
 
   # Required trailing catch-all. Same object shape as route_rules (nulls where N/A) so
   # the list element type unifies.
@@ -41,7 +57,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
 }
 
 resource "cloudflare_dns_record" "route" {
-  for_each = var.routes
+  for_each = local.hostnames
 
   zone_id = var.zone_id
   name    = each.key
@@ -82,7 +98,7 @@ resource "cloudflare_zero_trust_access_application" "route" {
 
   zone_id                   = var.zone_id
   name                      = each.key
-  domain                    = each.key
+  domain                    = "${local.host_of[each.key]}${each.value.access_path == null ? "" : each.value.access_path}"
   type                      = "self_hosted"
   session_duration          = each.value.session_duration
   allowed_idps              = each.value.allowed_idps

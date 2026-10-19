@@ -34,7 +34,7 @@ module "ingress" {
   trailing `http_status:404` catch-all (v5 attribute syntax: `config = { ingress = [...] }`).
 - A **proxied** `cloudflare_dns_record` CNAME per hostname → the tunnel (`<id>.cfargotunnel.com`).
 - When `access = true`: a `cloudflare_zero_trust_access_application` + `cloudflare_zero_trust_access_policy`
-  per hostname. The Authentik OIDC IdP referenced by `allowed_idps` is provisioned by **PET-38** —
+  per route, over its hostname plus `access_path`. The Authentik OIDC IdP referenced by `allowed_idps` is provisioned by **PET-38** —
   keep `access = false` on a route until that IdP exists.
 
 ## Route options
@@ -42,7 +42,9 @@ module "ingress" {
 | key | required | default | notes |
 |---|---|---|---|
 | `service` | yes | — | origin URL, e.g. `http://192.168.50.230:80` |
-| `path` | no | `null` | path-scoped ingress rule |
+| `hostname` | no | the map key | public hostname. Set it to put several path routes on one hostname (PET-667) |
+| `path` | no | `null` | path-scoped ingress rule, a regex. Required on every route that shares a hostname |
+| `access_path` | no | `null` | literal path the Access app covers, such as `/mcp/plane`. Required on a gated route that shares a hostname |
 | `no_tls_verify` | no | `false` | set true for self-signed origins (e.g. Vault) |
 | `access` | no | `false` | gate via Cloudflare Access (needs an IdP) |
 | `allowed_idps` | no | `[]` | Access IdP IDs (Authentik, from PET-38) |

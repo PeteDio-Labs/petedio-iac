@@ -23,7 +23,15 @@ variable "tunnel_cname" {
 
 variable "routes" {
   description = <<-EOT
-    Map of public hostname -> route config. Example:
+    Map of route name -> route config. The name is the public hostname unless the route
+    sets `hostname`, which lets several path routes share one hostname (PET-667):
+      "pdlab.dev/mcp/plane" = {
+        hostname    = "pdlab.dev"
+        path        = "^/mcp/plane(/.*)?$"   # ingress regex
+        access_path = "/mcp/plane"           # literal path the Access app covers
+        ...
+      }
+    Example:
       {
         "vault.pdlab.dev" = {
           service             = "https://192.168.50.223:8200"
@@ -49,7 +57,9 @@ variable "routes" {
   EOT
   type = map(object({
     service             = string
+    hostname            = optional(string)
     path                = optional(string)
+    access_path         = optional(string)
     no_tls_verify       = optional(bool, false)
     access              = optional(bool, false)
     allowed_idps        = optional(list(string), [])
@@ -68,4 +78,22 @@ variable "routes" {
     }))
   }))
   default = {}
+
+  # A path-less route on a shared hostname would catch every path, and a gated route on a
+  # shared hostname with no access_path would put one Access app over the whole hostname.
+  # Either one silently widens what a sibling route's gate covers, so refuse both.
+  validation {
+    condition = alltrue([
+      for k, r in var.routes : (
+        length([for k2, r2 in var.routes : k2 if coalesce(r2.hostname, k2) == coalesce(r.hostname, k)]) == 1
+        || (r.path != null && (!r.access || r.access_path != null))
+      )
+    ])
+    error_message = "Every route that shares a hostname must set path, and a gated one must also set access_path."
+  }
+
+  validation {
+    condition     = alltrue([for k, r in var.routes : r.access_path == null || startswith(coalesce(r.access_path, "/"), "/")])
+    error_message = "access_path must start with a slash, for example \"/mcp/plane\"."
+  }
 }
