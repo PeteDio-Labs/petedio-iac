@@ -20,8 +20,9 @@
 # LAB-AGENT (PET-669, PET-670). A second binary from the pete-bot repo, under its own user
 # and unit. It answers pete-bot's /lab with read-only lab tools on 127.0.0.1:3016, and calls
 # the gateway above as the lab-map caller. It holds lab-map's bearer, its own ask bearer, a
-# metadata-only Vault token, a read-only Proxmox token and a petedio-vault deploy key. It
-# holds no Discord token, no desk key and no Anthropic key. It also holds pete-bot's notify
+# metadata-only Vault token, a read-only Proxmox token and the read-only
+# petedio-workspace-mirror App's key, which mints petedio-vault read tokens. It holds no
+# Discord token, no desk key and no Anthropic key. It also holds pete-bot's notify
 # bearer, which its nightly drift check (PET-671) DMs with. It is off until
 # kv/services/lab-agent and kv/services/lab-agent-pve are both seeded: run
 # scripts/seed-lab-agent.sh, whose header gives the order.
@@ -101,9 +102,11 @@
     # ── lab-agent (PET-670) ──
     # Optional, all together or not at all, from scripts/deploy-pete-bot.sh or deploy.yml:
     #   lab_agent_binary_src, and from kv/services/lab-agent: lab_agent_ask_token,
-    #   lab_agent_vault_token, lab_agent_vault_deploy_key; from kv/services/lab-agent-pve:
-    #   lab_agent_pve_token_id, lab_agent_pve_token_secret, lab_agent_pve_endpoint,
-    #   lab_agent_pve_ca_pem. lab-map's bearer is pete_bot_gateway_token_lab_map above.
+    #   lab_agent_vault_token; from kv/services/lab-agent-pve: lab_agent_pve_token_id,
+    #   lab_agent_pve_token_secret, lab_agent_pve_endpoint, lab_agent_pve_ca_pem; from
+    #   kv/services/claude-workspace-mirror: lab_agent_github_app_id,
+    #   lab_agent_github_installation_id, lab_agent_github_app_pem.
+    #   lab-map's bearer is pete_bot_gateway_token_lab_map above.
     lab_agent_user: lab-agent
     lab_agent_dir: /opt/lab-agent
     lab_agent_bin: /opt/lab-agent/lab-agent
@@ -112,19 +115,24 @@
     # The unit's StateDirectory. The three read-only clones live here.
     lab_agent_state_dir: /var/lib/lab-agent
     lab_agent_port: 3016
-    # How git reaches the private vault repo: the deploy key, and GitHub's pinned host keys.
-    lab_agent_ssh_command: >-
-      ssh -i {{ lab_agent_conf_dir }}/vault_deploy_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes
-      -o StrictHostKeyChecking=yes -o UserKnownHostsFile={{ lab_agent_conf_dir }}/github_known_hosts
+    # ⚠ NO DEPLOY KEY. PeteDio-Labs disables deploy keys for every repository, so lab-agent
+    # reaches the private vault over https with a token it mints from the read-only
+    # petedio-workspace-mirror App, scoped to petedio-vault with contents:read (PET-542).
+    lab_agent_github_key_file: /etc/lab-agent/github-app.pem
     lab_agent_repos:
-      vault: git@github.com:PeteDio-Labs/petedio-vault.git
+      vault: https://github.com/PeteDio-Labs/petedio-vault.git
       iac: https://github.com/PeteDio-Labs/petedio-iac.git
       media-iac: https://github.com/PeteDio-Labs/petedio-media-iac.git
-    # One entry per secret. A value is set or it is empty; the play counts the set ones.
+    # One entry per lab-agent secret. A value is set or it is empty; the play counts the set
+    # ones. The mirror App's three are apart: that path is seeded for 247 and petedio-search
+    # too, so its values arrive whether or not lab-agent is seeded.
+    lab_agent_app_values:
+      - "{{ lab_agent_github_app_id | default('') }}"
+      - "{{ lab_agent_github_installation_id | default('') }}"
+      - "{{ lab_agent_github_app_pem | default('') }}"
     lab_agent_values:
       - "{{ lab_agent_ask_token | default('') }}"
       - "{{ lab_agent_vault_token | default('') }}"
-      - "{{ lab_agent_vault_deploy_key | default('') }}"
       - "{{ lab_agent_pve_token_id | default('') }}"
       - "{{ lab_agent_pve_token_secret | default('') }}"
       - "{{ lab_agent_pve_endpoint | default('') }}"
@@ -171,13 +179,15 @@
         that:
           - (lab_agent_set_count | int) in [0, lab_agent_values | length]
           - not (lab_agent_ready | bool) or (pete_bot_gateway_token_lab_map | default('') | length > 0)
+          - not (lab_agent_ready | bool) or (lab_agent_app_values | map('trim') | reject('equalto', '') | list | length == 3)
           - not (lab_agent_ready | bool) or lab_agent_ask_token not in
               [pete_bot_alert_bearer, pete_bot_notify_bearer, pete_bot_gateway_token_lab_map | default('')]
         fail_msg: >-
           lab-agent got {{ lab_agent_set_count }} of {{ lab_agent_values | length }} values, or it
-          has no gateway bearer, or its ask bearer repeats another route's. Seed
+          has no gateway bearer or no mirror App, or its ask bearer repeats another route's. Seed
           kv/services/lab-agent-pve with playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
           and kv/services/lab-agent with scripts/seed-lab-agent.sh, then deploy again.
+          kv/services/claude-workspace-mirror comes from scripts/seed-workspace-mirror-vault.sh.
 
     - name: Look for the lab-agent binary on the controller
       ansible.builtin.stat:
@@ -400,74 +410,32 @@
             label: "{{ item.name }}"
           notify: Restart lab-agent
 
-        # ⚠ root OWNS THE KEY, AND THE SERVICE ONLY READS IT. ssh refuses a group-readable
-        # key only when the caller owns it, as the Codex key above shows.
-        - name: Install the petedio-vault deploy key
+        # ⚠ root OWNS THE KEY, AND THE SERVICE ONLY READS IT. lab-agent signs a JWT with it
+        # and asks GitHub for a one-hour token that reads petedio-vault and nothing else.
+        - name: Install the mirror App's key
           ansible.builtin.copy:
-            content: "{{ lab_agent_vault_deploy_key | trim }}\n"
-            dest: "{{ lab_agent_conf_dir }}/vault_deploy_ed25519"
+            content: "{{ lab_agent_github_app_pem | trim }}\n"
+            dest: "{{ lab_agent_github_key_file }}"
             owner: root
             group: "{{ lab_agent_user }}"
             mode: "0640"
           no_log: true
+          notify: Restart lab-agent
 
-        # ⚠ GITHUB'S HOST KEYS COME FROM ITS API, OVER TLS. ssh-keyscan trusts whatever
-        # answers on port 22. api.github.com/meta is GitHub's published list, and the
-        # certificate check is what makes it GitHub's. An answer with no ed25519 key stops
-        # the play rather than writing an empty known_hosts.
-        - name: Read GitHub's SSH host keys
-          ansible.builtin.uri:
-            url: https://api.github.com/meta
-            return_content: true
-          register: lab_agent_github_meta
-          check_mode: false
-
-        - name: Pin GitHub's SSH host keys
-          ansible.builtin.copy:
-            content: |
-              {% for key in lab_agent_github_meta.json.ssh_keys %}
-              github.com {{ key }}
-              {% endfor %}
-            dest: "{{ lab_agent_conf_dir }}/github_known_hosts"
-            owner: root
-            group: "{{ lab_agent_user }}"
-            mode: "0644"
-          when: >-
-            lab_agent_github_meta.json.ssh_keys | default([])
-            | select('match', '^ssh-ed25519 ') | list | length > 0
-
-        - name: Fail when GitHub published no ed25519 host key
-          ansible.builtin.fail:
-            msg: api.github.com/meta listed no ssh-ed25519 key, so the vault clone has no host to trust.
-          when: >-
-            lab_agent_github_meta.json.ssh_keys | default([])
-            | select('match', '^ssh-ed25519 ') | list | length == 0
-
-        # ⚠ AS lab-agent, THROUGH runuser. The clones belong to the service, which fetches
-        # them; `become_user` to an unprivileged account needs ACL tooling this LXC lacks.
-        # A clone that fails stops the deploy: lab-agent with no vault clone answers nothing.
-        - name: Clone the three repos lab-agent reads
+        # ⚠ AN EMPTY REPOSITORY, NOT A CLONE. Only lab-agent can mint the vault's token, so
+        # the play makes each repository and names its remote, and lab-agent's first fetch
+        # fills it. It reads refs/remotes/origin/main only, so no checkout is ever needed.
+        # As lab-agent, through runuser: `become_user` needs ACL tooling this LXC lacks. The
+        # health check below fails the deploy when the vault's first fetch fails.
+        - name: Create the three repositories lab-agent reads
           ansible.builtin.command:
-            argv:
-              - runuser
-              - -u
-              - "{{ lab_agent_user }}"
-              - --
-              - git
-              - -c
-              - "core.sshCommand={{ lab_agent_ssh_command }}"
-              - clone
-              - --quiet
-              - --no-checkout
-              - "{{ item.value }}"
-              - "{{ lab_agent_state_dir }}/{{ item.key }}"
+            argv: [runuser, -u, "{{ lab_agent_user }}", --, git, init, --quiet, "{{ lab_agent_state_dir }}/{{ item.key }}"]
             creates: "{{ lab_agent_state_dir }}/{{ item.key }}/.git"
           loop: "{{ lab_agent_repos | dict2items }}"
           loop_control:
             label: "{{ item.key }}"
 
-        # Every later fetch of the vault clone uses the deploy key and the pinned hosts.
-        - name: Point the vault clone's fetches at the deploy key
+        - name: Point each repository at its GitHub remote
           ansible.builtin.command:
             argv:
               - runuser
@@ -476,10 +444,13 @@
               - --
               - git
               - -C
-              - "{{ lab_agent_state_dir }}/vault"
+              - "{{ lab_agent_state_dir }}/{{ item.key }}"
               - config
-              - core.sshCommand
-              - "{{ lab_agent_ssh_command }}"
+              - remote.origin.url
+              - "{{ item.value }}"
+          loop: "{{ lab_agent_repos | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
           changed_when: false
 
         # Read by systemd, as root, before it drops to the service account. So 0600 root.

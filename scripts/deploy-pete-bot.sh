@@ -108,12 +108,17 @@ read_optional(){
 SNAPSHOT="$(read_optional kv/services/lab-agent)"
 LAB_ASK="$(field ask_token 2>/dev/null || true)"
 LAB_VAULT_TOKEN="$(field vault_token 2>/dev/null || true)"
-LAB_DEPLOY_KEY="$(field vault_deploy_key 2>/dev/null || true)"
 SNAPSHOT="$(read_optional kv/services/lab-agent-pve)"
 LAB_PVE_ID="$(field token_id 2>/dev/null || true)"
 LAB_PVE_SECRET="$(field secret 2>/dev/null || true)"
 LAB_PVE_ENDPOINT="$(field endpoint 2>/dev/null || true)"
 LAB_PVE_CA="$(field ca_pem 2>/dev/null || true)"
+# The vault repo is private and deploy keys are disabled org-wide, so lab-agent reads it
+# with the read-only petedio-workspace-mirror App, as petedio-search does (PET-542).
+SNAPSHOT="$(read_optional kv/services/claude-workspace-mirror)"
+LAB_GH_APP_ID="$(field app_id 2>/dev/null || true)"
+LAB_GH_INSTALL_ID="$(field installation_id 2>/dev/null || true)"
+LAB_GH_APP_PEM="$(field app_pem 2>/dev/null || true)"
 unset SNAPSHOT
 echo "  resolved the 5 required values"
 if [ -n "$PB_DESK_APP_ID" ] && [ -n "$PB_DESK_INSTALLATION_ID" ] && [ -n "$PB_DESK_APP_PEM" ]; then
@@ -172,7 +177,8 @@ PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
 PB_ANTHROPIC_KEY="$PB_ANTHROPIC_KEY" PB_GATEWAY_LAB_MAP="$PB_GATEWAY_LAB_MAP" \
 PB_DESK_APP_ID="$PB_DESK_APP_ID" PB_DESK_INSTALLATION_ID="$PB_DESK_INSTALLATION_ID" \
 PB_DESK_APP_PEM="$PB_DESK_APP_PEM" LAB_BIN="$LAB_BIN" \
-LAB_ASK="$LAB_ASK" LAB_VAULT_TOKEN="$LAB_VAULT_TOKEN" LAB_DEPLOY_KEY="$LAB_DEPLOY_KEY" \
+LAB_ASK="$LAB_ASK" LAB_VAULT_TOKEN="$LAB_VAULT_TOKEN" \
+LAB_GH_APP_ID="$LAB_GH_APP_ID" LAB_GH_INSTALL_ID="$LAB_GH_INSTALL_ID" LAB_GH_APP_PEM="$LAB_GH_APP_PEM" \
 LAB_PVE_ID="$LAB_PVE_ID" LAB_PVE_SECRET="$LAB_PVE_SECRET" LAB_PVE_ENDPOINT="$LAB_PVE_ENDPOINT" \
 LAB_PVE_CA="$LAB_PVE_CA" \
 python3 -c '
@@ -193,7 +199,9 @@ json.dump({
     "lab_agent_binary_src":          os.environ["LAB_BIN"],
     "lab_agent_ask_token":           os.environ.get("LAB_ASK", ""),
     "lab_agent_vault_token":         os.environ.get("LAB_VAULT_TOKEN", ""),
-    "lab_agent_vault_deploy_key":    os.environ.get("LAB_DEPLOY_KEY", ""),
+    "lab_agent_github_app_id":       os.environ.get("LAB_GH_APP_ID", ""),
+    "lab_agent_github_installation_id": os.environ.get("LAB_GH_INSTALL_ID", ""),
+    "lab_agent_github_app_pem":      os.environ.get("LAB_GH_APP_PEM", ""),
     "lab_agent_pve_token_id":        os.environ.get("LAB_PVE_ID", ""),
     "lab_agent_pve_token_secret":    os.environ.get("LAB_PVE_SECRET", ""),
     "lab_agent_pve_endpoint":        os.environ.get("LAB_PVE_ENDPOINT", ""),

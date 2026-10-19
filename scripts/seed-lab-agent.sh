@@ -2,19 +2,22 @@
 # seed-lab-agent.sh — mint lab-agent's credentials and store them in kv/services/lab-agent
 # (PET-670).
 #
-# WHAT IT WRITES. Five fields, none of them typed by a person:
+# WHAT IT WRITES. Three fields, none of them typed by a person:
 #   ask_token             the bearer pete-bot's /lab sends to lab-agent's POST /v1/ask
 #   vault_token           a periodic, orphan Vault token with the lab-agent-presence policy
 #   vault_token_accessor  that token's accessor, so a rotation can revoke the old token
-#   vault_deploy_key      an ed25519 key that reads PeteDio-Labs/petedio-vault, and only it
-#   vault_deploy_key_pub  its public half, which Pedro adds to that repo as a deploy key
 # lab-agent's read-only Proxmox token lives at kv/services/lab-agent-pve. The play
 # ansible/playbooks/mint-pve-audit-token.yml mints it, because a node has to be touched.
+#
+# NO DEPLOY KEY. PeteDio-Labs disables deploy keys for every repository, so lab-agent
+# reads the private petedio-vault with the read-only petedio-workspace-mirror App, as
+# petedio-search does (PET-542). This script mints nothing for it: it checks that
+# kv/services/claude-workspace-mirror holds the App's three fields.
 #
 # WHERE THE VALUES COME FROM. This script mints every value. The Vault token is never
 # prompted for: $VAULT_TOKEN, else the macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. It
 # must be able to create an orphan token, which Pedro's root token can. Nothing here prints
-# a secret; the deploy key's public half is not one.
+# a secret.
 #
 # WHY CHECK-AND-SET. The first write creates the path with -cas=0, which fails if the path
 # appeared since the read. Later writes patch with -cas=<version>, which keeps the other
@@ -24,7 +27,7 @@
 #   1. scripts/apply-vault-config.sh, so the lab-agent-presence policy exists and
 #      pete-bot-cd may read both lab-agent paths
 #   2. ansible-playbook playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
-#   3. this script, which stops for the deploy key to be added on GitHub
+#   3. this script
 #   4. scripts/deploy-pete-bot.sh, or pete-bot's deploy.yml PR that reads both paths. That
 #      PR merges only after steps 2 and 3: its Vault step fails on a missing field.
 #
@@ -32,20 +35,17 @@
 #   ./scripts/seed-lab-agent.sh                        # write whichever field is absent
 #   ./scripts/seed-lab-agent.sh --rotate-ask           # replace the ask bearer
 #   ./scripts/seed-lab-agent.sh --rotate-vault-token   # replace the Vault token, revoke the old
-#   ./scripts/seed-lab-agent.sh --rotate-deploy-key    # replace the deploy key
 # After any rotation, run step 4 again.
 set -euo pipefail
 umask 077
 
 ROTATE_ASK=0
 ROTATE_VAULT=0
-ROTATE_KEY=0
 for arg in "$@"; do
   case "$arg" in
     --rotate-ask) ROTATE_ASK=1 ;;
     --rotate-vault-token) ROTATE_VAULT=1 ;;
-    --rotate-deploy-key) ROTATE_KEY=1 ;;
-    -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$arg" >&2; exit 2 ;;
   esac
 done
@@ -57,8 +57,7 @@ POLICY="lab-agent-presence"
 # A week. lab-agent renews every 12 hours, so the token lapses only after lab-agent has
 # been down, or Vault sealed, for most of a week.
 PERIOD="168h"
-VAULT_REPO="git@github.com:PeteDio-Labs/petedio-vault.git"
-DEPLOY_KEY_PAGE="https://github.com/PeteDio-Labs/petedio-vault/settings/keys/new"
+MIRROR_KV="kv/services/claude-workspace-mirror"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 
 export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
@@ -67,7 +66,7 @@ export VAULT_CACERT="${VAULT_CACERT:-$REPO_ROOT/environments/homelab/vault-ca.cr
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
 
-for t in vault python3 ssh-keygen git; do command -v "$t" >/dev/null || die "$t not in PATH."; done
+for t in vault python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -144,26 +143,20 @@ BEFORE="$(names)"
 CUR_ASK="$(field ask_token)"
 CUR_VAULT="$(field vault_token)"
 CUR_ACCESSOR="$(field vault_token_accessor)"
-CUR_KEY="$(field vault_deploy_key)"
-CUR_PUB="$(field vault_deploy_key_pub)"
 
 # want CURRENT ROTATE: 0 keeps the field, 1 writes it.
 want(){ if [ -n "$1" ] && [ "$2" = "0" ]; then echo 0; else echo 1; fi; }
 WRITE_ASK="$(want "$CUR_ASK" "$ROTATE_ASK")"
 WRITE_VAULT="$(want "$CUR_VAULT" "$ROTATE_VAULT")"
-WRITE_KEY="$(want "$CUR_KEY" "$ROTATE_KEY")"
-# The accessor and the public half travel with their secret. One without the other is a
-# path someone edited by hand, and this script writes both again.
+# The accessor travels with its token. One without the other is a path someone edited by
+# hand, and this script writes both again.
 [ -n "$CUR_ACCESSOR" ] || WRITE_VAULT=1
-[ -n "$CUR_PUB" ] || WRITE_KEY=1
 report(){ if [ "$2" = "0" ]; then echo "  $1: present. Kept."; else echo "  $1: will be written"; fi; }
 report ask_token "$WRITE_ASK"
 report vault_token "$WRITE_VAULT"
-report vault_deploy_key "$WRITE_KEY"
 CHECK_ONLY=0
-if [ "$WRITE_ASK$WRITE_VAULT$WRITE_KEY" = "000" ]; then
-  # Nothing to write, but a run that stopped at the deploy-key check comes back here, so
-  # the key is still checked below before this reports success.
+if [ "$WRITE_ASK$WRITE_VAULT" = "00" ]; then
+  # Nothing to write, but the mirror App is still checked below before this reports success.
   echo "  nothing to write"
   CHECK_ONLY=1
 fi
@@ -171,8 +164,6 @@ fi
 NEW_ASK="$CUR_ASK"
 NEW_VAULT="$CUR_VAULT"
 NEW_ACCESSOR="$CUR_ACCESSOR"
-NEW_KEY="$CUR_KEY"
-NEW_PUB="$CUR_PUB"
 
 if [ "$CHECK_ONLY" = "0" ]; then
 if [ "$WRITE_ASK" = "1" ]; then
@@ -180,14 +171,6 @@ if [ "$WRITE_ASK" = "1" ]; then
   NEW_ASK="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
   [ "$NEW_ASK" != "$CUR_ASK" ] || die "the minted bearer repeats the stored one. Run this again."
   echo "  ${#NEW_ASK} characters"
-fi
-
-if [ "$WRITE_KEY" = "1" ]; then
-  step "Mint the petedio-vault deploy key"
-  ssh-keygen -q -t ed25519 -N '' -C "lab-agent@media-dash-237 (PET-670)" -f "$TMP/deploy" >/dev/null
-  NEW_KEY="$(cat "$TMP/deploy")"
-  NEW_PUB="$(cat "$TMP/deploy.pub")"
-  echo "  $(ssh-keygen -lf "$TMP/deploy.pub")"
 fi
 
 if [ "$WRITE_VAULT" = "1" ]; then
@@ -206,15 +189,12 @@ fi
 
 step "Write $PATH_KV"
 # JSON on stdin (the trailing `-`), so no value reaches argv.
-payload(){ NEW_ASK="$NEW_ASK" NEW_VAULT="$NEW_VAULT" NEW_ACCESSOR="$NEW_ACCESSOR" \
-  NEW_KEY="$NEW_KEY" NEW_PUB="$NEW_PUB" python3 -c '
+payload(){ NEW_ASK="$NEW_ASK" NEW_VAULT="$NEW_VAULT" NEW_ACCESSOR="$NEW_ACCESSOR" python3 -c '
 import json, os
 print(json.dumps({
     "ask_token": os.environ["NEW_ASK"],
     "vault_token": os.environ["NEW_VAULT"],
     "vault_token_accessor": os.environ["NEW_ACCESSOR"],
-    "vault_deploy_key": os.environ["NEW_KEY"],
-    "vault_deploy_key_pub": os.environ["NEW_PUB"],
 }))'; }
 revoke_new(){
   # A token minted for a write that failed is a live credential nobody holds. Revoke it.
@@ -233,8 +213,6 @@ SNAPSHOT="$(vault kv get -format=json "$PATH_KV")"
 [ "$(field ask_token)" = "$NEW_ASK" ] || die "the read-back of ask_token does not match the write."
 [ "$(field vault_token)" = "$NEW_VAULT" ] || die "the read-back of vault_token does not match the write."
 [ "$(field vault_token_accessor)" = "$NEW_ACCESSOR" ] || die "the read-back of vault_token_accessor does not match."
-[ "$(field vault_deploy_key)" = "$NEW_KEY" ] || die "the read-back of vault_deploy_key does not match the write."
-[ "$(field vault_deploy_key_pub)" = "$NEW_PUB" ] || die "the read-back of vault_deploy_key_pub does not match."
 AFTER="$(names)"
 for f in $BEFORE; do
   case " $AFTER " in *" $f "*) ;; *) die "the write dropped the field $f." ;; esac
@@ -261,28 +239,18 @@ if [ "$WRITE_VAULT" = "1" ] && [ -n "$CUR_ACCESSOR" ] && [ "$CUR_ACCESSOR" != "$
 fi
 fi  # CHECK_ONLY
 
-step "Check the deploy key reads petedio-vault"
-# ⚠ A KEY GITHUB DOES NOT KNOW FAILS THE DEPLOY, NOT THIS SCRIPT. The play clones with it on
-# 237, so it is checked here first, where the fix is one page away.
-printf '%s\n' "$NEW_KEY" > "$TMP/deploy_check"
-check_key(){
-  GIT_SSH_COMMAND="ssh -i $TMP/deploy_check -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$TMP/known_hosts" \
-    git ls-remote "$VAULT_REPO" HEAD >/dev/null 2>&1
-}
-if check_key; then
-  echo "  GitHub accepts the key for petedio-vault"
-elif [ -t 0 ]; then
-  echo "  GitHub does not know this key yet. Add it as a READ-ONLY deploy key:"
-  echo "    $DEPLOY_KEY_PAGE"
-  echo "    Title: lab-agent on 237 (PET-670). Leave 'Allow write access' off."
-  echo "    Key:   $NEW_PUB"
-  read -rp "  Press Enter once it is added: " _
-  check_key || die "GitHub still refuses the key. Add it as above, then run this script again; it keeps what it wrote."
-  echo "  GitHub accepts the key for petedio-vault"
-else
-  die "GitHub does not know the deploy key yet. Add it read-only at $DEPLOY_KEY_PAGE with this public key, then run this again: $NEW_PUB"
-fi
-unset NEW_ASK NEW_VAULT NEW_KEY CUR_ASK CUR_VAULT CUR_KEY SNAPSHOT
+step "Check $MIRROR_KV"
+# A MISSING FIELD FAILS THE DEPLOY, NOT THIS SCRIPT. The deploy reads this path with
+# ignoreNotFound, so it is checked here first, where the fix is one script away. Field
+# names only: no value is printed.
+SNAPSHOT="$(vault kv get -format=json "$MIRROR_KV" 2>/dev/null)" \
+  || die "cannot read $MIRROR_KV. Seed it with scripts/seed-workspace-mirror-vault.sh, then run this again."
+for f in app_id installation_id app_pem; do
+  [ -n "$(field "$f")" ] || die "$MIRROR_KV has no $f. Re-run scripts/seed-workspace-mirror-vault.sh."
+done
+echo "  app_id, installation_id and app_pem are present. lab-agent's /health proves the"
+echo "  installation reaches petedio-vault on its first fetch, and the deploy fails if it does not."
+unset NEW_ASK NEW_VAULT CUR_ASK CUR_VAULT SNAPSHOT
 
 step "Done"
 cat <<'NOTE'
@@ -290,5 +258,5 @@ cat <<'NOTE'
     1. If kv/services/lab-agent-pve is not seeded yet, run, from ansible/:
          ansible-playbook playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
     2. Deploy: ./scripts/deploy-pete-bot.sh, or merge pete-bot's deploy.yml PR that reads
-       both lab-agent paths. The play fails unless lab-agent's /health reports every check up.
+       the lab-agent paths and the mirror App. The play fails unless lab-agent's /health reports every check up.
 NOTE

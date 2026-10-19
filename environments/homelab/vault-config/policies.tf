@@ -317,13 +317,19 @@ resource "vault_policy" "pete_bot_cd" {
       capabilities = ["list"]
     }
 
-    # lab-agent shares 237 and this play (PET-670): its ask bearer, its Vault token, the
-    # vault clone's deploy key, and its read-only Proxmox token.
+    # lab-agent shares 237 and this play (PET-670): its ask bearer, its Vault token and its
+    # read-only Proxmox token.
     path "kv/data/services/lab-agent" {
       capabilities = ["read"]
     }
 
     path "kv/data/services/lab-agent-pve" {
+      capabilities = ["read"]
+    }
+
+    # The read-only petedio-workspace-mirror App, for lab-agent's petedio-vault fetches.
+    # Deploy keys are disabled org-wide; petedio-search reads the vault the same way (PET-542).
+    path "kv/data/services/claude-workspace-mirror" {
       capabilities = ["read"]
     }
   EOT
