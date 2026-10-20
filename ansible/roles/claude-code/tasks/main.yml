@@ -311,6 +311,14 @@
   ansible.builtin.include_tasks: claude-ops.yml
   when: claude_ops_enable | bool
 
+# --- Pedro's phone SSH (PET-713) ----------------------------------------------------------
+# A key-only sshd, a `pedro` account with no session and no standing credential, and the phone
+# key on it and on claude-ops, accepted only from the tailnet's subnet router.
+# tasks/operator-ssh.yml carries the design.
+- name: Let Pedro SSH in from his phone over the tailnet
+  ansible.builtin.include_tasks: operator-ssh.yml
+  when: claude_operator_ssh_enable | bool
+
 # --- Claude Code settings ------------------------------------------------------------------
 # SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles
 # and one-time prompts land here — so an Ansible-owned copy would silently revert choices

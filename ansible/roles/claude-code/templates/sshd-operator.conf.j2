@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# PET-713: keys only. Pedro reaches this host from the phone over the tailnet, and Ansible
+# reaches it as root with its key, so no account here needs a password.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin prohibit-password
+AuthenticationMethods publickey
+MaxAuthTries 3
+LoginGraceTime 30
+X11Forwarding no
+# The phone's agent never reaches this host: a session here could use a forwarded agent to
+# sign as Pedro anywhere his key opens.
+AllowAgentForwarding no
