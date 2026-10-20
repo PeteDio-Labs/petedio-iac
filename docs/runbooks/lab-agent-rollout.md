@@ -26,7 +26,7 @@ Merge `pete-bot#38` after step 1. Until the apply runs, the `pete-bot-cd` role c
 
 ## Step 1: apply the Vault config
 
-One run covers all three PRs. Read the plan before you confirm it.
+One run covers all three PRs. `scripts/apply-vault-config.sh` plans, then applies without a prompt whenever the plan destroys nothing. It confirms only a plan that destroys. Review a plan-only run first, then run the script.
 
 Expected changes:
 
@@ -34,10 +34,21 @@ Expected changes:
 - `#459`: two additions, the `ansible-247` policy and AppRole.
 - `#460`: the `lab-agent-presence` policy, plus a change to the `pete-bot-cd` policy.
 
-Stop if the plan destroys anything.
+Stop if the plan destroys anything or lists a change this section does not name.
+
+1. Export a Vault token as `VAULT_TOKEN` (the script reads the Keychain item `vault-root-token` when you do not), then run a plan that applies nothing:
 
 ```bash
 cd ~/petedio/iac && git checkout main && git pull --ff-only
+export VAULT_ADDR=https://192.168.50.223:8200 VAULT_CACERT="$PWD/environments/homelab/vault-ca.crt"
+export AWS_ACCESS_KEY_ID="$(vault kv get -field=access_key kv/iac/minio)"
+export AWS_SECRET_ACCESS_KEY="$(vault kv get -field=secret_key kv/iac/minio)"
+(cd environments/homelab/vault-config && terraform init -reconfigure -input=false >/dev/null && terraform plan -input=false -no-color)
+```
+
+2. Compare the plan with the list above. When it matches, apply:
+
+```bash
 ./scripts/apply-vault-config.sh
 ```
 
