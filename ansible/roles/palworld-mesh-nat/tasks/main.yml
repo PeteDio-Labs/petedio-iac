@@ -4,11 +4,11 @@
   # unit that fails at boot, and reports changed. The interface name is derived from the
   # adapter, so this also catches the day wlo1 is renamed.
   ansible.builtin.assert:
-    that: palworld_nat_mesh_interface in ansible_interfaces
+    that: palworld_nat_mesh_interface in ansible_facts['interfaces']
     fail_msg: >-
       No interface {{ palworld_nat_mesh_interface }} on {{ inventory_hostname }}. This role
       belongs on the node with a leg on the .86 mesh (pve03). Found:
-      {{ ansible_interfaces | join(', ') }}.
+      {{ ansible_facts['interfaces'] | join(', ') }}.
 
 - name: Install nftables
   ansible.builtin.apt:

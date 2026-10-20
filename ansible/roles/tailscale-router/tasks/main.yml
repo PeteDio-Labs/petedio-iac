@@ -17,18 +17,18 @@
     update_cache: true
 
 # --- Tailscale apt repo (official, codename-matched) -----------------------------
-# Keyring + sources keyed to the running distro release ({{ ansible_distribution_release }},
+# Keyring + sources keyed to the running distro release ({{ ansible_facts['distribution_release'] }},
 # e.g. "trixie" on Debian 13) so this works on whatever the LXC template ships.
 
 - name: Add the Tailscale apt signing key
   ansible.builtin.get_url:
-    url: "https://pkgs.tailscale.com/stable/debian/{{ ansible_distribution_release }}.noarmor.gpg"
+    url: "https://pkgs.tailscale.com/stable/debian/{{ ansible_facts['distribution_release'] }}.noarmor.gpg"
     dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
     mode: "0644"
 
 - name: Add the Tailscale apt repository
   ansible.builtin.get_url:
-    url: "https://pkgs.tailscale.com/stable/debian/{{ ansible_distribution_release }}.tailscale-keyring.list"
+    url: "https://pkgs.tailscale.com/stable/debian/{{ ansible_facts['distribution_release'] }}.tailscale-keyring.list"
     dest: /etc/apt/sources.list.d/tailscale.list
     mode: "0644"
 
