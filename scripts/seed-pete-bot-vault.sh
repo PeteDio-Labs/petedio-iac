@@ -8,8 +8,8 @@
 # resource would also write them in plaintext into the MinIO-backed state, which is
 # worse than not declaring them. Writing kv/services/* needs a privileged token anyway —
 # the read-only AppRoles cannot write here — so this resolves the Vault token the way
-# every sibling reseed script does: $VAULT_TOKEN, else the macOS Keychain item, else a
-# prompt.
+# every sibling reseed script does: $VAULT_TOKEN, else the macOS Keychain item, else it
+# exits non-zero naming the item (PET-519). It never prompts for the Vault token.
 #
 # ⚠ IT CARRIES EVERY OTHER FIELD THROUGH (PET-584). `vault kv put` replaces the whole
 # secret, so a payload of these four fields alone dropped github_updates_token and would
