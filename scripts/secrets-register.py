@@ -114,6 +114,27 @@ def load_register(path: str) -> list[dict]:
     return doc["secrets"]
 
 
+def expiry_error(entry: dict) -> str | None:
+    """Return why an `expiry` declaration is malformed, or None when it is valid."""
+    rule = entry.get("expiry")
+    if not isinstance(rule, dict) or "rule" not in rule:
+        return "`expiry` must be a mapping with a `rule` (none, date or ttl_days)"
+    kind = rule["rule"]
+    if kind == "none":
+        return None
+    if kind == "date":
+        d = rule.get("date")
+        if isinstance(d, dt.datetime) or not isinstance(d, dt.date):
+            return "`expiry.date` must be an unquoted YYYY-MM-DD date"
+        return None
+    if kind == "ttl_days":
+        days = rule.get("days")
+        if isinstance(days, bool) or not isinstance(days, int) or days <= 0:
+            return "`expiry.days` must be a positive integer"
+        return None
+    return f"unknown expiry rule {kind!r}"
+
+
 def expiry_of(entry: dict, updated: dt.datetime | None) -> tuple[dt.date | None, str]:
     rule = entry.get("expiry") or {}
     kind = rule.get("rule")
@@ -146,6 +167,11 @@ def check(entries: list[dict], refs: dict[str, set[str]], today: dt.date,
         if p in seen:
             problems.append(f"{p}: listed twice")
         seen.add(p)
+        if "*" in p and e.get("kind") != "external":
+            problems.append(f"{p}: a wildcard path checks no concrete secret, so list each path")
+        bad = expiry_error(e) if "expiry" in e else None
+        if bad:
+            problems.append(f"{p}: {bad}")
 
     # Code that reads a path no entry accounts for.
     for ref, files in sorted(refs.items()):
@@ -164,7 +190,7 @@ def check(entries: list[dict], refs: dict[str, set[str]], today: dt.date,
 
         updated = None
         meta = (metadata or {}).get(p)
-        if metadata is not None and e.get("kind") != "external" and "*" not in p:
+        if metadata is not None and e.get("kind") != "external" and e.get("status") != "retired":
             if meta is None:
                 if not e.get("optional"):
                     problems.append(f"{p}: absent from Vault (mark it `optional: true` if it is not seeded yet)")
@@ -191,7 +217,7 @@ def vault_metadata(entries: list[dict]) -> tuple[dict[str, dict | None], int]:
     reads = 0
     for e in entries:
         p = e.get("path", "")
-        if e.get("kind") == "external" or "*" in p or not p.startswith("kv/"):
+        if e.get("kind") == "external" or e.get("status") == "retired" or not p.startswith("kv/"):
             continue
         req = urllib.request.Request(f"{addr}/v1/kv/metadata/{p[len('kv/'):]}",
                                      headers={"X-Vault-Token": token})
@@ -229,7 +255,20 @@ def self_test() -> int:
     bad = check([soon], refs, today, None)
     good = check([later], refs, today, None)
     orphan = check([later], {**refs, "kv/services/other": {"scripts/y.sh"}}, today, None)
-    ok = bool(bad) and not good and any("no owner" in p for p in orphan)
+    # A quoted date, an unknown rule and an empty mapping must fail, not pass as "no expiry".
+    quoted = check([dict(base, expiry={"rule": "date", "date": "2027-01-01"})], refs, today, None)
+    unknown = check([dict(base, expiry={"rule": "weekly"})], refs, today, None)
+    empty = check([dict(base, expiry={})], refs, today, None)
+    # A retired entry whose path is gone from Vault is correct; a live one is not.
+    gone = {"kv/services/probe": None}
+    retired = check([dict(later, status="retired")], refs, today, gone)
+    live_gone = check([later], refs, today, gone)
+    wild = check([dict(later, path="kv/services/probe-*")], refs, today, None)
+    ok = (bool(bad) and not good and any("no owner" in p for p in orphan)
+          and quoted and unknown and empty and not retired and live_gone
+          and any("wildcard" in p for p in wild))
+    print(f"self-test: quoted date / unknown rule / empty expiry -> {bool(quoted and unknown and empty)}")
+    print(f"self-test: retired 404 passes -> {not retired}; live 404 fails -> {bool(live_gone)}")
     print(f"self-test: 7-day entry -> {bad or 'NO PROBLEM (wrong)'}")
     print(f"self-test: 60-day entry -> {good or 'no problems'}")
     print(f"self-test: unowned path -> {orphan or 'NO PROBLEM (wrong)'}")

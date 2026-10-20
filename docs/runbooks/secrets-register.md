@@ -22,9 +22,12 @@ below 10 entries or 40 files fails.
 3. Set `expiry` to `{rule: none}`, `{rule: ttl_days, days: N}` (counted from the path's last write)
    or `{rule: date, date: YYYY-MM-DD}`.
 
-A path that code reads through a template, such as `kv/services/plane-$name`, matches an entry
-with a glob: `kv/services/plane-*`. `optional: true` lets a path be absent from Vault.
-`status: retired` waives the reader and absence checks for a path kept for history.
+A path that code reads through a template, such as `kv/services/plane-$name`, needs one entry
+for each concrete path (`kv/services/plane-tom`, `kv/services/plane-sonia`). The checker rejects
+a wildcard entry, because it cannot read the metadata of a path it cannot name. Write the
+date unquoted (`date: 2026-12-31`); a quoted date, an unknown rule or a missing `expiry` fails.
+`optional: true` lets a path be absent from Vault. `status: retired` waives the reader,
+the Vault metadata read and the absence check for a path kept for history.
 `kind: external` records a credential that is not a KV path, such as a Vault token.
 
 ## Run it by hand
