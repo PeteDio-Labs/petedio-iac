@@ -213,7 +213,13 @@ chmod 600 iac/.secrets/*.role_id iac/.secrets/*.secret_id
 
 > [!NOTE]
 > `secret_id`s are rotatable: re-run the `write -f .../secret-id` to mint a fresh one
-> (the old one keeps working until its TTL/use limit or you revoke it). CI does **not**
+> (the old one keeps working until its TTL/use limit or you revoke it).
+> Since PET-687 the `ansible` and `terraform-local` roles set `secret_id_ttl` (90 days). To
+> rotate, run `./scripts/rotate-approle-secret-id.sh <role> --destroy-others` on the Mac, on
+> Pedro's word. It proves the new login before it destroys the old `secret_id`. To bind both
+> roles to the Mac and claude-247, set `approle_operator_cidrs` in the vault-config
+> `terraform.tfvars` and run `scripts/apply-vault-config.sh`. Rotate first, because a
+> `secret_id` minted from outside the list stops working once the list applies. CI does **not**
 > use these AppRole files — it authenticates via the **GitHub OIDC** (`jwt-github`)
 > role once the CI cutover lands (deferred — PET-29).
 
