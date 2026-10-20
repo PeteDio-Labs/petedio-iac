@@ -150,14 +150,15 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com", "tsilveri406@gmail.com", "soniasdelgadillo@gmail.com"]
     }
 
-    # Batsy (Sonia's agent) posts USAA totals here from outside the lab, so Access is OFF for
-    # this hostname and the app's bearer check (kv/services/usaa batsy_bearer_token) is the
-    # gate. Only this one path is routed. The ingress rule matches hostname AND path, so every
-    # other path on this hostname falls through to the tunnel's catch-all 404, and the app
-    # also refuses non-feed paths on this Host. `path` is a regex, hence the anchors.
+    # Batsy (Sonia's agent) and Bobberto (Pedro's) post account totals here from outside the
+    # lab and read the month view (PET-590), so Access is OFF for this hostname and the app's
+    # bearer check (kv/services/usaa <agent>_bearer_token) is the gate. Only these two paths
+    # are routed. The ingress rule matches hostname AND path, so every other path on this
+    # hostname falls through to the tunnel's catch-all 404, and the app also refuses
+    # non-feed paths on this Host. `path` is a regex, hence the anchors.
     "savings-feed.pdlab.dev" = {
       service = "http://192.168.50.238:8080"
-      path    = "^/api/v1/totals$"
+      path    = "^/api/v1/(totals|month)$"
     }
   }
 }
