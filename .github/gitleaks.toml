@@ -36,20 +36,22 @@ description = "Discord bot token"
 regex = '''\b[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}\b'''
 keywords = [".", "discord"]
 
-# Known false positives. Each entry names the rule it silences, so a real secret in the
-# same file still fails.
+# Known false positives. Each entry names one rule and matches both the file and the exact
+# content, so a real secret in the same file, or the same shape elsewhere, still fails
+# (condition = "AND"). Add a one-off exception for another false positive to that repo's
+# own .gitleaksignore (the finding's Fingerprint), never as a broad path or pattern here.
 [[allowlists]]
 description = "databases.tf names the Vault field that holds a password; it holds no password"
-targetRules = ["generic-api-key", "hashicorp-tf-password"]
+condition = "AND"
+targetRules = ["hashicorp-tf-password"]
 paths = ['''environments/homelab/databases\.tf$''']
-
-[[allowlists]]
-description = "A curl credential fetched with command substitution is a lookup, not a literal secret"
-targetRules = ["curl-auth-user", "curl-auth-header"]
 regexTarget = "match"
-regexes = ['''\$\(''']
+regexes = ['''password_field\s*=\s*"[a-z_]+"''']
 
 [[allowlists]]
-description = "Stub keys in test files are not credentials"
-targetRules = ["generic-api-key"]
-paths = ['''(^|/)[^/]*\.(test|spec)\.[cm]?[jt]sx?$''', '''(^|/)tests?/fixtures?/''']
+description = "A runbook reads the metrics key with a Vault lookup and holds no literal key"
+condition = "AND"
+targetRules = ["curl-auth-user"]
+paths = ['''docs/runbooks/uptime-kuma-fault-study\.md$''']
+regexTarget = "match"
+regexes = ['''-u ":\$\(vault kv get -field=metrics_api_key kv/services/uptime-kuma\)"''']

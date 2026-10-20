@@ -14,6 +14,9 @@
 # the value below before it runs. The runner is GitHub-hosted and holds no credentials: the
 # scan reads the checkout and nothing else. No third-party action runs.
 #
+# LOGS. --verbose prints each finding's rule, file, line and fingerprint. --redact keeps the
+# secret itself out of the log, so the fingerprint is what a .gitleaksignore entry needs.
+#
 # FAILS CLOSED. A scan that reads zero commits is a red run, as is a missing commit count
 # in gitleaks' own output. The job summary states how many commits it read, so "0 findings
 # after 40 commits" and "0 findings because nothing was read" cannot look alike.
@@ -101,7 +104,7 @@ jobs:
           # finding end the step before it prints the log and the commit count.
           rc=0
           "$RUNNER_TEMP/gitleaks" git . \
-            --config "$cfg" --no-banner --redact --no-color \
+            --config "$cfg" --no-banner --redact --no-color --verbose \
             --log-opts="$logopts" "${extra[@]}" \
             --report-format sarif --report-path "$RUNNER_TEMP/gitleaks.sarif" \
             > "$RUNNER_TEMP/gitleaks.log" 2>&1 || rc=$?
