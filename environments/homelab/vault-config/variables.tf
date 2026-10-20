@@ -93,6 +93,12 @@ variable "pete_bot_repo" {
   default     = "PeteDio-Labs/pete-bot"
 }
 
+variable "usaa_repo" {
+  description = "owner/repo whose CD mints the usaa-cd role."
+  type        = string
+  default     = "PeteDio-Labs/petedio-usaa"
+}
+
 variable "water_fast_repo" {
   description = "owner/name of the petedio-water-fast repo bound to the water-fast-cd JWT role."
   type        = string

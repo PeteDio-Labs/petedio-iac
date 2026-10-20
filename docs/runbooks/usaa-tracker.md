@@ -98,6 +98,24 @@ grant fails it with permission denied.
 If the script says a field is empty, the M1 seed has not run. Do not write the value by
 hand.
 
+## Deploy on merge
+
+A push to `main` in `petedio-usaa` deploys through `.github/workflows/deploy.yml` on the
+self-hosted runner (PET-695). It mints the `usaa-cd` Vault role over GitHub OIDC, builds the
+Linux x86-64 binary, and runs `configure-usaa.yml` against usaa-238. `deploy-usaa.sh` still
+works for a hand deploy from the Mac.
+
+Before you merge the workflow, in this order:
+
+1. Apply `environments/homelab/vault-config`, which adds the `usaa-cd` role and policy. That
+   root is operator-applied.
+2. Run `./scripts/seed-usaa-cd.sh`. It copies `usaa_access_aud` and pete-bot's
+   `notify_bearer_token` into `kv/services/usaa`, because `usaa-cd` cannot read
+   `kv/services/pete-bot`. Run it again after you rotate pete-bot's notify token.
+
+The run's log names every optional field that is missing, as a warning. After the first
+merge, the 247 session reads back `GET /healthz` on usaa-238 and the service's start time.
+
 ## Turn on the month view
 
 The month view (`/month`, `GET /api/v1/month`) reads the Finance calendar and the balances
