@@ -1,0 +1,55 @@
+# Shared gitleaks config for every PeteDio-Labs repository (PET-684).
+#
+# The reusable workflow .github/workflows/gitleaks.yml checks this file out from
+# petedio-iac@main, so one edit here reaches every repo. A repo adds a one-off exception
+# to its own .gitleaksignore (a finding's Fingerprint), never to this file.
+#
+# WHY CUSTOM RULES. The default rules did not catch the Plane tokens in finding S1 of the
+# lab secrets check, because a Plane personal access token has no recognizable shape to
+# a generic rule. Each rule below names a token the lab issues.
+title = "PeteDio-Labs shared gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "plane-api-token"
+description = "Plane personal access token"
+regex = '''plane_api_[A-Za-z0-9]{16,}'''
+keywords = ["plane_api_"]
+
+[[rules]]
+id = "vault-token"
+description = "HashiCorp Vault service or batch token"
+regex = '''\bhv[sb]\.[A-Za-z0-9_-]{20,}'''
+keywords = ["hvs.", "hvb."]
+
+[[rules]]
+id = "proxmox-api-token"
+description = "Proxmox API token in a PVEAPIToken header or environment value"
+regex = '''PVEAPIToken=[A-Za-z0-9@!._-]+=[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'''
+keywords = ["pveapitoken"]
+
+[[rules]]
+id = "discord-bot-token"
+description = "Discord bot token"
+regex = '''\b[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}\b'''
+keywords = [".", "discord"]
+
+# Known false positives. Each entry names the rule it silences, so a real secret in the
+# same file still fails.
+[[allowlists]]
+description = "databases.tf names the Vault field that holds a password; it holds no password"
+targetRules = ["generic-api-key", "hashicorp-tf-password"]
+paths = ['''environments/homelab/databases\.tf$''']
+
+[[allowlists]]
+description = "A curl credential fetched with command substitution is a lookup, not a literal secret"
+targetRules = ["curl-auth-user", "curl-auth-header"]
+regexTarget = "match"
+regexes = ['''\$\(''']
+
+[[allowlists]]
+description = "Stub keys in test files are not credentials"
+targetRules = ["generic-api-key"]
+paths = ['''(^|/)[^/]*\.(test|spec)\.[cm]?[jt]sx?$''', '''(^|/)tests?/fixtures?/''']
