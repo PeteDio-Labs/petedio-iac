@@ -97,12 +97,14 @@ jobs:
               ;;
           esac
 
+          # Actions runs bash with -e, so capture the exit code instead of letting a
+          # finding end the step before it prints the log and the commit count.
+          rc=0
           "$RUNNER_TEMP/gitleaks" git . \
             --config "$cfg" --no-banner --redact --no-color \
             --log-opts="$logopts" "${extra[@]}" \
             --report-format sarif --report-path "$RUNNER_TEMP/gitleaks.sarif" \
-            > "$RUNNER_TEMP/gitleaks.log" 2>&1
-          rc=$?
+            > "$RUNNER_TEMP/gitleaks.log" 2>&1 || rc=$?
           cat "$RUNNER_TEMP/gitleaks.log"
 
           commits=$(sed -n 's/.* \([0-9][0-9]*\) commits scanned.*/\1/p' "$RUNNER_TEMP/gitleaks.log" | tail -1)
