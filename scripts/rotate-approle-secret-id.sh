@@ -25,6 +25,11 @@
 # so pass --destroy-others to destroy every other secret_id on the role. That also revokes a
 # copy on another host, which is the point when you cannot say who holds one.
 #
+# A REVOCATION THAT FAILS IS KEPT. Accessors waiting for destruction are listed in
+# <role>.secret_id_accessor.pending. A run destroys every one of them before it mints, and
+# deletes a line only after Vault confirms. A run that dies after installing the new files
+# leaves the old accessor there, so the next run finishes the job.
+#
 # Usage:
 #   ./scripts/rotate-approle-secret-id.sh ansible [--destroy-others]
 #   ./scripts/rotate-approle-secret-id.sh terraform-local [--destroy-others]
@@ -37,7 +42,7 @@ for arg in "$@"; do
   case "$arg" in
     ansible|terraform-local) ROLE="$arg" ;;
     --destroy-others) DESTROY_OTHERS=1 ;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
     *) printf 'unknown argument: %s (try --help)\n' "$arg" >&2; exit 2 ;;
   esac
 done
@@ -85,6 +90,8 @@ if [ -z "$OLD_ACCESSOR" ] && [ "$DESTROY_OTHERS" -eq 0 ]; then
   echo "  It mints a new secret_id and leaves the old one valid. Pass --destroy-others to destroy it."
 fi
 
+PENDING="$SECRETS/$ROLE.secret_id_accessor.pending"
+
 role_id="$(vault read -field=role_id "auth/approle/role/$ROLE/role-id")"
 [ -n "$role_id" ] || die "Vault returned no role_id for $ROLE."
 
@@ -93,9 +100,14 @@ MINT="$(vault write -format=json -f "auth/approle/role/$ROLE/secret-id" \
   metadata='{"host":"mac","pet":"PET-687"}')"
 NEW_ID="$(jq -r '.data.secret_id // empty' <<<"$MINT")"
 NEW_ACCESSOR="$(jq -r '.data.secret_id_accessor // empty' <<<"$MINT")"
+ISSUED_TTL="$(jq -r '.data.secret_id_ttl // empty' <<<"$MINT")"
 unset MINT
 [ -n "$NEW_ID" ] && [ -n "$NEW_ACCESSOR" ] || die "vault write did not return a secret_id."
 echo "  accessor $NEW_ACCESSOR"
+[ -n "$ISSUED_TTL" ] && [ "$ISSUED_TTL" -gt 0 ] 2>/dev/null \
+  || die "Vault issued a secret_id with no TTL (secret_id_ttl='${ISSUED_TTL}'), so it would never expire."
+echo "  issued secret_id_ttl=${ISSUED_TTL}s (the role asks for ${TTL}s)"
+[ "$ISSUED_TTL" -ge "$TTL" ] || echo "  WARNING: Vault shortened the TTL below the role setting. Check the approle mount's max_lease_ttl." >&2
 
 PROVEN=0
 cleanup() {
@@ -125,6 +137,10 @@ echo "  login=ok policies=$POLICIES (token revoked)"
 PROVEN=1
 
 step "Moving the new files into place"
+# Record the old accessor as pending BEFORE the file that names it is overwritten.
+if [ -n "$OLD_ACCESSOR" ] && [ "$OLD_ACCESSOR" != "$NEW_ACCESSOR" ]; then
+  printf '%s\n' "$OLD_ACCESSOR" >> "$PENDING"
+fi
 printf '%s' "$role_id" > "$SECRETS/$ROLE.role_id.new"
 printf '%s' "$NEW_ACCESSOR" > "$SECRETS/$ROLE.secret_id_accessor.new"
 mv -f "$SECRETS/$ROLE.role_id.new" "$SECRETS/$ROLE.role_id"
@@ -132,7 +148,7 @@ mv -f "$SECRETS/$ROLE.secret_id.new" "$SECRETS/$ROLE.secret_id"
 mv -f "$SECRETS/$ROLE.secret_id_accessor.new" "$SECRETS/$ROLE.secret_id_accessor"
 chmod 600 "$SECRETS/$ROLE.role_id" "$SECRETS/$ROLE.secret_id" "$SECRETS/$ROLE.secret_id_accessor"
 for f in role_id secret_id; do
-  read -r LEN MODE <<<"$(stat -f '%z %Lp' "$SECRETS/$ROLE.$f" 2>/dev/null || stat -c '%s %a' "$SECRETS/$ROLE.$f")"
+  read -r LEN MODE <<<"$(stat -c '%s %a' "$SECRETS/$ROLE.$f" 2>/dev/null || stat -f '%z %Lp' "$SECRETS/$ROLE.$f")"
   [ "${LEN:-0}" -gt 0 ] && [ "$MODE" = "600" ] || die "$SECRETS/$ROLE.$f is $LEN bytes, mode $MODE. Expected non-empty, 600."
   echo "  $ROLE.$f: $LEN bytes, mode $MODE."
 done
@@ -144,27 +160,41 @@ destroy() {
   elif grep -q 'failed to find accessor entry' <<<"$err"; then
     echo "  accessor $1 was already gone."
   else
-    die "Vault refused to destroy accessor $1, so that secret_id may still log in: $err"
+    die "Vault refused to destroy accessor $1, so that secret_id may still log in. It stays in $PENDING; rerun to retry: $err"
   fi
 }
 
-if [ -n "$OLD_ACCESSOR" ] && [ "$OLD_ACCESSOR" != "$NEW_ACCESSOR" ]; then
-  step "Destroying the replaced secret_id"
-  destroy "$OLD_ACCESSOR"
-fi
-if [ "$DESTROY_OTHERS" -eq 1 ]; then
-  step "Destroying every other secret_id on $ROLE"
-  COUNT=0
+# Destroy every pending accessor, rewriting the file as each one is confirmed.
+if [ -s "$PENDING" ]; then
+  step "Destroying the replaced secret_id(s)"
   while read -r acc; do
     [ -n "$acc" ] && [ "$acc" != "$NEW_ACCESSOR" ] || continue
+    destroy "$acc"
+    grep -vxF "$acc" "$PENDING" > "$PENDING.tmp" || true
+    mv -f "$PENDING.tmp" "$PENDING"
+  done < <(cat "$PENDING")
+fi
+[ -s "$PENDING" ] || rm -f "$PENDING"
+
+if [ "$DESTROY_OTHERS" -eq 1 ]; then
+  step "Destroying every other secret_id on $ROLE"
+  LIST="$(vault list -format=json "auth/approle/role/$ROLE/secret-id")" \
+    || die "Could not list the secret_ids on $ROLE, so the old ones were not destroyed."
+  ACCESSORS="$(jq -r '.[]' <<<"$LIST")" \
+    || die "Could not parse the secret_id list for $ROLE, so the old ones were not destroyed."
+  COUNT=0; SEEN=0
+  while read -r acc; do
+    [ -n "$acc" ] || continue
+    SEEN=$((SEEN + 1))
+    [ "$acc" != "$NEW_ACCESSOR" ] || continue
     destroy "$acc"; COUNT=$((COUNT + 1))
-  done < <(vault list -format=json "auth/approle/role/$ROLE/secret-id" | jq -r '.[]')
-  echo "  destroyed $COUNT other secret_id(s). The new one is the only one left."
+  done <<<"$ACCESSORS"
+  echo "  read $SEEN accessor(s); destroyed $COUNT other secret_id(s). The new one is the only one left."
 fi
 
 step "Next"
 cat <<TXT
   Record the accessor on PET-687: $NEW_ACCESSOR
   Run a deploy from this machine to confirm it logs in, for example ./scripts/vault-verify.sh.
-  Rotate again before the secret_id expires, ${TTL}s after the mint.
+  Rotate again before the secret_id expires, ${ISSUED_TTL}s after the mint.
 TXT

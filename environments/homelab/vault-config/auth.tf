@@ -4,6 +4,13 @@
 # AppRole — machine logins for local Ansible/Terraform runs (role_id + secret_id).
 resource "vault_auth_backend" "approle" {
   type = "approle"
+
+  # Vault caps a secret_id's life at the mount's max lease TTL (default 768h, 32 days), so a
+  # role's secret_id_ttl above that is silently shortened (PET-687). Raise the cap to match
+  # the role setting. default_lease_ttl stays at the system default, so token TTLs do not move.
+  tune {
+    max_lease_ttl = "${var.approle_secret_id_ttl}s"
+  }
 }
 
 # Ansible host-config role → ansible policy.
