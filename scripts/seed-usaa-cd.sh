@@ -11,7 +11,7 @@
 # app keeps sending the old one.
 #
 # HOW IT WRITES. `vault kv patch -cas=<version>` changes these two fields and keeps the
-# others. The script prints field names and lengths, never a value, and reads both back.
+# others. The values go to Vault on stdin, never on the command line. The script prints field names and lengths, never a value, and reads both back.
 #
 # THE ORDER:
 #   1. apply environments/homelab/vault-config (the usaa-cd role and policy)
@@ -92,13 +92,20 @@ fi
 echo "  version $VERSION"
 
 step "Write access_aud and notify_bearer_token"
+# Both values travel as one JSON object on stdin (`-`), so neither reaches argv, where a
+# process listing would show the notify token. The object holds only these two fields; a
+# `patch` merges them into the others.
+BODY="$(AUD="$AUD" NOTIFY="$NOTIFY" python3 -c '
+import json, os
+print(json.dumps({"access_aud": os.environ["AUD"], "notify_bearer_token": os.environ["NOTIFY"]}))')"
 if [ "$VERSION" = 0 ]; then
-  vault kv put -cas=0 "$DEST" access_aud="$AUD" notify_bearer_token="$NOTIFY" >/dev/null \
+  printf '%s' "$BODY" | vault kv put -cas=0 "$DEST" - >/dev/null \
     || die "vault kv put failed. If another writer created $DEST, run this again."
 else
-  vault kv patch -cas="$VERSION" "$DEST" access_aud="$AUD" notify_bearer_token="$NOTIFY" >/dev/null \
+  printf '%s' "$BODY" | vault kv patch -cas="$VERSION" "$DEST" - >/dev/null \
     || die "vault kv patch failed. If another writer changed $DEST, run this again."
 fi
+unset BODY
 
 step "Verify, by reading it back"
 [ "$(vault kv get -field=access_aud "$DEST")" = "$AUD" ] || die "access_aud does not match the write."
