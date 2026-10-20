@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# seed-usaa-batsy-token.sh — mint the bearer that opens the usaa app's
-# POST /api/v1/totals, and store it in kv/services/usaa as batsy_bearer_token (PET-590).
+# seed-usaa-batsy-token.sh — mint an agent's bearer for the usaa app's feed, and store it in
+# kv/services/usaa as <agent>_bearer_token (PET-590). The agent is batsy (Sonia's, the
+# default) or bobberto (Pedro's, added for the month view on 2026-10-20).
 #
-# WHY ITS OWN TOKEN. Batsy sends USAA balances and period totals to that one endpoint, and
-# nothing else accepts this token. A leaked copy can post totals and cannot read the ledger.
+# WHY ITS OWN TOKEN. Each agent sends balances to POST /api/v1/totals and reads
+# GET /api/v1/month, and nothing else accepts its token. A leaked copy can post totals and
+# read the month view's balances. It cannot read the ledger. One token per agent lets
+# Pedro revoke one without the other, and each push records which agent sent it.
 #
 # WHY A PATCH. kv/services/usaa may hold other app fields. `vault kv patch` writes this one
 # field and keeps the others as they are. A first seed of an absent path uses `put`.
@@ -11,31 +14,39 @@
 # THE ORDER, on a first seed and on a rotation:
 #   1. this script
 #   2. ./scripts/deploy-usaa.sh, so the app accepts the token
-#   3. Pedro places the token in Batsy. No session does.
-# After a rotation, Batsy holds a token the app refuses until step 3 finishes.
+#   3. Pedro places the token in the agent. No session does.
+# After a rotation, the agent holds a token the app refuses until step 3 finishes.
 #
 #   Vault token: $VAULT_TOKEN, else the macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM.
 #   This script never prompts for it, and it never prints the bearer.
 #
 # Usage:
-#   ./scripts/seed-usaa-batsy-token.sh            # mint one when absent, else keep it
-#   ./scripts/seed-usaa-batsy-token.sh --rotate   # replace it
+#   ./scripts/seed-usaa-batsy-token.sh                     # Batsy's: mint one when absent, else keep it
+#   ./scripts/seed-usaa-batsy-token.sh --agent bobberto    # Bobberto's
+#   ./scripts/seed-usaa-batsy-token.sh --rotate            # replace it
 set -euo pipefail
 umask 077
 
 ROTATE=0
-for arg in "$@"; do
-  case "$arg" in
+AGENT=batsy
+while [ $# -gt 0 ]; do
+  case "$1" in
     --rotate) ROTATE=1 ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
-    *) printf 'unknown argument: %s\n' "$arg" >&2; exit 2 ;;
+    --agent) shift; AGENT="${1:-}" ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
+  shift
 done
+case "$AGENT" in
+  batsy|bobberto) ;;
+  *) printf 'unknown agent: %s (batsy or bobberto)\n' "$AGENT" >&2; exit 2 ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PATH_KV="kv/services/usaa"
-FIELD="batsy_bearer_token"
+FIELD="${AGENT}_bearer_token"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 
 export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
@@ -112,6 +123,10 @@ fi
 step "Mint and write $FIELD"
 NEW="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 [ "$NEW" != "$CURRENT" ] || die "the minted token repeats the stored one. Run this again."
+for other in batsy_bearer_token bobberto_bearer_token; do
+  [ "$other" = "$FIELD" ] && continue
+  [ "$NEW" != "$(field "$other")" ] || die "the minted token repeats $other. Run this again."
+done
 # key=- reads the value from stdin, so it never reaches argv. -cas=0 creates only, and
 # -cas=VERSION fails when another writer changed the path since the read.
 case "$VERSION" in
@@ -137,6 +152,6 @@ step "Done"
 cat <<NOTE
   Next, in this order:
     1. ./scripts/deploy-usaa.sh, so the app accepts the token.
-    2. Pedro places the token in Batsy, reading it in his own terminal with:
+    2. Pedro places the token in $AGENT, reading it in his own terminal with:
          vault kv get -field=$FIELD $PATH_KV
 NOTE

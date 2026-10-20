@@ -42,7 +42,7 @@ step "Asking GitHub whether the $APP_SLUG App still exists"
 # returned the App, id 4918687. So this asks through gh, and first proves the token can see a
 # private App at all: CONTROL_SLUG is a private App that must exist. Without that control, a
 # token with no view of the org's Apps reads every App as deleted.
-CONTROL_SLUG="${CONTROL_SLUG:-petedio-code-247}"
+CONTROL_SLUG="${CONTROL_SLUG:-petedio-ops-247}"
 gh api "/apps/$CONTROL_SLUG" --jq .id >/dev/null 2>&1 || die "gh cannot see the private App
   $CONTROL_SLUG, so a 404 for $APP_SLUG would prove nothing. Examined nothing. Check
   \`gh auth status\` names an owner of PeteDio-Labs, then re-run."
