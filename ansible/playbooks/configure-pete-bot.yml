@@ -121,6 +121,9 @@
     #   kv/services/claude-workspace-mirror: lab_agent_github_app_id,
     #   lab_agent_github_installation_id, lab_agent_github_app_pem.
     #   lab-map's bearer is pete_bot_gateway_token_lab_map above.
+    # Optional on its own, and not one of the values lab_agent_ready counts (PET-672):
+    #   lab_agent_plane_token, from kv/services/lab-agent-plane. Without it lab-agent runs
+    #   with no plane_item tool.
     lab_agent_user: lab-agent
     lab_agent_dir: /opt/lab-agent
     lab_agent_bin: /opt/lab-agent/lab-agent

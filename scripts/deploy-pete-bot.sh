@@ -130,6 +130,9 @@ SNAPSHOT="$(read_optional kv/services/claude-workspace-mirror)"
 LAB_GH_APP_ID="$(field app_id 2>/dev/null || true)"
 LAB_GH_INSTALL_ID="$(field installation_id 2>/dev/null || true)"
 LAB_GH_APP_PEM="$(field app_pem 2>/dev/null || true)"
+# Optional (PET-672): the Plane token for plane_item. Absent leaves the tool off.
+SNAPSHOT="$(read_optional kv/services/lab-agent-plane)"
+LAB_PLANE_TOKEN="$(field token 2>/dev/null || true)"
 unset SNAPSHOT
 echo "  resolved the 5 required values"
 if [ -n "$PB_DESK_APP_ID" ] && [ -n "$PB_DESK_INSTALLATION_ID" ] && [ -n "$PB_DESK_APP_PEM" ]; then
@@ -141,6 +144,11 @@ if [ -n "$PB_PLANE_API_KEY" ]; then
   echo "  scheduled reports: Plane key present, so they run once the desk App is also present"
 else
   echo "  scheduled reports: no plane_api_key, so they stay off (run scripts/seed-pete-bot-plane-key.sh)"
+fi
+if [ -n "$LAB_PLANE_TOKEN" ]; then
+  echo "  lab-agent: Plane token present, so plane_item is offered"
+else
+  echo "  lab-agent: kv/services/lab-agent-plane is not seeded, so plane_item is off"
 fi
 if [ -n "$PB_UPDATES_TOKEN" ]; then
   echo "  /update: token present"
@@ -196,7 +204,7 @@ PB_DESK_APP_PEM="$PB_DESK_APP_PEM" PB_PLANE_API_KEY="$PB_PLANE_API_KEY" LAB_BIN=
 LAB_ASK="$LAB_ASK" LAB_VAULT_TOKEN="$LAB_VAULT_TOKEN" \
 LAB_GH_APP_ID="$LAB_GH_APP_ID" LAB_GH_INSTALL_ID="$LAB_GH_INSTALL_ID" LAB_GH_APP_PEM="$LAB_GH_APP_PEM" \
 LAB_PVE_ID="$LAB_PVE_ID" LAB_PVE_SECRET="$LAB_PVE_SECRET" LAB_PVE_ENDPOINT="$LAB_PVE_ENDPOINT" \
-LAB_PVE_CA="$LAB_PVE_CA" \
+LAB_PVE_CA="$LAB_PVE_CA" LAB_PLANE_TOKEN="$LAB_PLANE_TOKEN" \
 PB_CD_PUBLIC_KEY="$PB_CD_PUBLIC_KEY" \
 python3 -c '
 import json, os
@@ -225,6 +233,7 @@ json.dump({
     "lab_agent_pve_ca_pem":          os.environ.get("LAB_PVE_CA", ""),
     "pete_bot_plane_api_key":        os.environ.get("PB_PLANE_API_KEY", ""),
     "pete_bot_cd_public_key":        os.environ.get("PB_CD_PUBLIC_KEY", ""),
+    "lab_agent_plane_token":         os.environ.get("LAB_PLANE_TOKEN", ""),
 }, open(os.environ["OUT"], "w"))
 '
 
