@@ -13,6 +13,12 @@
 # ci-read: the policy GitHub Actions gets via the JWT/OIDC role. Narrow read scope
 # limited to the secrets CI actually needs (Proxmox/MinIO/LXC-SSH creds + kv/poker/db).
 #
+# NO kv/admin/* GRANT (PET-702, audit H4). That prefix holds the Vault root token and the
+# unseal material, and nothing here reads it: the one named path, kv/admin/db, belonged to
+# the Co-latro admin database that PET-366 destroyed. This policy, `terraform` and `ansible`
+# all carried the grant until PET-702. Add one named path with its own comment if a read
+# ever needs it, never the prefix.
+#
 # ⚠ THE kv/poker/* GRANTS BELOW STAY, THOUGH CO-LATRO IS GONE (PET-366). They do not
 # serve the poker app any more — they serve the postgresql PROVIDER, whose server-wide
 # admin credential still lives at kv/poker/db under that historical name. Revoking them
@@ -69,10 +75,6 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
-    path "kv/data/admin/*" {
-      capabilities = ["read"]
-    }
-
     path "kv/metadata/iac/*" {
       capabilities = ["list"]
     }
@@ -82,10 +84,6 @@ resource "vault_policy" "ci_read" {
     }
 
     path "kv/metadata/poker/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/admin/*" {
       capabilities = ["list"]
     }
   EOT
@@ -104,19 +102,11 @@ resource "vault_policy" "terraform" {
       capabilities = ["read"]
     }
 
-    path "kv/data/admin/*" {
-      capabilities = ["read"]
-    }
-
     path "kv/metadata/iac/*" {
       capabilities = ["list"]
     }
 
     path "kv/metadata/poker/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/admin/*" {
       capabilities = ["list"]
     }
   EOT
@@ -150,10 +140,6 @@ resource "vault_policy" "ansible" {
       capabilities = ["read"]
     }
 
-    path "kv/data/admin/*" {
-      capabilities = ["read"]
-    }
-
     path "kv/metadata/iac/*" {
       capabilities = ["list"]
     }
@@ -163,10 +149,6 @@ resource "vault_policy" "ansible" {
     }
 
     path "kv/metadata/db/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/admin/*" {
       capabilities = ["list"]
     }
   EOT
@@ -566,7 +548,7 @@ resource "vault_policy" "claude_247_deploy" {
 # path is a reviewable diff, not a standing grant that widens itself.
 #
 # ⚠ NEVER kv/data/admin/*. Every other broad-scoped policy in this file (ci-read, terraform,
-# ansible) reads kv/data/admin/*, but that prefix is where the Vault ROOT TOKEN and the
+# ansible) read kv/data/admin/* until PET-702, and that prefix is where the Vault ROOT TOKEN and the
 # unseal material are documented (vault/Systems/vault-and-secrets.md) — exactly what Pedro's
 # decision for PET-531 rules out landing on 247 by any path. Granting it here would make a
 # renewing token on 247 equivalent to the one credential this whole design exists to keep
