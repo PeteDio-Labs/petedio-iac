@@ -107,7 +107,8 @@ printf '  Paste the secret address in iCal format, then press Enter (input hidde
 IFS= read -rs NEW
 printf '\n'
 # The env file holds it single-quoted, so the shape check matches the playbook's assert.
-python3 -c '
+# NEW is a plain shell variable, so it goes to python through this one call's environment.
+NEW="$NEW" python3 -c '
 import os, re, sys
 v = os.environ["NEW"]
 if not re.fullmatch(r"https://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+", v):

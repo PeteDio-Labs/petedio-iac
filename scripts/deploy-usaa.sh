@@ -99,7 +99,8 @@ out = {
 for var, (src, field, why) in optional.items():
     out[var] = src.get(field) or ""
     # Say which field is missing, never what a present one holds.
-    print(f"  {field}: {'present' if out[var] else 'MISSING, ' + why}", file=sys.stderr)
+    # No single quote anywhere in this program: the shell passes it single-quoted.
+    print("  " + field + ": " + ("present" if out[var] else "MISSING, " + why), file=sys.stderr)
 yaml.safe_dump(out, open(sys.argv[1], "w"))
 ' "$TMP/extra.yml" "$TMP/db.json" "$TMP/svc.json" "$TMP/pb.json"
 rm -f "$TMP/db.json" "$TMP/svc.json" "$TMP/pb.json"
