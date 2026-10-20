@@ -52,12 +52,7 @@ step "Credentials"
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
-if [ -z "${VAULT_TOKEN:-}" ]; then
-  # ⚠ A non-TTY run reaches EOF here and `read` returns non-zero, which under `set -e`
-  # exits with no message at all. Test for a terminal first so cron says why.
-  [ -t 0 ] || die "no VAULT_TOKEN, no Keychain item, and stdin is not a terminal."
-  read -rsp "Vault token: " VAULT_TOKEN; echo
-fi
+[ -n "${VAULT_TOKEN:-}" ] || die "no Vault token: set VAULT_TOKEN or add the Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM"
 export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault token invalid, or Vault is sealed/unreachable."
 echo "  vault reachable and token valid"

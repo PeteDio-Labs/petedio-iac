@@ -4,7 +4,7 @@
 # bound_audiences / bound_claims and the backend's issuer/discovery against what the
 # workflow sends. No writes.
 #
-#   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM, else prompt
+#   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +21,7 @@ command -v vault >/dev/null || { echo "vault not in PATH" >&2; exit 1; }
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
-[ -n "${VAULT_TOKEN:-}" ] || { read -rsp "Vault token: " VAULT_TOKEN; echo; }
+[ -n "${VAULT_TOKEN:-}" ] || { echo "ERROR: no Vault token: set VAULT_TOKEN or add the Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM" >&2; exit 1; }
 export VAULT_TOKEN
 
 echo "=== auth methods (confirm the jwt mount path) ==="
