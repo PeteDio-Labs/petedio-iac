@@ -385,7 +385,9 @@
       register: pete_bot_reports_health
       retries: 10
       delay: 2
-      # A binary from before PET-701 reports no `reports`, and a deploy of one must still pass.
+      # A binary from before PET-701 reports no `reports`. That is acceptable only while the
+      # reports are off: with them switched on, a missing section means no scheduler exists,
+      # and the wait must end so the next task can fail the deploy.
       until: >-
         pete_bot_reports_health.json is defined
         and (pete_bot_reports_health.json.reports is not defined
@@ -393,7 +395,7 @@
                 (['misconfigured', 'running'] if (pete_bot_reports_ready | bool)
                  else ['off', 'misconfigured', 'running']))
 
-    - name: Fail when the scheduled reports are misconfigured or did not start
+    - name: Fail when the scheduled reports are misconfigured, missing or did not start
       ansible.builtin.fail:
         msg: >-
           The scheduled reports report
@@ -401,9 +403,9 @@
           {{ pete_bot_reports_health.json.reports.reason | default('they were switched on but did not start') }}
       when:
         - not ansible_check_mode
-        - pete_bot_reports_health.json.reports is defined
-        - (pete_bot_reports_health.json.reports.state == 'misconfigured')
-          or ((pete_bot_reports_ready | bool) and pete_bot_reports_health.json.reports.state != 'running')
+        - (pete_bot_reports_health.json.reports.state | default('')) == 'misconfigured'
+          or ((pete_bot_reports_ready | bool)
+              and (pete_bot_reports_health.json.reports.state | default('')) != 'running')
 
     - name: Read the Codex queue key's public half
       ansible.builtin.slurp:
