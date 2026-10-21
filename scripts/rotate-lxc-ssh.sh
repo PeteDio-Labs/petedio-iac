@@ -94,6 +94,18 @@ has_key() {
   esac
 }
 
+# remove_key <vmid> <node> <material>: drops every line holding the material from $AUTH.
+# grep exits 1 when nothing is left, which is fine for the filter but not for this file, so an
+# empty result is refused and the file stays as it was. A grep read error (exit 2 or more) is
+# refused the same way. The container prints OK only after the file is rewritten; anything
+# else, including a failed pct exec, makes this return 1.
+REMOVE_KEY_SH='f="$1"; grep -vF "$2" "$f" > "$f.rot"; r=$?; if [ $r -ge 2 ]; then rm -f "$f.rot"; echo GREP_ERROR; exit 0; fi; if [ ! -s "$f.rot" ]; then rm -f "$f.rot"; echo WOULD_EMPTY; exit 0; fi; cat "$f.rot" > "$f" && rm -f "$f.rot" && echo OK'
+remove_key() {
+  local out
+  out="$(on_node "$2" "pct exec $1 -- sh -c '$REMOVE_KEY_SH' _ $AUTH $3" 2>/dev/null)" || return 1
+  [ "$out" = OK ] || { printf '%s' "$out" > "${TMP:-/tmp}/remove_key_reason" 2>/dev/null || true; return 1; }
+}
+
 # config_ip: reads `pct config` on stdin, prints the first static IPv4 across every netN line
 # (seerr 101 keeps its address on net1), or nothing when every netN is DHCP or has no ip=.
 config_ip() {
@@ -291,8 +303,8 @@ fi
 
 step "Removing the old public key"
 while read -u 3 -r node vmid ip hasold hasnew; do
-  on_node "$node" "pct exec $vmid -- sh -c 'f=$AUTH; { grep -vF \"$OLD_MAT\" \$f || true; } > \$f.rot && cat \$f.rot > \$f && rm -f \$f.rot'" \
-    || die "Could not edit $AUTH on CT $vmid. Vault holds the new pair; re-run to resume."
+  remove_key "$vmid" "$node" "$OLD_MAT" \
+    || die "Could not edit $AUTH on CT $vmid ($(cat "$TMP/remove_key_reason" 2>/dev/null || true); empty means pct exec or ssh failed). The file is unchanged. Vault holds the new pair; re-run to resume."
   echo "  CT $vmid edited"
 done 3< "$TARGETS"
 

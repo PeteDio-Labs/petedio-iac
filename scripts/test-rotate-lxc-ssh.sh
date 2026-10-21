@@ -57,6 +57,20 @@ chmod 000 "$AUTH"; has_key 1 n "$MAT"; rc=$?; chmod 600 "$AUTH"
 if [ "$(id -u)" -eq 0 ]; then skip "unreadable file: root reads it, so this case did not run (the fake-grep case above covers the fault path)"
 else eq "unreadable file is a fault (2)" 2 "$rc"; fi
 
+echo "remove_key (same stub; a grep read error must not rewrite the file)"
+TMP="$T"
+printf 'ssh-ed25519 KEEP1 a\nssh-ed25519 %s old\nssh-ed25519 KEEP2 b\n' "$MAT" > "$AUTH"
+remove_key 1 n "$MAT"; eq "removes the old line" 0 $?
+eq "keeps the other two" "ssh-ed25519 KEEP1 a|ssh-ed25519 KEEP2 b" "$(paste -sd'|' "$AUTH")"
+printf 'ssh-ed25519 KEEP1 a\nssh-ed25519 %s old\n' "$MAT" > "$AUTH"; before="$(cat "$AUTH")"
+PATH="$T/bin:$PATH" remove_key 1 n "$MAT"; eq "grep read error is refused (1)" 1 $?
+eq "file untouched after the grep error" "$before" "$(cat "$AUTH")"
+eq "reason recorded" GREP_ERROR "$(cat "$T/remove_key_reason")"
+printf 'ssh-ed25519 %s old\n' "$MAT" > "$AUTH"; before="$(cat "$AUTH")"
+remove_key 1 n "$MAT"; eq "would-empty file is refused (1)" 1 $?
+eq "file untouched when it would empty" "$before" "$(cat "$AUTH")"
+FAKE_RC=1; remove_key 1 n "$MAT"; eq "failed pct exec is refused (1)" 1 $?; FAKE_RC=0
+
 echo "live_ip (on_node stubbed with recorded output)"
 on_node() { case "$2" in *hostname*) printf '%s\n' "$HOSTNAME_I" ;; *"ip -4"*) printf '%s\n' "$IPA" ;; esac; }
 HOSTNAME_I="192.168.50.102 "; IPA=""
@@ -79,4 +93,4 @@ eq "dhcp, lease changed" 192.168.50.111 "$(ctip n 102 none)"
 
 echo
 echo "$PASS passed, $FAIL failed, $SKIPPED skipped."
-[ "$FAIL" -eq 0 ] && [ "$PASS" -ge 18 ] || exit 1
+[ "$FAIL" -eq 0 ] && [ "$PASS" -ge 25 ] || exit 1
