@@ -163,6 +163,27 @@
     lab_agent_ready: "{{ (lab_agent_set_count | int) == (lab_agent_values | length) }}"
 
   pre_tasks:
+    # PET-492. pete-bot holds a DOWN that starts inside the backup window and alerts only if
+    # its UP misses a deadline. The window comes from the stop-mode jobs, so a change to the
+    # schedule moves it. pve02's snapshot job restarts nothing and is left out. The zone is the
+    # homelab's one timezone. Each window runs 30 minutes from the job's start.
+    - name: Read the backup jobs and the homelab timezone
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/{{ item.role }}/defaults/main.yml"
+        name: "{{ item.name }}"
+      loop:
+        - {role: backup-store, name: pete_bot_backup_defaults}
+        - {role: timezone, name: pete_bot_timezone_defaults}
+      loop_control:
+        label: "{{ item.role }}"
+
+    - name: Derive pete-bot's maintenance windows from the stop-mode backup jobs
+      ansible.builtin.set_fact:
+        pete_bot_maintenance_windows: >-
+          {%- for job in pete_bot_backup_defaults.backup_store_jobs | selectattr('mode', 'equalto', 'stop') %}
+          {{ pete_bot_timezone_defaults.timezone_name }} {{ job.schedule }} 30{{ ', ' if not loop.last else '' }}
+          {%- endfor %}
+
     - name: Assert the secrets were provided
       ansible.builtin.assert:
         that:
