@@ -73,7 +73,13 @@ echo "  version $VERSION"
 
 step "Deploy key"
 if [ -n "$EXISTING_PUB" ] && [ -n "$EXISTING_PRIV" ] && [ "$ROTATE" = 0 ]; then
-  echo "  kept: both deploy_ssh_public_key and deploy_ssh_private_key are present. Nothing to write."
+  # A kept pair must still be a pair: the stored private key has to derive the stored public key.
+  vault kv get -field=deploy_ssh_public_key "$DEST" > "$TMP/kept.pub" || die "cannot read deploy_ssh_public_key."
+  vault kv get -field=deploy_ssh_private_key "$DEST" > "$TMP/kept.key" || die "cannot read deploy_ssh_private_key."
+  chmod 600 "$TMP/kept.key"
+  [ "$(ssh-keygen -y -f "$TMP/kept.key" 2>/dev/null | awk '{print $2}')" = "$(awk '{print $2}' "$TMP/kept.pub")" ] \
+    || die "the stored private key does not derive the stored public key. Run with --rotate-key."
+  echo "  kept: the stored pair matches, fingerprint $(ssh-keygen -lf "$TMP/kept.pub" | awk '{print $2}'). Nothing to write."
   exit 0
 fi
 if [ -n "$EXISTING_PUB" ] && [ -z "$EXISTING_PRIV" ] && [ "$ROTATE" = 0 ]; then
