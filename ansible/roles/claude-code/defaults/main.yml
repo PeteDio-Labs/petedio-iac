@@ -669,3 +669,11 @@ claude_operator_ssh_key_options: >-
 claude_operator_notify_users:
   - "{{ claude_operator_user }}"
   - "{{ claude_ops_user }}"
+
+# --- Break-glass Vault admin for the operator (PET-714) -------------------------------------
+# tasks/breakglass.yml installs /usr/local/bin/vault-breakglass. It needs the Vault CLI from
+# tasks/iac-tools.yml and notify-pedro, which configure-claude-code.yml installs.
+claude_operator_breakglass_enable: true
+claude_operator_vault_addr: https://192.168.50.223:8200
+claude_operator_vault_ca_path: /usr/local/share/petedio/vault-ca.crt
+claude_operator_vault_username: pedro

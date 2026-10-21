@@ -319,6 +319,15 @@
   ansible.builtin.include_tasks: operator-ssh.yml
   when: claude_operator_ssh_enable | bool
 
+# --- Break-glass Vault admin (PET-714) -------------------------------------------------------
+# A one-hour Vault admin shell for the operator account, unlocked with a password and TOTP.
+- name: Install the operator's break-glass Vault login
+  ansible.builtin.include_tasks: breakglass.yml
+  when:
+    - claude_operator_ssh_enable | bool
+    - claude_operator_breakglass_enable | bool
+    - claude_iac_tools_enable | bool
+
 # --- Claude Code settings ------------------------------------------------------------------
 # SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles
 # and one-time prompts land here — so an Ansible-owned copy would silently revert choices
