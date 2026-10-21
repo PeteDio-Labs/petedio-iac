@@ -1,0 +1,73 @@
+---
+# See defaults/main.yml for why this exists and what it cannot see.
+
+- name: Install curl
+  ansible.builtin.apt:
+    name: curl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the config directory
+  ansible.builtin.file:
+    path: /etc/lab-watchdog
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# The webhook URL is the credential: anyone holding it can post to the channel. Land it only
+# when the run carries it, and never print it.
+- name: Land the Discord webhook URL
+  ansible.builtin.copy:
+    content: "{{ lab_watchdog_discord_webhook_url }}\n"
+    dest: /etc/lab-watchdog/discord_webhook
+    owner: root
+    group: root
+    mode: "0600"
+  when: lab_watchdog_discord_webhook_url | length > 0
+  no_log: true
+
+- name: Read back whether the webhook file exists
+  ansible.builtin.stat:
+    path: /etc/lab-watchdog/discord_webhook
+  register: lab_watchdog_webhook
+
+- name: Install the probe
+  ansible.builtin.template:
+    src: lab-watchdog.sh.j2
+    dest: /usr/local/sbin/lab-watchdog
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the units
+  ansible.builtin.template:
+    src: "lab-watchdog.{{ item }}.j2"
+    dest: "/etc/systemd/system/lab-watchdog.{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [service, timer]
+  register: lab_watchdog_units
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: lab_watchdog_units is changed
+
+# The timer runs only once the webhook exists. A timer that probes and cannot post is a
+# green unit over work that never happened.
+- name: Enable the timer when the webhook is present
+  ansible.builtin.systemd:
+    name: lab-watchdog.timer
+    enabled: true
+    state: started
+  when: lab_watchdog_webhook.stat.exists
+
+- name: Say when the timer is not running
+  ansible.builtin.debug:
+    msg: >-
+      /etc/lab-watchdog/discord_webhook is absent, so lab-watchdog.timer is not enabled.
+      Run scripts/seed-lab-watchdog-webhook.sh, then scripts/deploy-lab-watchdog.sh.
+  when: not lab_watchdog_webhook.stat.exists

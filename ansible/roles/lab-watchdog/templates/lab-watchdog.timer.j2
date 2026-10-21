@@ -1,0 +1,11 @@
+# Managed by Ansible: roles/lab-watchdog (PET-707).
+[Unit]
+Description=Run lab-watchdog
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ lab_watchdog_interval }}
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
