@@ -34,8 +34,10 @@ for t in vault jq ansible-playbook; do command -v "$t" >/dev/null || die "$t not
   || die "ansible AppRole creds not in $SECRETS."
 
 step "Reading the webhook from Vault (ansible AppRole)"
+# `key=@file` makes the Vault CLI read the value from the file, so neither the RoleID nor the
+# SecretID reaches argv, where `ps` would show them.
 AN_TOKEN="$(vault write -field=token auth/approle/login \
-  role_id="$(cat "$SECRETS/ansible.role_id")" secret_id="$(cat "$SECRETS/ansible.secret_id")" 2>/dev/null)" \
+  role_id=@"$SECRETS/ansible.role_id" secret_id=@"$SECRETS/ansible.secret_id" 2>/dev/null)" \
   || die "AppRole login failed for 'ansible'. Run ./scripts/pet-secrets doctor to see whether Vault is sealed."
 LAB_WATCHDOG_WEBHOOK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=discord_webhook_url kv/services/lab-watchdog 2>/dev/null || true)"
 unset AN_TOKEN

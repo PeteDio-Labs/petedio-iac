@@ -25,20 +25,26 @@ esac
 HOST="$(hostname)"
 RC=0
 
+# post MESSAGE -> returns 0 when Discord accepted it. A failure also sets RC, the run's exit
+# status, but callers decide each marker from this call's own result, so one failed post
+# cannot leave an unrelated target's marker unwritten.
 post() {
   local body hook
-  hook="$(cat "$HOOK_FILE" 2>/dev/null)" || { echo "no webhook at $HOOK_FILE" >&2; RC=1; return; }
+  hook="$(cat "$HOOK_FILE" 2>/dev/null)" || { echo "no webhook at $HOOK_FILE" >&2; RC=1; return 1; }
   # Messages hold only target names, status codes and the hostname, so there is nothing to escape.
   body="{\"username\":\"lab-watchdog\",\"content\":\"$1\"}"
-  if ! curl -sS -f -m 10 -o /dev/null -H 'Content-Type: application/json' -d "$body" "$hook"; then
+  # The URL is the credential, so it goes to curl on stdin as a config line, never in argv
+  # where `ps` would show it.
+  if ! printf 'url = "%s"\n' "$hook" \
+      | curl -sS -f -m 10 -o /dev/null -K - -H 'Content-Type: application/json' -d "$body"; then
     echo "Discord post failed: $1" >&2
     RC=1
+    return 1
   fi
 }
 
 if [ "$MODE" = test ]; then
-  post "lab-watchdog test from $HOST. If you can read this, the webhook works."
-  [ "$RC" = 0 ] && echo "posted"
+  post "lab-watchdog test from $HOST. If you can read this, the webhook works." && echo "posted"
   exit "$RC"
 fi
 
@@ -62,16 +68,16 @@ if [ "$MODE" = run ]; then
   posted="$([ -e "$STATE/$name.posted" ] && echo 1 || echo 0)"
   if [ "$up" = 1 ]; then
     if [ "$posted" = 1 ]; then
-      post "RECOVERED: $name answers again (status $code). Probe host: $HOST."
-      [ "$RC" = 0 ] && rm -f "$STATE/$name.posted"
+      post "RECOVERED: $name answers again (status $code). Probe host: $HOST." \
+        && rm -f "$STATE/$name.posted"
     fi
     echo 0 > "$STATE/$name.fails"
   else
     fails=$((fails + 1))
     echo "$fails" > "$STATE/$name.fails"
     if [ "$fails" -ge "$THRESHOLD" ] && [ "$posted" = 0 ]; then
-      post "DOWN: $name (status $code) failed $fails runs in a row. Probe host: $HOST."
-      [ "$RC" = 0 ] && : > "$STATE/$name.posted"
+      post "DOWN: $name (status $code) failed $fails runs in a row. Probe host: $HOST." \
+        && : > "$STATE/$name.posted"
     fi
   fi
 fi
@@ -80,8 +86,8 @@ fi
 if [ "$MODE" = run ]; then
   today="$(date +%F)"
   if [ "$(date +%-H)" -ge "$DAILY_HOUR" ] && [ "$(cat "$STATE/daily" 2>/dev/null)" != "$today" ]; then
-    post "lab-watchdog alive on $HOST: $answering of $examined targets answering."
-    [ "$RC" = 0 ] && echo "$today" > "$STATE/daily"
+    post "lab-watchdog alive on $HOST: $answering of $examined targets answering." \
+      && echo "$today" > "$STATE/daily"
   fi
 fi
 echo "examined $examined targets, $answering answering"
