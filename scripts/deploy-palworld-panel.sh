@@ -45,6 +45,11 @@ SSH_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=panel_ssh_private_key kv/
 CD_SNAP="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -format=json kv/services/palworld-panel)" || die "cannot read kv/services/palworld-panel."
 CD_PUB="$(CD_SNAP="$CD_SNAP" python3 -c 'import json,os;print((json.loads(os.environ["CD_SNAP"])["data"]["data"] or {}).get("deploy_ssh_public_key",""))')"
 unset CD_SNAP
+# An empty key must not pass silently: the play would skip installing it, and the CD deploy
+# that reads it would later fail. ALLOW_NO_CD_KEY=1 deploys without it on purpose.
+if [ -z "$CD_PUB" ] && [ "${ALLOW_NO_CD_KEY:-}" != 1 ]; then
+  die "deploy_ssh_public_key is empty. Run scripts/seed-palworld-panel-cd-key.sh, then run this again. ALLOW_NO_CD_KEY=1 skips the key on purpose."
+fi
 
 step "Running configure-palworld-panel.yml (native deploy on 234)"
 cd "$ANSIBLE_DIR"
