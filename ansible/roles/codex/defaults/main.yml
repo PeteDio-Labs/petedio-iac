@@ -32,8 +32,11 @@ codex_reasoning_effort: low
 
 # codex-quota refuses a run once either window reaches its limit. Pedro chose these on
 # 2026-10-01: the worker may use most of the week.
-codex_quota_max_5h_percent: 90
-codex_quota_max_weekly_percent: 85
+#
+# PET-721, temporary: Pedro lifted both caps to 100 on 2026-10-21 to run the PR backlog until
+# Codex limits out, then spend his two free resets. After the second reset, restore 90 and 85.
+codex_quota_max_5h_percent: 100
+codex_quota_max_weekly_percent: 100
 
 # codex-review runs one review at a time. A second caller waits this long for the lock.
 codex_review_lock_wait_s: 3600
