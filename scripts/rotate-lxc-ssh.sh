@@ -76,26 +76,71 @@ die()  { printf '\033[31mERROR\033[0m %s\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '  \033[33mWARN\033[0m %s\n' "$*" >&2; }
 
-for t in vault jq ssh ssh-keygen awk; do command -v "$t" >/dev/null || die "$t not in PATH"; done
-[ -f "$PVE_SSH_KEY" ] || die "No SSH key at $PVE_SSH_KEY. Set PVE_SSH_KEY to the key root on the nodes accepts."
-[ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'. Run from inside the repo or export it."
-
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-
 material() { awk '{print $2}' <<<"$1"; }
 valid_material() { [[ "$1" =~ ^[A-Za-z0-9+/=]{40,}$ ]]; }
 
-# has_key <vmid> <node> <material>: 0 present, 1 absent, anything else is a fault.
+# has_key <vmid> <node> <material>: 0 present, 1 absent, 2 anything else (a fault).
+# The container prints PRESENT or ABSENT itself, so a failed pct exec or ssh, which can also
+# exit 1, prints nothing and cannot pass for "absent". A container with no $AUTH trusts no key
+# from that file, so a missing file is ABSENT. grep exit 2 (a read error) is a fault.
+HAS_KEY_SH='if [ ! -f "$1" ]; then echo ABSENT; exit 0; fi; grep -qF "$2" "$1"; r=$?; if [ $r -eq 0 ]; then echo PRESENT; elif [ $r -eq 1 ]; then echo ABSENT; else echo ERR; fi'
 has_key() {
-  local rc=0
-  on_node "$2" "pct exec $1 -- grep -qF '$3' $AUTH" >/dev/null 2>&1 || rc=$?
-  return "$rc"
+  local out
+  out="$(on_node "$2" "pct exec $1 -- sh -c '$HAS_KEY_SH' _ $AUTH $3" 2>/dev/null)" || return 2
+  case "$out" in
+    PRESENT) return 0 ;;
+    ABSENT) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+# remove_key <vmid> <node> <material>: drops every line holding the material from $AUTH.
+# grep exits 1 when nothing is left, which is fine for the filter but not for this file, so an
+# empty result is refused and the file stays as it was. A grep read error (exit 2 or more) is
+# refused the same way. The container prints OK only after the file is rewritten; anything
+# else, including a failed pct exec, makes this return 1.
+REMOVE_KEY_SH='f="$1"; grep -vF "$2" "$f" > "$f.rot"; r=$?; if [ $r -ge 2 ]; then rm -f "$f.rot"; echo GREP_ERROR; exit 0; fi; if [ ! -s "$f.rot" ]; then rm -f "$f.rot"; echo WOULD_EMPTY; exit 0; fi; cat "$f.rot" > "$f" && rm -f "$f.rot" && echo OK'
+remove_key() {
+  local out
+  out="$(on_node "$2" "pct exec $1 -- sh -c '$REMOVE_KEY_SH' _ $AUTH $3" 2>/dev/null)" || return 1
+  [ "$out" = OK ] || { printf '%s' "$out" > "${TMP:-/tmp}/remove_key_reason" 2>/dev/null || true; return 1; }
+}
+
+# config_ip: reads `pct config` on stdin, prints the first static IPv4 across every netN line
+# (seerr 101 keeps its address on net1), or nothing when every netN is DHCP or has no ip=.
+config_ip() {
+  sed -n 's/^net[0-9][0-9]*:.*,ip=\([0-9][0-9.]*\)\/.*/\1/p' | head -1
+}
+
+# pick_ip: reads candidate IPv4 addresses on stdin, one per line. Prints the first one on the
+# lab LAN (192.168.50.0/24) and nothing else: the Mac reaches no other segment, so a mesh or
+# Docker address would make the probe fail for a reason that has nothing to do with the key.
+pick_ip() {
+  grep -m1 -E '^192\.168\.50\.[0-9]+$' || true
+}
+
+# live_ip <vmid> <node>: asks the running container for its address, for DHCP containers
+# (flaresolverr 102). Prints nothing when no LAN address comes back.
+live_ip() {
+  local out
+  out="$(on_node "$2" "pct exec $1 -- hostname -I" 2>/dev/null | tr ' ' '\n' || true)"
+  if ! grep -qE '^192\.168\.50\.[0-9]+$' <<<"$out"; then
+    out="$(on_node "$2" "pct exec $1 -- ip -4 -o addr show scope global" 2>/dev/null \
+      | grep -oE 'inet [0-9.]+' | awk '{print $2}' || true)"
+  fi
+  pick_ip <<<"$out"
+}
+
+# ctip <node> <vmid> <ip>: the address to use now. A static address passes through; a DHCP
+# container (ip none) is asked again each time, because the lease can change during a run.
+ctip() {
+  if [ "$3" != none ]; then echo "$3"; else live_ip "$2" "$1"; fi
 }
 
 # login <ip> <keyfile>: prints ok, denied or unreachable.
 login() {
   local err rc=0
+  [ -n "$1" ] || { echo unreachable; return; }
   err="$(ssh -n -o ConnectTimeout=6 -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
     -i "$2" "root@$1" true 2>&1 >/dev/null)" || rc=$?
   if [ "$rc" -eq 0 ]; then echo ok
@@ -103,6 +148,16 @@ login() {
   else echo unreachable
   fi
 }
+
+# Tests source this file for the functions above; nothing below runs then.
+[ "${ROTATE_LXC_SSH_SOURCE_ONLY:-}" = 1 ] && return 0
+
+for t in vault jq ssh ssh-keygen awk; do command -v "$t" >/dev/null || die "$t not in PATH"; done
+[ -f "$PVE_SSH_KEY" ] || die "No SSH key at $PVE_SSH_KEY. Set PVE_SSH_KEY to the key root on the nodes accepts."
+[ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'. Run from inside the repo or export it."
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
 step "Authenticating to Vault"
 if [ -z "${VAULT_TOKEN:-}" ]; then
@@ -147,7 +202,7 @@ for node in "${NODES[@]}"; do
   while read -u 3 -r vmid status _; do
     [[ "$vmid" =~ ^[0-9]+$ ]] || continue
     cfg="$(on_node "$node" "pct config $vmid" 2>/dev/null || true)"
-    ip="$(sed -n 's/^net0:.*[,]ip=\([0-9.]*\)\/.*/\1/p' <<<"$cfg" | head -1)"
+    ip="$(config_ip <<<"$cfg")"
     printf '%s %s %s %s\n' "$node" "$vmid" "${ip:-none}" "$status" >> "$ROWS"
   done 3<<<"$(tail -n +2 <<<"$LIST")"
 done
@@ -172,8 +227,9 @@ while read -u 3 -r node vmid ip status; do
     # Not in $AUTH does not mean the old key is refused: a second file or another sshd
     # setting can still trust it. Probe it with the old private key where we hold one.
     if [ -f "$TMP/old_key" ]; then
-      [ "$ip" != none ] || { FAULTS+=("$vmid:no-static-ip"); continue; }
-      r="$(login "$ip" "$TMP/old_key")"
+      a="$(ctip "$node" "$vmid" "$ip")"
+      [ -n "$a" ] || { FAULTS+=("$vmid:no-address"); continue; }
+      r="$(login "$a" "$TMP/old_key")"
       case "$r" in
         denied) ;;
         ok) FAULTS+=("$vmid:old-key-trusted-outside-$AUTH") ;;
@@ -182,9 +238,10 @@ while read -u 3 -r node vmid ip status; do
     fi
     continue
   fi
-  if [ "$ip" = none ]; then FAULTS+=("$vmid:no-static-ip"); continue; fi
+  a="$(ctip "$node" "$vmid" "$ip")"
+  if [ -z "$a" ]; then FAULTS+=("$vmid:no-address"); continue; fi
   printf '%s %s %s %s %s\n' "$node" "$vmid" "$ip" "$hasold" "$hasnew" >> "$TARGETS"
-  echo "  CT $vmid ($ip): old=$hasold new=$hasnew"
+  echo "  CT $vmid ($a): old=$hasold new=$hasnew"
 done 3< "$ROWS"
 NTARGET="$(grep -c . "$TARGETS" || true)"
 PROBED="refused the old private key"; [ -f "$TMP/old_key" ] || PROBED="not probed with the old private key (resume)"
@@ -221,9 +278,9 @@ if [ "$RESUME" -eq 0 ]; then
 
   step "Logging in to every container with the NEW key"
   while read -u 3 -r node vmid ip hasold hasnew; do
-    r="$(login "$ip" "$TMP/new_key")"
-    [ "$r" = ok ] || die "New key: CT $vmid ($ip) answered '$r'. Stopped before Vault changed; the old key still works. A re-run generates another pair and leaves this run's appended key trusted with no private key, so remove lines ending lxc-ssh@petedio-<date> from $AUTH by hand."
-    echo "  CT $vmid ($ip) ok"
+    a="$(ctip "$node" "$vmid" "$ip")"; r="$(login "$a" "$TMP/new_key")"
+    [ "$r" = ok ] || die "New key: CT $vmid (${a:-no address}) answered '$r'. Stopped before Vault changed; the old key still works. A re-run generates another pair and leaves this run's appended key trusted with no private key, so remove lines ending lxc-ssh@petedio-<date> from $AUTH by hand."
+    echo "  CT $vmid (${a:-no address}) ok"
   done 3< "$TARGETS"
 
   step "Writing the new pair to $KV"
@@ -238,16 +295,16 @@ if [ "$RESUME" -eq 0 ]; then
 else
   step "Logging in to every container with the key already in Vault"
   while read -u 3 -r node vmid ip hasold hasnew; do
-    r="$(login "$ip" "$TMP/new_key")"
-    [ "$r" = ok ] || die "Vault's key: CT $vmid ($ip) answered '$r'. Append it to $AUTH on that container, then re-run."
-    echo "  CT $vmid ($ip) ok"
+    a="$(ctip "$node" "$vmid" "$ip")"; r="$(login "$a" "$TMP/new_key")"
+    [ "$r" = ok ] || die "Vault's key: CT $vmid (${a:-no address}) answered '$r'. Append it to $AUTH on that container, then re-run."
+    echo "  CT $vmid (${a:-no address}) ok"
   done 3< "$TARGETS"
 fi
 
 step "Removing the old public key"
 while read -u 3 -r node vmid ip hasold hasnew; do
-  on_node "$node" "pct exec $vmid -- sh -c 'f=$AUTH; { grep -vF \"$OLD_MAT\" \$f || true; } > \$f.rot && cat \$f.rot > \$f && rm -f \$f.rot'" \
-    || die "Could not edit $AUTH on CT $vmid. Vault holds the new pair; re-run to resume."
+  remove_key "$vmid" "$node" "$OLD_MAT" \
+    || die "Could not edit $AUTH on CT $vmid ($(cat "$TMP/remove_key_reason" 2>/dev/null || true); empty means pct exec or ssh failed). The file is unchanged. Vault holds the new pair; re-run to resume."
   echo "  CT $vmid edited"
 done 3< "$TARGETS"
 
@@ -256,10 +313,11 @@ BAD=0
 while read -u 3 -r node vmid ip hasold hasnew; do
   rc=0; has_key "$vmid" "$node" "$OLD_MAT" || rc=$?
   [ "$rc" -eq 1 ] || { warn "CT $vmid: old key still in $AUTH (or unreadable, rc=$rc)"; BAD=$((BAD + 1)); }
-  r="$(login "$ip" "$TMP/new_key")"
+  a="$(ctip "$node" "$vmid" "$ip")"
+  r="$(login "$a" "$TMP/new_key")"
   [ "$r" = ok ] || { warn "CT $vmid: new key answered '$r'"; BAD=$((BAD + 1)); }
   if [ -f "$TMP/old_key" ]; then
-    r="$(login "$ip" "$TMP/old_key")"
+    r="$(login "$a" "$TMP/old_key")"
     [ "$r" = denied ] || { warn "CT $vmid: old private key answered '$r', expected denied"; BAD=$((BAD + 1)); }
   fi
 done 3< "$TARGETS"
