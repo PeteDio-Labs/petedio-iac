@@ -181,8 +181,7 @@
       ansible.builtin.set_fact:
         pete_bot_maintenance_windows: >-
           {%- for job in pete_bot_backup_defaults.backup_store_jobs | selectattr('mode', 'equalto', 'stop') %}
-          {{ pete_bot_timezone_defaults.timezone_name }} {{ job.schedule }} 30{{ ', ' if not loop.last else '' }}
-          {%- endfor %}
+          {{ pete_bot_timezone_defaults.timezone_name }} {{ job.schedule }} 30{{ ', ' if not loop.last else '' }}{%- endfor %}
 
     - name: Assert the secrets were provided
       ansible.builtin.assert:
