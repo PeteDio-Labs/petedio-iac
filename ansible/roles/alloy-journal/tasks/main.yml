@@ -78,7 +78,7 @@
 # write a warning of our own and ask Loki for it. Loki reads the query from a form body on POST only. The canary carries this run's epoch, so an old
 # line cannot satisfy the check.
 - name: Write a canary warning to the journal
-  ansible.builtin.command: "logger -p user.warning -t alloy-journal-canary canary {{ inventory_hostname }} {{ ansible_date_time.epoch }}"
+  ansible.builtin.command: "logger -p user.warning -t alloy-journal-canary canary {{ inventory_hostname }} {{ ansible_facts['date_time']['epoch'] }}"
   changed_when: true
 
 - name: Ask Loki for the canary
@@ -87,7 +87,7 @@
     method: POST
     body_format: form-urlencoded
     body:
-      query: '{host="{{ inventory_hostname }}"} |= "canary {{ inventory_hostname }} {{ ansible_date_time.epoch }}"'
+      query: '{host="{{ inventory_hostname }}"} |= "canary {{ inventory_hostname }} {{ ansible_facts['date_time']['epoch'] }}"'
       since: 10m
       limit: 1
     return_content: true
@@ -102,4 +102,4 @@
   ansible.builtin.debug:
     msg: >-
       alloy is ready on {{ inventory_hostname }}, and Loki returned the canary warning written at
-      {{ ansible_date_time.epoch }}.
+      {{ ansible_facts['date_time']['epoch'] }}.
