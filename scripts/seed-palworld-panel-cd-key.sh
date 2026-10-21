@@ -32,6 +32,7 @@ case "${1:-}" in
   *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
 esac
 
+HOST_NOTE="234 keeps authorizing the old public key until deploy-palworld-panel.sh runs."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEST="kv/services/palworld-panel"
@@ -64,13 +65,22 @@ VERSION="$(SNAP="$SNAP" python3 -c 'import json,os; print(json.loads(os.environ[
 EXISTING_PUB="$(SNAP="$SNAP" python3 -c '
 import json, os
 print((json.loads(os.environ["SNAP"])["data"]["data"] or {}).get("deploy_ssh_public_key", ""))')"
+EXISTING_PRIV="$(SNAP="$SNAP" python3 -c '
+import json, os
+print("yes" if (json.loads(os.environ["SNAP"])["data"]["data"] or {}).get("deploy_ssh_private_key", "") else "")')"
 unset SNAP
 echo "  version $VERSION"
 
 step "Deploy key"
-if [ -n "$EXISTING_PUB" ] && [ "$ROTATE" = 0 ]; then
-  echo "  kept: deploy_ssh_public_key is present. Nothing to write."
+if [ -n "$EXISTING_PUB" ] && [ -n "$EXISTING_PRIV" ] && [ "$ROTATE" = 0 ]; then
+  echo "  kept: both deploy_ssh_public_key and deploy_ssh_private_key are present. Nothing to write."
   exit 0
+fi
+if [ -n "$EXISTING_PUB" ] && [ -z "$EXISTING_PRIV" ] && [ "$ROTATE" = 0 ]; then
+  echo "  deploy_ssh_public_key is present but deploy_ssh_private_key is missing, so I replace the pair."
+fi
+if [ "$ROTATE" = 1 ]; then
+  echo "  rotating. KV v2 keeps the old version. $HOST_NOTE"
 fi
 ssh-keygen -q -t ed25519 -N "" -C palworld-panel-cd -f "$TMP/palworld-panel-cd" || die "ssh-keygen failed."
 echo "  generated a new ed25519 pair"
@@ -86,8 +96,17 @@ print(json.dumps({"deploy_ssh_private_key": os.environ["PRIV"] + "\n",
   || die "vault kv patch failed. If another writer changed $DEST, run this again."
 
 step "Verify, by reading it back"
-vault kv get -field=deploy_ssh_public_key "$DEST" | grep -q '^ssh-ed25519 .* palworld-panel-cd' || die "deploy_ssh_public_key is missing or malformed."
-vault kv get -field=deploy_ssh_private_key "$DEST" | grep -q 'BEGIN OPENSSH PRIVATE KEY' || die "deploy_ssh_private_key is missing."
+# The stored pair must be the pair generated above: the stored public key has the generated
+# fingerprint, and the stored private key derives that same public key.
+WANT_FP="$(ssh-keygen -lf "$TMP/palworld-panel-cd.pub" | awk '{print $2}')"
+vault kv get -field=deploy_ssh_public_key "$DEST" > "$TMP/back.pub" || die "cannot read deploy_ssh_public_key back."
+GOT_FP="$(ssh-keygen -lf "$TMP/back.pub" 2>/dev/null | awk '{print $2}')"
+[ -n "$GOT_FP" ] && [ "$GOT_FP" = "$WANT_FP" ] || die "the stored public key does not match the generated one."
+vault kv get -field=deploy_ssh_private_key "$DEST" > "$TMP/back.key" || die "cannot read deploy_ssh_private_key back."
+chmod 600 "$TMP/back.key"
+[ "$(ssh-keygen -y -f "$TMP/back.key" 2>/dev/null | awk '{print $2}')" = "$(awk '{print $2}' "$TMP/back.pub")" ] \
+  || die "the stored private key does not derive the stored public key."
+echo "  fingerprint $GOT_FP"
 for f in admin_password panel_ssh_private_key; do
   vault kv get -field="$f" "$DEST" >/dev/null 2>&1 || die "$f vanished from $DEST. Restore the previous version with vault kv rollback."
 done

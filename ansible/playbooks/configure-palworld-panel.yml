@@ -99,6 +99,13 @@
         quiet: true
 
   tasks:
+    - name: Say that no palworld-panel-cd key is managed when the public key is empty
+      ansible.builtin.debug:
+        msg: >-
+          panel_cd_public_key is empty, so this run neither authorizes nor revokes a
+          palworld-panel-cd key on this host. Run scripts/seed-palworld-panel-cd-key.sh.
+      when: panel_cd_public_key | length == 0
+
     - name: Authorize the palworld-panel-cd deploy key for root on this host only
       ansible.posix.authorized_key:
         user: root
@@ -123,7 +130,7 @@
         executable: /bin/bash
       register: panel_cd_authorized
       changed_when: false
-      check_mode: false # read-only
+      check_mode: false # read-only; the `when` below still skips it under --check, so a --check run examines nothing here
       failed_when: panel_cd_authorized.stdout_lines != [panel_cd_public_key.split()[1]]
       when: panel_cd_public_key | length > 0 and not ansible_check_mode
 
