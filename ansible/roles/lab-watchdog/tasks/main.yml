@@ -28,6 +28,21 @@
   when: lab_watchdog_discord_webhook_url | length > 0
   no_log: true
 
+# A curl config file: the URL and the secret header stay out of argv when the probe reads it.
+- name: Land the off-site heartbeat config
+  ansible.builtin.copy:
+    content: |
+      url = "{{ lab_watchdog_heartbeat_url }}"
+      header = "x-heartbeat-secret: {{ lab_watchdog_heartbeat_secret }}"
+    dest: /etc/lab-watchdog/heartbeat
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - lab_watchdog_heartbeat_url | length > 0
+    - lab_watchdog_heartbeat_secret | length > 0
+  no_log: true
+
 - name: Read back whether the webhook file exists
   ansible.builtin.stat:
     path: /etc/lab-watchdog/discord_webhook

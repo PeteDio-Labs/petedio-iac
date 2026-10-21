@@ -40,6 +40,9 @@ AN_TOKEN="$(vault write -field=token auth/approle/login \
   role_id=@"$SECRETS/ansible.role_id" secret_id=@"$SECRETS/ansible.secret_id" 2>/dev/null)" \
   || die "AppRole login failed for 'ansible'. Run ./scripts/pet-secrets doctor to see whether Vault is sealed."
 LAB_WATCHDOG_WEBHOOK="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=discord_webhook_url kv/services/lab-watchdog 2>/dev/null || true)"
+# The off-site heartbeat (PET-722) is optional: absent, the in-lab probe still runs.
+HB_URL="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=heartbeat_url kv/services/aws-watchdog 2>/dev/null || true)"
+HB_SECRET="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=heartbeat_secret kv/services/aws-watchdog 2>/dev/null || true)"
 unset AN_TOKEN
 [ -n "$LAB_WATCHDOG_WEBHOOK" ] \
   || die "kv/services/lab-watchdog has no discord_webhook_url. Run ./scripts/seed-lab-watchdog-webhook.sh first."
@@ -47,13 +50,19 @@ case "$LAB_WATCHDOG_WEBHOOK" in
   https://discord.com/api/webhooks/*|https://discordapp.com/api/webhooks/*) echo "  webhook: present" ;;
   *) die "kv/services/lab-watchdog holds a value that is not a Discord webhook URL." ;;
 esac
-export LAB_WATCHDOG_WEBHOOK
+if [ -n "$HB_URL" ] && [ -n "$HB_SECRET" ]; then
+  echo "  off-site heartbeat: present"
+else
+  echo "  off-site heartbeat: not seeded (PET-722), the play leaves the file as it is"
+fi
+export LAB_WATCHDOG_WEBHOOK HB_URL HB_SECRET
 
 umask 077
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-jq -n '{lab_watchdog_discord_webhook_url: env.LAB_WATCHDOG_WEBHOOK}' > "$TMP/extra.json"
-unset LAB_WATCHDOG_WEBHOOK
+jq -n '{lab_watchdog_discord_webhook_url: env.LAB_WATCHDOG_WEBHOOK,
+  lab_watchdog_heartbeat_url: env.HB_URL, lab_watchdog_heartbeat_secret: env.HB_SECRET}' > "$TMP/extra.json"
+unset LAB_WATCHDOG_WEBHOOK HB_SECRET
 
 step "Running configure-lab-watchdog.yml"
 cd "$ANSIBLE_DIR"

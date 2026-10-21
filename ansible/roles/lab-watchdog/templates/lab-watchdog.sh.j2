@@ -90,5 +90,15 @@ if [ "$MODE" = run ]; then
       && echo "$today" > "$STATE/daily"
   fi
 fi
+# The off-site heartbeat (PET-722): tell the AWS watchdog this host is alive. The config file
+# holds the URL and the secret header, so neither reaches argv. A failed beat exits non-zero.
+BEAT_FILE=/etc/lab-watchdog/heartbeat
+if [ "$MODE" = run ] && [ -r "$BEAT_FILE" ]; then
+  if ! curl -sS -f -m 10 -o /dev/null -X POST -K "$BEAT_FILE"; then
+    echo "heartbeat to AWS failed" >&2
+    RC=1
+  fi
+fi
+
 echo "examined $examined targets, $answering answering"
 exit "$RC"
