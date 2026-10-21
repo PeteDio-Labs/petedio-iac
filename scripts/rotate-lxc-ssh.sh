@@ -117,6 +117,7 @@ CUR_JSON="$(vault kv get -format=json "$KV")" || die "Could not read $KV."
 CUR_PUB="$(jq -r '.data.data.public_key // empty' <<<"$CUR_JSON")"
 PREV_PUB="$(jq -r '.data.data.previous_public_key // empty' <<<"$CUR_JSON")"
 [ -n "$CUR_PUB" ] || die "$KV has no public_key."
+jq '.data.data' <<<"$CUR_JSON" > "$TMP/cur_data.json"
 jq -r '.data.data.private_key // empty' <<<"$CUR_JSON" > "$TMP/vault_private"
 [ -s "$TMP/vault_private" ] || die "$KV has no private_key."
 unset CUR_JSON
@@ -166,14 +167,32 @@ while read -u 3 -r node vmid ip status; do
     rc=0; has_key "$vmid" "$node" "$NEW_MAT" || rc=$?
     case "$rc" in 0) hasnew=1 ;; 1) ;; *) FAULTS+=("$vmid:read"); continue ;; esac
   fi
-  if [ "$hasold" -eq 0 ] && [ "$hasnew" -eq 0 ]; then SKIPPED+=("$vmid"); continue; fi
+  if [ "$hasold" -eq 0 ] && [ "$hasnew" -eq 0 ]; then
+    SKIPPED+=("$vmid")
+    # Not in $AUTH does not mean the old key is refused: a second file or another sshd
+    # setting can still trust it. Probe it with the old private key where we hold one.
+    if [ -f "$TMP/old_key" ]; then
+      [ "$ip" != none ] || { FAULTS+=("$vmid:no-static-ip"); continue; }
+      r="$(login "$ip" "$TMP/old_key")"
+      case "$r" in
+        denied) ;;
+        ok) FAULTS+=("$vmid:old-key-trusted-outside-$AUTH") ;;
+        *) FAULTS+=("$vmid:old-key-probe-$r") ;;
+      esac
+    fi
+    continue
+  fi
   if [ "$ip" = none ]; then FAULTS+=("$vmid:no-static-ip"); continue; fi
   printf '%s %s %s %s %s\n' "$node" "$vmid" "$ip" "$hasold" "$hasnew" >> "$TARGETS"
   echo "  CT $vmid ($ip): old=$hasold new=$hasnew"
 done 3< "$ROWS"
 NTARGET="$(grep -c . "$TARGETS" || true)"
-echo "  $NTARGET trust the key; ${#SKIPPED[@]} trust neither (${SKIPPED[*]:-none}); ${#STOPPED[@]} not running (${STOPPED[*]:-none}); ${#FAULTS[@]} unreadable (${FAULTS[*]:-none})."
-[ "${#FAULTS[@]}" -eq 0 ] || die "Could not read or address: ${FAULTS[*]}. Fix these first; nothing was changed."
+PROBED="refused the old private key"; [ -f "$TMP/old_key" ] || PROBED="not probed with the old private key (resume)"
+echo "  $NTARGET trust the key; ${#SKIPPED[@]} do not list it in $AUTH and $PROBED (${SKIPPED[*]:-none}); ${#STOPPED[@]} not running (${STOPPED[*]:-none}); ${#FAULTS[@]} unreadable (${FAULTS[*]:-none})."
+[ "${#FAULTS[@]}" -eq 0 ] || die "Could not read, address or probe: ${FAULTS[*]}. A name ending old-key-trusted-outside means the old private key still logs in there by a path this script does not edit. Fix these first; nothing was changed."
+# Before any change: a stopped container that trusts only the old key would be left behind
+# after Vault and the other containers move on.
+[ "${#STOPPED[@]}" -eq 0 ] || die "Containers not running: ${STOPPED[*]}. Start them, or destroy them, and re-run; nothing was changed."
 [ "$NTARGET" -gt 0 ] || die "No running container trusts the key. Refusing to continue; nothing was changed."
 
 if [ "$CHECK" -eq 1 ]; then
@@ -189,26 +208,29 @@ if [ "$RESUME" -eq 0 ]; then
   NEW_MAT="$(material "$NEW_PUB")"
   valid_material "$NEW_MAT" || die "The generated public key material does not look like base64."
 
+  # Add a newline first when the file lacks one, or the new key glues onto the last line.
+  APPEND_SH='f=/root/.ssh/authorized_keys; if [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ]; then echo >> "$f"; fi; cat >> "$f"'
+
   step "Appending the new public key"
   while read -u 3 -r node vmid ip hasold hasnew; do
     if [ "$hasnew" -eq 1 ]; then echo "  CT $vmid already has it"; continue; fi
-    printf '%s\n' "$NEW_PUB" | on_node "$node" "pct exec $vmid -- sh -c 'cat >> $AUTH'" \
-      || die "Could not append to CT $vmid. Both keys are still valid everywhere; Vault is unchanged."
+    printf '%s\n' "$NEW_PUB" | on_node "$node" "pct exec $vmid -- sh -c '$APPEND_SH'" \
+      || die "Could not append to CT $vmid. Vault is unchanged and the old key still works everywhere; CTs appended before this one keep the new key, which a re-run does not reuse."
     echo "  CT $vmid appended"
   done 3< "$TARGETS"
 
   step "Logging in to every container with the NEW key"
   while read -u 3 -r node vmid ip hasold hasnew; do
     r="$(login "$ip" "$TMP/new_key")"
-    [ "$r" = ok ] || die "New key: CT $vmid ($ip) answered '$r'. Stopped before Vault changed; the old key still works. A re-run generates another pair, so remove stray lines from $AUTH by hand if this repeats."
+    [ "$r" = ok ] || die "New key: CT $vmid ($ip) answered '$r'. Stopped before Vault changed; the old key still works. A re-run generates another pair and leaves this run's appended key trusted with no private key, so remove lines ending lxc-ssh@petedio-<date> from $AUTH by hand."
     echo "  CT $vmid ($ip) ok"
   done 3< "$TARGETS"
 
   step "Writing the new pair to $KV"
-  printf '%s' "$NEW_PUB" > "$TMP/new_pub_value"
-  printf '%s' "$CUR_PUB" > "$TMP/old_pub_value"
-  vault kv put "$KV" public_key=@"$TMP/new_pub_value" private_key=@"$TMP/new_key" \
-    previous_public_key=@"$TMP/old_pub_value" >/dev/null \
+  jq --rawfile pub "$TMP/new_key.pub" --rawfile priv "$TMP/new_key" --arg prev "$CUR_PUB" \
+    '. + {public_key: ($pub | rtrimstr("\n")), private_key: $priv, previous_public_key: $prev}' \
+    "$TMP/cur_data.json" > "$TMP/put1.json"
+  vault kv put "$KV" @"$TMP/put1.json" >/dev/null \
     || die "vault kv put failed. Both keys still work on every container; Vault still holds the old pair."
   GOT="$(vault kv get -field=public_key "$KV")"
   [ "$(material "$GOT")" = "$NEW_MAT" ] || die "Vault read-back does not hold the new public key."
@@ -245,25 +267,23 @@ done 3< "$TARGETS"
 OLDCHECK="old private key refused"; [ -f "$TMP/old_key" ] || OLDCHECK="old key material absent from $AUTH (old private key not tested on a resume)"
 echo "  $NTARGET containers: new key logs in; $OLDCHECK."
 
-[ "${#STOPPED[@]}" -eq 0 ] || die "Not rotated, containers not running: ${STOPPED[*]}. Start them and re-run; previous_public_key stays in Vault so the re-run resumes."
-
 step "Clearing previous_public_key from Vault"
-printf '%s' "$(cat "$TMP/new_key.pub")" > "$TMP/new_pub_value"
-vault kv put "$KV" public_key=@"$TMP/new_pub_value" private_key=@"$TMP/new_key" >/dev/null \
+# Re-read, so a field another writer added since the start survives; drop only previous_public_key.
+vault kv get -format=json "$KV" | jq '.data.data | del(.previous_public_key)' > "$TMP/put2.json" \
+  || die "Could not read $KV to clear previous_public_key. The rotation is done; delete that field by hand."
+vault kv put "$KV" @"$TMP/put2.json" >/dev/null \
   || die "Could not clear previous_public_key. The rotation is done; delete that field by hand."
 echo "  done."
 
 if [ "$LOCAL" -eq 1 ]; then
   step "Replacing $LOCAL_KEY"
   mkdir -p "$(dirname "$LOCAL_KEY")"
-  if [ -f "$LOCAL_KEY" ]; then
-    cp -p "$LOCAL_KEY" "$LOCAL_KEY.pre-rotation-$(date +%Y%m%d)"
-    echo "  old copy kept as $LOCAL_KEY.pre-rotation-$(date +%Y%m%d); delete it when you are done."
-  fi
+  # No backup: the old private key is refused everywhere now, and a copy would leave it
+  # outside this script's 0700 directory.
   cat "$TMP/new_key" > "$LOCAL_KEY"
   cat "$TMP/new_key.pub" > "$LOCAL_KEY.pub"
 fi
 
 echo
-echo "Rotated kv/iac/lxc-ssh: examined $TOTAL containers on ${#NODES[@]} nodes, rotated $NTARGET, ${#SKIPPED[@]} trusted neither key."
-echo "Next: other copies of the old private key (a Mac backup, a runner file) still open nothing, but delete them."
+echo "Rotated kv/iac/lxc-ssh: examined $TOTAL containers on ${#NODES[@]} nodes, rotated $NTARGET, ${#SKIPPED[@]} did not list the old key ($PROBED)."
+echo "Next: delete other copies of the old private key (a Mac backup, a runner file); they open nothing now."
