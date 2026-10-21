@@ -40,7 +40,49 @@
   # these containers; this group exists only to answer "who may mtrace log into", which is
   # a fact about mtrace rather than about the media stack. Keeping it declarative here beats
   # a distribution script nobody re-runs — workflow rule 6.
+  # The public half of the media-dash-cd deploy key (PET-724), from kv/services/media/dashboard
+  # field deploy_ssh_public_key (scripts/seed-media-dash-cd-key.sh). The GitHub deploy connects
+  # with the private half, so it reaches these seven hosts and no other LXC. Empty skips it.
+  vars:
+    media_dash_cd_public_key: ""
+
   tasks:
+    - name: Authorize the media-dash-cd deploy key for root on this host only
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ media_dash_cd_public_key }}"
+        comment: media-dash-cd
+        state: present
+        exclusive: false
+      when: media_dash_cd_public_key | length > 0
+
+    # authorized_key with state: present adds a key and never removes another, so a rotated
+    # key would stay authorized as root. Drop every other media-dash-cd line. mtrace's own key
+    # carries no such comment, and neither do the ansible and operator keys.
+    - name: Remove superseded media-dash-cd deploy keys
+      ansible.builtin.replace:
+        path: /root/.ssh/authorized_keys
+        regexp: '(?m)^ssh-ed25519 (?!{{ media_dash_cd_public_key.split()[1] | regex_escape }}[ \t])\S+ media-dash-cd[ \t]*\n'
+        replace: ""
+      when: media_dash_cd_public_key | length > 0
+
+    - name: Check that exactly one media-dash-cd key is authorized, and it is the current one
+      ansible.builtin.shell:
+        cmd: set -o pipefail; grep -E ' media-dash-cd[[:space:]]*$' /root/.ssh/authorized_keys | awk '{print $2}'
+        executable: /bin/bash
+      register: media_dash_cd_authorized
+      changed_when: false
+      check_mode: false # read-only; the `when` below still skips it under --check, so a --check run examines nothing here
+      failed_when: media_dash_cd_authorized.stdout_lines != [media_dash_cd_public_key.split()[1]]
+      when: media_dash_cd_public_key | length > 0 and not ansible_check_mode
+
+    - name: Say that no media-dash-cd key is managed when the public key is empty
+      ansible.builtin.debug:
+        msg: >-
+          media_dash_cd_public_key is empty, so this run neither authorizes nor revokes a
+          media-dash-cd key on this host. Run scripts/seed-media-dash-cd-key.sh.
+      when: media_dash_cd_public_key | length == 0
+
     - name: Assert the public key was provided (use scripts/deploy-media-dash.sh)
       ansible.builtin.assert:
         that:
@@ -78,6 +120,8 @@
   become: true
 
   vars:
+    # See the first play: the media-dash-cd deploy key's public half. Empty skips it.
+    media_dash_cd_public_key: ""
     mtrace_dir: /opt/mtrace
     mtrace_bin: /opt/mtrace/mtrace
     mtrace_user: mtrace
@@ -168,6 +212,42 @@
         quiet: true
 
   tasks:
+    - name: Authorize the media-dash-cd deploy key for root on this host only
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ media_dash_cd_public_key }}"
+        comment: media-dash-cd
+        state: present
+        exclusive: false
+      when: media_dash_cd_public_key | length > 0
+
+    # authorized_key with state: present adds a key and never removes another, so a rotated
+    # key would stay authorized as root. Drop every other media-dash-cd line. mtrace's own key
+    # carries no such comment, and neither do the ansible and operator keys.
+    - name: Remove superseded media-dash-cd deploy keys
+      ansible.builtin.replace:
+        path: /root/.ssh/authorized_keys
+        regexp: '(?m)^ssh-ed25519 (?!{{ media_dash_cd_public_key.split()[1] | regex_escape }}[ \t])\S+ media-dash-cd[ \t]*\n'
+        replace: ""
+      when: media_dash_cd_public_key | length > 0
+
+    - name: Check that exactly one media-dash-cd key is authorized, and it is the current one
+      ansible.builtin.shell:
+        cmd: set -o pipefail; grep -E ' media-dash-cd[[:space:]]*$' /root/.ssh/authorized_keys | awk '{print $2}'
+        executable: /bin/bash
+      register: media_dash_cd_authorized
+      changed_when: false
+      check_mode: false # read-only; the `when` below still skips it under --check, so a --check run examines nothing here
+      failed_when: media_dash_cd_authorized.stdout_lines != [media_dash_cd_public_key.split()[1]]
+      when: media_dash_cd_public_key | length > 0 and not ansible_check_mode
+
+    - name: Say that no media-dash-cd key is managed when the public key is empty
+      ansible.builtin.debug:
+        msg: >-
+          media_dash_cd_public_key is empty, so this run neither authorizes nor revokes a
+          media-dash-cd key on this host. Run scripts/seed-media-dash-cd-key.sh.
+      when: media_dash_cd_public_key | length == 0
+
     - name: Create the service account
       ansible.builtin.user:
         name: "{{ mtrace_user }}"

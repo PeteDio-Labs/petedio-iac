@@ -87,6 +87,14 @@ PB_DESK_APP_PEM="$(field desk_app_pem)"
 # Optional (PET-701): a read-only Plane token for the scheduled reports. With it and the desk
 # App, the reports turn on. scripts/seed-pete-bot-plane-key.sh writes it.
 PB_PLANE_API_KEY="$(field plane_api_key)"
+# Optional (PET-724): the public half of the pete-bot-cd deploy key. The play authorizes it
+# for root on 237 only. scripts/seed-pete-bot-cd-key.sh writes it.
+PB_CD_PUBLIC_KEY="$(field deploy_ssh_public_key)"
+# An empty key must not pass silently: the play would skip installing it, and the CD deploy
+# that reads it would later fail. ALLOW_NO_CD_KEY=1 deploys without it on purpose.
+if [ -z "$PB_CD_PUBLIC_KEY" ] && [ "${ALLOW_NO_CD_KEY:-}" != 1 ]; then
+  die "deploy_ssh_public_key is empty. Run scripts/seed-pete-bot-cd-key.sh, then run this again. ALLOW_NO_CD_KEY=1 skips the key on purpose."
+fi
 # Optional (PET-617), together or not at all: the gateway's Anthropic key and lab-map's
 # bearer. Absent leaves the gateway off. scripts/seed-llm-gateway.sh writes both, and the
 # play refuses one without the other.
@@ -142,6 +150,7 @@ PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
 PB_ANTHROPIC_KEY="$PB_ANTHROPIC_KEY" PB_GATEWAY_LAB_MAP="$PB_GATEWAY_LAB_MAP" \
 PB_DESK_APP_ID="$PB_DESK_APP_ID" PB_DESK_INSTALLATION_ID="$PB_DESK_INSTALLATION_ID" \
 PB_DESK_APP_PEM="$PB_DESK_APP_PEM" PB_PLANE_API_KEY="$PB_PLANE_API_KEY" \
+PB_CD_PUBLIC_KEY="$PB_CD_PUBLIC_KEY" \
 python3 -c '
 import json, os
 json.dump({
@@ -158,6 +167,7 @@ json.dump({
     "pete_bot_desk_installation_id": os.environ.get("PB_DESK_INSTALLATION_ID", ""),
     "pete_bot_desk_app_pem":         os.environ.get("PB_DESK_APP_PEM", ""),
     "pete_bot_plane_api_key":        os.environ.get("PB_PLANE_API_KEY", ""),
+    "pete_bot_cd_public_key":        os.environ.get("PB_CD_PUBLIC_KEY", ""),
 }, open(os.environ["OUT"], "w"))
 '
 

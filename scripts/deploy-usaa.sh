@@ -90,6 +90,7 @@ optional = {
     "usaa_bobberto_bearer": (svc, "bobberto_bearer_token", "Bobberto cannot push or read: run seed-usaa-batsy-token.sh --agent bobberto"),
     "usaa_calendar_ics_url": (svc, "calendar_ics_url", "the month view has no calendar: run seed-usaa-calendar-url.sh"),
     "usaa_notify_bearer": (pb, "notify_bearer_token", "alerts stay on /month and reach no DM"),
+    "usaa_cd_public_key": (svc, "deploy_ssh_public_key", "the GitHub deploy cannot connect: run seed-usaa-cd.sh, then this script"),
 }
 out = {
     "usaa_db_password": db["password"],
