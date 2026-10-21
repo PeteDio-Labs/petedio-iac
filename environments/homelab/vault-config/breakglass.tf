@@ -15,8 +15,9 @@
 # its lifetime: it can grant itself anything. The explicit denies below stop an accidental read
 # of kv/admin/*, not a determined one. The containment is who can mint it (Pedro's password and
 # his phone's TOTP), where it works (token_bound_cidrs, set by the seed script to 247's /32),
-# and for how long (one hour, not renewable). The root token and the unseal keys still never
-# land on 247.
+# and for how long: token_explicit_max_ttl=1h, also set by the seed script, is fixed into each
+# issued token at login, so neither a renewal nor a raised token_max_ttl on the user extends
+# it. The root token and the unseal keys still never land on 247.
 #
 # The user, its password and its TOTP secret are NOT here: a password in this config would sit
 # in the state file. scripts/seed-breakglass-247.sh creates them once, from the Mac, with the

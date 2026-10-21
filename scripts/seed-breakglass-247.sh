@@ -3,7 +3,10 @@
 #
 # Run once, on the Mac, after environments/homelab/vault-config/breakglass.tf is applied. It:
 #   1. creates the userpass user with a password you type (never echoed, never on argv),
-#      bound to the breakglass-247 policy, a one-hour token and 247's address only;
+#      bound to the breakglass-247 policy, a one-hour token and 247's address only.
+#      token_explicit_max_ttl fixes the ceiling INTO each issued token: the token is renewable,
+#      and Vault re-reads the user's token_max_ttl at renewal, which this policy could raise.
+#      The explicit max cannot be raised for a token already issued;
 #   2. creates the identity entity and the alias that ties the user to it;
 #   3. enrols that entity on the TOTP method, and shows the QR code for your authenticator app.
 #
@@ -81,7 +84,7 @@ read -rsp "Same password again: " pw2; echo
 [ "${#pw1}" -ge 16 ] || die "the password is shorter than 16 characters. Nothing was written."
 # password=- reads the value from stdin, so it never appears in argv or `ps`.
 printf '%s' "$pw1" | vault write "auth/$MOUNT/users/$USERNAME" password=- \
-  token_policies="$POLICY" token_ttl=1h token_max_ttl=1h \
+  token_policies="$POLICY" token_ttl=1h token_max_ttl=1h token_explicit_max_ttl=1h \
   token_bound_cidrs="$BOUND_CIDR" token_type=service >/dev/null
 unset pw1 pw2
 
@@ -121,8 +124,8 @@ read -rp "Scan the code into your authenticator app, then press Enter to delete 
 step "Reading the user back"
 vault read -format=json "auth/$MOUNT/users/$USERNAME" | jq -e --arg p "$POLICY" --arg c "$BOUND_CIDR" '
   .data.token_policies == [$p] and .data.token_ttl == 3600 and .data.token_max_ttl == 3600
-  and .data.token_bound_cidrs == [$c]' >/dev/null \
+  and .data.token_explicit_max_ttl == 3600 and .data.token_bound_cidrs == [$c]' >/dev/null \
   || die "the user's token settings did not read back as written."
-echo "user $USERNAME: policy $POLICY, 1-hour token, bound to $BOUND_CIDR"
+echo "user $USERNAME: policy $POLICY, 1-hour token with a fixed 1-hour ceiling, bound to $BOUND_CIDR"
 echo
 echo "Done. On 247, as $USERNAME: vault-breakglass"
