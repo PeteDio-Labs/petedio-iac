@@ -580,7 +580,7 @@ resource "vault_policy" "claude_247_deploy" {
 
 # claude-ops: the policy behind auth.tf's claude-ops token role, minted by
 # scripts/seed-claude-ops-vault-token.sh onto claude-247 for claude-ops, Pedro's Remote
-# Control identity (PET-531). READ only, on 27 named secrets — no list, no
+# Control identity (PET-531). READ only, on 24 named secrets — no list, no
 # create/update/delete, and no App keys.
 #
 # Pedro's decision: exact paths, not a wildcard glob, and no `kv/metadata/*` grant either.
@@ -588,7 +588,7 @@ resource "vault_policy" "claude_247_deploy" {
 # (deploy-claude-247.sh, apply-vault-config.sh, seed-*.sh) or write there — never a GitHub
 # App's private key. `vault kv get` on a named path needs no `list`, and nothing in
 # `ansible/roles/claude-code` or `scripts/seed-claude-ops-*` calls `vault kv list` or reads
-# `kv/metadata/*`, so claude-ops can read exactly these 27 secrets and cannot discover, list
+# `kv/metadata/*`, so claude-ops can read exactly these 24 secrets and cannot discover, list
 # or enumerate any other name under `services/`, `iac/` or `db/`.
 #
 # The Mac's seed-* scripts write these paths from the Mac with the admin token;
@@ -610,6 +610,16 @@ resource "vault_policy" "claude_247_deploy" {
 #
 # A new secret needs a policy change to be readable here, and that is by design: adding a
 # path is a reviewable diff, not a standing grant that widens itself.
+#
+# ⚠ NO STANDING ROOT (Pedro's decision, PET-725, 2026-10-21). Three paths left this policy
+# because each one is a route to root on 247 itself, which lets a session read the break-glass
+# Vault token out of the operator's shell (PET-714):
+#   kv/iac/lxc-ssh          — root on every Terraform LXC, 247, Vault 223 and runner 232
+#   kv/iac/proxmox          — Terraform's PVEVMAdmin token, which includes a guest console
+#   kv/iac/github-runner-pat — registers a runner that can pick up the jobs that mint
+#                              claude-247-deploy, which reads lxc-ssh
+# Root on hosts is break-glass: the breakglass-247 policy reads kv/data/*, so Pedro's unlocked
+# shell on 247 reaches all three. Do not add any of them back here.
 #
 # ⚠ NEVER kv/data/admin/*. Every other broad-scoped policy in this file (ci-read, terraform,
 # ansible) read kv/data/admin/* until PET-702, and that prefix is where the Vault ROOT TOKEN and the
@@ -634,14 +644,6 @@ resource "vault_policy" "claude_ops" {
       capabilities = ["read"]
     }
 
-    path "kv/data/iac/github-runner-pat" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/iac/minio" {
       capabilities = ["read"]
     }
@@ -651,10 +653,6 @@ resource "vault_policy" "claude_ops" {
     }
 
     path "kv/data/iac/minio-root" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/iac/proxmox" {
       capabilities = ["read"]
     }
 

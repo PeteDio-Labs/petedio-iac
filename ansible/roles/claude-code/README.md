@@ -571,7 +571,7 @@ Pedro's word (the order is at the end of this section).
 | Remote Control | one unit, `claude-remote-ops.service`, session name prefix `ops` |
 | GitHub | a fifth App (`kv/services/claude-ops-github`), `contents`, `pull_requests` and `workflows` write on whatever it is installed on under `PeteDio-Labs` — not a fixed repo list like code-push's |
 | Vault | a **policy token**, role `claude-ops`, read-and-list only, `token_period` 7 days, `token_explicit_max_ttl` 90 days, renewed daily by `claude-ops-vault-renew.timer` — **never root, never the unseal key** |
-| SSH | an ed25519 key generated on the host, as `claude-ops`; reaches `pve02` and `pve03` as `root` |
+| SSH | two ed25519 keys generated on the host, as `claude-ops`: one queues Codex reviews on `codex-248`, one opens the seven media hosts as `root`. **No root on the Proxmox nodes or the core LXCs** (PET-725): that is break-glass |
 
 **The GitHub App can touch `.github/workflows/**`, unlike every other App in this role.** The
 others (mirror, vault, code-push) all lack `workflows` permission on purpose, so a
@@ -585,7 +585,7 @@ it, the same as everywhere else in this repo.
 
 ### Seeding it
 
-Three scripts, modeled on `scripts/seed-claude-code-app.sh` and `scripts/apply-vault-config.sh`:
+These scripts are modeled on `scripts/seed-claude-code-app.sh` and `scripts/apply-vault-config.sh`:
 
 - `scripts/seed-claude-ops-app.sh` proves the App's permissions and its `PeteDio-Labs`-only
   token scope, refuses an App id collision against the mirror, vault or code-push Apps,
@@ -593,12 +593,14 @@ Three scripts, modeled on `scripts/seed-claude-code-app.sh` and `scripts/apply-v
 - `scripts/seed-claude-ops-vault-token.sh` mints a `role=claude-ops` Vault token and delivers
   it over `ssh root@pve03 "pct exec 247 -- ..."`, installed `0400 claude-ops:claude-ops` at
   `~/.config/claude-ops-vault/token`. The role never writes or reads that file.
-- `scripts/seed-claude-ops-ssh.sh` reads the claude-ops public key back from 247 through
-  pve02, authorizes it in `/etc/pve/priv/authorized_keys` (never `/root/.ssh/authorized_keys`,
-  which is a pmxcfs symlink replaced at `pve-cluster` start), and reads it back on pve03 to
-  prove the cluster propagated it.
+- `scripts/seed-claude-ops-media-ssh.sh` reads the media public key back from 247 and
+  authorizes it for `root` on the seven media hosts (PET-725).
+- `scripts/revoke-claude-ops-node-key.sh` removes claude-ops's key from
+  `/etc/pve/priv/authorized_keys` on pve02 and proves pve03 dropped it too (PET-725). It
+  replaced `scripts/seed-claude-ops-ssh.sh`, which granted node root from PET-531 until
+  2026-10-21. Root on a node reaches 247 through `pct exec`, so it is break-glass now.
 
-**All three refuse to prompt for the Vault root token.** They read `$VAULT_TOKEN`, then the
+**The two Vault scripts refuse to prompt for the Vault root token.** They read `$VAULT_TOKEN`, then the
 macOS Keychain item `vault-root-token`, then exit non-zero — never `read -rsp`. Every secret
 travels over stdin, never argv.
 

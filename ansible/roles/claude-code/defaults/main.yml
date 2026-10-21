@@ -566,30 +566,32 @@ claude_ops_vault_renew_bin: "{{ claude_ops_home }}/.local/bin/claude-ops-vault-r
 # renewed forever. The timer below renews it daily, well inside the period.
 claude_ops_vault_renew_oncalendar: "03:00"
 
-# --- SSH to the Proxmox nodes -------------------------------------------------------------
+# --- SSH: codex-248 and the media hosts ----------------------------------------------------
 # claude_ops_ssh_key is generated ON THE HOST, as claude-ops, so its private half NEVER
 # leaves 247 — not into Vault, not into CI, not into a Terraform state. tasks/claude-ops.yml runs `ssh-keygen`
-# only when the file is absent, so a re-run never overwrites a key pve02 already trusts.
-# scripts/seed-claude-ops-ssh.sh reads back the PUBLIC half only and authorizes it on pve02,
-# which pmxcfs then carries to pve03.
+# only when the file is absent, so a re-run never overwrites a key a host already trusts.
+# roles/codex authorizes it on codex-248 behind a forced command. It reached pve02 and pve03
+# as root until PET-725; scripts/revoke-claude-ops-node-key.sh removes that grant.
 claude_ops_ssh_key: "{{ claude_ops_home }}/.ssh/id_ed25519"
 
-# StrictHostKeyChecking=accept-new: trust a node's key on the first connection and pin it
+# StrictHostKeyChecking=accept-new: trust a host's key on the first connection and pin it
 # after that, rather than either failing cold on an unknown host or accepting a changed one
-# silently. `user` defaults to root, because there is no operator account on either Proxmox
-# node — the same posture ansible/inventory reaches them with.
+# silently. `user` defaults to root, the account the media hosts are reached as.
 #
 # codex-248 takes the same key as codex. roles/codex authorizes it there with a forced
 # command, codex-review-gate, so `ssh codex-248 codex-review <repo> <pr> <effort>` queues a
 # review and every other request is refused (PET-591).
+#
+# ⚠ NO PROXMOX NODES HERE (PET-725, Pedro's decision 2026-10-21). pve02 and pve03 were
+# targets until then. Root on a node reaches 247 through `pct exec`, which would let a
+# session read the break-glass Vault token from the operator's shell (PET-714). Root on the
+# nodes is break-glass now; scripts/revoke-claude-ops-node-key.sh removes the old grant.
 claude_ops_ssh_targets:
-  - { name: pve02, host: 192.168.50.11 }
-  - { name: pve03, host: 192.168.50.10 }
   - { name: codex-248, host: 192.168.50.248, user: codex }
-  # The media hosts take claude_ops_media_ssh_key, a COPY of the Mac's id_ed25519_ansible,
-  # the key Terraform installs for root on every media LXC (PET-662). Pedro chose the copy
-  # over a key generated here. A Mac session places it on his word; this role never sees it.
-  # Until it is placed, `ssh <media host>` fails. Addresses follow petedio-media-iac's
+  # The media hosts take claude_ops_media_ssh_key, a key generated HERE for the media hosts
+  # alone (PET-725). Until then it was a copy of the Mac's id_ed25519_ansible (PET-662), which
+  # is also root on 247 and the core LXCs. scripts/seed-claude-ops-media-ssh.sh authorizes the
+  # new key on the seven hosts below; until it runs, `ssh <media host>` fails. Addresses follow petedio-media-iac's
   # ansible/inventory/hosts.yml, which owns them, and inventory/media-dash.yml for 237.
   - { name: seerr, host: 192.168.50.33, key: "{{ claude_ops_media_ssh_key }}" }            # 101
   - { name: sonarr, host: 192.168.50.15, key: "{{ claude_ops_media_ssh_key }}" }           # 104
@@ -599,8 +601,14 @@ claude_ops_ssh_targets:
   - { name: plex-gpu, host: 192.168.86.236, key: "{{ claude_ops_media_ssh_key }}" }        # 236, .86 only
   - { name: media-dash-237, host: 192.168.50.237, key: "{{ claude_ops_media_ssh_key }}" }  # 237, mtrace
 
-# Where the Mac session places the copy: owner claude-ops, mode 0600 (PET-662).
-claude_ops_media_ssh_key: "{{ claude_ops_home }}/.ssh/id_ed25519_ansible"
+# Generated on this host, as claude-ops, like claude_ops_ssh_key (PET-725).
+claude_ops_media_ssh_key: "{{ claude_ops_home }}/.ssh/id_ed25519_media"
+
+# The copy of the Mac's id_ed25519_ansible that PET-662 placed. tasks/claude-ops.yml removes
+# it: that key is root on 247 and every core LXC, so no session here may hold it (PET-725).
+claude_ops_retired_ssh_keys:
+  - "{{ claude_ops_home }}/.ssh/id_ed25519_ansible"
+  - "{{ claude_ops_home }}/.ssh/id_ed25519_ansible.pub"
 
 # --- The Remote Control server ------------------------------------------------------------
 # ONE unit, ONE directory: the petedio-workspace clone above. Not an entry in
