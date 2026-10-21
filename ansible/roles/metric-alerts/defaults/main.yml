@@ -16,7 +16,8 @@ metric_alerts_interval: "5min"
 metric_alerts_rules:
   - name: coverage
     summary: "Fewer than 15 node exporters answer, so the other rules may be reading an empty store"
-    expr: 'count(up{job="node"} == 1) < 15'
+    # `or vector(0)` matters: with no node targets, count() returns nothing and the rule would read green.
+    expr: '(count(up{job="node"} == 1) or vector(0)) < 15'
     for_runs: 2
   - name: host-down
     summary: "A node exporter does not answer"

@@ -121,6 +121,27 @@ posts.clear()
 rc, _, new = run({}, [series("a")], rules=[dict(RULES[0], for_runs=1)], mode="check")
 check("--check posts nothing", posts == [])
 
+# 7b. The coverage rule must fire on an empty store. count() over nothing returns nothing, so the
+# shipped expression needs `or vector(0)`. The evaluator side: the series that `vector(0) < 15`
+# returns has no labels, and the evaluator must treat it as one firing series.
+import yaml  # noqa: E402
+
+with open(os.path.join(ROOT, "ansible", "roles", "metric-alerts", "defaults", "main.yml")) as fh:
+    shipped = yaml.safe_load(fh)["metric_alerts_rules"]
+coverage = [r for r in shipped if r["name"] == "coverage"]
+check("the shipped coverage rule exists", len(coverage) == 1)
+check("the coverage rule falls back to vector(0) so an empty store fires",
+      bool(coverage) and "or vector(0)" in coverage[0]["expr"], coverage[0]["expr"] if coverage else "")
+bare = [r["name"] for r in shipped if "count(" in r["expr"] and "< " in r["expr"] and "vector(0)" not in r["expr"]]
+check("no count()-below-threshold rule lacks the empty-store fallback", bare == [], str(bare))
+posts.clear()
+empty_label = {"metric": {}, "value": [0, "0"]}
+cov_rule = [dict(coverage[0], for_runs=1)] if coverage else RULES
+rc, _, state = run({}, [empty_label], rules=cov_rule)
+check("an empty-label series (zero exporters) posts FIRING", len(posts) == 1 and posts[0].startswith("FIRING"), str(posts))
+rc, lines, _ = run({}, [], rules=cov_rule)
+check("a rule that returns nothing prints how many it examined", any("examined, 0 firing" in l for l in lines), str(lines))
+
 # 8. End to end: a local store, a curl shim, and the real script. The token must stay out of argv.
 answers = {"result": [series("e2e")]}
 
