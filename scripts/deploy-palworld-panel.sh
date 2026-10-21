@@ -39,6 +39,17 @@ AN_TOKEN="$(applogin ansible)"
 ADMIN_PW="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=admin_password kv/services/palworld-panel)" || die "cannot read admin_password."
 SSH_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=panel_ssh_private_key kv/services/palworld-panel)" || die "cannot read panel_ssh_private_key."
 [ -n "$ADMIN_PW" ] && [ -n "$SSH_KEY" ] || die "a required secret was empty."
+# Optional (PET-724): the public half of the palworld-panel-cd deploy key. A failed read must
+# stop here, so only a path that lacks the field yields an empty value. To seed it, run
+# scripts/seed-palworld-panel-cd-key.sh.
+CD_SNAP="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -format=json kv/services/palworld-panel)" || die "cannot read kv/services/palworld-panel."
+CD_PUB="$(CD_SNAP="$CD_SNAP" python3 -c 'import json,os;print((json.loads(os.environ["CD_SNAP"])["data"]["data"] or {}).get("deploy_ssh_public_key",""))')"
+unset CD_SNAP
+# An empty key must not pass silently: the play would skip installing it, and the CD deploy
+# that reads it would later fail. ALLOW_NO_CD_KEY=1 deploys without it on purpose.
+if [ -z "$CD_PUB" ] && [ "${ALLOW_NO_CD_KEY:-}" != 1 ]; then
+  die "deploy_ssh_public_key is empty. Run scripts/seed-palworld-panel-cd-key.sh, then run this again. ALLOW_NO_CD_KEY=1 skips the key on purpose."
+fi
 
 step "Running configure-palworld-panel.yml (native deploy on 234)"
 cd "$ANSIBLE_DIR"
@@ -47,6 +58,7 @@ cat > "$EVARS" <<JSON
 {
   "palworld_admin_password": $(printf '%s' "$ADMIN_PW" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
   "panel_ssh_private_key": $(printf '%s' "$SSH_KEY" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))'),
+  "panel_cd_public_key": $(printf '%s' "$CD_PUB" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read().strip()))'),
   "palworld_panel_src": $(printf '%s' "$PANEL_SRC" | python3 -c 'import sys,json;print(json.dumps(sys.stdin.read()))')
 }
 JSON
