@@ -21,7 +21,12 @@ what was examined, so "0 problems" cannot hide "0 examined".
 Usage:
   scripts/secrets-register.py                 offline: register against code
   scripts/secrets-register.py --live          also read Vault KV metadata (nightly job)
+  scripts/secrets-register.py --report [FILE] write the generated register as Markdown (stdout by default)
   scripts/secrets-register.py --self-test     prove an entry that expires in 7 days fails
+
+`--report` joins the register with the Vault policies in vault-config (which role can read each
+path), the code that reads it, and, in live mode, the last write time. It runs the same checks
+first and exits non-zero when they fail, so a report never hides a failing register.
 
 Live mode reads $VAULT_ADDR and $VAULT_TOKEN, and trusts $VAULT_CACERT when it is set. It
 reads metadata only, never a secret value.
@@ -107,6 +112,29 @@ def covers(entry_path: str, ref: str) -> bool:
     return fnmatch.fnmatch(ref, entry_path)
 
 
+POLICY_BLOCK = re.compile(r'resource\s+"vault_policy"\s+"[^"]+"\s*\{(.*?)\n\}', re.S)
+POLICY_NAME = re.compile(r'name\s*=\s*"([^"]+)"')
+POLICY_PATH = re.compile(r'path\s+"kv/data/([^"]+)"\s*\{[^}]*?capabilities\s*=\s*\[([^\]]*)\]', re.S)
+
+
+def scan_policies() -> tuple[list[tuple[str, str, str]], int]:
+    """Return [(policy, glob, capabilities)] for each kv/data grant in vault-config, and the policy count."""
+    grants: list[tuple[str, str, str]] = []
+    npol = 0
+    path = os.path.join(REPO_ROOT, "environments", "homelab", "vault-config", "policies.tf")
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    for block in POLICY_BLOCK.findall(text):
+        name = POLICY_NAME.search(block)
+        if not name:
+            continue
+        npol += 1
+        for glob, caps in POLICY_PATH.findall(block):
+            caps = ",".join(c.strip().strip('"') for c in caps.split(",") if c.strip())
+            grants.append((name.group(1), "kv/" + glob, caps))
+    return grants, npol
+
+
 def load_register(path: str) -> list[dict]:
     with open(path, encoding="utf-8") as fh:
         doc = yaml.safe_load(fh)
@@ -177,6 +205,12 @@ def check(entries: list[dict], refs: dict[str, set[str]], today: dt.date,
         bad = expiry_error(e) if "expiry" in e else None
         if bad:
             problems.append(f"{p}: {bad}")
+        for f in e.get("fields") or []:
+            fname = f.get("name") if isinstance(f, dict) else None
+            if not (isinstance(fname, str) and fname.strip()
+                    and isinstance(f.get("rotation"), str) and f["rotation"].strip()
+                    and not expiry_error(f)):
+                problems.append(f"{p}: each `fields` item needs a `name`, a `rotation` and a valid `expiry`")
 
     # Code that reads a path no entry accounts for.
     for ref, files in sorted(refs.items()):
@@ -250,6 +284,59 @@ def vault_metadata(entries: list[dict]) -> tuple[dict[str, dict | None], int]:
     return out, reads
 
 
+def consumers_of(path: str, refs: dict[str, set[str]]) -> list[str]:
+    return sorted({f for r, files in refs.items() if covers(path, r) for f in files})
+
+
+def render_report(entries: list[dict], refs: dict[str, set[str]], grants: list[tuple[str, str, str]],
+                  metadata: dict[str, dict | None] | None, today: dt.date) -> str:
+    """Render the register as Markdown. It carries paths, owners and dates, never a value."""
+    def cell(v: str) -> str:
+        return v.replace("|", "\\|").replace("\n", " ")
+
+    live = metadata is not None
+    out = [
+        "# Generated secrets register",
+        "",
+        f"Generated {today} by `scripts/secrets-register.py --report` from `secrets/register.yml`, the",
+        "`kv/...` references in the code and the Vault policies in `vault-config/policies.tf`. "
+        + ("Last write times come from Vault KV metadata." if live
+           else "Offline: last write times need `--live`, so they read `unknown`."),
+        "It holds no secret values.",
+        "",
+        "| Vault path | Owner | Read by (Vault roles) | Consumers (code) | Rotation | Last write | Expiry |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for e in entries:
+        p = e.get("path", "")
+        roles = sorted({f"{pol} ({caps})" for pol, glob, caps in grants if fnmatch.fnmatch(p, glob)})
+        cons = consumers_of(p, refs)
+        ext = e.get("consumers_external")
+        consumer = ", ".join(f"`{c}`" for c in cons[:4]) + (f" +{len(cons) - 4} more" if len(cons) > 4 else "")
+        if ext:
+            consumer = (consumer + "; " if consumer else "") + str(ext)
+        meta = (metadata or {}).get(p)
+        if meta is not None:
+            last = str(meta["updated"].date())
+        elif e.get("rotated"):
+            last = str(e["rotated"])
+        else:
+            last = "unknown" if not live else ("absent" if e.get("kind") != "external" else "unknown")
+        when, why = expiry_of(e, meta["updated"] if meta else None)
+        expiry = str(when) if when else "none"
+        out.append("| " + " | ".join(cell(x) for x in (
+            f"`{p}`", e.get("owner", ""), "; ".join(roles) or "none", consumer or "none",
+            e.get("rotation", ""), last, expiry)) + " |")
+        for f in e.get("fields") or []:
+            fw, _ = expiry_of(f, None)
+            out.append("| " + " | ".join(cell(x) for x in (
+                f"&nbsp;&nbsp;↳ field `{f.get('name', '')}`", f.get("owner", e.get("owner", "")),
+                "", f.get("consumer", ""), f.get("rotation", ""), "",
+                str(fw) if fw else "none")) + " |")
+    out += ["", f"{len(entries)} entries, {len(grants)} policy grants read."]
+    return "\n".join(out) + "\n"
+
+
 def self_test() -> int:
     """An entry that expires in 7 days must fail, and one that expires in 60 must not."""
     today = dt.date(2026, 1, 1)
@@ -271,7 +358,10 @@ def self_test() -> int:
     blank = check([dict(later, owner=None, rotation="  ")], refs, today, None)
     child = check([later], {**refs, "kv/services/probe/child": {"scripts/z.sh"}}, today, None)
     wild = check([dict(later, path="kv/services/probe-*")], refs, today, None)
-    ok = (bool(bad) and not good and any("no owner" in p for p in orphan)
+    badfield = check([dict(later, fields=[{"name": "k"}])], refs, today, None)
+    report = render_report([dict(later, fields=[{"name": "k", "rotation": "manual", "expiry": {"rule": "none"}}])],
+                           refs, [("pol", "kv/services/probe", "read")], None, today)
+    ok = (bool(bad) and bool(badfield) and "pol (read)" in report and "field `k`" in report and not good and any("no owner" in p for p in orphan)
           and quoted and unknown and empty and not retired and live_gone
           and any("wildcard" in p for p in wild)
           and len(blank) >= 2 and any("no owner" in p for p in child))
@@ -287,6 +377,8 @@ def self_test() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--live", action="store_true", help="also read Vault KV metadata")
+    ap.add_argument("--report", nargs="?", const="-", metavar="FILE",
+                    help="write the generated register as Markdown (- for stdout)")
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("--today", help="override today's date (YYYY-MM-DD), for tests")
     args = ap.parse_args()
@@ -300,13 +392,26 @@ def main() -> int:
 
     problems = check(entries, refs, today, metadata)
     for p in problems:
-        print(f"FAIL {p}")
+        print(f"FAIL {p}", file=sys.stderr if args.report == "-" else sys.stdout)
+    grants, npol = scan_policies()
+    if args.report:
+        if npol < 5:
+            print(f"secrets-register: read only {npol} Vault policies, so the report is incomplete.",
+                  file=sys.stderr)
+            return 2
+        text = render_report(entries, refs, grants, metadata, today)
+        if args.report == "-":
+            sys.stdout.write(text)
+        else:
+            with open(args.report, "w", encoding="utf-8") as fh:
+                fh.write(text)
     absent = sum(1 for v in (metadata or {}).values() if v is None)
     summary = (f"examined {len(entries)} register entries, {len(refs)} distinct kv references "
                f"in {nfiles} files; vault: " +
                (f"{reads} metadata reads, {absent} absent" if args.live else "not read (offline)") +
                f"; {len(problems)} problems")
-    print(summary)
+    summary += f"; {npol} policies, {len(grants)} grants" if args.report else ""
+    print(summary, file=sys.stderr if args.report == "-" else sys.stdout)
     if len(entries) < MIN_ENTRIES or nfiles < MIN_FILES:
         print(f"secrets-register: below the floor ({MIN_ENTRIES} entries, {MIN_FILES} files), "
               "so this run examined too little to pass.", file=sys.stderr)
