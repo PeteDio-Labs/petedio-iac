@@ -1,4 +1,0 @@
----
-- name: Reload systemd for metric-alerts
-  ansible.builtin.systemd:
-    daemon_reload: true
