@@ -611,7 +611,7 @@ resource "vault_policy" "claude_247_deploy" {
 # A new secret needs a policy change to be readable here, and that is by design: adding a
 # path is a reviewable diff, not a standing grant that widens itself.
 #
-# ⚠ NO STANDING ROOT (Pedro's decision, PET-725, 2026-10-21). Three paths left this policy
+# ⚠ NO STANDING ROOT ON 247, THE NODES OR THE CORE LXCs (PET-725). Three paths left this policy
 # because each one is a route to root on 247 itself, which lets a session read the break-glass
 # Vault token out of the operator's shell (PET-714):
 #   kv/iac/lxc-ssh          — root on every Terraform LXC, 247, Vault 223 and runner 232
@@ -620,6 +620,11 @@ resource "vault_policy" "claude_247_deploy" {
 #                              claude-247-deploy, which reads lxc-ssh
 # Root on hosts is break-glass: the breakglass-247 policy reads kv/data/*, so Pedro's unlocked
 # shell on 247 reaches all three. Do not add any of them back here.
+#
+# ⚠ MEDIA ROOT STAYS STANDING, BY DESIGN. kv/services/media/dashboard below holds mtrace's SSH
+# private key, root on six media LXCs, and claude-ops holds its own id_ed25519_media with the
+# same reach. Those LXCs are unprivileged and reach neither 247 nor a node, so neither key
+# reaches the break-glass token. A media root grant that reaches further belongs in break-glass.
 #
 # ⚠ NEVER kv/data/admin/*. Every other broad-scoped policy in this file (ci-read, terraform,
 # ansible) read kv/data/admin/* until PET-702, and that prefix is where the Vault ROOT TOKEN and the

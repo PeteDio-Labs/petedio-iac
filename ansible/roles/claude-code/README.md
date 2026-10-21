@@ -597,8 +597,8 @@ These scripts are modeled on `scripts/seed-claude-code-app.sh` and `scripts/appl
   authorizes it for `root` on the seven media hosts (PET-725).
 - `scripts/revoke-claude-ops-node-key.sh` removes claude-ops's key from
   `/etc/pve/priv/authorized_keys` on pve02 and proves pve03 dropped it too (PET-725). It
-  replaced `scripts/seed-claude-ops-ssh.sh`, which granted node root from PET-531 until
-  2026-10-21. Root on a node reaches 247 through `pct exec`, so it is break-glass now.
+  replaced `scripts/seed-claude-ops-ssh.sh`, which granted node root (PET-531). Root on a
+  node reaches 247 through `pct exec`, so it is break-glass (PET-725).
 
 **The two Vault scripts refuse to prompt for the Vault root token.** They read `$VAULT_TOKEN`, then the
 macOS Keychain item `vault-root-token`, then exit non-zero — never `read -rsp`. Every secret

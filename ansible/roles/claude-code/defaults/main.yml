@@ -570,8 +570,8 @@ claude_ops_vault_renew_oncalendar: "03:00"
 # claude_ops_ssh_key is generated ON THE HOST, as claude-ops, so its private half NEVER
 # leaves 247 — not into Vault, not into CI, not into a Terraform state. tasks/claude-ops.yml runs `ssh-keygen`
 # only when the file is absent, so a re-run never overwrites a key a host already trusts.
-# roles/codex authorizes it on codex-248 behind a forced command. It reached pve02 and pve03
-# as root until PET-725; scripts/revoke-claude-ops-node-key.sh removes that grant.
+# roles/codex authorizes it on codex-248 behind a forced command. PET-531 also made it root on
+# pve02 and pve03; PET-725 took that away, and scripts/revoke-claude-ops-node-key.sh removes it.
 claude_ops_ssh_key: "{{ claude_ops_home }}/.ssh/id_ed25519"
 
 # StrictHostKeyChecking=accept-new: trust a host's key on the first connection and pin it
@@ -582,15 +582,15 @@ claude_ops_ssh_key: "{{ claude_ops_home }}/.ssh/id_ed25519"
 # command, codex-review-gate, so `ssh codex-248 codex-review <repo> <pr> <effort>` queues a
 # review and every other request is refused (PET-591).
 #
-# ⚠ NO PROXMOX NODES HERE (PET-725, Pedro's decision 2026-10-21). pve02 and pve03 were
-# targets until then. Root on a node reaches 247 through `pct exec`, which would let a
+# ⚠ NO PROXMOX NODES HERE (PET-725). PET-531 listed pve02 and pve03, and PET-725 removed
+# them. Root on a node reaches 247 through `pct exec`, which would let a
 # session read the break-glass Vault token from the operator's shell (PET-714). Root on the
 # nodes is break-glass now; scripts/revoke-claude-ops-node-key.sh removes the old grant.
 claude_ops_ssh_targets:
   - { name: codex-248, host: 192.168.50.248, user: codex }
   # The media hosts take claude_ops_media_ssh_key, a key generated HERE for the media hosts
-  # alone (PET-725). Until then it was a copy of the Mac's id_ed25519_ansible (PET-662), which
-  # is also root on 247 and the core LXCs. scripts/seed-claude-ops-media-ssh.sh authorizes the
+  # alone (PET-725). PET-662 used a copy of the Mac's id_ed25519_ansible instead, which is
+  # also root on 247 and the core LXCs. scripts/seed-claude-ops-media-ssh.sh authorizes the
   # new key on the seven hosts below; until it runs, `ssh <media host>` fails. Addresses follow petedio-media-iac's
   # ansible/inventory/hosts.yml, which owns them, and inventory/media-dash.yml for 237.
   - { name: seerr, host: 192.168.50.33, key: "{{ claude_ops_media_ssh_key }}" }            # 101

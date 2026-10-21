@@ -6,7 +6,7 @@
 # WHY. scripts/seed-claude-ops-ssh.sh (PET-531, deleted in PET-725) authorized claude-ops's
 # key for root on pve02 and pve03. Root on a node reaches 247 through `pct exec 247`, which
 # would let a session on 247 read the break-glass Vault token from the operator's shell
-# (PET-714). Pedro decided on 2026-10-21 that root on hosts is break-glass, so the grant goes.
+# (PET-714). Root on hosts is break-glass (PET-725), so the grant goes.
 #
 # WHAT IT REMOVES. Every line in /etc/pve/priv/authorized_keys that carries claude-ops's key
 # MATERIAL (read from 247) or the comment claude-ops@claude-247. It edits the pmxcfs file on
@@ -76,7 +76,11 @@ fi
 
 step "Proving neither node still grants claude-ops"
 for node in "$PVE02" "$PVE03"; do
-  LEFT="$(on_node "$node" "cat $AUTH_KEYS" | matches | grep -c . || true)"
+  # Read first, and fail on a failed read: a pipeline ending in `|| true` would turn an
+  # unreachable node into "0 claude-ops lines".
+  CONTENT="$(on_node "$node" "cat $AUTH_KEYS")" || die "Could not read $AUTH_KEYS on $node."
+  [ -n "$CONTENT" ] || die "$AUTH_KEYS on $node read back empty."
+  LEFT="$(printf '%s\n' "$CONTENT" | matches | grep -c . || true)"
   [ "$LEFT" -eq 0 ] || die "$node still has $LEFT claude-ops lines in $AUTH_KEYS. pmxcfs may lag; re-run in a few seconds."
   echo "  $node: 0 claude-ops lines."
 done
