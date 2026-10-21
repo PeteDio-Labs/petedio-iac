@@ -160,48 +160,6 @@ resource "vault_jwt_auth_backend_role" "palworld_panel_cd" {
   token_ttl      = 900
 }
 
-# resume-builder-cd role → resume-builder-cd policy (Resume Builder P1). APPLY-on-merge
-# only: the app repo's deploy.yml copies build/ + installs the systemd unit on resume-242
-# from the runner on push to main. Bound to ONLY the repo's main-push sub. Gets ONLY the
-# ansible SSH key (to reach resume-242) + the app's own service secret. Mirrors
-# palworld-panel-cd. Apply BEFORE the CD workflow lands or the first run 403s.
-resource "vault_jwt_auth_backend_role" "resume_builder_cd" {
-  backend           = vault_jwt_auth_backend.github.path
-  role_name         = "resume-builder-cd"
-  role_type         = "jwt"
-  user_claim        = "actor"
-  bound_audiences   = [var.github_oidc_audience]
-  bound_claims_type = "string"
-  # Bound on `repository` + `ref` rather than on `sub`, unlike palworld-panel-cd above.
-  #
-  # GitHub does not emit one stable `sub` format across repos. The panel's repo produces the
-  # classic `repo:OWNER/NAME:ref:refs/heads/main`, but this (newer) repo produces an
-  # ID-QUALIFIED subject — `repo:PeteDio-Labs@<org-id>/petedio-resume-builder@<repo-id>:ref:…`
-  # — so a literal sub binding can never match and the first CD run fails with
-  # `claim "sub" does not match any associated bound claim values`. Confirmed via
-  # /repos/{owner}/{repo}/actions/oidc/customization/sub, which differs between the two repos.
-  #
-  # `repository` and `ref` are plain claims with no such prefix games, and together they are
-  # exactly as tight as the sub binding was: this repo, pushes to main only (a PR run carries
-  # ref=refs/pull/N/merge and is still excluded). Prefer this form for new CD roles.
-  bound_claims = {
-    repository = var.resume_builder_repo
-    ref        = "refs/heads/main"
-  }
-  token_policies = [vault_policy.resume_builder_cd.name]
-  token_ttl      = 900
-}
-
-# water-fast-cd role → water-fast-cd policy. The petedio-water-fast repo's CD role: its
-# deploy.yml builds the frontend then runs petedio-iac's configure-water-fast.yml against
-# waterfast-243 on push to main. Gets ONLY the ansible SSH key (to reach 243) + the app's
-# own service secret. Apply BEFORE the CD workflow lands or the first run 403s.
-#
-# Bound on `repository` + `ref`, NOT on `sub` — see the resume-builder-cd note above. This
-# repo was created in 2026 and so emits the ID-QUALIFIED subject
-# (`repo:PeteDio-Labs@<org-id>/petedio-water-fast@<repo-id>:ref:...`), which no literal sub
-# binding can match. repository + ref is exactly as tight: this repo, pushes to main only
-# (a PR run carries ref=refs/pull/N/merge and is excluded).
 # media-dash-cd → the petedio-media-control repo's deploy.yml (PET-355).
 #
 # ⚠ Bound on `repository` + `ref`, NOT on `sub`. petedio-media-control was created in
@@ -220,9 +178,13 @@ resource "vault_jwt_auth_backend_role" "pete_bot_cd" {
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
+  # workflow_ref pins deploy.yml, the only workflow in pete-bot that mints this role, so
+  # no other workflow on main can read the SSH key. event_name stays open: deploy.yml runs
+  # on push and on workflow_dispatch.
   bound_claims = {
-    repository = var.pete_bot_repo
-    ref        = "refs/heads/main"
+    repository   = var.pete_bot_repo
+    ref          = "refs/heads/main"
+    workflow_ref = "${var.pete_bot_repo}/.github/workflows/deploy.yml@refs/heads/main"
   }
   token_policies = [vault_policy.pete_bot_cd.name]
   token_ttl      = 900
@@ -265,21 +227,6 @@ resource "vault_jwt_auth_backend_role" "media_dash_cd" {
     ref        = "refs/heads/main"
   }
   token_policies = [vault_policy.media_dash_cd.name]
-  token_ttl      = 900
-}
-
-resource "vault_jwt_auth_backend_role" "water_fast_cd" {
-  backend           = vault_jwt_auth_backend.github.path
-  role_name         = "water-fast-cd"
-  role_type         = "jwt"
-  user_claim        = "actor"
-  bound_audiences   = [var.github_oidc_audience]
-  bound_claims_type = "string"
-  bound_claims = {
-    repository = var.water_fast_repo
-    ref        = "refs/heads/main"
-  }
-  token_policies = [vault_policy.water_fast_cd.name]
   token_ttl      = 900
 }
 
