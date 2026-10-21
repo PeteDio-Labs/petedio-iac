@@ -1,0 +1,22 @@
+---
+# journald-cap (PET-719): a size cap on every journal, and a persistent journal on the Pi.
+#
+# WHY. The PET-712 survey (claude-247, 2026-10-20) found 24 of 26 hosts keep a persistent
+# journal with no SystemMaxUse, so each can grow to 10% of its filesystem: 1.9 GB on 247, 1.1 GB
+# on pve03. Pete-Pi-1 runs Storage=volatile (the Raspberry Pi OS drop-in
+# /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf), so every log it holds (Kuma,
+# the digest, the Vault unseal watcher, backup-health) is lost on its next reboot. It has one
+# boot of history. Alpine 112 has no journald and is covered by PET-718.
+
+# The cap for the node and for each guest.
+journald_system_max_use: 500M
+
+# Empty keeps journald's own default (auto). The Pi sets persistent.
+journald_storage: ""
+
+# Guests are reached through the node, as the timezone role does, because they sit in two
+# repos' inventories and some are in neither.
+journald_include_guests: true
+
+# Sorts after 40-rpi-volatile-storage.conf, so the Pi's setting wins.
+journald_dropin: /etc/systemd/journald.conf.d/50-cap.conf
