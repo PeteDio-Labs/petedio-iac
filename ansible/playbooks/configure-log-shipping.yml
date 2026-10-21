@@ -1,0 +1,20 @@
+---
+# configure-log-shipping.yml — Grafana Alloy on each host that already pages, reading the journal
+# and pushing warnings and above, plus the paging units, to Loki on metrics-240. (PET-709)
+#
+# The scope is the item's cut: vault, the runners, Postgres, MinIO, Plane and pete-bot's host.
+# Add a group to `hosts:` to widen it, and widen it one group at a time: each host gains an apt
+# repository and a service.
+#
+#   ansible-playbook -i inventory/hosts.yml -i inventory/media-dash.yml playbooks/configure-log-shipping.yml
+#   ansible-playbook -i inventory/hosts.yml -i inventory/media-dash.yml playbooks/configure-log-shipping.yml --limit vault-223
+#
+# Each host proves its own path: the play writes a canary warning and asks Loki for it.
+# Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
+
+- name: Ship the journal to Loki
+  hosts: vault:runner:postgres:minio:plane:media_dash
+  become: true
+  gather_facts: true
+  roles:
+    - alloy-journal
