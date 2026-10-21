@@ -173,9 +173,16 @@
         executable: /bin/bash
       register: pete_bot_cd_authorized
       changed_when: false
-      check_mode: false # read-only
+      check_mode: false # read-only; the `when` below still skips it under --check, so a --check run examines nothing here
       failed_when: pete_bot_cd_authorized.stdout_lines != [pete_bot_cd_public_key.split()[1]]
       when: pete_bot_cd_public_key | length > 0 and not ansible_check_mode
+
+    - name: Say that no pete-bot-cd key is managed when the public key is empty
+      ansible.builtin.debug:
+        msg: >-
+          pete_bot_cd_public_key is empty, so this run neither authorizes nor revokes a
+          pete-bot-cd key on this host. Run scripts/seed-pete-bot-cd-key.sh.
+      when: pete_bot_cd_public_key | length == 0
 
     - name: Create the service account
       ansible.builtin.user:
