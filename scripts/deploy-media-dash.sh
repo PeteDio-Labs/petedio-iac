@@ -76,6 +76,9 @@ yaml.safe_dump({
     "media_dash_ssh_private_key": d["ssh_private_key"],
     "media_dash_ssh_public_key": d["ssh_public_key"],
     "mtrace_caller_tokens": caller_tokens,
+    # Optional (PET-724): the public half of the media-dash-cd deploy key. Empty skips its tasks.
+    # scripts/seed-media-dash-cd-key.sh writes it.
+    "media_dash_cd_public_key": (d.get("deploy_ssh_public_key") or "").strip(),
 }, open(sys.argv[1], "w"))
 ' "$TMP/extra.yml"
 
