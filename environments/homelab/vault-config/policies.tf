@@ -282,14 +282,6 @@ resource "vault_policy" "palworld_panel_cd" {
     path "kv/data/services/palworld-panel" {
       capabilities = ["read"]
     }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
-    }
   EOT
 }
 
@@ -416,14 +408,6 @@ resource "vault_policy" "media_dash_cd" {
 
     path "kv/data/services/media/dashboard" {
       capabilities = ["read"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
     }
   EOT
 }

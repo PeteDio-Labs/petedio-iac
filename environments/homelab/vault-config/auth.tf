@@ -153,8 +153,12 @@ resource "vault_jwt_auth_backend_role" "palworld_panel_cd" {
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
+  # workflow_ref and event_name pin deploy.yml on push, the only workflow in the panel repo
+  # that mints this role, so no other workflow on main can read the SSH key.
   bound_claims = {
-    sub = "repo:${var.palworld_panel_repo}:ref:refs/heads/main"
+    sub          = "repo:${var.palworld_panel_repo}:ref:refs/heads/main"
+    event_name   = "push"
+    workflow_ref = "${var.palworld_panel_repo}/.github/workflows/deploy.yml@refs/heads/main"
   }
   token_policies = [vault_policy.palworld_panel_cd.name]
   token_ttl      = 900
@@ -284,9 +288,12 @@ resource "vault_jwt_auth_backend_role" "media_dash_cd" {
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
+  # workflow_ref pins deploy.yml, the only workflow in the media-control repo that mints this
+  # role. event_name stays open: deploy.yml runs on push and on workflow_dispatch.
   bound_claims = {
-    repository = var.media_control_repo
-    ref        = "refs/heads/main"
+    repository   = var.media_control_repo
+    ref          = "refs/heads/main"
+    workflow_ref = "${var.media_control_repo}/.github/workflows/deploy.yml@refs/heads/main"
   }
   token_policies = [vault_policy.media_dash_cd.name]
   token_ttl      = 900
