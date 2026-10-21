@@ -51,7 +51,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 umask 077
 vault kv get -format=json kv/services/media/dashboard \
   | python3 -c '
-import json, sys, yaml
+import json, os, sys, yaml
 d = json.load(sys.stdin)["data"]["data"]
 missing = [k for k in ("ssh_private_key", "ssh_public_key") if not d.get(k)]
 if missing:
@@ -72,13 +72,21 @@ if not caller_tokens:
     sys.exit("kv/services/media/dashboard has no caller tokens (token_<name> fields, or "
              "the legacy api_token) — run scripts/mtrace-caller-token.sh create <name>.")
 
+# An empty key must not pass silently: the play would skip installing it, and the CD deploy
+# that reads it would later fail. ALLOW_NO_CD_KEY=1 deploys without it on purpose.
+cd_pub = (d.get("deploy_ssh_public_key") or "").strip()
+if not cd_pub and os.environ.get("ALLOW_NO_CD_KEY") != "1":
+    sys.exit("kv/services/media/dashboard has no deploy_ssh_public_key. Run "
+             "scripts/seed-media-dash-cd-key.sh, then run this again. "
+             "ALLOW_NO_CD_KEY=1 skips the key on purpose.")
+
 yaml.safe_dump({
     "media_dash_ssh_private_key": d["ssh_private_key"],
     "media_dash_ssh_public_key": d["ssh_public_key"],
     "mtrace_caller_tokens": caller_tokens,
     # Optional (PET-724): the public half of the media-dash-cd deploy key. Empty skips its tasks.
     # scripts/seed-media-dash-cd-key.sh writes it.
-    "media_dash_cd_public_key": (d.get("deploy_ssh_public_key") or "").strip(),
+    "media_dash_cd_public_key": cd_pub,
 }, open(sys.argv[1], "w"))
 ' "$TMP/extra.yml"
 
