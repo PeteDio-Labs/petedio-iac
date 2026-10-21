@@ -27,7 +27,7 @@ run fails after Vault changes, re-run it: Vault's `previous_public_key` field le
 ## How it finds addresses
 
 The script takes the first static `ip=` across every `netN` line of `pct config`. For a DHCP
-container it asks the container (`hostname -I`) and prefers an address on `192.168.50.0/24`.
+container it asks the container (`hostname -I`) and accepts only an address on `192.168.50.0/24`, read again each time it is used.
 A container with no `/root/.ssh/authorized_keys` counts as not trusting the key. To test the
 parsing and exit codes without the lab, run `./scripts/test-rotate-lxc-ssh.sh`.
 
