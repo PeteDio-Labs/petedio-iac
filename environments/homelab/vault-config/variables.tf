@@ -84,6 +84,12 @@ variable "pete_bot_repo" {
   default     = "PeteDio-Labs/pete-bot"
 }
 
+variable "usaa_repo" {
+  description = "owner/repo whose CD mints the usaa-cd role."
+  type        = string
+  default     = "PeteDio-Labs/petedio-usaa"
+}
+
 # GitHub's numeric IDs, used to build the IMMUTABLE OIDC subject form. GitHub is
 # migrating repositories from name-based to ID-based subjects, and a migrated repo
 # stops sending the name form entirely. Read the current prefix for any repo with:
@@ -101,4 +107,24 @@ variable "github_repo_id_vault" {
   description = "Numeric repo ID for petedio-vault, used in its immutable OIDC subject."
   type        = string
   default     = "1312503638"
+}
+
+# Life of a new secret_id for the `ansible` and `terraform-local` AppRoles, in seconds
+# (PET-687). 7776000 is 90 days. It applies only to secret_ids minted after the apply.
+variable "approle_secret_id_ttl" {
+  description = "secret_id_ttl, in seconds, for the ansible and terraform-local AppRoles."
+  type        = number
+  default     = 7776000
+}
+
+# Source addresses allowed to log in as `ansible` or `terraform-local`, and to use the
+# tokens they mint (PET-687). Empty means no binding, which is today's behavior. Set it
+# to the Mac's and claude-247's /32 addresses in terraform.tfvars on the operator's
+# machine once both are known. A wrong value locks the deploy scripts out, so
+# scripts/rotate-approle-secret-id.sh proves a login from the Mac before it destroys the
+# old secret_id.
+variable "approle_operator_cidrs" {
+  description = "secret_id_bound_cidrs and token_bound_cidrs for the ansible and terraform-local AppRoles."
+  type        = list(string)
+  default     = []
 }

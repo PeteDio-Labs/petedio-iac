@@ -106,7 +106,7 @@
         dest: "{{ netplan_revert_sentinel }}"
         mode: "0644"
         content: |
-          Auto-revert armed at {{ ansible_date_time.iso8601 | default('(time n/a)') }}.
+          Auto-revert armed at {{ ansible_facts['date_time']['iso8601'] | default('(time n/a)') }}.
           Reverts to {{ netplan_revert_backup }} in {{ netplan_revert_seconds }}s unless cancelled.
 
     # Launch the guard fully detached so it survives the SSH drop from the apply.

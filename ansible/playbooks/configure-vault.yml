@@ -61,7 +61,7 @@
       ansible.builtin.apt_repository:
         repo: >-
           deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.asc]
-          https://apt.releases.hashicorp.com {{ ansible_distribution_release }} main
+          https://apt.releases.hashicorp.com {{ ansible_facts['distribution_release'] }} main
         filename: hashicorp
         state: present
 

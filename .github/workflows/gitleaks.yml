@@ -1,0 +1,127 @@
+# Secret scan. REUSABLE: every PeteDio-Labs repo calls this instead of copying it (PET-684).
+# The caller shape is in .github/workflows/gitleaks-caller.yml.
+#
+# TWO MODES.
+#   pr   scans the commits a pull request adds (base..head). Call it on `pull_request`.
+#   full scans every ref in the clone, including blobs of any size. Call it on a weekly
+#        `schedule`, because a reusable workflow cannot set its own trigger.
+#
+# CONFIG. The rules live in .github/gitleaks.toml in petedio-iac and are read from
+# petedio-iac@main, so one edit reaches every repo. The default rules miss Plane tokens
+# (`plane_api_`), so the config adds a rule for each token the lab issues.
+#
+# SUPPLY CHAIN. The job downloads one pinned gitleaks release and checks its SHA-256 against
+# the value below before it runs. The runner is GitHub-hosted and holds no credentials: the
+# scan reads the checkout and nothing else. No third-party action runs.
+#
+# LOGS. --verbose prints each finding's rule, file, line and fingerprint. --redact keeps the
+# secret itself out of the log, so the fingerprint is what a .gitleaksignore entry needs.
+#
+# FAILS CLOSED. A scan that reads zero commits is a red run, as is a missing commit count
+# in gitleaks' own output. The job summary states how many commits it read, so "0 findings
+# after 40 commits" and "0 findings because nothing was read" cannot look alike.
+name: gitleaks
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "pr: scan the commits the pull request adds. full: scan every ref."
+        required: false
+        type: string
+        default: pr
+
+permissions:
+  contents: read
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Fetch the shared config
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: PeteDio-Labs/petedio-iac
+          # petedio-iac scans itself with its own config, so a PR that edits the config
+          # is checked by the edit. Every other repo reads main.
+          ref: ${{ github.repository == 'PeteDio-Labs/petedio-iac' && (github.event.pull_request.head.sha || github.sha) || 'main' }}
+          path: .gitleaks-shared
+          sparse-checkout: .github/gitleaks.toml
+          persist-credentials: false
+
+      - name: Install gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/gitleaks.tgz" "$url"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      - name: Scan
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          cfg=.gitleaks-shared/.github/gitleaks.toml
+          [ -s "$cfg" ] || { echo "::error::The shared config $cfg is missing or empty."; exit 1; }
+
+          case "$MODE" in
+            pr)
+              if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+                echo "::error::mode=pr needs a pull_request event: no base or head SHA."
+                exit 1
+              fi
+              logopts="${BASE_SHA}..${HEAD_SHA}"
+              extra=()
+              ;;
+            full)
+              logopts="--all"
+              extra=(--max-target-megabytes 0)
+              ;;
+            *)
+              echo "::error::Unknown mode '$MODE'. Use pr or full."
+              exit 1
+              ;;
+          esac
+
+          # Actions runs bash with -e, so capture the exit code instead of letting a
+          # finding end the step before it prints the log and the commit count.
+          rc=0
+          "$RUNNER_TEMP/gitleaks" git . \
+            --config "$cfg" --no-banner --redact --no-color --verbose \
+            --log-opts="$logopts" "${extra[@]}" \
+            --report-format sarif --report-path "$RUNNER_TEMP/gitleaks.sarif" \
+            > "$RUNNER_TEMP/gitleaks.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/gitleaks.log"
+
+          commits=$(sed -n 's/.* \([0-9][0-9]*\) commits scanned.*/\1/p' "$RUNNER_TEMP/gitleaks.log" | tail -1)
+          if [ -z "$commits" ]; then
+            echo "::error::gitleaks printed no commit count, so this run examined nothing it can name."
+            echo "gitleaks ($MODE): no commit count in the output. Failing closed." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "gitleaks ($MODE): $commits commits scanned, exit code $rc" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$commits" -eq 0 ]; then
+            echo "::error::gitleaks scanned 0 commits (log range: $logopts)."
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::gitleaks exited $rc. Findings are redacted in the log above."
+            exit "$rc"
+          fi

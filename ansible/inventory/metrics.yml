@@ -1,0 +1,13 @@
+# metrics — its own inventory source, like netboot.yml and usaa.yml, so an edit to hosts.yml does
+# not re-run playbooks that watch it. LXC 240 is created by Terraform
+# (environments/homelab/metrics.tf) and configured by playbooks/configure-metrics.yml (PET-708).
+---
+all:
+  children:
+    metrics:
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
+      hosts:
+        metrics-240:
+          ansible_host: 192.168.50.240

@@ -126,6 +126,70 @@ resource "vault_policy" "terraform" {
   EOT
 }
 
+# ansible-247: the AppRole policy that claude-ops on claude-247 logs in with (PET-674).
+# Pedro asked on 2026-10-19 for 247 to run the deploy scripts the way the Mac does, from
+# .secrets/ansible.{role_id,secret_id}.
+#
+# EXACT PATHS, NO LIST, NO APP KEYS: the PET-531 boundary the claude-ops policy below keeps.
+# Each path is one that an AppRole deploy script reads and that holds no GitHub App key:
+#   deploy-backup-store.sh     kv/services/backup-health
+#   deploy-minio-data.sh       kv/iac/minio-data-root
+#   deploy-palworld-panel.sh   kv/services/palworld-panel
+#   deploy-plane.sh            kv/db/plane, kv/services/plane, kv/services/plane-<member>
+#   deploy-resume-builder.sh   kv/services/resume-builder
+#   deploy-water-fast.sh       kv/services/water-fast
+# Those scripts run on 247. These stay on the Mac, by design:
+#   deploy-claude-247.sh  reads four App keys (claude-*); see the claude-ops exclusions.
+#   deploy-codex-248.sh   reads kv/services/codex-review-app, the Codex reviewer's App key.
+#   deploy-uptime-kuma.sh needs macOS `security`.
+#   deploy-pete-bot.sh, deploy-usaa.sh, deploy-search.sh, deploy-media-dash.sh log in with
+#     an admin token, not this AppRole.
+# NEVER kv/admin/*: the root token and the unseal material live there.
+#
+# A deploy script that moves to 247, or a Plane member added to MCP_MEMBERS in
+# deploy-plane.sh, needs its path here. That is a reviewable diff, by design.
+resource "vault_policy" "ansible_247" {
+  name = "ansible-247"
+
+  policy = <<-EOT
+    path "kv/data/db/plane" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/minio-data-root" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/backup-health" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/palworld-panel" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane-sonia" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane-tom" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/resume-builder" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/water-fast" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 # ansible: host-config runs read infra + service secrets.
 resource "vault_policy" "ansible" {
   name = "ansible"
@@ -218,27 +282,16 @@ resource "vault_policy" "media_ci" {
 
 
 # palworld-panel-cd: the petedio-palworld-panel repo's CD role — deploy.yml runs the native
-# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the ansible
-# SSH key (to reach 234) and the panel's own service secret (REST admin password + restricted
-# start-hook key). NOT the broader ci-read/ansible scope. (PET-266)
+# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the panel's
+# own service secret (REST admin password, restricted start-hook key and its own deploy SSH
+# key, authorized on 234 alone). NOT kv/iac/lxc-ssh and NOT the broader ci-read/ansible
+# scope. (PET-266, PET-724)
 resource "vault_policy" "palworld_panel_cd" {
   name = "palworld-panel-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/palworld-panel" {
       capabilities = ["read"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
     }
   EOT
 }
@@ -273,15 +326,82 @@ resource "vault_policy" "pete_bot_cd" {
   name = "pete-bot-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/pete-bot" {
       capabilities = ["read"]
     }
 
     path "kv/metadata/services/pete-bot" {
+      capabilities = ["list"]
+    }
+
+    # lab-agent shares 237 and this play (PET-670): its ask bearer, its Vault token and its
+    # read-only Proxmox token.
+    path "kv/data/services/lab-agent" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/lab-agent-pve" {
+      capabilities = ["read"]
+    }
+
+    # The read-only petedio-workspace-mirror App, for lab-agent's petedio-vault fetches.
+    # Deploy keys are disabled org-wide; petedio-search reads the vault the same way (PET-542).
+    path "kv/data/services/claude-workspace-mirror" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+# lab-agent-presence: what lab-agent's vault_presence tool may read (PET-667, PET-670).
+# KV v2 METADATA under services/, and nothing under kv/data/. It can show that a secret
+# exists, its versions and when each was written. It cannot read a value or a field name.
+#
+# ⚠ NO ROLE MINTS THIS. scripts/seed-lab-agent.sh creates one periodic, orphan token with
+# this policy alone, and lab-agent renews it twice a day. A token that lapses fails
+# lab-agent's `secrets` health check; the seed's --rotate-vault-token replaces it.
+resource "vault_policy" "lab_agent_presence" {
+  name = "lab-agent-presence"
+
+  policy = <<-EOT
+    path "kv/metadata/services/" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["read", "list"]
+    }
+
+    # The seed mints the token with -no-default-policy, so renewal is granted here. The
+    # default policy's other grants (cubbyhole, lookup, wrapping) are not needed.
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+  EOT
+}
+
+# usaa-cd: the savings tracker's deploy (PET-695). It reads the app's own credentials and its
+# own SSH key, both under the app's paths, and nothing else. It does NOT read
+# kv/iac/lxc-ssh: that key opens root on every Terraform-built LXC, and the deploy needs
+# only usaa-238. seed-usaa-cd.sh generates a key for this app, and configure-usaa.yml
+# installs its public half on usaa-238 alone.
+#
+# ⚠ It does NOT read kv/services/pete-bot. Vault cannot scope a read to one field, and that
+# path holds the Discord token and the desk App's key. The notify token the app needs is a
+# copy in kv/services/usaa, written by scripts/seed-usaa-cd.sh. Rotating pete-bot's token
+# means running that script again.
+resource "vault_policy" "usaa_cd" {
+  name = "usaa-cd"
+
+  policy = <<-EOT
+    path "kv/data/db/usaa" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/usaa" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/services/usaa" {
       capabilities = ["list"]
     }
   EOT
@@ -304,20 +424,8 @@ resource "vault_policy" "media_dash_cd" {
   name = "media-dash-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/media/dashboard" {
       capabilities = ["read"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
     }
   EOT
 }
@@ -475,7 +583,7 @@ resource "vault_policy" "claude_247_deploy" {
 
 # claude-ops: the policy behind auth.tf's claude-ops token role, minted by
 # scripts/seed-claude-ops-vault-token.sh onto claude-247 for claude-ops, Pedro's Remote
-# Control identity (PET-531). READ only, on 27 named secrets — no list, no
+# Control identity (PET-531). READ only, on 24 named secrets — no list, no
 # create/update/delete, and no App keys.
 #
 # Pedro's decision: exact paths, not a wildcard glob, and no `kv/metadata/*` grant either.
@@ -483,7 +591,7 @@ resource "vault_policy" "claude_247_deploy" {
 # (deploy-claude-247.sh, apply-vault-config.sh, seed-*.sh) or write there — never a GitHub
 # App's private key. `vault kv get` on a named path needs no `list`, and nothing in
 # `ansible/roles/claude-code` or `scripts/seed-claude-ops-*` calls `vault kv list` or reads
-# `kv/metadata/*`, so claude-ops can read exactly these 27 secrets and cannot discover, list
+# `kv/metadata/*`, so claude-ops can read exactly these 24 secrets and cannot discover, list
 # or enumerate any other name under `services/`, `iac/` or `db/`.
 #
 # The Mac's seed-* scripts write these paths from the Mac with the admin token;
@@ -505,6 +613,21 @@ resource "vault_policy" "claude_247_deploy" {
 #
 # A new secret needs a policy change to be readable here, and that is by design: adding a
 # path is a reviewable diff, not a standing grant that widens itself.
+#
+# ⚠ NO STANDING ROOT ON 247, THE NODES OR THE CORE LXCs (PET-725). Three paths left this policy
+# because each one is a route to root on 247 itself, which lets a session read the break-glass
+# Vault token out of the operator's shell (PET-714):
+#   kv/iac/lxc-ssh          — root on every Terraform LXC, 247, Vault 223 and runner 232
+#   kv/iac/proxmox          — Terraform's PVEVMAdmin token, which includes a guest console
+#   kv/iac/github-runner-pat — registers a runner that can pick up the jobs that mint
+#                              claude-247-deploy, which reads lxc-ssh
+# Root on hosts is break-glass: the breakglass-247 policy reads kv/data/*, so Pedro's unlocked
+# shell on 247 reaches all three. Do not add any of them back here.
+#
+# ⚠ MEDIA ROOT STAYS STANDING, BY DESIGN. kv/services/media/dashboard below holds mtrace's SSH
+# private key, root on six media LXCs, and claude-ops holds its own id_ed25519_media with the
+# same reach. Those LXCs are unprivileged and reach neither 247 nor a node, so neither key
+# reaches the break-glass token. A media root grant that reaches further belongs in break-glass.
 #
 # ⚠ NEVER kv/data/admin/*. Every other broad-scoped policy in this file (ci-read, terraform,
 # ansible) read kv/data/admin/* until PET-702, and that prefix is where the Vault ROOT TOKEN and the
@@ -529,14 +652,6 @@ resource "vault_policy" "claude_ops" {
       capabilities = ["read"]
     }
 
-    path "kv/data/iac/github-runner-pat" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/iac/minio" {
       capabilities = ["read"]
     }
@@ -546,10 +661,6 @@ resource "vault_policy" "claude_ops" {
     }
 
     path "kv/data/iac/minio-root" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/iac/proxmox" {
       capabilities = ["read"]
     }
 

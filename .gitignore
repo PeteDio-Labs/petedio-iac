@@ -27,3 +27,4 @@ __pycache__/
 
 # ansible-lint and ansible-playbook write a working-directory lock here (PET-643).
 ansible/.ansible/
+environments/offsite-watchdog/.build/

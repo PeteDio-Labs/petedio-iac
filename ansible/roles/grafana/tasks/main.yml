@@ -1,0 +1,146 @@
+---
+# See defaults/main.yml for why this exists.
+
+- name: Install the apt prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, gnupg]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Fetch Grafana's signing key
+  ansible.builtin.get_url:
+    url: "{{ grafana_apt_key_url }}"
+    dest: /etc/apt/keyrings/grafana.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add Grafana's apt repository
+  ansible.builtin.deb822_repository:
+    name: grafana
+    types: [deb]
+    uris: https://apt.grafana.com
+    suites: [stable]
+    components: [main]
+    signed_by: /etc/apt/keyrings/grafana.asc
+    state: present
+
+- name: Install Grafana
+  ansible.builtin.apt:
+    name: grafana
+    state: present
+    update_cache: true
+
+# Set once. A re-run finds the file and leaves the password alone.
+- name: Create the admin password file when it is absent
+  ansible.builtin.shell: |
+    set -o pipefail
+    umask 077
+    head -c 24 /dev/urandom | base64 | tr -d '/+=' > {{ grafana_admin_password_file }}
+    chgrp grafana {{ grafana_admin_password_file }}
+    chmod 0640 {{ grafana_admin_password_file }}
+    echo CREATED
+  args:
+    creates: "{{ grafana_admin_password_file }}"
+    executable: /bin/bash
+  register: grafana_password
+  changed_when: "'CREATED' in grafana_password.stdout"
+  no_log: true
+
+# Grafana reads GF_* variables from this file, so the packaged grafana.ini stays untouched.
+- name: Configure the listener and anonymous Viewer access
+  ansible.builtin.copy:
+    content: |
+      GF_SERVER_HTTP_ADDR={{ grafana_listen_address }}
+      GF_SERVER_HTTP_PORT={{ grafana_port }}
+      GF_SECURITY_ADMIN_PASSWORD__FILE={{ grafana_admin_password_file }}
+      GF_AUTH_ANONYMOUS_ENABLED=true
+      GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      GF_ANALYTICS_REPORTING_ENABLED=false
+      GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    dest: /etc/default/grafana-server
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: Restart grafana
+
+- name: Provision the Prometheus datasource
+  ansible.builtin.template:
+    src: grafana-datasource.yml.j2
+    dest: /etc/grafana/provisioning/datasources/prometheus.yml
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: Restart grafana
+
+- name: Provision the dashboard provider
+  ansible.builtin.template:
+    src: grafana-dashboards.yml.j2
+    dest: /etc/grafana/provisioning/dashboards/lab.yml
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: Restart grafana
+
+- name: Create the dashboard directory
+  ansible.builtin.file:
+    path: /var/lib/grafana/dashboards
+    state: directory
+    owner: grafana
+    group: grafana
+    mode: "0755"
+
+- name: Land the Lab overview dashboard
+  ansible.builtin.copy:
+    src: lab-overview.json
+    dest: /var/lib/grafana/dashboards/lab-overview.json
+    owner: grafana
+    group: grafana
+    mode: "0644"
+  notify: Restart grafana
+
+- name: Apply a pending restart now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start Grafana
+  ansible.builtin.systemd:
+    name: grafana-server
+    enabled: true
+    state: started
+
+- name: Wait until Grafana answers
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/health"
+    return_content: true
+  register: grafana_health
+  until: grafana_health.status == 200
+  retries: 20
+  delay: 3
+
+# A running service is not a working dashboard. Ask Grafana for the provisioned datasource and the
+# dashboard by name, so the result says what was examined.
+- name: Read back the datasource
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/datasources/name/Prometheus"
+    return_content: true
+  register: grafana_datasource
+
+- name: Read back the dashboard
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/dashboards/uid/lab-overview"
+    return_content: true
+  register: grafana_dashboard
+
+- name: Check the provisioned objects exist
+  ansible.builtin.assert:
+    that:
+      - grafana_datasource.json.type == 'prometheus'
+      - grafana_dashboard.json.dashboard.panels | length >= 1
+    fail_msg: Grafana did not provision the Prometheus datasource and the Lab overview dashboard.
+
+- name: Say what was examined
+  ansible.builtin.debug:
+    msg: >-
+      grafana answers on {{ grafana_port }}, holds the Prometheus datasource and
+      {{ grafana_dashboard.json.dashboard.panels | length }} panels on Lab overview.

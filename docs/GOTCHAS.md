@@ -548,6 +548,15 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   roles whose repo genuinely runs a credentialed PR job (e.g. `media-ci`, `colatro-ci`
   until they get the same PET-104 treatment).
 
+- **A `sub` names a branch, not a workflow or an event (PET-675).** A `workflow_dispatch`
+  or a `schedule` on `main` sends the same `sub` as a push to `main`, so a role bound to
+  `sub` alone can be minted by any workflow on `main`. That holds only while every workflow
+  on `main` runs reviewed code. A dispatched job that checks out a PR head runs branch code
+  under that `sub`. So a role that holds homelab credentials binds `repository`, `ref`,
+  `event_name` and the workflow file: `workflow_ref` for a top-level workflow, and
+  `job_workflow_ref` for a reusable one, whose `workflow_ref` names its caller.
+  `github-actions`, `openfaas-ci`, `media-updates` and `claude-247-deploy` follow it.
+
 - **The Terraform provider only takes STRING `bound_claims`, not lists.** Put multiple
   allowed values in ONE comma-separated string with OR semantics:
   `bound_claims = { sub = "<main-sub>,<pr-sub>" }`, and set

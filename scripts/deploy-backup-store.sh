@@ -33,8 +33,8 @@ done
 
 step "Vault: log in as the ansible AppRole"
 RID="$(cat "$SECRETS/ansible.role_id")"; SID="$(cat "$SECRETS/ansible.secret_id")"
-AN_TOKEN="$(vault write -field=token auth/approle/login \
-  role_id="$RID" secret_id="$SID" 2>/dev/null)" || die "AppRole login failed."
+AN_TOKEN="$(printf '{"role_id":"%s","secret_id":"%s"}' "$RID" "$SID" \
+  | vault write -field=token auth/approle/login - 2>/dev/null)" || die "AppRole login failed."
 
 step "Vault: read the push tokens"
 VARS="$(mktemp)"

@@ -1,0 +1,26 @@
+---
+# configure-node-exporter.yml — the Prometheus node exporter on every Debian host. (PET-708)
+#
+# The nodes cover their guests through `pct exec`, as configure-timezone.yml does. The Pi has
+# its own play. A guest with no apt (Alpine 112) reports NOT-DEBIAN and is covered by PET-718.
+# The play never touches ollama-host and pete-pi-2, which no key held by a session can reach.
+# Run roles/prometheus (configure-metrics.yml) first or after: the order does not matter.
+#
+#   ansible-playbook playbooks/configure-node-exporter.yml
+#
+# Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
+
+- name: Install the node exporter on the Proxmox nodes and their guests
+  hosts: proxmox:pve_new
+  become: true
+  serial: 1
+  roles:
+    - node-exporter
+
+- name: Install the node exporter on the Pi
+  hosts: pete_pi
+  become: true
+  vars:
+    node_exporter_include_guests: false
+  roles:
+    - node-exporter

@@ -17,6 +17,16 @@
 # WHY IT LIVES HERE. A Discord bot needs only an OUTBOUND websocket, so co-locating it
 # on 237 exposes nothing new.
 #
+# LAB-AGENT (PET-669, PET-670). A second binary from the pete-bot repo, under its own user
+# and unit. It answers pete-bot's /lab with read-only lab tools on 127.0.0.1:3016, and calls
+# the gateway above as the lab-map caller. It holds lab-map's bearer, its own ask bearer, a
+# metadata-only Vault token, a read-only Proxmox token and the read-only
+# petedio-workspace-mirror App's key, which mints petedio-vault read tokens. It holds no
+# Discord token, no desk key and no Anthropic key. It also holds pete-bot's notify
+# bearer, which its nightly drift check (PET-671) DMs with. It is off until
+# kv/services/lab-agent and kv/services/lab-agent-pve are both seeded: run
+# scripts/seed-lab-agent.sh, whose header gives the order.
+#
 # ⚠ THE BINARY IS BUILT ON THE CONTROLLER. `bun build --compile` produces a standalone
 # linux-x64 executable, so 237 needs neither node nor bun and no npm install runs on a
 # container with 512 MB. The play only ever COPIES it, and fails if it is missing rather
@@ -53,6 +63,11 @@
     # (scripts/seed-pete-bot-desk-app.sh). Without all three the desk stays off, whatever
     # pete_bot_desk_mode says, so a deploy before the seed changes nothing.
     pete_bot_conf_dir: /etc/pete-bot
+    # The public half of the pete-bot-cd deploy key (PET-724), from kv/services/pete-bot field
+    # deploy_ssh_public_key (scripts/seed-pete-bot-cd-key.sh). Empty skips the tasks. The
+    # GitHub deploy connects with the private half, so this grants root on this host only,
+    # never on another LXC.
+    pete_bot_cd_public_key: ""
     # dry-run approves and merges nothing, and DMs each merge it would make (Pedro,
     # 2026-10-16). Moving to `on` is a decision, so it is a reviewed change to this line.
     # Pedro moved it to `on` on 2026-10-19, after the desk queued Codex with its own key
@@ -73,6 +88,14 @@
          and (pete_bot_desk_installation_id | default('') | string | length > 0)
          and (pete_bot_desk_app_pem | default('') | length > 0) }}
 
+    # The scheduled reports (PET-701). They read GitHub as the desk's App and Plane with
+    # pete_bot_plane_api_key (scripts/seed-pete-bot-plane-key.sh). Without both, the reports
+    # stay off, so a deploy before the seed changes nothing.
+    pete_bot_reports_repos: petedio-iac,petedio-workspace,petedio-vault,petedio-pm,pete-bot
+    pete_bot_reports_ready: >-
+      {{ (pete_bot_desk_ready | bool)
+         and (pete_bot_plane_api_key | default('') | length > 0) }}
+
     # Each gateway caller: its bearer, its monthly cap in whole dollars, and the models it
     # may ask for. A model outside pete-bot's price table puts the gateway in the
     # misconfigured state, which the check below fails.
@@ -88,6 +111,47 @@
     # The spend ledger the caps read. It must survive a restart, so it lives in the unit's
     # StateDirectory beside the alert state.
     pete_bot_llm_ledger_path: /var/lib/pete-bot/llm-ledger.sqlite
+
+    # ── lab-agent (PET-670) ──
+    # Optional, all together or not at all, from scripts/deploy-pete-bot.sh or deploy.yml:
+    #   lab_agent_binary_src, and from kv/services/lab-agent: lab_agent_ask_token,
+    #   lab_agent_vault_token; from kv/services/lab-agent-pve: lab_agent_pve_token_id,
+    #   lab_agent_pve_token_secret, lab_agent_pve_endpoint, lab_agent_pve_ca_pem; from
+    #   kv/services/claude-workspace-mirror: lab_agent_github_app_id,
+    #   lab_agent_github_installation_id, lab_agent_github_app_pem.
+    #   lab-map's bearer is pete_bot_gateway_token_lab_map above.
+    lab_agent_user: lab-agent
+    lab_agent_dir: /opt/lab-agent
+    lab_agent_bin: /opt/lab-agent/lab-agent
+    lab_agent_conf_dir: /etc/lab-agent
+    lab_agent_env_file: /etc/lab-agent/lab-agent.env
+    # The unit's StateDirectory. The three read-only clones live here.
+    lab_agent_state_dir: /var/lib/lab-agent
+    lab_agent_port: 3016
+    # ⚠ NO DEPLOY KEY. PeteDio-Labs disables deploy keys for every repository, so lab-agent
+    # reaches the private vault over https with a token it mints from the read-only
+    # petedio-workspace-mirror App, scoped to petedio-vault with contents:read (PET-542).
+    lab_agent_github_key_file: /etc/lab-agent/github-app.pem
+    lab_agent_repos:
+      vault: https://github.com/PeteDio-Labs/petedio-vault.git
+      iac: https://github.com/PeteDio-Labs/petedio-iac.git
+      media-iac: https://github.com/PeteDio-Labs/petedio-media-iac.git
+    # One entry per lab-agent secret. A value is set or it is empty; the play counts the set
+    # ones. The mirror App's three are apart: that path is seeded for 247 and petedio-search
+    # too, so its values arrive whether or not lab-agent is seeded.
+    lab_agent_app_values:
+      - "{{ lab_agent_github_app_id | default('') }}"
+      - "{{ lab_agent_github_installation_id | default('') }}"
+      - "{{ lab_agent_github_app_pem | default('') }}"
+    lab_agent_values:
+      - "{{ lab_agent_ask_token | default('') }}"
+      - "{{ lab_agent_vault_token | default('') }}"
+      - "{{ lab_agent_pve_token_id | default('') }}"
+      - "{{ lab_agent_pve_token_secret | default('') }}"
+      - "{{ lab_agent_pve_endpoint | default('') }}"
+      - "{{ lab_agent_pve_ca_pem | default('') }}"
+    lab_agent_set_count: "{{ lab_agent_values | map('trim') | reject('equalto', '') | list | length }}"
+    lab_agent_ready: "{{ (lab_agent_set_count | int) == (lab_agent_values | length) }}"
 
   pre_tasks:
     - name: Assert the secrets were provided
@@ -121,6 +185,40 @@
           kv/services/pete-bot holds only one of anthropic_api_key and gateway_token_lab_map,
           or the gateway bearer repeats another route's. Run scripts/seed-llm-gateway.sh.
 
+    # ⚠ ALL OR NONE. Some lab-agent values without the rest is a seed that stopped halfway,
+    # and a lab-agent started from it fails its health check on every deploy.
+    - name: Assert lab-agent's values arrive together
+      ansible.builtin.assert:
+        that:
+          - (lab_agent_set_count | int) in [0, lab_agent_values | length]
+          - not (lab_agent_ready | bool) or (pete_bot_gateway_token_lab_map | default('') | length > 0)
+          - not (lab_agent_ready | bool) or (lab_agent_app_values | map('trim') | reject('equalto', '') | list | length == 3)
+          - not (lab_agent_ready | bool) or lab_agent_ask_token not in
+              [pete_bot_alert_bearer, pete_bot_notify_bearer, pete_bot_gateway_token_lab_map | default('')]
+        fail_msg: >-
+          lab-agent got {{ lab_agent_set_count }} of {{ lab_agent_values | length }} values, or it
+          has no gateway bearer or no mirror App, or its ask bearer repeats another route's. Seed
+          kv/services/lab-agent-pve with playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
+          and kv/services/lab-agent with scripts/seed-lab-agent.sh, then deploy again.
+          kv/services/claude-workspace-mirror comes from scripts/seed-workspace-mirror-vault.sh.
+
+    - name: Look for the lab-agent binary on the controller
+      ansible.builtin.stat:
+        path: "{{ lab_agent_binary_src | default('') }}"
+      register: lab_agent_artifact
+      delegate_to: localhost
+      become: false
+      when: lab_agent_ready | bool
+
+    - name: Fail when lab-agent is seeded but its binary is missing
+      ansible.builtin.fail:
+        msg: >-
+          lab-agent is seeded, but no binary is at {{ lab_agent_binary_src | default('(lab_agent_binary_src unset)') }}.
+          Run `bun run build:lab-binary` in the pete-bot repo first; deploy-pete-bot.sh does it for you.
+      when:
+        - lab_agent_ready | bool
+        - not lab_agent_artifact.stat.exists
+
     - name: Assert the binary was compiled on the controller
       ansible.builtin.stat:
         path: "{{ pete_bot_binary_src }}"
@@ -135,7 +233,62 @@
           pete-bot repo first; deploy-pete-bot.sh does it for you.
       when: not pete_bot_artifact.stat.exists
 
+    # ⚠ ONCE INSTALLED, A DEPLOY WITHOUT ITS VALUES IS A FAULT. A Vault refusal or an
+    # outage on the lab-agent paths reads the same as "not seeded": every value empty. On a
+    # 237 that already runs lab-agent, that would blank pete-bot's LAB_ASK_TOKEN and turn
+    # /lab off under a green deploy. Before the first seed the unit does not exist, so a
+    # deploy then still passes.
+    - name: Look for an installed lab-agent unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/lab-agent.service
+      register: lab_agent_unit_file
+
+    - name: Fail when lab-agent is installed but its values did not arrive
+      ansible.builtin.fail:
+        msg: >-
+          lab-agent is installed on this host, but the deploy passed none of its values. Vault
+          refused or could not answer the read of kv/services/lab-agent or
+          kv/services/lab-agent-pve. Run scripts/pet-secrets doctor, then deploy again.
+      when:
+        - lab_agent_unit_file.stat.exists
+        - not (lab_agent_ready | bool)
+
   tasks:
+    - name: Authorize the pete-bot-cd deploy key for root on this host only
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ pete_bot_cd_public_key }}"
+        comment: pete-bot-cd
+        state: present
+      when: pete_bot_cd_public_key | length > 0
+
+    # authorized_key with state: present adds a key and never removes another, so a rotated
+    # key would stay authorized as root. Drop every other pete-bot-cd line and keep the
+    # operator key, which carries a different comment.
+    - name: Remove superseded pete-bot-cd deploy keys
+      ansible.builtin.replace:
+        path: /root/.ssh/authorized_keys
+        regexp: '(?m)^ssh-ed25519 (?!{{ pete_bot_cd_public_key.split()[1] | regex_escape }}[ \t])\S+ pete-bot-cd[ \t]*\n'
+        replace: ""
+      when: pete_bot_cd_public_key | length > 0
+
+    - name: Check that exactly one pete-bot-cd key is authorized, and it is the current one
+      ansible.builtin.shell:
+        cmd: set -o pipefail; grep -E ' pete-bot-cd[[:space:]]*$' /root/.ssh/authorized_keys | awk '{print $2}'
+        executable: /bin/bash
+      register: pete_bot_cd_authorized
+      changed_when: false
+      check_mode: false # read-only; the `when` below still skips it under --check, so a --check run examines nothing here
+      failed_when: pete_bot_cd_authorized.stdout_lines != [pete_bot_cd_public_key.split()[1]]
+      when: pete_bot_cd_public_key | length > 0 and not ansible_check_mode
+
+    - name: Say that no pete-bot-cd key is managed when the public key is empty
+      ansible.builtin.debug:
+        msg: >-
+          pete_bot_cd_public_key is empty, so this run neither authorizes nor revokes a
+          pete-bot-cd key on this host. Run scripts/seed-pete-bot-cd-key.sh.
+      when: pete_bot_cd_public_key | length == 0
+
     - name: Create the service account
       ansible.builtin.user:
         name: "{{ pete_bot_user }}"
@@ -167,9 +320,10 @@
     # ── The merge desk (PET-645) ─────────────────────────────────────────────────────
     # python3-yaml: the desk runs petedio-iac's pr-blast-radius.py, which parses workflows.
     # openssh-client: the desk queues Codex reviews over ssh to codex-248.
+    # git: lab-agent reads its three clones with git (PET-670).
     - name: Install what the merge desk runs
       ansible.builtin.apt:
-        name: [python3, python3-yaml, openssh-client]
+        name: [python3, python3-yaml, openssh-client, git]
         state: present
         update_cache: true
         cache_valid_time: 86400
@@ -237,6 +391,142 @@
       no_log: true
       when: pete_bot_desk_ready | bool
       notify: Restart pete-bot
+
+    # ── lab-agent (PET-670) ──────────────────────────────────────────────────────────
+    # Skipped as a whole until both lab-agent paths are seeded, so a deploy before the seed
+    # changes nothing. Once it ran, a deploy without the values leaves lab-agent as it was.
+    - name: Install lab-agent
+      when: lab_agent_ready | bool
+      # git run through runuser keeps root's HOME, which lab-agent cannot read. The unit sets
+      # the same HOME, so the play's git and the service's git read the same config.
+      environment:
+        HOME: "{{ lab_agent_state_dir }}"
+      block:
+        - name: Create lab-agent's service account
+          ansible.builtin.user:
+            name: "{{ lab_agent_user }}"
+            system: true
+            # ssh takes ~ from the passwd entry, not from HOME, so both name the state dir.
+            home: "{{ lab_agent_state_dir }}"
+            create_home: false
+            shell: /usr/sbin/nologin
+            state: present
+
+        # Owned by root and readable by the service, as pete-bot's are: the process can read
+        # its keys and binary and replace none of them.
+        - name: Create lab-agent's application and configuration directories
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: root
+            group: "{{ lab_agent_user }}"
+            mode: "0750"
+          loop:
+            - "{{ lab_agent_dir }}"
+            - "{{ lab_agent_conf_dir }}"
+
+        # The unit's StateDirectory= makes the same directory at start. Making it here first
+        # lets the clones below exist before lab-agent's first start.
+        - name: Create lab-agent's state directory
+          ansible.builtin.file:
+            path: "{{ lab_agent_state_dir }}"
+            state: directory
+            owner: "{{ lab_agent_user }}"
+            group: "{{ lab_agent_user }}"
+            mode: "0700"
+
+        - name: Install the lab-agent binary
+          ansible.builtin.copy:
+            src: "{{ lab_agent_binary_src }}"
+            dest: "{{ lab_agent_bin }}"
+            owner: root
+            group: "{{ lab_agent_user }}"
+            mode: "0750"
+          notify: Restart lab-agent
+
+        - name: Install the CAs lab-agent pins for Proxmox and Vault
+          ansible.builtin.copy:
+            content: "{{ item.pem | trim }}\n"
+            dest: "{{ lab_agent_conf_dir }}/{{ item.name }}"
+            owner: root
+            group: "{{ lab_agent_user }}"
+            mode: "0640"
+          loop:
+            - { name: pve-root-ca.pem, pem: "{{ lab_agent_pve_ca_pem }}" }
+            - { name: vault-ca.pem, pem: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../environments/homelab/vault-ca.crt') }}" }
+          loop_control:
+            label: "{{ item.name }}"
+          notify: Restart lab-agent
+
+        # ⚠ root OWNS THE KEY, AND THE SERVICE ONLY READS IT. lab-agent signs a JWT with it
+        # and asks GitHub for a one-hour token that reads petedio-vault and nothing else.
+        - name: Install the mirror App's key
+          ansible.builtin.copy:
+            content: "{{ lab_agent_github_app_pem | trim }}\n"
+            dest: "{{ lab_agent_github_key_file }}"
+            owner: root
+            group: "{{ lab_agent_user }}"
+            mode: "0640"
+          no_log: true
+          notify: Restart lab-agent
+
+        # ⚠ AN EMPTY REPOSITORY, NOT A CLONE. Only lab-agent can mint the vault's token, so
+        # the play makes each repository and names its remote, and lab-agent's first fetch
+        # fills it. It reads refs/remotes/origin/main only, so no checkout is ever needed.
+        # As lab-agent, through runuser: `become_user` needs ACL tooling this LXC lacks. The
+        # health check below fails the deploy when the vault's first fetch fails.
+        - name: Create the three repositories lab-agent reads
+          ansible.builtin.command:
+            argv: [runuser, -u, "{{ lab_agent_user }}", --, git, init, --quiet, "{{ lab_agent_state_dir }}/{{ item.key }}"]
+            creates: "{{ lab_agent_state_dir }}/{{ item.key }}/.git"
+          loop: "{{ lab_agent_repos | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
+
+        - name: Point each repository at its GitHub remote
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - -u
+              - "{{ lab_agent_user }}"
+              - --
+              - git
+              - -C
+              - "{{ lab_agent_state_dir }}/{{ item.key }}"
+              - config
+              - remote.origin.url
+              - "{{ item.value }}"
+          loop: "{{ lab_agent_repos | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
+          changed_when: false
+
+        # Read by systemd, as root, before it drops to the service account. So 0600 root.
+        - name: Install lab-agent's environment file
+          ansible.builtin.template:
+            src: lab-agent.env.j2
+            dest: "{{ lab_agent_env_file }}"
+            owner: root
+            group: root
+            mode: "0600"
+          no_log: true
+          notify: Restart lab-agent
+
+        - name: Install lab-agent's systemd unit
+          ansible.builtin.template:
+            src: lab-agent.service.j2
+            dest: /etc/systemd/system/lab-agent.service
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Restart lab-agent
+
+        - name: Enable and start lab-agent
+          ansible.builtin.systemd_service:
+            name: lab-agent
+            enabled: true
+            state: started
+            daemon_reload: true
 
     - name: Install the environment file
       ansible.builtin.template:
@@ -368,6 +658,73 @@
         - pete_bot_desk_ready | bool
         - (pete_bot_desk_health.json.desk.state | default('')) != 'running'
 
+    # ⚠ EVERY DEPENDENCY, NOT ONLY THE PROCESS. lab-agent's /health answers 503 unless the
+    # gateway, Proxmox, the vault clone, Kuma and Vault all answer, and names each one down.
+    # A lab-agent that runs but cannot read the lab fails the deploy here.
+    - name: Read lab-agent's health
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ lab_agent_port }}/health"
+        return_content: true
+        status_code: [200, 503]
+      register: lab_agent_health
+      retries: 15
+      delay: 4
+      until: lab_agent_health.status is defined and lab_agent_health.status == 200
+      failed_when: false
+      when:
+        - not ansible_check_mode
+        - lab_agent_ready | bool
+
+    - name: Fail when a lab-agent dependency is down
+      ansible.builtin.fail:
+        msg: >-
+          lab-agent's /health answered HTTP {{ lab_agent_health.status | default('nothing') }}:
+          {{ (lab_agent_health.json | default({})).checks | default('no checks; read journalctl -u lab-agent') }}
+      when:
+        - not ansible_check_mode
+        - lab_agent_ready | bool
+        - (lab_agent_health.status | default(0)) != 200
+
+    - name: Report lab-agent
+      ansible.builtin.debug:
+        msg: >-
+          lab-agent:
+          {{ ('every check up: ' ~ (lab_agent_health.json.checks | dict2items | map(attribute='key') | join(', ')))
+             if (lab_agent_health.status | default(0)) == 200
+             else ('off: kv/services/lab-agent and kv/services/lab-agent-pve are not both seeded'
+                   if not (lab_agent_ready | bool) else 'not checked in check mode') }}
+
+    # The reports start after the Discord login too. A misconfigured setting leaves alerts
+    # working, so this fails the deploy, where someone reads it.
+    - name: Read the scheduled reports' state
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ pete_bot_port }}/health"
+        return_content: true
+      register: pete_bot_reports_health
+      retries: 10
+      delay: 2
+      # A binary from before PET-701 reports no `reports`. That is acceptable only while the
+      # reports are off: with them switched on, a missing section means no scheduler exists,
+      # and the wait must end so the next task can fail the deploy.
+      until: >-
+        pete_bot_reports_health.json is defined
+        and (pete_bot_reports_health.json.reports is not defined
+             or pete_bot_reports_health.json.reports.state in
+                (['misconfigured', 'running'] if (pete_bot_reports_ready | bool)
+                 else ['off', 'misconfigured', 'running']))
+
+    - name: Fail when the scheduled reports are misconfigured, missing or did not start
+      ansible.builtin.fail:
+        msg: >-
+          The scheduled reports report
+          {{ pete_bot_reports_health.json.reports.state | default('nothing: this binary predates them') }}:
+          {{ pete_bot_reports_health.json.reports.reason | default('they were switched on but did not start') }}
+      when:
+        - not ansible_check_mode
+        - (pete_bot_reports_health.json.reports.state | default('')) == 'misconfigured'
+          or ((pete_bot_reports_ready | bool)
+              and (pete_bot_reports_health.json.reports.state | default('')) != 'running')
+
     - name: Read the Codex queue key's public half
       ansible.builtin.slurp:
         src: "{{ pete_bot_conf_dir }}/codex_ed25519.pub"
@@ -378,6 +735,7 @@
       ansible.builtin.debug:
         msg:
           - "merge desk: {{ pete_bot_desk_health.json.desk.state | default('not in this binary') }}"
+          - "scheduled reports: {{ pete_bot_reports_health.json.reports.state | default('not in this binary') }}"
           - >-
             codex_review_gate_keys entry:
             {{ (pete_bot_codex_pub.content | b64decode | trim) if pete_bot_codex_pub.content is defined
@@ -387,5 +745,11 @@
     - name: Restart pete-bot
       ansible.builtin.systemd_service:
         name: pete-bot
+        state: restarted
+        daemon_reload: true
+
+    - name: Restart lab-agent
+      ansible.builtin.systemd_service:
+        name: lab-agent
         state: restarted
         daemon_reload: true

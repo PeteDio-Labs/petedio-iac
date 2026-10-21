@@ -8,7 +8,7 @@
 #
 # Idempotent. The token is never echoed, never passed as an argv (so it stays out of `ps` and
 # shell history), and never written to disk.
-#   Vault token:   $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM, else prompt
+#   Vault token:   $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt (PET-519)
 #   Tunnel token:  prompted (paste the value from Cloudflare Zero Trust -> Tunnels -> palworld-mc)
 #
 # To ROTATE: refresh the token in the Cloudflare dashboard, re-run this, then on the host
@@ -34,7 +34,7 @@ step "Resolving Vault token"
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
-[ -n "${VAULT_TOKEN:-}" ] || { read -rsp "Vault token: " VAULT_TOKEN; echo; }
+[ -n "${VAULT_TOKEN:-}" ] || die "no Vault token: set VAULT_TOKEN or add the Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM"
 export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault token invalid / Vault unreachable at $VAULT_ADDR."
 

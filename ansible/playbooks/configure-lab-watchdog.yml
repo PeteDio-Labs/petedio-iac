@@ -1,0 +1,19 @@
+---
+# configure-lab-watchdog.yml — the second alert path (PET-707). Probes the Pi's Kuma, pete-bot
+# and Vault from claude-247 and posts to Pedro's Lab-Agent DM through Discord's bot API
+# (PET-728), so an outage of pete-bot or of the Pi still reaches Pedro. See roles/lab-watchdog/defaults/main.yml for what it
+# cannot see: it shares fate with pve03.
+#
+# Run it through scripts/deploy-lab-watchdog.sh, which passes the bot token and the DM
+# channel id from Vault (kv/services/lab-watchdog). A plain run installs the probe and leaves
+# the timer off until /etc/lab-watchdog/discord.curl exists.
+#
+#   ./scripts/deploy-lab-watchdog.sh
+#
+# Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
+
+- name: Install the lab watchdog
+  hosts: claude
+  become: true
+  roles:
+    - lab-watchdog

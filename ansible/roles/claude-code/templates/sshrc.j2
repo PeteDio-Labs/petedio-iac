@@ -1,0 +1,14 @@
+#!/bin/sh
+# {{ ansible_managed }}
+# PET-713: DM Pedro when someone logs in as an account the phone key opens. sshd runs this as
+# the logged-in user. Backgrounded with a timeout, so a pete-bot outage never blocks a login.
+case "$(id -un)" in
+{% for u in claude_operator_notify_users %}
+  {{ u }}) ;;
+{% endfor %}
+  *) exit 0 ;;
+esac
+src="${SSH_CONNECTION%% *}"
+( timeout 10 /usr/local/bin/notify-pedro "SSH login: $(id -un)@$(hostname) from ${src:-unknown}" \
+    >/dev/null 2>&1 & )
+exit 0

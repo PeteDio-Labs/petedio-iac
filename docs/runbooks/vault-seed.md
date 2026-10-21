@@ -214,9 +214,34 @@ chmod 600 iac/.secrets/*.role_id iac/.secrets/*.secret_id
 
 > [!NOTE]
 > `secret_id`s are rotatable: re-run the `write -f .../secret-id` to mint a fresh one
-> (the old one keeps working until its TTL/use limit or you revoke it). CI does **not**
+> (the old one keeps working until its TTL/use limit or you revoke it).
+> Since PET-687 the `ansible` and `terraform-local` roles set `secret_id_ttl` (90 days). To
+> rotate, run `./scripts/rotate-approle-secret-id.sh <role> --destroy-others` on the Mac, on
+> Pedro's word. It proves the new login before it destroys the old `secret_id`. To bind both
+> roles to the Mac and claude-247, set `approle_operator_cidrs` in the vault-config
+> `terraform.tfvars` and run `scripts/apply-vault-config.sh`. Rotate first, because a
+> `secret_id` minted from outside the list stops working once the list applies. CI does **not**
 > use these AppRole files — it authenticates via the **GitHub OIDC** (`jwt-github`)
 > role once the CI cutover lands (deferred — PET-29).
+
+### The same files on claude-247 (PET-674)
+
+`claude-ops` on 247 runs the deploy scripts from the same two files,
+`.secrets/ansible.{role_id,secret_id}`, in its own iac clone. They belong to the
+`ansible-247` AppRole, not to `ansible`. Its policy reads nine named paths, the ones the
+AppRole deploy scripts read, with no App key and no `kv/admin/*`. Both CIDR lists pin its
+logins and tokens to `192.168.50.247/32`. The deploy scripts pass the two values to
+`vault write auth/approle/login -` as JSON on stdin, so no other user on 247 can read them
+from the process table.
+
+To place or rotate them, run this on the Mac, on Pedro's word (PET-511):
+
+```bash
+./scripts/seed-claude-ops-ansible-approle.sh            # place, or confirm they log in
+./scripts/seed-claude-ops-ansible-approle.sh --rotate   # replace the secret_id
+```
+
+Never copy the Mac's `secret_id` to 247.
 
 ---
 

@@ -19,7 +19,7 @@ See the `module.cloudflare_ingress_palworld` comment in `cloudflare-routes.tf`.
 | Var | Default | Notes |
 | -- | -- | -- |
 | `cloudflared_tunnel_token` | *(none)* | **Secret.** From Vault at runtime. Without it the daemon installs but no connector is registered. |
-| `cloudflared_apt_release` | `ansible_distribution_release` | Cloudflare publishes per-codename lists. Pop!_OS 24.04 → `noble`. |
+| `cloudflared_apt_release` | `ansible_facts['distribution_release']` | Cloudflare publishes per-codename lists. Pop!_OS 24.04 → `noble`. |
 
 ## Token rotation
 

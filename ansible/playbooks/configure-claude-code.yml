@@ -54,7 +54,12 @@
     # kv/services/pete-bot. A run without it leaves the copies on disk as they are.
     - role: notify-pedro
       vars:
-        notify_pedro_users: "{{ [claude_user] + ([claude_ops_user] if claude_ops_enable | bool else []) }}"
+        # The operator account (PET-713) gets a copy too, so its login notice and the
+        # break-glass notice (PET-714) can reach Pedro.
+        notify_pedro_users: >-
+          {{ [claude_user]
+             + ([claude_ops_user] if claude_ops_enable | bool else [])
+             + ([claude_operator_user] if claude_operator_ssh_enable | bool else []) }}
         notify_pedro_deploy_script: scripts/deploy-claude-247.sh
 
   post_tasks:
