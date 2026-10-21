@@ -154,6 +154,26 @@
         state: present
       when: usaa_cd_public_key | length > 0
 
+    # authorized_key with state: present adds a key and never removes another, so a
+    # --rotate-key deploy would leave the old private key authorized as root. Drop every
+    # other usaa-cd line and keep the operator key, which carries a different comment.
+    - name: Remove superseded usaa-cd deploy keys
+      ansible.builtin.replace:
+        path: /root/.ssh/authorized_keys
+        regexp: '(?m)^ssh-ed25519 (?!{{ usaa_cd_public_key.split()[1] | regex_escape }}[ \t])\S+ usaa-cd[ \t]*\n'
+        replace: ""
+      when: usaa_cd_public_key | length > 0
+
+    - name: Check that exactly one usaa-cd key is authorized, and it is the current one
+      ansible.builtin.shell:
+        cmd: set -o pipefail; grep -E ' usaa-cd[[:space:]]*$' /root/.ssh/authorized_keys | awk '{print $2}'
+        executable: /bin/bash
+      register: usaa_cd_authorized
+      changed_when: false
+      check_mode: false # read-only
+      failed_when: usaa_cd_authorized.stdout_lines != [usaa_cd_public_key.split()[1]]
+      when: usaa_cd_public_key | length > 0 and not ansible_check_mode
+
     - name: Create the service group
       ansible.builtin.group:
         name: "{{ usaa_group }}"
