@@ -563,6 +563,34 @@
             state: "{{ 'restarted' if lab_mcp_allowlist_files is changed else 'started' }}"
             daemon_reload: true
 
+        # ⚠ NEVER REMOVE AN INSTALLED PLANE TOKEN (PET-672). A deploy path that does not read
+        # kv/services/lab-agent-plane renders the env file without LAB_PLANE_TOKEN, and lab-agent
+        # restarts with no plane_item under a green health check. Fail instead, and name the fix.
+        - name: Find lab-agent's installed environment file
+          ansible.builtin.stat:
+            path: "{{ lab_agent_env_file }}"
+          register: lab_agent_env_stat
+
+        - name: Look for an installed Plane token
+          ansible.builtin.command: grep -q '^LAB_PLANE_TOKEN=.' {{ lab_agent_env_file | quote }}
+          register: lab_agent_plane_installed
+          changed_when: false
+          failed_when: lab_agent_plane_installed.rc > 1
+          check_mode: false
+          no_log: true
+          when: lab_agent_env_stat.stat.exists
+
+        - name: Refuse a deploy that would drop the installed Plane token
+          ansible.builtin.assert:
+            that:
+              - (lab_agent_plane_token | default('') | length > 0) or (lab_agent_plane_installed.rc | default(1)) != 0
+            fail_msg: >-
+              lab-agent's env file holds LAB_PLANE_TOKEN, but this deploy passed no
+              lab_agent_plane_token, so the render would remove it and lab-agent would lose
+              plane_item. Deploy with scripts/deploy-pete-bot.sh, which reads
+              kv/services/lab-agent-plane. A deploy-on-merge run needs pete-bot's deploy.yml
+              to read that path too.
+
         # Read by systemd, as root, before it drops to the service account. So 0600 root.
         - name: Install lab-agent's environment file
           ansible.builtin.template:
