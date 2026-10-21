@@ -17,6 +17,18 @@ plan ends, the watchdog stops without warning: the lab's heartbeat gets no answe
 
 Nothing here runs from CI. Apply it by hand from claude-247, on Pedro's word.
 
+## Account rules
+
+Treat the $100 credit as a hard limit. Pedro set these rules on 2026-10-21:
+
+- Do not join an AWS Organization, set up Control Tower, or enable advanced features. Any of these ends credit earning immediately.
+- Use only Free plan-eligible services and the smallest sizes. Flag any change that spends credit.
+- Credits take 10 to 30 minutes to appear under Billing > Credits.
+- The plan has no surprise bill. When the credit or the period ends, access stops, and a 90-day window lets you upgrade and reopen.
+- The Budgets, Lambda and other bonus activities earn +$20 each only when you start them from the Console Home "Explore AWS" widget (filter: Earn AWS credits). Create the budget first.
+- A bonus activity that launches an EC2 instance or an RDS database spends credit. Terminate or delete it when you finish.
+- Upgrading to a paid plan keeps unused credit valid for up to 12 months from sign-up. Anything above it is billed.
+
 ## Before the first apply
 
 1. Create a $5 monthly AWS Budget with email alerts. Do it before any resource exists.
