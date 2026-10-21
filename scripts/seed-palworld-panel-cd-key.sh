@@ -59,7 +59,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 step "Read $DEST"
 SNAP="$(vault kv get -format=json "$DEST" 2>/dev/null)" \
-  || die "cannot read $DEST. Run scripts/seed the path first."
+  || die "cannot read $DEST. Run scripts/pet-secrets doctor."
 VERSION="$(SNAP="$SNAP" python3 -c 'import json,os; print(json.loads(os.environ["SNAP"])["data"]["metadata"]["version"])')" \
   || die "could not parse the read of $DEST."
 EXISTING_PUB="$(SNAP="$SNAP" python3 -c '
