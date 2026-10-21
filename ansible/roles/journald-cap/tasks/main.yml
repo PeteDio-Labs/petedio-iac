@@ -63,7 +63,7 @@
       systemctl is-active --quiet systemd-journald
       echo CHANGED'
   args: { executable: /bin/bash }
-  loop: "{{ journald_guests.stdout_lines[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
+  loop: "{{ (journald_guests.stdout_lines | default([]))[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
   loop_control:
     label: "guest {{ item }}"
   register: journald_applied
