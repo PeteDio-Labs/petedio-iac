@@ -84,6 +84,9 @@ PB_UPDATES_TOKEN="$(field github_updates_token)"
 PB_DESK_APP_ID="$(field desk_app_id)"
 PB_DESK_INSTALLATION_ID="$(field desk_installation_id)"
 PB_DESK_APP_PEM="$(field desk_app_pem)"
+# Optional (PET-701): a read-only Plane token for the scheduled reports. With it and the desk
+# App, the reports turn on. scripts/seed-pete-bot-plane-key.sh writes it.
+PB_PLANE_API_KEY="$(field plane_api_key)"
 # Optional (PET-617), together or not at all: the gateway's Anthropic key and lab-map's
 # bearer. Absent leaves the gateway off. scripts/seed-llm-gateway.sh writes both, and the
 # play refuses one without the other.
@@ -95,6 +98,11 @@ if [ -n "$PB_DESK_APP_ID" ] && [ -n "$PB_DESK_INSTALLATION_ID" ] && [ -n "$PB_DE
   echo "  merge desk: App present"
 else
   echo "  merge desk: the App is not seeded, so the desk stays off"
+fi
+if [ -n "$PB_PLANE_API_KEY" ]; then
+  echo "  scheduled reports: Plane key present, so they run once the desk App is also present"
+else
+  echo "  scheduled reports: no plane_api_key, so they stay off (run scripts/seed-pete-bot-plane-key.sh)"
 fi
 if [ -n "$PB_UPDATES_TOKEN" ]; then
   echo "  /update: token present"
@@ -133,7 +141,7 @@ PB_BEARER="$PB_BEARER" PB_NOTIFY_BEARER="$PB_NOTIFY_BEARER" BIN="$BIN" \
 PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
 PB_ANTHROPIC_KEY="$PB_ANTHROPIC_KEY" PB_GATEWAY_LAB_MAP="$PB_GATEWAY_LAB_MAP" \
 PB_DESK_APP_ID="$PB_DESK_APP_ID" PB_DESK_INSTALLATION_ID="$PB_DESK_INSTALLATION_ID" \
-PB_DESK_APP_PEM="$PB_DESK_APP_PEM" \
+PB_DESK_APP_PEM="$PB_DESK_APP_PEM" PB_PLANE_API_KEY="$PB_PLANE_API_KEY" \
 python3 -c '
 import json, os
 json.dump({
@@ -149,6 +157,7 @@ json.dump({
     "pete_bot_desk_app_id":          os.environ.get("PB_DESK_APP_ID", ""),
     "pete_bot_desk_installation_id": os.environ.get("PB_DESK_INSTALLATION_ID", ""),
     "pete_bot_desk_app_pem":         os.environ.get("PB_DESK_APP_PEM", ""),
+    "pete_bot_plane_api_key":        os.environ.get("PB_PLANE_API_KEY", ""),
 }, open(os.environ["OUT"], "w"))
 '
 
