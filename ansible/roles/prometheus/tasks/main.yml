@@ -62,6 +62,21 @@
     return_content: true
   register: prometheus_targets
 
+# The store must hold every target the config declares, and at least one must answer. A store that
+# loaded an empty config, or one where every scrape fails, must not read as a pass.
+- name: Check the store holds every declared target and some answer
+  ansible.builtin.assert:
+    that:
+      - >-
+        prometheus_targets.json.data.activeTargets | length ==
+        (prometheus_node_targets | length) + 1
+        + (prometheus_extra_jobs | map(attribute='targets') | map('length') | sum)
+      - prometheus_targets.json.data.activeTargets | selectattr('health', 'equalto', 'up') | list | length >= 1
+    fail_msg: >-
+      prometheus holds {{ prometheus_targets.json.data.activeTargets | length }} active targets and
+      {{ prometheus_targets.json.data.activeTargets | selectattr('health', 'equalto', 'up') | list | length }} up;
+      the config declares {{ (prometheus_node_targets | length) + 1 }} plus the extra jobs.
+
 - name: Report what the store examined
   ansible.builtin.debug:
     msg: >-
