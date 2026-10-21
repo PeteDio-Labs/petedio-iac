@@ -97,11 +97,7 @@ data "aws_iam_policy_document" "fn" {
   }
   statement {
     actions   = ["ssm:GetParameter"]
-    resources = [
-      aws_ssm_parameter.discord_bot_token.arn,
-      aws_ssm_parameter.discord_dm_channel_id.arn,
-      aws_ssm_parameter.heartbeat_secret.arn,
-    ]
+    resources = [aws_ssm_parameter.discord_bot_token.arn, aws_ssm_parameter.discord_dm_channel_id.arn, aws_ssm_parameter.heartbeat_secret.arn]
   }
   statement {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
