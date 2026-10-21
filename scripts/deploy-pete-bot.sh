@@ -90,6 +90,11 @@ PB_PLANE_API_KEY="$(field plane_api_key)"
 # Optional (PET-724): the public half of the pete-bot-cd deploy key. The play authorizes it
 # for root on 237 only. scripts/seed-pete-bot-cd-key.sh writes it.
 PB_CD_PUBLIC_KEY="$(field deploy_ssh_public_key)"
+# An empty key must not pass silently: the play would skip installing it, and the CD deploy
+# that reads it would later fail. ALLOW_NO_CD_KEY=1 deploys without it on purpose.
+if [ -z "$PB_CD_PUBLIC_KEY" ] && [ "${ALLOW_NO_CD_KEY:-}" != 1 ]; then
+  die "deploy_ssh_public_key is empty. Run scripts/seed-pete-bot-cd-key.sh, then run this again. ALLOW_NO_CD_KEY=1 skips the key on purpose."
+fi
 # Optional (PET-617), together or not at all: the gateway's Anthropic key and lab-map's
 # bearer. Absent leaves the gateway off. scripts/seed-llm-gateway.sh writes both, and the
 # play refuses one without the other.
