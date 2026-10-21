@@ -12,6 +12,25 @@
 # Each host proves its own path: the play writes a canary warning and asks Loki for it.
 # Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
 
+# A host pattern that names a missing group matches nothing and only warns, so a play run without
+# media-dash.yml would pass over pete-bot's host and report success. Name the groups and fail instead.
+- name: Check every group in scope exists and holds a host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    log_shipping_groups: [vault, runner, postgres, minio, plane, media_dash]
+  tasks:
+    - name: Assert each group is in the inventory and not empty
+      ansible.builtin.assert:
+        that:
+          - item in groups
+          - groups[item] | default([]) | length > 0
+        fail_msg: >-
+          Group {{ item }} is missing or empty. Pass -i inventory/hosts.yml -i inventory/media-dash.yml
+          so every group in scope loads.
+      loop: "{{ log_shipping_groups }}"
+
 - name: Ship the journal to Loki
   hosts: vault:runner:postgres:minio:plane:media_dash
   become: true

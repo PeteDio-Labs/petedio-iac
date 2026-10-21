@@ -75,7 +75,7 @@
   delay: 2
 
 # Alloy ready means it parsed the config. A quiet host may log nothing above warning for days, so
-# write a warning of our own and ask Loki for it. The canary carries this run's epoch, so an old
+# write a warning of our own and ask Loki for it. Loki reads the query from a form body on POST only. The canary carries this run's epoch, so an old
 # line cannot satisfy the check.
 - name: Write a canary warning to the journal
   ansible.builtin.command: "logger -p user.warning -t alloy-journal-canary canary {{ inventory_hostname }} {{ ansible_date_time.epoch }}"
@@ -84,7 +84,7 @@
 - name: Ask Loki for the canary
   ansible.builtin.uri:
     url: "{{ alloy_journal_loki_url | regex_replace('/push$', '/query_range') }}"
-    method: GET
+    method: POST
     body_format: form-urlencoded
     body:
       query: '{host="{{ inventory_hostname }}"} |= "canary {{ inventory_hostname }} {{ ansible_date_time.epoch }}"'
