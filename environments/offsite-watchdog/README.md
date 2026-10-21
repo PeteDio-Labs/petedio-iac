@@ -78,10 +78,11 @@ as a different identity than the apply user:
 }
 ```
 
-Copy its ARN into `terraform.tfvars` as `permissions_boundary_arn`. Replace `ACCOUNT_ID` below with
-the account's 12 digits.
+Pass its ARN as `-var permissions_boundary_arn=<ARN>` on each plan and apply. The repository ignores
+`*.tfvars` and the ARN holds the account ID, so no file in git carries it. Record the ARN on PET-722.
+Replace `ACCOUNT_ID` below with the account's 12 digits.
 
-**2. Attach this inline policy to `petedio-terraform-watchdog`.** It is scoped by name, and every
+**2. Attach this inline policy to `petedio-terraform-watchdog`, named `petedio-watchdog-apply`.** It is scoped by name, and every
 role action requires the boundary:
 
 ```json
