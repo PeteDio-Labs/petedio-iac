@@ -83,7 +83,7 @@ petedio-media-control     unavailable                                        fal
 petedio-palworld-panel    unavailable                                        false
 
 # ── private: protection and rulesets both 403 on the Free plan ───────────────
-claude-skills             unavailable                                        false
+skills                    unavailable                                        false
 fs-mcs-vault              unavailable                                        false
 notification-service      unavailable                                        false
 pete-vision-backend       unavailable                                        false
