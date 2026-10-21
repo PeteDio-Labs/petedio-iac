@@ -25,7 +25,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 HEARTBEAT_ID = "heartbeat"
-USER_AGENT = "petedio-watchdog/1.0"  # Discord answers 403 to the default urllib agent
+USER_AGENT = "DiscordBot (https://github.com/PeteDio-Labs/petedio-iac, 1)"  # Discord answers 403 to the default urllib agent
+DISCORD_API = "https://discord.com/api/v10"
 
 
 def _env(name, default=None):
@@ -33,7 +34,7 @@ def _env(name, default=None):
 
 
 class AwsStore:
-    """DynamoDB for state, SSM for the two secrets. Replaced by a fake in the tests."""
+    """DynamoDB for state, SSM for the secrets. Replaced by a fake in the tests."""
 
     def __init__(self):
         import boto3
@@ -89,11 +90,14 @@ def cert_days(url, timeout):
         return None
 
 
-def discord(webhook, text):
+def discord(target, text):
+    """Post one message to the Lab-Agent DM as the bot. target is (bot token, DM channel id)."""
+    token, channel = target
     req = urllib.request.Request(
-        webhook,
-        data=json.dumps({"username": "petedio-watchdog", "content": text}).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+        "%s/channels/%s/messages" % (DISCORD_API, channel),
+        data=json.dumps({"content": text}).encode(),
+        headers={"Content-Type": "application/json", "User-Agent": USER_AGENT,
+                 "Authorization": "Bot " + token},
     )
     with urllib.request.urlopen(req, timeout=10):
         pass
@@ -109,7 +113,7 @@ def heartbeat(event, store, now):
 
 
 def run_checks(store, now, probe_fn=probe, post_fn=discord):
-    webhook = store.secret(_env("PARAM_DISCORD"))
+    target = (store.secret(_env("PARAM_DISCORD_TOKEN")), store.secret(_env("PARAM_DISCORD_CHANNEL")))
     threshold = int(_env("FAIL_THRESHOLD", "2"))
     max_age = int(_env("HEARTBEAT_MAX_AGE", "900"))
     checks = json.loads(_env("CHECKS", "[]"))
@@ -126,7 +130,7 @@ def run_checks(store, now, probe_fn=probe, post_fn=discord):
 
     def post(text):
         try:
-            post_fn(webhook, text)
+            post_fn(target, text)
             return True
         except Exception as err:  # noqa: BLE001 - any failure to deliver is a failed post
             print("post failed: %s: %s" % (type(err).__name__, err))

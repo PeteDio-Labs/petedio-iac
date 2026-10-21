@@ -1,10 +1,10 @@
 # offsite-watchdog (PET-722)
 
 An AWS Lambda that watches the lab from outside it. The lab sends a heartbeat to the function
-URL every 2 minutes. A scheduled run of the same function posts to Discord when the heartbeat
+URL every 2 minutes. A scheduled run of the same function posts to the Lab-Agent DM on Discord when the heartbeat
 stops (house power, internet, pve03 or 247 down) and probes the public endpoints in
 `var.public_checks`. It costs $0 to $1 a month: one Lambda, one on-demand DynamoDB table, one
-EventBridge rule, two SSM parameters.
+EventBridge rule, three SSM parameters.
 
 ## Account limits
 
@@ -33,8 +33,12 @@ Treat the $100 credit as a hard limit. Pedro set these rules on 2026-10-21:
 
 1. Create a $5 monthly AWS Budget with email alerts. Do it before any resource exists.
 2. Create the boundary policy and the IAM user `petedio-terraform-watchdog` with its inline policy (next section), and an access key.
-3. Run `scripts/seed-aws-watchdog-vault.sh`. It stores the keys, a Discord webhook and a
-   generated heartbeat secret in `kv/services/aws-watchdog`.
+3. Run `scripts/seed-watchdog-discord.sh`. It copies the Lab-Agent bot token from
+   `kv/services/pete-bot`, opens Pedro's DM, and stores the token and the DM channel id in
+   `kv/services/aws-watchdog` and `kv/services/lab-watchdog`. A webhook cannot post into a DM, so
+   both watchdogs post as the bot. The token is shared with pete-bot: rotating it silences both.
+4. Run `scripts/seed-aws-watchdog-vault.sh`. It stores the AWS keys and a generated heartbeat
+   secret in `kv/services/aws-watchdog`, and refuses to run before step 3.
 
 ## Apply
 
@@ -47,9 +51,12 @@ terraform init && terraform plan -var permissions_boundary_arn=<ARN of petedio-w
 ```
 
 The two `AWS_*` variables are the MinIO state backend's keys. The AWS provider ignores them and
-authenticates from Vault, so the two never collide. Read the plan before the apply: expect 13
-resources to add (two SSM parameters, the table, a log group, a role and its policy, the function,
+authenticates from Vault, so the two never collide. Read the plan before the apply: expect 14
+resources to add (three SSM parameters, the table, a log group, a role and its policy, the function,
 its URL and two URL permissions, an EventBridge rule, its target and permission).
+The plan should show no destroys. PET-722 had not been applied when PET-728 replaced the
+`discord_webhook` parameter, so no state holds it. A destroy of `aws_ssm_parameter.discord_webhook`
+means someone applied the earlier version: read it, and accept it.
 
 After the apply, run `scripts/seed-aws-watchdog-vault.sh --heartbeat-url` with the
 `heartbeat_url` output, then `scripts/deploy-lab-watchdog.sh` to land the heartbeat on 247.
@@ -129,7 +136,9 @@ here, and never add `iam:*` or drop the boundary condition.
 
 ## Rotation
 
-- Discord webhook: re-run the seed script, then bump `value_wo_version` in `main.tf` and apply.
+- Discord bot token or DM: re-run `scripts/seed-watchdog-discord.sh`, then bump `value_wo_version`
+  on `discord_bot_token` and `discord_dm_channel_id` in `main.tf`, apply, and run
+  `scripts/deploy-lab-watchdog.sh`.
 - Heartbeat secret: delete the field in Vault, re-run the seed script, bump `value_wo_version` on
   `heartbeat_secret`, apply, then run `scripts/deploy-lab-watchdog.sh`.
 
