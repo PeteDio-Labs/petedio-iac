@@ -29,7 +29,7 @@
 # browser steps on the App's GitHub settings page. scripts/deploy-claude-247.sh delivers the
 # credential to claude-247 from this Vault path.
 #
-#   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM, else prompt
+#   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt (PET-519)
 #
 # The key is never printed, never passed in argv, and never leaves this process except into
 # Vault over TLS and into a signature. Verification reads properties back, never values.
@@ -134,7 +134,7 @@ step "Authenticating to Vault"
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
-[ -n "${VAULT_TOKEN:-}" ] || { read -rsp "Vault token: " VAULT_TOKEN; echo; }
+[ -n "${VAULT_TOKEN:-}" ] || die "no Vault token: set VAULT_TOKEN or add the Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM"
 export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault rejected the token, or $VAULT_ADDR is unreachable.
   Check both before assuming either: ./scripts/pet-secrets doctor reports whether Vault is
