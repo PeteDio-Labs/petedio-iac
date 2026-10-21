@@ -16,16 +16,21 @@
     group: root
     mode: "0700"
 
-# The webhook URL is the credential: anyone holding it can post to the channel. Land it only
-# when the run carries it, and never print it.
-- name: Land the Discord webhook URL
+# A curl config file: the bot token is the credential, and it stays out of argv when the probe
+# reads it. Land it only when the run carries both values, and never print it.
+- name: Land the Discord bot config
   ansible.builtin.copy:
-    content: "{{ lab_watchdog_discord_webhook_url }}\n"
-    dest: /etc/lab-watchdog/discord_webhook
+    content: |
+      url = "https://discord.com/api/v10/channels/{{ lab_watchdog_discord_dm_channel_id }}/messages"
+      header = "Authorization: Bot {{ lab_watchdog_discord_bot_token }}"
+      user-agent = "DiscordBot (https://github.com/PeteDio-Labs/petedio-iac, 1)"
+    dest: /etc/lab-watchdog/discord.curl
     owner: root
     group: root
     mode: "0600"
-  when: lab_watchdog_discord_webhook_url | length > 0
+  when:
+    - lab_watchdog_discord_bot_token | length > 0
+    - lab_watchdog_discord_dm_channel_id | length > 0
   no_log: true
 
 # A curl config file: the URL and the secret header stay out of argv when the probe reads it.
@@ -43,10 +48,10 @@
     - lab_watchdog_heartbeat_secret | length > 0
   no_log: true
 
-- name: Read back whether the webhook file exists
+- name: Read back whether the Discord config exists
   ansible.builtin.stat:
-    path: /etc/lab-watchdog/discord_webhook
-  register: lab_watchdog_webhook
+    path: /etc/lab-watchdog/discord.curl
+  register: lab_watchdog_discord
 
 - name: Install the probe
   ansible.builtin.template:
@@ -70,18 +75,18 @@
 - name: Apply the systemd reload before enabling the timer
   ansible.builtin.meta: flush_handlers
 
-# The timer runs only once the webhook exists. A timer that probes and cannot post is a
+# The timer runs only once the Discord config exists. A timer that probes and cannot post is a
 # green unit over work that never happened.
-- name: Enable the timer when the webhook is present
+- name: Enable the timer when the Discord config is present
   ansible.builtin.systemd:
     name: lab-watchdog.timer
     enabled: true
     state: started
-  when: lab_watchdog_webhook.stat.exists
+  when: lab_watchdog_discord.stat.exists
 
 - name: Say when the timer is not running
   ansible.builtin.debug:
     msg: >-
-      /etc/lab-watchdog/discord_webhook is absent, so lab-watchdog.timer is not enabled.
-      Run scripts/seed-lab-watchdog-webhook.sh, then scripts/deploy-lab-watchdog.sh.
-  when: not lab_watchdog_webhook.stat.exists
+      /etc/lab-watchdog/discord.curl is absent, so lab-watchdog.timer is not enabled.
+      Run scripts/seed-watchdog-discord.sh, then scripts/deploy-lab-watchdog.sh.
+  when: not lab_watchdog_discord.stat.exists
