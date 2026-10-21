@@ -244,6 +244,22 @@ uptime_kuma_monitors:
     url: "http://192.168.50.237:8237/health"
     description: "Media triage API on 237. Liveness only; Bobbert is its caller."
 
+  # -- services that ran unwatched (PET-706) -----------------------------------
+  # /healthz answers {"ok":true,"db":<bool>}. A 200 alone does not prove the database
+  # connects, so the usaa monitor reads the keyword the app sets when it does.
+  - name: usaa
+    type: keyword
+    url: "http://192.168.50.238:8080/healthz"
+    keyword: '"db":true'
+    description: "Savings tracker on 238. DOWN means the app is off or its database does not connect."
+  # petedio-search binds 192.168.50.12 and admits 192.168.50.0/24, so the Pi reaches it.
+  # /healthz proves only that the server is up; the embedding lane has its own check
+  # in configure-search.yml.
+  - name: search
+    type: http
+    url: "http://192.168.50.12:8526/healthz"
+    description: "petedio-search on ollama-host. Liveness only."
+
   # -- the one monitor that is ALLOWED to depend on the resolver ---------------
   # DNS is not self-hosted, so the router is a real single point of failure and
   # an injectable fault. Kuma queries the named server directly rather than
@@ -334,6 +350,7 @@ uptime_kuma_maintenances:
       - postgres       # 231
       - plane          # 235
       - mtrace         # 237
+      - usaa           # 238
       - minio-data     # 245
 
 # ------------------------------------------------------- backup to the HDD --

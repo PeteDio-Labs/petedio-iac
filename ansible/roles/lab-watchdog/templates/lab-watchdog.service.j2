@@ -1,0 +1,14 @@
+# Managed by Ansible: roles/lab-watchdog (PET-707).
+[Unit]
+Description=Probe the lab from outside pete-bot and post to Discord
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/lab-watchdog
+StateDirectory=lab-watchdog
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

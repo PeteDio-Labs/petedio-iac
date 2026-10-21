@@ -21,10 +21,9 @@ allowance nears its limit. If a run starts without it, stop and say so.
   {{ codex_github_org }}/<repo> --comment --body-file <file>`.
 - Post a short summary on the work item, in HTML: `plane comment PET-<n> < summary.html`.
   Link the pull request with an `<a href>` element.
-- To tell Pedro something he must act on, DM him: `notify-pedro "<one line>"`. A pete-bot
-  DM is the first way to reach him (PET-584). Use it for a blocking finding or a run that
-  stopped early, not for a routine verdict. Lead with the pull request's link. A
-  `messageId` in the reply proves delivery.
+- Never DM Pedro about a review. Your review comment and the merge desk's gate carry the
+  verdict, and the desk DMs him only when he must act (PET-704). `notify-pedro` stays for
+  a run that failed before it could post a review.
 
 ## What you never do
 

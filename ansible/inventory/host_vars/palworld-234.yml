@@ -26,7 +26,7 @@ palworld_lan_ingress_enabled: true
 # /v1/api/info — days:0 / basecampnum:0 means a fresh world, so stop before it writes.
 
 # ⚠ CLOUDFLARE PUBLISHES NO `trixie` DIST, AND THIS CONTAINER IS DEBIAN 13.
-# roles/cloudflared defaults cloudflared_apt_release to ansible_distribution_release, which
+# roles/cloudflared defaults cloudflared_apt_release to ansible_facts['distribution_release'], which
 # is correct almost everywhere and wrong here: the old game host was Pop!_OS 24.04 and
 # resolved to `noble`, which exists. Debian 13 resolves to `trixie`, which does not, and
 # apt fails with "does not have a Release file" — an error that reads like a broken mirror

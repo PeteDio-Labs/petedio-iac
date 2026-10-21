@@ -4,6 +4,13 @@
 # AppRole — machine logins for local Ansible/Terraform runs (role_id + secret_id).
 resource "vault_auth_backend" "approle" {
   type = "approle"
+
+  # Vault caps a secret_id's life at the mount's max lease TTL (default 768h, 32 days), so a
+  # role's secret_id_ttl above that is silently shortened (PET-687). Raise the cap to match
+  # the role setting. default_lease_ttl stays at the system default, so token TTLs do not move.
+  tune {
+    max_lease_ttl = "${var.approle_secret_id_ttl}s"
+  }
 }
 
 # Ansible host-config role → ansible policy.
@@ -13,6 +20,34 @@ resource "vault_approle_auth_backend_role" "ansible" {
   token_policies = [vault_policy.ansible.name]
   token_ttl      = 1200
   token_max_ttl  = 3600
+
+  # secret_id_ttl bounds a new secret_id's life (PET-687). It applies to secret_ids minted
+  # after the apply; scripts/rotate-approle-secret-id.sh replaces the ones in use.
+  # The CIDR lists stay empty until var.approle_operator_cidrs names the Mac and 247.
+  secret_id_ttl         = var.approle_secret_id_ttl
+  secret_id_bound_cidrs = var.approle_operator_cidrs
+  token_bound_cidrs     = var.approle_operator_cidrs
+}
+
+# ansible-247 role → ansible-247 policy (PET-674). The AppRole that claude-ops on
+# claude-247 logs in with, so the deploy scripts run there the way they run on the Mac.
+# scripts/seed-claude-ops-ansible-approle.sh mints its secret_id on the Mac and delivers it
+# to claude-ops's iac clone as .secrets/ansible.{role_id,secret_id}. The file names match
+# the Mac's, so the deploy scripts find them where they look on the Mac.
+#
+# A role of its own, not a second secret_id on `ansible`: the ansible policy reads every
+# path under kv/iac, kv/services, kv/db and kv/admin, and ansible-247 reads nine named
+# paths (policies.tf). Both CIDR lists pin every login and every token to
+# 247's address, so a secret_id copied off the host does not log in anywhere else.
+# The TTLs match `ansible`.
+resource "vault_approle_auth_backend_role" "ansible_247" {
+  backend               = vault_auth_backend.approle.path
+  role_name             = "ansible-247"
+  token_policies        = [vault_policy.ansible_247.name]
+  token_ttl             = 1200
+  token_max_ttl         = 3600
+  secret_id_bound_cidrs = ["192.168.50.247/32"]
+  token_bound_cidrs     = ["192.168.50.247/32"]
 }
 
 # Local Terraform role → terraform policy.
@@ -22,6 +57,13 @@ resource "vault_approle_auth_backend_role" "terraform_local" {
   token_policies = [vault_policy.terraform.name]
   token_ttl      = 1200
   token_max_ttl  = 3600
+
+  # secret_id_ttl bounds a new secret_id's life (PET-687). It applies to secret_ids minted
+  # after the apply; scripts/rotate-approle-secret-id.sh replaces the ones in use.
+  # The CIDR lists stay empty until var.approle_operator_cidrs names the Mac and 247.
+  secret_id_ttl         = var.approle_secret_id_ttl
+  secret_id_bound_cidrs = var.approle_operator_cidrs
+  token_bound_cidrs     = var.approle_operator_cidrs
 }
 
 # JWT auth for GitHub Actions OIDC. Mounted at a non-default path (`jwt-github`)
@@ -47,7 +89,7 @@ resource "vault_jwt_auth_backend" "github" {
 # (.github/workflows/terraform.yml), so nothing on a PR needs — or may mint — a token
 # here. Matches the openfaas-ci role's main-only pattern below.
 #
-# bound_claims_type = "string" → EXACT match (not glob): the sub is a fixed string
+# bound_claims_type = "string" → EXACT match (not glob): each claim is a fixed string
 # with no wildcard.
 #
 # NOTE (sibling exposure, separate issue): media-ci below binds only its main-push sub
@@ -62,8 +104,17 @@ resource "vault_jwt_auth_backend_role" "github_actions" {
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
+  # ⚠ BOUND TO THE FILE AND THE EVENT, NOT ONLY THE BRANCH (PET-675). It bound only
+  # sub, and a workflow_dispatch on main sends the same sub as a push to main, so any
+  # workflow on main could mint this role. That was safe only while every workflow on
+  # main runs reviewed code. A dispatched job that checks out a PR head breaks that,
+  # so the role names terraform.yml and push, as claude-247-deploy does. Claims, not
+  # sub, because sub cannot name a file and the id-based migration (PET-360) changes it.
   bound_claims = {
-    sub = "repo:${var.github_repo}:ref:refs/heads/main"
+    repository   = var.github_repo
+    ref          = "refs/heads/main"
+    event_name   = "push"
+    workflow_ref = "${var.github_repo}/.github/workflows/terraform.yml@refs/heads/main"
   }
   token_policies = [vault_policy.ci_read.name]
   token_ttl      = 900
@@ -349,9 +400,9 @@ resource "vault_jwt_auth_backend_role" "infra_reconcile" {
 
 # openfaas-ci role → openfaas-ci policy. ⚠ MISNAMED, NOT DEAD — see the policy's comment in
 # policies.tf. `.github/workflows/ansible-stack.yml` mints as this role (lines 102, 116) to
-# deploy the arr stack; openfaas-241 itself is gone. Bound to petedio-iac's main-push sub
-# only, so a PR cannot mint it. Values captured from live Vault on 2026-09-12, not
-# reconstructed, so this apply is a no-op against what is already there (PET-423).
+# deploy the palworld stack; openfaas-241 itself is gone. Bound to a push to petedio-iac's
+# main through ansible-stack.yml only, so a PR or a dispatch cannot mint it. The other
+# values were captured from live Vault on 2026-09-12, not reconstructed (PET-423).
 resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "openfaas-ci"
@@ -359,8 +410,17 @@ resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
+  # ⚠ BOUND TO THE REUSABLE FILE AND THE EVENT (PET-675), for the reason on the
+  # github-actions role above: a sub alone lets any workflow on main mint the lxc-ssh
+  # key. ansible-stack.yml is a reusable workflow, so workflow_ref names its caller
+  # (ansible-palworld.yml) and job_workflow_ref names ansible-stack.yml itself. Pinning
+  # job_workflow_ref lets a new stack caller work with no change here, and event_name
+  # still refuses a dispatch or a schedule.
   bound_claims = {
-    sub = "repo:PeteDio-Labs/petedio-iac:ref:refs/heads/main"
+    repository       = var.github_repo
+    ref              = "refs/heads/main"
+    event_name       = "push"
+    job_workflow_ref = "${var.github_repo}/.github/workflows/ansible-stack.yml@refs/heads/main"
   }
   token_policies = [vault_policy.openfaas_ci.name]
   token_ttl      = 900

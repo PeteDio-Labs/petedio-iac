@@ -6,3 +6,9 @@
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
+
+# PET-713. Reload, not restart: a reload keeps the session that is running this play.
+- name: Reload sshd
+  ansible.builtin.systemd:
+    name: ssh
+    state: reloaded
