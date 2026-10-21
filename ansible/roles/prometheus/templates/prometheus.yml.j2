@@ -1,0 +1,25 @@
+# Managed by Ansible: roles/prometheus (PET-708). Edit the role's defaults, not this file.
+global:
+  scrape_interval: {{ prometheus_scrape_interval }}
+  evaluation_interval: {{ prometheus_scrape_interval }}
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["{{ prometheus_listen }}"]
+
+  - job_name: node
+    static_configs:
+{% for t in prometheus_node_targets %}
+      - targets: ["{{ t.address }}:9100"]
+        labels: { host: "{{ t.host }}" }
+{% endfor %}
+{% for j in prometheus_extra_jobs %}
+
+  - job_name: {{ j.job }}
+{% if j.scheme is defined %}
+    scheme: {{ j.scheme }}
+{% endif %}
+    static_configs:
+      - targets: {{ j.targets | to_json }}
+{% endfor %}

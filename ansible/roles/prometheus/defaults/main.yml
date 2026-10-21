@@ -1,0 +1,47 @@
+---
+# prometheus (PET-708): the lab's metrics store, on LXC 240 (metrics-240).
+#
+# WHY PROMETHEUS FROM APT, NOT VICTORIAMETRICS. The proposal on PET-708 named VictoriaMetrics.
+# Its release archives come from GitHub, and the cloud thread that wrote this role could not
+# fetch one to pin a checksum, so a role would install an unpinned binary. Debian's `prometheus`
+# package is signed by apt, runs the same exporters and PromQL, and fits 30 hosts in 1 GB.
+# Swapping the store later changes this role and nothing that scrapes it.
+#
+# The API listens on loopback. Grafana and the alert timer run on the same host, so nothing
+# needs an unauthenticated query endpoint on the LAN.
+
+prometheus_retention: 90d
+prometheus_listen: "127.0.0.1:9090"
+prometheus_scrape_interval: 30s
+
+# Every host that runs roles/node-exporter, by the address the metrics host reaches. Addresses
+# come from the Kuma monitors and the PET-712 survey (2026-10-20). plex-gpu (236) sits on the
+# mesh and is not listed: add it once a route from 240 to .86.236 is proved.
+prometheus_node_targets:
+  - { host: pve02, address: 192.168.50.11 }
+  - { host: pve03, address: 192.168.50.10 }
+  - { host: pete-pi, address: 192.168.50.4 }
+  - { host: qbittorrent-vpn, address: 192.168.50.21 }
+  - { host: seerr, address: 192.168.50.33 }
+  - { host: flaresolverr, address: 192.168.50.150 }
+  - { host: sonarr, address: 192.168.50.15 }
+  - { host: radarr, address: 192.168.50.16 }
+  - { host: prowlarr, address: 192.168.50.20 }
+  - { host: authentik, address: 192.168.50.119 }
+  - { host: minio-221, address: 192.168.50.221 }
+  - { host: vault-223, address: 192.168.50.223 }
+  - { host: postgres-rds-231, address: 192.168.50.231 }
+  - { host: runner-232, address: 192.168.50.232 }
+  - { host: runner-233, address: 192.168.50.233 }
+  - { host: palworld-234, address: 192.168.50.234 }
+  - { host: plane-235, address: 192.168.50.235 }
+  - { host: media-dash-237, address: 192.168.50.237 }
+  - { host: usaa-238, address: 192.168.50.238 }
+  - { host: netboot-239, address: 192.168.50.239 }
+  - { host: metrics-240, address: 192.168.50.240 }
+  - { host: minio-data-245, address: 192.168.50.245 }
+  - { host: claude-247, address: 192.168.50.247 }
+
+# Extra scrape jobs: { job, targets: [host:port], scheme (optional) }. Empty until the endpoints
+# exist (pete-bot's /metrics is off by IaC, and Kuma's needs an API key).
+prometheus_extra_jobs: []
