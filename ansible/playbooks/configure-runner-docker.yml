@@ -52,7 +52,7 @@
       ansible.builtin.apt_repository:
         repo: >-
           deb [signed-by=/usr/share/keyrings/docker-archive-keyring.asc]
-          https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+          https://download.docker.com/linux/debian {{ ansible_facts['distribution_release'] }} stable
         filename: docker
         state: present
 
