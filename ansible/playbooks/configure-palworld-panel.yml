@@ -22,6 +22,11 @@
   become: true
 
   vars:
+    # The public half of the palworld-panel-cd deploy key (PET-724), from
+    # kv/services/palworld-panel field deploy_ssh_public_key
+    # (scripts/seed-palworld-panel-cd-key.sh). Empty skips the tasks. The GitHub deploy
+    # connects with the private half, so this grants root on this host only.
+    panel_cd_public_key: ""
     panel_app_dir: /opt/palworld-panel
     panel_user: palpanel
     panel_group: palpanel
@@ -94,6 +99,41 @@
         quiet: true
 
   tasks:
+    - name: Say that no palworld-panel-cd key is managed when the public key is empty
+      ansible.builtin.debug:
+        msg: >-
+          panel_cd_public_key is empty, so this run neither authorizes nor revokes a
+          palworld-panel-cd key on this host. Run scripts/seed-palworld-panel-cd-key.sh.
+      when: panel_cd_public_key | length == 0
+
+    - name: Authorize the palworld-panel-cd deploy key for root on this host only
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ panel_cd_public_key }}"
+        comment: palworld-panel-cd
+        state: present
+      when: panel_cd_public_key | length > 0
+
+    # authorized_key with state: present adds a key and never removes another, so a rotated
+    # key would stay authorized as root. Drop every other palworld-panel-cd line and keep the
+    # operator key, which carries a different comment.
+    - name: Remove superseded palworld-panel-cd deploy keys
+      ansible.builtin.replace:
+        path: /root/.ssh/authorized_keys
+        regexp: '(?m)^ssh-ed25519 (?!{{ panel_cd_public_key.split()[1] | regex_escape }}[ \t])\S+ palworld-panel-cd[ \t]*\n'
+        replace: ""
+      when: panel_cd_public_key | length > 0
+
+    - name: Check that exactly one palworld-panel-cd key is authorized, and it is the current one
+      ansible.builtin.shell:
+        cmd: set -o pipefail; grep -E ' palworld-panel-cd[[:space:]]*$' /root/.ssh/authorized_keys | awk '{print $2}'
+        executable: /bin/bash
+      register: panel_cd_authorized
+      changed_when: false
+      check_mode: false # read-only; the `when` below still skips it under --check, so a --check run examines nothing here
+      failed_when: panel_cd_authorized.stdout_lines != [panel_cd_public_key.split()[1]]
+      when: panel_cd_public_key | length > 0 and not ansible_check_mode
+
     - name: Create the panel service group
       ansible.builtin.group:
         name: "{{ panel_group }}"

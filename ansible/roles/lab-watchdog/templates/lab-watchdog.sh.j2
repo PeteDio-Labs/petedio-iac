@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lab-watchdog — probe the lab and post to Discord. Managed by Ansible: roles/lab-watchdog (PET-707).
+# lab-watchdog — probe the lab and post to the Lab-Agent DM on Discord. Managed by Ansible: roles/lab-watchdog (PET-707).
 #
 # It posts when a target has failed {{ lab_watchdog_fail_threshold }} runs in a row, once, and posts again when
 # the target answers. It posts nothing while everything is up, except one line a day
@@ -7,11 +7,11 @@
 #
 #   lab-watchdog            probe, post on a state change
 #   lab-watchdog --check    probe and print, post nothing, change no state
-#   lab-watchdog --test     post one test line to prove the webhook
+#   lab-watchdog --test     post one test line to prove the bot token and the DM
 set -uo pipefail
 
 STATE=/var/lib/lab-watchdog
-HOOK_FILE=/etc/lab-watchdog/discord_webhook
+DISCORD_CURL=/etc/lab-watchdog/discord.curl
 THRESHOLD={{ lab_watchdog_fail_threshold }}
 DAILY_HOUR={{ lab_watchdog_daily_hour }}
 MODE=run
@@ -29,14 +29,13 @@ RC=0
 # status, but callers decide each marker from this call's own result, so one failed post
 # cannot leave an unrelated target's marker unwritten.
 post() {
-  local body hook
-  hook="$(cat "$HOOK_FILE" 2>/dev/null)" || { echo "no webhook at $HOOK_FILE" >&2; RC=1; return 1; }
+  local body
+  [ -r "$DISCORD_CURL" ] || { echo "no Discord config at $DISCORD_CURL" >&2; RC=1; return 1; }
   # Messages hold only target names, status codes and the hostname, so there is nothing to escape.
-  body="{\"username\":\"lab-watchdog\",\"content\":\"$1\"}"
-  # The URL is the credential, so it goes to curl on stdin as a config line, never in argv
+  body="{\"content\":\"$1\"}"
+  # The config file holds the channel URL and the bot token header, so neither reaches argv
   # where `ps` would show it.
-  if ! printf 'url = "%s"\n' "$hook" \
-      | curl -sS -f -m 10 -o /dev/null -K - -H 'Content-Type: application/json' -d "$body"; then
+  if ! curl -sS -f -m 10 -o /dev/null -K "$DISCORD_CURL" -H 'Content-Type: application/json' -d "$body"; then
     echo "Discord post failed: $1" >&2
     RC=1
     return 1
@@ -44,7 +43,7 @@ post() {
 }
 
 if [ "$MODE" = test ]; then
-  post "lab-watchdog test from $HOST. If you can read this, the webhook works." && echo "posted"
+  post "lab-watchdog test from $HOST. If you can read this, the bot token and the DM work." && echo "posted"
   exit "$RC"
 fi
 

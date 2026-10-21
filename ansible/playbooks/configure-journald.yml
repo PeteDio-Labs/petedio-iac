@@ -1,0 +1,30 @@
+---
+# configure-journald.yml — cap every journal, and keep the Pi's across reboots. (PET-719)
+#
+# Found by the PET-712 survey: Pete-Pi-1 runs a volatile journal, so every log on it is lost
+# at reboot, and the other hosts set no size cap. See roles/journald-cap/defaults/main.yml.
+#
+#   ansible-playbook playbooks/configure-journald.yml
+#
+# The nodes cover their guests through `pct exec`, as configure-timezone.yml does. A guest
+# with no journald (Alpine 112) reports NO-JOURNALD and is covered by PET-718. The play never
+# touches ollama-host and pete-pi-2, which no key held by a session can reach.
+#
+# Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
+
+- name: Cap the journal on the Proxmox nodes and their guests
+  hosts: proxmox:pve_new
+  become: true
+  serial: 1
+  roles:
+    - journald-cap
+
+- name: Make the Pi's journal persistent and cap it
+  hosts: pete_pi
+  become: true
+  vars:
+    journald_storage: persistent
+    journald_system_max_use: 200M
+    journald_include_guests: false
+  roles:
+    - journald-cap

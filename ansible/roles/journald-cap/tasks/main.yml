@@ -1,0 +1,116 @@
+---
+# See defaults/main.yml for why this exists.
+
+- name: Create the journald drop-in directory on the host
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Land the journald drop-in on the host
+  ansible.builtin.copy:
+    content: |
+      [Journal]
+      {% if journald_storage | length > 0 %}
+      Storage={{ journald_storage }}
+      {% endif %}
+      SystemMaxUse={{ journald_system_max_use }}
+    dest: "{{ journald_dropin }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart journald and trim it
+
+- name: Create the persistent journal directory when the host asks for persistent storage
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: "2755"
+  when: journald_storage == "persistent"
+  notify: Restart journald and trim it
+
+# The read-back below needs the restart to have happened.
+- name: Apply the journald restart now
+  ansible.builtin.meta: flush_handlers
+
+- name: Find the guests on this node
+  ansible.builtin.command: pct list
+  register: journald_guests
+  changed_when: false
+  when: journald_include_guests | bool
+
+# One result word per guest: CHANGED, UNCHANGED or NO-JOURNALD. A guest that prints anything
+# else, or whose pct exec fails, fails the play, so a guest that was never examined cannot
+# read as capped.
+- name: Cap the journal inside every guest
+  when: journald_include_guests | bool
+  ansible.builtin.shell: |
+    set -o pipefail
+    pct exec {{ item }} -- sh -c '
+      set -e
+      command -v journalctl >/dev/null 2>&1 || { echo NO-JOURNALD; exit 0; }
+      f={{ journald_dropin }}
+      want="SystemMaxUse={{ journald_system_max_use }}"
+      if grep -qx "$want" "$f" 2>/dev/null; then echo UNCHANGED; exit 0; fi
+      mkdir -p /etc/systemd/journald.conf.d
+      printf "[Journal]\n%s\n" "$want" > "$f"
+      systemctl restart systemd-journald
+      journalctl --vacuum-size={{ journald_system_max_use }} >/dev/null
+      systemctl is-active --quiet systemd-journald
+      echo CHANGED'
+  args: { executable: /bin/bash }
+  loop: "{{ (journald_guests.stdout_lines | default([]))[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
+  loop_control:
+    label: "guest {{ item }}"
+  register: journald_applied
+  changed_when: "'CHANGED' == (journald_applied.stdout | default('') | trim)"
+  failed_when: journald_applied.stdout | default('') | trim not in ['CHANGED', 'UNCHANGED', 'NO-JOURNALD']
+
+# A loop that ran over fewer guests than `pct list` shows examined nothing about the rest.
+- name: Check every guest was examined
+  when: journald_include_guests | bool
+  ansible.builtin.assert:
+    that: journald_applied.results | length == journald_guests.stdout_lines[1:] | length
+    fail_msg: >-
+      pct list shows {{ journald_guests.stdout_lines[1:] | length }} guests and the loop covered
+      {{ journald_applied.results | length }}.
+
+- name: Say what was examined
+  when: journald_applied is defined and journald_applied.results is defined
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: examined {{ journald_applied.results | length }} guests,
+      {{ journald_applied.results | selectattr('stdout', 'defined')
+         | map(attribute='stdout') | map('trim') | select('equalto', 'CHANGED') | list | length }} changed,
+      {{ journald_applied.results | selectattr('stdout', 'defined')
+         | map(attribute='stdout') | map('trim') | select('equalto', 'NO-JOURNALD') | list | length }} without journald.
+
+- name: Read back the journal size on the host
+  ansible.builtin.command: journalctl --disk-usage
+  register: journald_usage
+  changed_when: false
+
+# The effective configuration, not the drop-in file: this proves the 50-cap.conf setting wins over
+# any earlier drop-in, such as the Raspberry Pi OS 40-rpi-volatile-storage.conf.
+- name: Read back the effective journald configuration
+  ansible.builtin.shell: |
+    set -o pipefail
+    systemd-analyze cat-config systemd/journald.conf | grep -E '^(Storage|SystemMaxUse)=' || true
+  args: { executable: /bin/bash }
+  register: journald_effective
+  changed_when: false
+
+- name: Assert the cap and the storage mode are the effective ones
+  ansible.builtin.assert:
+    that:
+      - ('SystemMaxUse=' ~ journald_system_max_use) == (journald_effective.stdout_lines | select('match', '^SystemMaxUse=') | list | last | default(''))
+      - journald_storage | length == 0 or ('Storage=' ~ journald_storage) == (journald_effective.stdout_lines | select('match', '^Storage=') | list | last)
+    fail_msg: "{{ inventory_hostname }}: the effective journald configuration is {{ journald_effective.stdout_lines }}"
+
+- name: Report the host's journal size and effective configuration
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: {{ journald_usage.stdout }}; effective {{ journald_effective.stdout_lines }}"

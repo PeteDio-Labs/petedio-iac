@@ -39,11 +39,11 @@ class Store:
         self.items[key] = fields
 
     def secret(self, name):
-        return {"/hook": "https://discord.test/hook", "/beat": "s3cret"}[name]
+        return {"/token": "bot-token", "/channel": "42", "/beat": "s3cret"}[name]
 
 
 def configure(checks=()):
-    os.environ.update(PARAM_DISCORD="/hook", PARAM_HEARTBEAT="/beat", HEARTBEAT_MAX_AGE="900",
+    os.environ.update(PARAM_DISCORD_TOKEN="/token", PARAM_DISCORD_CHANNEL="/channel", PARAM_HEARTBEAT="/beat", HEARTBEAT_MAX_AGE="900",
                       FAIL_THRESHOLD="2", DAILY_HOUR_UTC="12", CHECKS=json.dumps(list(checks)))
 
 
@@ -51,7 +51,7 @@ T0 = 1_800_000_000  # 2027-01-15 08:00 UTC, before the daily hour
 posts, fail_on = [], []
 
 
-def post_fn(webhook, text):
+def post_fn(target, text):
     if any(f in text for f in fail_on):
         raise OSError("discord unreachable")
     posts.append(text)
@@ -172,6 +172,27 @@ check("probes run in parallel", len(events) == 4)
 # 8. A certificate check uses the URL's own port.
 check("host_port reads a nonstandard port", h.host_port("https://example.test:32400/x") == ("example.test", 32400))
 check("host_port defaults to 443", h.host_port("https://example.test/x") == ("example.test", 443))
+
+# 9. A post is a bot request into the DM channel: the URL, the Authorization header and a Discord
+# User-Agent. Discord answers 403 to a request without them, and a 403 is a silent missed alert.
+sent = []
+
+
+class _Resp:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+h.urllib.request.urlopen = lambda req, timeout=None: sent.append(req) or _Resp()
+h.discord(("bot-token", "42"), "hello")
+req = sent[0]
+check("the post goes to the DM channel's messages URL", req.full_url == "https://discord.com/api/v10/channels/42/messages", req.full_url)
+check("the post carries the bot Authorization header", req.get_header("Authorization") == "Bot bot-token")
+check("the post carries a DiscordBot User-Agent", req.get_header("User-agent", "").startswith("DiscordBot ("))
+check("the post body is the message", json.loads(req.data) == {"content": "hello"})
 
 print("\n%d failure(s)" % len(failures))
 sys.exit(1 if failures else 0)

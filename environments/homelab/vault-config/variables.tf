@@ -72,15 +72,6 @@ variable "palworld_panel_repo" {
   default     = "PeteDio-Labs/petedio-palworld-panel"
 }
 
-# GitHub repo for the resume builder app (Resume Builder P1). Bound to its own
-# resume-builder-cd JWT role (auth.tf) so its deploy-on-merge gets ONLY the ansible SSH
-# key + its own service secret, never the broader iac/ansible scope.
-variable "resume_builder_repo" {
-  description = "owner/name of the petedio-resume-builder repo bound to the resume-builder-cd JWT role."
-  type        = string
-  default     = "PeteDio-Labs/petedio-resume-builder"
-}
-
 variable "media_control_repo" {
   description = "owner/name of the petedio-media-control repo bound to the media-dash-cd JWT role."
   type        = string
@@ -93,10 +84,10 @@ variable "pete_bot_repo" {
   default     = "PeteDio-Labs/pete-bot"
 }
 
-variable "water_fast_repo" {
-  description = "owner/name of the petedio-water-fast repo bound to the water-fast-cd JWT role."
+variable "usaa_repo" {
+  description = "owner/repo whose CD mints the usaa-cd role."
   type        = string
-  default     = "PeteDio-Labs/petedio-water-fast"
+  default     = "PeteDio-Labs/petedio-usaa"
 }
 
 # GitHub's numeric IDs, used to build the IMMUTABLE OIDC subject form. GitHub is

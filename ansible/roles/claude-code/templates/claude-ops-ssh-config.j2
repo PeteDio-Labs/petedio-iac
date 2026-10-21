@@ -1,16 +1,12 @@
 {{ ansible_managed | comment }}
-# claude-ops's SSH client config (PET-531): the Proxmox nodes as root, since neither node has
-# an operator account, and codex-248 as codex, where a forced command lets this key queue a
-# review and nothing else (PET-591). StrictHostKeyChecking=accept-new trusts a node's key on the
-# first connection and pins it after that — neither failing cold on an unknown host nor
-# silently accepting a changed one.
+# claude-ops's SSH client config: codex-248 as codex, where a forced command lets this key
+# queue a review and nothing else (PET-591), and the seven media hosts as root with a key
+# that opens those hosts alone (PET-725). StrictHostKeyChecking=accept-new trusts a host's
+# key on the first connection and pins it after that.
 #
-# The private half of {{ claude_ops_ssh_key }}, the Proxmox and codex-248 key, was
-# generated ON THIS HOST, as {{ claude_ops_user }}, and never leaves it: not into Vault, not into CI, not into a
-# Terraform state. scripts/seed-claude-ops-ssh.sh reads back the PUBLIC half only and
-# authorizes it on pve02 (PeteDio-Labs cluster filesystem propagates it to pve03).
-# The media hosts use {{ claude_ops_media_ssh_key }} instead. That one is NOT generated here:
-# it is a copy of the Mac's id_ed25519_ansible, which a Mac session places (PET-662).
+# No Proxmox node and no core LXC is here, by design (PET-725): root on either reaches 247,
+# and root on hosts is break-glass. Both private keys were generated ON THIS HOST, as
+# {{ claude_ops_user }}, and never leave it.
 {% for t in claude_ops_ssh_targets %}
 Host {{ t.name }}
     HostName {{ t.host }}

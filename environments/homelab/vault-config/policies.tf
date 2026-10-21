@@ -268,55 +268,16 @@ resource "vault_policy" "media_ci" {
 
 
 # palworld-panel-cd: the petedio-palworld-panel repo's CD role — deploy.yml runs the native
-# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the ansible
-# SSH key (to reach 234) and the panel's own service secret (REST admin password + restricted
-# start-hook key). NOT the broader ci-read/ansible scope. (PET-266)
+# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the panel's
+# own service secret (REST admin password, restricted start-hook key and its own deploy SSH
+# key, authorized on 234 alone). NOT kv/iac/lxc-ssh and NOT the broader ci-read/ansible
+# scope. (PET-266, PET-724)
 resource "vault_policy" "palworld_panel_cd" {
   name = "palworld-panel-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/palworld-panel" {
       capabilities = ["read"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
-    }
-  EOT
-}
-
-# water-fast-cd: the petedio-water-fast repo's CD role — deploy.yml copies the built
-# frontend + backend source and installs the systemd unit on waterfast-243 on merge (the
-# runner SSHes in). Least-privilege: ONLY the ansible SSH key (to reach 243) and the app's
-# own service secret (DB password + CF Access team domain/AUD). NOT the broader
-# ci-read/ansible scope. Mirrors resume-builder-cd. Apply BEFORE the CD workflow lands or
-# the first run 403s.
-resource "vault_policy" "water_fast_cd" {
-  name = "water-fast-cd"
-
-  policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/water-fast" {
-      capabilities = ["read"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
     }
   EOT
 }
@@ -351,10 +312,6 @@ resource "vault_policy" "pete_bot_cd" {
   name = "pete-bot-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/pete-bot" {
       capabilities = ["read"]
     }
@@ -408,6 +365,34 @@ resource "vault_policy" "lab_agent_presence" {
   EOT
 }
 
+# usaa-cd: the savings tracker's deploy (PET-695). It reads the app's own credentials and its
+# own SSH key, both under the app's paths, and nothing else. It does NOT read
+# kv/iac/lxc-ssh: that key opens root on every Terraform-built LXC, and the deploy needs
+# only usaa-238. seed-usaa-cd.sh generates a key for this app, and configure-usaa.yml
+# installs its public half on usaa-238 alone.
+#
+# ⚠ It does NOT read kv/services/pete-bot. Vault cannot scope a read to one field, and that
+# path holds the Discord token and the desk App's key. The notify token the app needs is a
+# copy in kv/services/usaa, written by scripts/seed-usaa-cd.sh. Rotating pete-bot's token
+# means running that script again.
+resource "vault_policy" "usaa_cd" {
+  name = "usaa-cd"
+
+  policy = <<-EOT
+    path "kv/data/db/usaa" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/usaa" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/services/usaa" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
 # media-updates: what pete-bot's update workflow may read (PET-395). The Ansible SSH key
 # and nothing else: not MinIO, not Proxmox, not mtrace's key. media-ci carries those for
 # Terraform; an update run needs none of them.
@@ -425,47 +410,8 @@ resource "vault_policy" "media_dash_cd" {
   name = "media-dash-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/media/dashboard" {
       capabilities = ["read"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
-    }
-  EOT
-}
-
-# resume-builder-cd: the petedio-resume-builder repo's CD role (Resume Builder P1) —
-# deploy.yml copies build/ + installs the systemd unit on resume-242 on merge (the runner
-# SSHes in). Least-privilege: ONLY the ansible SSH key (to reach resume-242) and the app's
-# own service secret (Mongo creds + CF Access env). NOT the broader ci-read/ansible scope.
-# Mirrors palworld-panel-cd. Apply BEFORE the CD workflow lands or the first run 403s.
-resource "vault_policy" "resume_builder_cd" {
-  name = "resume-builder-cd"
-
-  policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/resume-builder" {
-      capabilities = ["read"]
-    }
-
-    path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/services/*" {
-      capabilities = ["list"]
     }
   EOT
 }
@@ -623,7 +569,7 @@ resource "vault_policy" "claude_247_deploy" {
 
 # claude-ops: the policy behind auth.tf's claude-ops token role, minted by
 # scripts/seed-claude-ops-vault-token.sh onto claude-247 for claude-ops, Pedro's Remote
-# Control identity (PET-531). READ only, on 27 named secrets — no list, no
+# Control identity (PET-531). READ only, on 24 named secrets — no list, no
 # create/update/delete, and no App keys.
 #
 # Pedro's decision: exact paths, not a wildcard glob, and no `kv/metadata/*` grant either.
@@ -631,7 +577,7 @@ resource "vault_policy" "claude_247_deploy" {
 # (deploy-claude-247.sh, apply-vault-config.sh, seed-*.sh) or write there — never a GitHub
 # App's private key. `vault kv get` on a named path needs no `list`, and nothing in
 # `ansible/roles/claude-code` or `scripts/seed-claude-ops-*` calls `vault kv list` or reads
-# `kv/metadata/*`, so claude-ops can read exactly these 27 secrets and cannot discover, list
+# `kv/metadata/*`, so claude-ops can read exactly these 24 secrets and cannot discover, list
 # or enumerate any other name under `services/`, `iac/` or `db/`.
 #
 # The Mac's seed-* scripts write these paths from the Mac with the admin token;
@@ -653,6 +599,21 @@ resource "vault_policy" "claude_247_deploy" {
 #
 # A new secret needs a policy change to be readable here, and that is by design: adding a
 # path is a reviewable diff, not a standing grant that widens itself.
+#
+# ⚠ NO STANDING ROOT ON 247, THE NODES OR THE CORE LXCs (PET-725). Three paths left this policy
+# because each one is a route to root on 247 itself, which lets a session read the break-glass
+# Vault token out of the operator's shell (PET-714):
+#   kv/iac/lxc-ssh          — root on every Terraform LXC, 247, Vault 223 and runner 232
+#   kv/iac/proxmox          — Terraform's PVEVMAdmin token, which includes a guest console
+#   kv/iac/github-runner-pat — registers a runner that can pick up the jobs that mint
+#                              claude-247-deploy, which reads lxc-ssh
+# Root on hosts is break-glass: the breakglass-247 policy reads kv/data/*, so Pedro's unlocked
+# shell on 247 reaches all three. Do not add any of them back here.
+#
+# ⚠ MEDIA ROOT STAYS STANDING, BY DESIGN. kv/services/media/dashboard below holds mtrace's SSH
+# private key, root on six media LXCs, and claude-ops holds its own id_ed25519_media with the
+# same reach. Those LXCs are unprivileged and reach neither 247 nor a node, so neither key
+# reaches the break-glass token. A media root grant that reaches further belongs in break-glass.
 #
 # ⚠ NEVER kv/data/admin/*. Every other broad-scoped policy in this file (ci-read, terraform,
 # ansible) read kv/data/admin/* until PET-702, and that prefix is where the Vault ROOT TOKEN and the
@@ -677,14 +638,6 @@ resource "vault_policy" "claude_ops" {
       capabilities = ["read"]
     }
 
-    path "kv/data/iac/github-runner-pat" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/iac/minio" {
       capabilities = ["read"]
     }
@@ -694,10 +647,6 @@ resource "vault_policy" "claude_ops" {
     }
 
     path "kv/data/iac/minio-root" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/iac/proxmox" {
       capabilities = ["read"]
     }
 

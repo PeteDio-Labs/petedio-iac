@@ -1,0 +1,20 @@
+---
+# configure-metrics.yml — the metrics host: Prometheus, Grafana and the alert timer on LXC 240
+# (metrics-240). (PET-708)
+#
+# Terraform creates the container (environments/homelab/metrics.tf). This play installs the store,
+# the dashboards and the alert evaluator, then reads back what each holds. Run
+# configure-node-exporter.yml to put an exporter on each target. To post alerts, run
+# scripts/deploy-metrics.sh, which passes the Discord bot fields from Vault.
+#
+#   ansible-playbook playbooks/configure-metrics.yml
+#
+# Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
+
+- name: Configure the metrics host
+  hosts: metrics
+  become: true
+  roles:
+    - prometheus
+    - grafana
+    - metric-alerts

@@ -63,6 +63,11 @@
     # (scripts/seed-pete-bot-desk-app.sh). Without all three the desk stays off, whatever
     # pete_bot_desk_mode says, so a deploy before the seed changes nothing.
     pete_bot_conf_dir: /etc/pete-bot
+    # The public half of the pete-bot-cd deploy key (PET-724), from kv/services/pete-bot field
+    # deploy_ssh_public_key (scripts/seed-pete-bot-cd-key.sh). Empty skips the tasks. The
+    # GitHub deploy connects with the private half, so this grants root on this host only,
+    # never on another LXC.
+    pete_bot_cd_public_key: ""
     # dry-run approves and merges nothing, and DMs each merge it would make (Pedro,
     # 2026-10-16). Moving to `on` is a decision, so it is a reviewed change to this line.
     # Pedro moved it to `on` on 2026-10-19, after the desk queued Codex with its own key
@@ -249,6 +254,41 @@
         - not (lab_agent_ready | bool)
 
   tasks:
+    - name: Authorize the pete-bot-cd deploy key for root on this host only
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ pete_bot_cd_public_key }}"
+        comment: pete-bot-cd
+        state: present
+      when: pete_bot_cd_public_key | length > 0
+
+    # authorized_key with state: present adds a key and never removes another, so a rotated
+    # key would stay authorized as root. Drop every other pete-bot-cd line and keep the
+    # operator key, which carries a different comment.
+    - name: Remove superseded pete-bot-cd deploy keys
+      ansible.builtin.replace:
+        path: /root/.ssh/authorized_keys
+        regexp: '(?m)^ssh-ed25519 (?!{{ pete_bot_cd_public_key.split()[1] | regex_escape }}[ \t])\S+ pete-bot-cd[ \t]*\n'
+        replace: ""
+      when: pete_bot_cd_public_key | length > 0
+
+    - name: Check that exactly one pete-bot-cd key is authorized, and it is the current one
+      ansible.builtin.shell:
+        cmd: set -o pipefail; grep -E ' pete-bot-cd[[:space:]]*$' /root/.ssh/authorized_keys | awk '{print $2}'
+        executable: /bin/bash
+      register: pete_bot_cd_authorized
+      changed_when: false
+      check_mode: false # read-only; the `when` below still skips it under --check, so a --check run examines nothing here
+      failed_when: pete_bot_cd_authorized.stdout_lines != [pete_bot_cd_public_key.split()[1]]
+      when: pete_bot_cd_public_key | length > 0 and not ansible_check_mode
+
+    - name: Say that no pete-bot-cd key is managed when the public key is empty
+      ansible.builtin.debug:
+        msg: >-
+          pete_bot_cd_public_key is empty, so this run neither authorizes nor revokes a
+          pete-bot-cd key on this host. Run scripts/seed-pete-bot-cd-key.sh.
+      when: pete_bot_cd_public_key | length == 0
+
     - name: Create the service account
       ansible.builtin.user:
         name: "{{ pete_bot_user }}"

@@ -1,0 +1,13 @@
+---
+# grafana (PET-708): dashboards over the Prometheus store on the same host.
+#
+# Grafana OSS comes from Grafana's apt repository. Anonymous access is Viewer only and the port
+# listens on the LAN, which is the same trust boundary as Uptime Kuma and Plane. The admin password
+# is random, written once to a root-only file, and never printed.
+
+grafana_apt_key_url: https://apt.grafana.com/gpg.key
+grafana_listen_address: "0.0.0.0"
+grafana_port: 3000
+grafana_prometheus_url: "http://127.0.0.1:9090"
+grafana_admin_password_file: /etc/grafana/admin-password
+grafana_loki_url: "http://127.0.0.1:3100"

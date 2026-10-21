@@ -98,6 +98,31 @@ grant fails it with permission denied.
 If the script says a field is empty, the M1 seed has not run. Do not write the value by
 hand.
 
+## Deploy on merge
+
+A push to `main` in `petedio-usaa` deploys through `.github/workflows/deploy.yml` on the
+self-hosted runner (PET-695). It mints the `usaa-cd` Vault role over GitHub OIDC, builds the
+Linux x86-64 binary, and runs `configure-usaa.yml` against usaa-238. `deploy-usaa.sh` still
+works for a hand deploy from the Mac.
+
+The `usaa-cd` role reads only `kv/db/usaa` and `kv/services/usaa`. It does not read the
+shared `kv/iac/lxc-ssh` key. The deploy connects with a key made for this app, whose public
+half the playbook authorizes for root on usaa-238 only.
+
+Before you merge the workflow, in this order:
+
+1. Apply `environments/homelab/vault-config`, which adds the `usaa-cd` role and policy. That
+   root is operator-applied.
+2. Run `./scripts/seed-usaa-cd.sh`. It writes `usaa_access_aud`, pete-bot's
+   `notify_bearer_token` (a copy, because Vault cannot scope a read to one field) and the
+   deploy key pair into `kv/services/usaa`. Run it again after you rotate pete-bot's notify
+   token, or with `--rotate-key` to replace the key pair.
+3. Run `./scripts/deploy-usaa.sh` from the Mac once. The play installs the public key on
+   usaa-238, which the first GitHub deploy needs.
+
+The run's log names every optional field that is missing, as a warning. After the first
+merge, the 247 session reads back `GET /healthz` on usaa-238 and the service's start time.
+
 ## Turn on the month view
 
 The month view (`/month`, `GET /api/v1/month`) reads the Finance calendar and the balances

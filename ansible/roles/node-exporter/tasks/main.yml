@@ -1,0 +1,84 @@
+---
+# See defaults/main.yml for why this exists.
+
+- name: Install the node exporter on the host
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable and start the node exporter on the host
+  ansible.builtin.systemd:
+    name: prometheus-node-exporter
+    enabled: true
+    state: started
+
+- name: Find the guests on this node
+  ansible.builtin.command: pct list
+  register: node_exporter_guests
+  changed_when: false
+  when: node_exporter_include_guests | bool
+
+# One result word per guest: INSTALLED, PRESENT or NOT-DEBIAN. A guest that prints anything
+# else, or whose pct exec fails, fails the play, so a guest that was never examined cannot read
+# as covered. Only the guests in node_exporter_non_debian_guests (Alpine 112, PET-718) may say NOT-DEBIAN.
+- name: Install the node exporter inside every guest
+  when:
+    - node_exporter_include_guests | bool
+    - item not in node_exporter_skip_guests
+  ansible.builtin.shell: |
+    set -o pipefail
+    pct exec {{ item }} -- sh -c '
+      set -e
+      # NOT-DEBIAN needs the os-release to say so. A Debian guest with a broken apt must fail the play.
+      if ! grep -qE "^ID(_LIKE)?=.*(debian|ubuntu)" /etc/os-release 2>/dev/null; then echo NOT-DEBIAN; exit 0; fi
+      if dpkg -s prometheus-node-exporter >/dev/null 2>&1 \
+         && systemctl is-active --quiet prometheus-node-exporter; then echo PRESENT; exit 0; fi
+      DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq prometheus-node-exporter >/dev/null
+      systemctl enable --now prometheus-node-exporter >/dev/null 2>&1
+      systemctl is-active --quiet prometheus-node-exporter
+      echo INSTALLED'
+  args: { executable: /bin/bash }
+  loop: "{{ (node_exporter_guests.stdout_lines | default([]))[1:] | map('regex_replace', '^([0-9]+).*$', '\\1') | list }}"
+  loop_control:
+    label: "guest {{ item }}"
+  register: node_exporter_applied
+  changed_when: "'INSTALLED' == (node_exporter_applied.stdout | default('') | trim)"
+  failed_when:
+    - item not in node_exporter_skip_guests
+    - >-
+      node_exporter_applied.stdout | default('') | trim not in
+      ['INSTALLED', 'PRESENT'] + (['NOT-DEBIAN'] if item in node_exporter_non_debian_guests else [])
+
+# A loop that ran over fewer guests than `pct list` shows examined nothing about the rest.
+- name: Check every guest was examined or skipped by name
+  when: node_exporter_include_guests | bool
+  ansible.builtin.assert:
+    that: node_exporter_applied.results | length == node_exporter_guests.stdout_lines[1:] | length
+    fail_msg: >-
+      pct list shows {{ node_exporter_guests.stdout_lines[1:] | length }} guests and the loop covered
+      {{ node_exporter_applied.results | length }}.
+
+- name: Say what was examined
+  when: node_exporter_applied is defined and node_exporter_applied.results is defined
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ node_exporter_applied.results | rejectattr('skipped', 'defined') | list | length }}
+      guests examined,
+      {{ node_exporter_applied.results | selectattr('stdout', 'defined')
+         | map(attribute='stdout') | map('trim') | select('equalto', 'INSTALLED') | list | length }} installed,
+      {{ node_exporter_applied.results | selectattr('stdout', 'defined')
+         | map(attribute='stdout') | map('trim') | select('equalto', 'NOT-DEBIAN') | list | length }} not Debian,
+      {{ node_exporter_applied.results | selectattr('skipped', 'defined') | list | length }} skipped by name.
+
+- name: Read back that the host exporter answers
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9100/metrics
+    return_content: false
+  register: node_exporter_answer
+
+- name: Report the host exporter
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: node exporter answers on :9100 (HTTP {{ node_exporter_answer.status }})"
