@@ -42,6 +42,9 @@ prometheus_node_targets:
   - { host: minio-data-245, address: 192.168.50.245 }
   - { host: claude-247, address: 192.168.50.247 }
 
-# Extra scrape jobs: { job, targets: [host:port], scheme (optional) }. Empty until the endpoints
-# exist (pete-bot's /metrics is off by IaC, and Kuma's needs an API key).
-prometheus_extra_jobs: []
+# Extra scrape jobs: { job, targets: [host:port], scheme (optional) }. The play fails when any
+# extra target is down, so list a job only once its endpoint answers. Kuma's needs an API key and
+# is not listed. pete-bot's endpoint is on since PET-711 (METRICS_ENABLED in pete-bot.env.j2), so
+# run configure-pete-bot.yml, or deploy pete-bot, before this play.
+prometheus_extra_jobs:
+  - { job: pete-bot, targets: ["192.168.50.237:9090"] }

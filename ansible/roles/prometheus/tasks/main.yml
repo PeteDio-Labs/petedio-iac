@@ -72,10 +72,19 @@
         (prometheus_node_targets | length) + 1
         + (prometheus_extra_jobs | map(attribute='targets') | map('length') | sum)
       - prometheus_targets.json.data.activeTargets | selectattr('health', 'equalto', 'up') | list | length >= 1
+      # An extra job is listed on purpose, so a target that is down fails the play. Node targets
+      # may be down while their exporters roll out, so they are not held to this.
+      - >-
+        prometheus_targets.json.data.activeTargets
+        | selectattr('scrapePool', 'in', prometheus_extra_jobs | map(attribute='job') | list)
+        | rejectattr('health', 'equalto', 'up') | list | length == 0
     fail_msg: >-
       prometheus holds {{ prometheus_targets.json.data.activeTargets | length }} active targets and
       {{ prometheus_targets.json.data.activeTargets | selectattr('health', 'equalto', 'up') | list | length }} up;
-      the config declares {{ (prometheus_node_targets | length) + 1 }} plus the extra jobs.
+      the config declares {{ (prometheus_node_targets | length) + 1 }} plus the extra jobs. Extra-job
+      targets that are not up: {{ prometheus_targets.json.data.activeTargets
+      | selectattr('scrapePool', 'in', prometheus_extra_jobs | map(attribute='job') | list)
+      | rejectattr('health', 'equalto', 'up') | map(attribute='scrapeUrl') | list }}.
 
 - name: Report what the store examined
   ansible.builtin.debug:
