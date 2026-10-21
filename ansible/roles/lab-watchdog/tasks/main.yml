@@ -16,6 +16,13 @@
     group: root
     mode: "0700"
 
+# PET-728 replaced the webhook with a bot token. Remove the old file so a live webhook URL does
+# not stay on the host unused.
+- name: Remove the retired Discord webhook file
+  ansible.builtin.file:
+    path: /etc/lab-watchdog/discord_webhook
+    state: absent
+
 # A curl config file: the bot token is the credential, and it stays out of argv when the probe
 # reads it. Land it only when the run carries both values, and never print it.
 - name: Land the Discord bot config

@@ -49,6 +49,8 @@ def render(targets, daily_hour=24):
 # Discord with failure when the body holds $LW_FAIL_MSG. It logs every argv to $LW_ARGV.
 SHIM = r'''#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$LW_ARGV"
+# curl reads a -K config file; log its content apart from argv, as a real curl would use it.
+prev=""; for a in "$@"; do [ "$prev" = "-K" ] && [ -r "$a" ] && { echo "K-FILE $a" >> "$LW_CFG"; cat "$a" >> "$LW_CFG"; }; prev="$a"; done
 url="${@: -1}"
 case "$*" in *heartbeat*) [ -n "${LW_FAIL_BEAT:-}" ] && exit 22; exit 0 ;; esac
 body=""; while [ $# -gt 0 ]; do case "$1" in -d) body="$2"; shift ;; esac; shift; done
@@ -85,7 +87,7 @@ class Rig:
             for url, code in answers.items():
                 f.write("%s=%s\n" % (url, code))
         env = dict(os.environ, PATH=os.path.join(t, "bin") + ":" + os.environ["PATH"],
-                   LW_ANSWERS=os.path.join(t, "answers"), LW_ARGV=os.path.join(t, "argv"),
+                   LW_ANSWERS=os.path.join(t, "answers"), LW_ARGV=os.path.join(t, "argv"), LW_CFG=os.path.join(t, "cfg"),
                    LW_FAIL_MSG=fail_msg, LW_FAIL_BEAT="1" if fail_beat else "")
         r = subprocess.run(["bash", self.path, *args], env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
         return r
@@ -94,6 +96,10 @@ class Rig:
         p = os.path.join(self.tmp, "argv")
         lines = open(p).read().splitlines() if os.path.exists(p) else []
         return [ln for ln in lines if "-d " in ln]
+
+    def cfg_text(self):
+        p = os.path.join(self.tmp, "cfg")
+        return open(p).read() if os.path.exists(p) else ""
 
     def argv_text(self):
         p = os.path.join(self.tmp, "argv")
@@ -138,6 +144,7 @@ check("the next run retries only the failed post", len(r.posts()) == 3 and res.r
 res = r.run(UP, "", "--test")
 check("--test posts", res.returncode == 0 and "posted" in res.stdout, res.stderr)
 check("the bot token is absent from curl's argv", "SECRET-TOKEN" not in r.argv_text())
+check("the post reads the Discord config through -K", "-K " in r.argv_text() and "SECRET-TOKEN" in r.cfg_text(), r.argv_text())
 
 # 5. --check posts nothing and changes no state.
 r = Rig(TARGETS)
