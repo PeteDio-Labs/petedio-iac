@@ -1,0 +1,10 @@
+[Unit]
+Description=Run metric-alerts every {{ metric_alerts_interval }}
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec={{ metric_alerts_interval }}
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

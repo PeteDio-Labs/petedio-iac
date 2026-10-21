@@ -1,0 +1,44 @@
+---
+# metric-alerts (PET-708): PromQL alert rules that post to the Lab-Agent DM, with no Claude and no
+# API spend. A systemd timer runs files/metric-alerts.py every five minutes on the metrics host.
+#
+# WHY NOT ALERTMANAGER OR VMALERT. PET-708 proposed vmalert delivering through pete-bot's
+# /v1/alert. That endpoint takes Uptime Kuma's payload, and an Alertmanager receiver cannot post
+# to a Discord DM (a webhook belongs to a channel). The alert path that bypasses pete-bot is the
+# bot token that lab-watchdog already uses (PET-728), so this timer posts through the same
+# Discord bot API. It shares fate with the metrics host, which lab-watchdog does not watch: the
+# script posts when the store itself stops answering.
+
+metric_alerts_interval: "5min"
+
+# Each rule: name, summary, expr (PromQL that returns a series per offender and nothing when all is
+# well), and for_runs (consecutive runs before the first post, at one run per five minutes).
+metric_alerts_rules:
+  - name: coverage
+    summary: "Fewer than 15 node exporters answer, so the other rules may be reading an empty store"
+    expr: 'count(up{job="node"} == 1) < 15'
+    for_runs: 2
+  - name: host-down
+    summary: "A node exporter does not answer"
+    expr: 'up{job="node"} == 0'
+    for_runs: 3
+  - name: disk-full
+    summary: "The root filesystem is more than 85 percent full"
+    expr: '1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} > 0.85'
+    for_runs: 3
+  - name: disk-fills-soon
+    summary: "The root filesystem is on course to fill within 24 hours"
+    expr: >-
+      predict_linear(node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}[6h], 24 * 3600) < 0
+      and node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} < 20 * 1024 * 1024 * 1024
+    for_runs: 6
+  - name: memory-low
+    summary: "Available memory is under 8 percent"
+    expr: 'node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.08'
+    for_runs: 3
+
+# Absent by default. The deploy script passes them from kv/services/lab-watchdog, fields
+# discord_bot_token and discord_dm_channel_id. A run without both leaves the file on the host as
+# it is, and the timer stays off.
+metric_alerts_discord_bot_token: ""
+metric_alerts_discord_dm_channel_id: ""
