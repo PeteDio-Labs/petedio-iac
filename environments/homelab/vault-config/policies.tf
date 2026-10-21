@@ -268,17 +268,14 @@ resource "vault_policy" "media_ci" {
 
 
 # palworld-panel-cd: the petedio-palworld-panel repo's CD role — deploy.yml runs the native
-# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the ansible
-# SSH key (to reach 234) and the panel's own service secret (REST admin password + restricted
-# start-hook key). NOT the broader ci-read/ansible scope. (PET-266)
+# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the panel's
+# own service secret (REST admin password, restricted start-hook key and its own deploy SSH
+# key, authorized on 234 alone). NOT kv/iac/lxc-ssh and NOT the broader ci-read/ansible
+# scope. (PET-266, PET-724)
 resource "vault_policy" "palworld_panel_cd" {
   name = "palworld-panel-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/palworld-panel" {
       capabilities = ["read"]
     }
