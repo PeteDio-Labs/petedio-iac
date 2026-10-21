@@ -52,8 +52,8 @@ case "$method $url" in
   PATCH*) emit 200 '{}' ;;
   "GET "*/projects/*/states/*)
     emit 200 '{"results": [{"id": "st-back", "name": "Backlog", "group": "backlog"}, {"id": "st-todo", "name": "Todo", "group": "unstarted"}, {"id": "st-prog", "name": "In Progress", "group": "started"}, {"id": "st-rev", "name": "In Review", "group": "started"}, {"id": "st-done", "name": "Done", "group": "completed"}, {"id": "st-cxl", "name": "Cancelled", "group": "cancelled"}, {"id": "st-ship", "name": "Shipped", "group": "completed"}]}' ;;
-  "GET "*/workspaces/*/work-items/PET-*/)
-    n="${url%/}"; n="${n##*/PET-}"
+  "GET "*/workspaces/*/work-items/PET-*/|"GET "*/workspaces/*/work-items/PDL-*/)
+    n="${url%/}"; n="${n##*-}"
     case "$ITEM_MODE" in
       found)   emit 200 "{\"id\": \"item-$n\", \"sequence_id\": $n, \"project\": \"$ITEM_PROJECT\", \"state\": \"$ITEM_STATE\"}" ;;
       foreign) emit 200 "{\"id\": \"item-$n\", \"sequence_id\": $n, \"project\": \"other-proj\", \"state\": \"st-prog\"}" ;;
@@ -79,12 +79,12 @@ case_() {
   : >"$TMP/log"
   got=$(PATH="$TMP/bin:$PATH" SHIM_LOG="$TMP/log" \
         ITEM_MODE="$mode" ITEM_STATE="$state" ITEM_PROJECT=proj \
-        PLANE_BASE_URL=http://plane.test PLANE_WORKSPACE=ws PLANE_PROJECT_ID=proj \
+        PLANE_BASE_URL=http://plane.test PLANE_WORKSPACE=ws PLANE_PROJECT_ID="${PROJECT_LIST:-proj}" \
         PLANE_API_KEY=not-a-key PLANE_TRANSITION="$transition" HEAD_REF="$ref" \
         bash "$TARGET" 2>&1)
   rc=$?
   joined=$(printf '%s' "$got" | tr '\n' '|')
-  nlook=$(grep -c '^GET http://plane\.test/api/v1/workspaces/ws/work-items/PET-[0-9]*/ $' "$TMP/log")
+  nlook=$(grep -cE '^GET http://plane\.test/api/v1/workspaces/ws/work-items/(PET|PDL)-[0-9]*/ $' "$TMP/log")
   npatch=$(grep -c '^PATCH ' "$TMP/log")
   [ -z "$wantlog" ] || grep -qE "$wantlog" "$TMP/log" || logok=0
   if [ "$rc" -eq 0 ] && printf '%s' "$joined" | grep -qE "$want" \
@@ -123,7 +123,7 @@ case_ "Plane unreachable at the lookup" pet-386-fixture 'done' down - \
   'Plane unreachable at http://plane\.test while resolving PET-386' 1 0
 
 case_ "a 200 for another project" pet-386-fixture 'done' foreign - \
-  'PET-386 resolved to project other-proj, not proj — left as-is' 1 0
+  'PET-386 resolved to project other-proj, which is not in PLANE_PROJECT_ID \(proj\) — left as-is' 1 0
 
 printf "\n\033[1mThe backward-move guard (PET-490)\033[0m\n"
 case_ "Done to In Review is refused" pet-386-fixture in-review found st-done \
@@ -154,9 +154,22 @@ case_ "a -part- merge from In Progress: one PATCH to In Review" pet-490-part-fix
 case_ "a -part- reconcile on a Done item: refused, no PATCH" pet-490-part-fixture 'done' found st-done \
   'PET-490 is Done; refused the move to In Review \(backward-move guard, PET-490\)' 1 0
 
+printf "\n\033[1mA second project (PDL cutover, PET-730)\033[0m\n"
+case_ "pdl-5 In Progress to In Review: one PATCH" pdl-5-fixture in-review found st-prog \
+  'PDL-5 .+ In Review ✓' 1 1 \
+  '^GET http://plane\.test/api/v1/workspaces/ws/work-items/PDL-5/ $'
+
+PROJECT_LIST="proj-a,proj" case_ "PLANE_PROJECT_ID lists two projects: the item's project is allowed" pet-386-fixture in-review found st-prog \
+  'PET-386 .+ In Review ✓' 1 1
+PROJECT_LIST="proj-a proj-b" case_ "a project missing from the list is refused" pet-386-fixture in-review found st-prog \
+  'not in PLANE_PROJECT_ID \(proj-a proj-b\)' 1 0
+
+case_ "a pdl -part- merge keeps the item at In Review" pdl-7-part-fixture 'done' found st-prog \
+  'keeps it open at In Review.*PDL-7 .+ In Review ✓' 1 1
+
 printf "\n\033[1mUnchanged behaviour\033[0m\n"
 case_ "a branch without the prefix syncs nothing" docs-typo 'done' found st-done \
-  'carries no pet-<n>- prefix' 0 0
+  'carries no <key>-<n>- prefix' 0 0
 
 printf "\n%d passed, %d failed\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
