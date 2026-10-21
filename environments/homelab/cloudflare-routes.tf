@@ -177,7 +177,7 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com", "tsilveri406@gmail.com", "soniasdelgadillo@gmail.com"]
     }
 
-    # Batsy (Sonia's agent) and Bobberto (Pedro's) post account totals here from outside the
+    # Batsy (Sonia's agent) and Muse (Pedro's) post account totals here from outside the
     # lab and read the month view (PET-590), so Access is OFF for this hostname and the app's
     # bearer check (kv/services/usaa <agent>_bearer_token) is the gate. Only these two paths
     # are routed. The ingress rule matches hostname AND path, so every other path on this

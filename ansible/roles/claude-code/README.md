@@ -555,7 +555,7 @@ user as well, run `ssh pve02 pveum user delete claude-247@pve`. Deleting
 
 `claude-ops` is a SECOND session user, for Pedro's own Remote Control sessions only. It exists
 so those sessions get Mac parity — a Vault token, `terraform`/`ansible`, and SSH to the
-Proxmox nodes — without widening `claude`, the general session user. **Bobbert never runs as
+Proxmox nodes — without widening `claude`, the general session user. **Muse never runs as
 `claude-ops`.** Nothing in this role sets a bot identity to it, and `tasks/claude-ops.yml`
 asserts that `claude-ops` and `claude` stay apart.
 
