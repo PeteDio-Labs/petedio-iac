@@ -112,6 +112,70 @@ resource "vault_policy" "terraform" {
   EOT
 }
 
+# ansible-247: the AppRole policy that claude-ops on claude-247 logs in with (PET-674).
+# Pedro asked on 2026-10-19 for 247 to run the deploy scripts the way the Mac does, from
+# .secrets/ansible.{role_id,secret_id}.
+#
+# EXACT PATHS, NO LIST, NO APP KEYS: the PET-531 boundary the claude-ops policy below keeps.
+# Each path is one that an AppRole deploy script reads and that holds no GitHub App key:
+#   deploy-backup-store.sh     kv/services/backup-health
+#   deploy-minio-data.sh       kv/iac/minio-data-root
+#   deploy-palworld-panel.sh   kv/services/palworld-panel
+#   deploy-plane.sh            kv/db/plane, kv/services/plane, kv/services/plane-<member>
+#   deploy-resume-builder.sh   kv/services/resume-builder
+#   deploy-water-fast.sh       kv/services/water-fast
+# Those scripts run on 247. These stay on the Mac, by design:
+#   deploy-claude-247.sh  reads four App keys (claude-*); see the claude-ops exclusions.
+#   deploy-codex-248.sh   reads kv/services/codex-review-app, the Codex reviewer's App key.
+#   deploy-uptime-kuma.sh needs macOS `security`.
+#   deploy-pete-bot.sh, deploy-usaa.sh, deploy-search.sh, deploy-media-dash.sh log in with
+#     an admin token, not this AppRole.
+# NEVER kv/admin/*: the root token and the unseal material live there.
+#
+# A deploy script that moves to 247, or a Plane member added to MCP_MEMBERS in
+# deploy-plane.sh, needs its path here. That is a reviewable diff, by design.
+resource "vault_policy" "ansible_247" {
+  name = "ansible-247"
+
+  policy = <<-EOT
+    path "kv/data/db/plane" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/minio-data-root" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/backup-health" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/palworld-panel" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane-sonia" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane-tom" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/resume-builder" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/water-fast" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 # ansible: host-config runs read infra + service secrets.
 resource "vault_policy" "ansible" {
   name = "ansible"

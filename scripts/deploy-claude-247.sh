@@ -75,7 +75,7 @@ applogin() {
   local rid sid
   rid="$(cat "$SECRETS/$1.role_id")"
   sid="$(cat "$SECRETS/$1.secret_id")"
-  vault write -field=token auth/approle/login role_id="$rid" secret_id="$sid" 2>/dev/null \
+  printf '{"role_id":"%s","secret_id":"%s"}' "$rid" "$sid" | vault write -field=token auth/approle/login - 2>/dev/null \
     || die "AppRole login failed for '$1'."
 }
 
