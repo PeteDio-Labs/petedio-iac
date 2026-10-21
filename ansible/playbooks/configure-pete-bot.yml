@@ -83,6 +83,14 @@
          and (pete_bot_desk_installation_id | default('') | string | length > 0)
          and (pete_bot_desk_app_pem | default('') | length > 0) }}
 
+    # The scheduled reports (PET-701). They read GitHub as the desk's App and Plane with
+    # pete_bot_plane_api_key (scripts/seed-pete-bot-plane-key.sh). Without both, the reports
+    # stay off, so a deploy before the seed changes nothing.
+    pete_bot_reports_repos: petedio-iac,petedio-workspace,petedio-vault,petedio-pm,pete-bot
+    pete_bot_reports_ready: >-
+      {{ (pete_bot_desk_ready | bool)
+         and (pete_bot_plane_api_key | default('') | length > 0) }}
+
     # Each gateway caller: its bearer, its monthly cap in whole dollars, and the models it
     # may ask for. A model outside pete-bot's price table puts the gateway in the
     # misconfigured state, which the check below fails.
@@ -646,6 +654,37 @@
              else ('off: kv/services/lab-agent and kv/services/lab-agent-pve are not both seeded'
                    if not (lab_agent_ready | bool) else 'not checked in check mode') }}
 
+    # The reports start after the Discord login too. A misconfigured setting leaves alerts
+    # working, so this fails the deploy, where someone reads it.
+    - name: Read the scheduled reports' state
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ pete_bot_port }}/health"
+        return_content: true
+      register: pete_bot_reports_health
+      retries: 10
+      delay: 2
+      # A binary from before PET-701 reports no `reports`. That is acceptable only while the
+      # reports are off: with them switched on, a missing section means no scheduler exists,
+      # and the wait must end so the next task can fail the deploy.
+      until: >-
+        pete_bot_reports_health.json is defined
+        and (pete_bot_reports_health.json.reports is not defined
+             or pete_bot_reports_health.json.reports.state in
+                (['misconfigured', 'running'] if (pete_bot_reports_ready | bool)
+                 else ['off', 'misconfigured', 'running']))
+
+    - name: Fail when the scheduled reports are misconfigured, missing or did not start
+      ansible.builtin.fail:
+        msg: >-
+          The scheduled reports report
+          {{ pete_bot_reports_health.json.reports.state | default('nothing: this binary predates them') }}:
+          {{ pete_bot_reports_health.json.reports.reason | default('they were switched on but did not start') }}
+      when:
+        - not ansible_check_mode
+        - (pete_bot_reports_health.json.reports.state | default('')) == 'misconfigured'
+          or ((pete_bot_reports_ready | bool)
+              and (pete_bot_reports_health.json.reports.state | default('')) != 'running')
+
     - name: Read the Codex queue key's public half
       ansible.builtin.slurp:
         src: "{{ pete_bot_conf_dir }}/codex_ed25519.pub"
@@ -656,6 +695,7 @@
       ansible.builtin.debug:
         msg:
           - "merge desk: {{ pete_bot_desk_health.json.desk.state | default('not in this binary') }}"
+          - "scheduled reports: {{ pete_bot_reports_health.json.reports.state | default('not in this binary') }}"
           - >-
             codex_review_gate_keys entry:
             {{ (pete_bot_codex_pub.content | b64decode | trim) if pete_bot_codex_pub.content is defined

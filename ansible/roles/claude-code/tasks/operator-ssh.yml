@@ -1,0 +1,106 @@
+# operator-ssh.yml (PET-713): Pedro's SSH from his phone, over the tailnet. Included from
+# tasks/main.yml behind claude_operator_ssh_enable.
+#
+# THE PATH, AND WHAT IT IS NOT. The phone runs the Tailscale app; pete-pi-1 advertises
+# 192.168.50.0/24 into the tailnet and SNATs onto the LAN, so a phone login reaches 247 from
+# the subnet router's own LAN address. Nothing here opens a port to the internet, and nothing
+# should: claude_operator_ssh_from pins the phone key to the subnet router, so a copy of the
+# key is useless from anywhere that is not on the tailnet.
+#
+# THE KEY. Generated on the phone, in the Secure Enclave (an SSH app such as Blink Shell) or
+# on a security key (ed25519-sk / ecdsa-sk). The private half never leaves the device; only
+# the public half is committed here. The assert below refuses the key types a phone app makes
+# in software by default (ssh-ed25519, ssh-rsa), so a soft key cannot slip in by accident.
+# A Secure Enclave key is ecdsa-sha2-nistp256 and looks like any other ECDSA key, so the
+# assert cannot prove hardware; the PET-713 runbook step is what does.
+#
+# TWO ACCOUNTS, ONE KEY.
+#   claude_ops_user  — the identity Pedro's Claude sessions run as. A phone login here is how
+#                      he drives a session or a tmux pane from the phone.
+#   claude_operator_user (pedro) — runs no Claude session and holds no standing credential.
+#                      It is where the break-glass Vault login happens (PET-714), because a
+#                      token in pedro's shell environment is unreadable to claude-ops: another
+#                      UID cannot read /proc/<pid>/environ, and neither user has sudo.
+#
+# FAIL CLOSED. With the flag on and no key, the play stops rather than hardening sshd for an
+# account nobody can reach.
+---
+- name: Refuse an operator SSH setup with no key, or a software key type
+  ansible.builtin.assert:
+    that:
+      - claude_operator_ssh_keys | length > 0
+      - claude_operator_ssh_from | length > 0
+      - claude_operator_user != claude_user
+      - claude_operator_user != claude_ops_user
+      - >-
+        claude_operator_ssh_keys
+        | map('split', ' ') | map('first')
+        | difference(claude_operator_ssh_key_types) | length == 0
+    fail_msg: >-
+      claude_operator_ssh_enable is true, so claude_operator_ssh_keys and
+      claude_operator_ssh_from must both be set, every key must be one of
+      {{ claude_operator_ssh_key_types | join(', ') }}, and claude_operator_user
+      ({{ claude_operator_user }}) must differ from {{ claude_user }} and {{ claude_ops_user }}.
+
+# No sudo, the same posture as claude and claude-ops: a user that can reconfigure the host
+# can undo the boundary that keeps its token away from the session users.
+- name: Create the operator user
+  ansible.builtin.user:
+    name: "{{ claude_operator_user }}"
+    home: "/home/{{ claude_operator_user }}"
+    shell: /bin/bash
+    create_home: true
+    password: "!"
+    state: present
+
+- name: Lock the operator's home to 0700
+  ansible.builtin.file:
+    path: "/home/{{ claude_operator_user }}"
+    state: directory
+    owner: "{{ claude_operator_user }}"
+    group: "{{ claude_operator_user }}"
+    mode: "0700"
+
+# exclusive: the operator account takes the phone keys and nothing else, so a key added by
+# hand on the host is removed at the next deploy.
+- name: Authorize the phone keys for the operator, from the subnet router only
+  ansible.posix.authorized_key:
+    user: "{{ claude_operator_user }}"
+    key: "{{ claude_operator_ssh_keys | join('\n') }}"
+    key_options: "{{ claude_operator_ssh_key_options }}"
+    exclusive: true
+    state: present
+
+# Not exclusive: claude-ops may hold other keys this role does not own.
+- name: Authorize the phone keys for claude-ops, from the subnet router only
+  ansible.posix.authorized_key:
+    user: "{{ claude_ops_user }}"
+    key: "{{ item }}"
+    key_options: "{{ claude_operator_ssh_key_options }}"
+    state: present
+  loop: "{{ claude_operator_ssh_keys }}"
+  when: claude_ops_enable | bool
+
+# 00- so it sorts first: sshd keeps the FIRST value it reads for a keyword, and Debian's
+# sshd_config includes sshd_config.d/*.conf at its top. -h supplies a host key, because the
+# drop-in alone has none and `sshd -t` refuses a config with no host key.
+- name: Harden sshd
+  ansible.builtin.template:
+    src: sshd-operator.conf.j2
+    dest: /etc/ssh/sshd_config.d/00-petedio-operator.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s -h /etc/ssh/ssh_host_ed25519_key
+  notify: Reload sshd
+
+# sshd runs /etc/ssh/sshrc as the user at every login. It DMs Pedro for a login to the two
+# accounts the phone key opens, so a login he did not make shows up on his phone. The drop-in
+# above sets PermitUserRC no, because a ~/.ssh/rc would otherwise run instead of this file.
+- name: Install the login notice
+  ansible.builtin.template:
+    src: sshrc.j2
+    dest: /etc/ssh/sshrc
+    owner: root
+    group: root
+    mode: "0755"

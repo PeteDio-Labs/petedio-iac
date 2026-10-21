@@ -30,7 +30,7 @@ for t in vault ansible-playbook python3; do command -v "$t" >/dev/null || die "$
   || die "ansible AppRole creds not in $SECRETS."
 
 applogin(){ local rid sid; rid="$(cat "$SECRETS/$1.role_id")"; sid="$(cat "$SECRETS/$1.secret_id")"
-  vault write -field=token auth/approle/login role_id="$rid" secret_id="$sid" 2>/dev/null || die "AppRole login failed for '$1'."; }
+  printf '{"role_id":"%s","secret_id":"%s"}' "$rid" "$sid" | vault write -field=token auth/approle/login - 2>/dev/null || die "AppRole login failed for '$1'."; }
 
 step "Resolving kv/iac/minio-data-root (ansible AppRole)"
 AN_TOKEN="$(applogin ansible)"

@@ -14,7 +14,7 @@
 # §"Cloudflare — tunnel ingress + Access". The runbook that held this went with the fleet (PET-265).
 #
 # Idempotent. Prints no secrets. Reads inputs at runtime:
-#   Vault token:   $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM, else prompt
+#   Vault token:   $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt (PET-519)
 #   OIDC creds:    $AUTHENTIK_OIDC_CLIENT_ID / $AUTHENTIK_OIDC_CLIENT_SECRET, else prompt
 set -euo pipefail
 
@@ -34,7 +34,7 @@ step "Resolving Vault token"
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
-[ -n "${VAULT_TOKEN:-}" ] || { read -rsp "Vault token: " VAULT_TOKEN; echo; }
+[ -n "${VAULT_TOKEN:-}" ] || die "no Vault token: set VAULT_TOKEN or add the Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM"
 export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault token invalid / Vault unreachable."
 

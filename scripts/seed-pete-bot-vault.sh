@@ -8,8 +8,8 @@
 # resource would also write them in plaintext into the MinIO-backed state, which is
 # worse than not declaring them. Writing kv/services/* needs a privileged token anyway —
 # the read-only AppRoles cannot write here — so this resolves the Vault token the way
-# every sibling reseed script does: $VAULT_TOKEN, else the macOS Keychain item, else a
-# prompt.
+# every sibling reseed script does: $VAULT_TOKEN, else the macOS Keychain item, else it
+# exits non-zero naming the item (PET-519). It never prompts for the Vault token.
 #
 # ⚠ IT CARRIES EVERY OTHER FIELD THROUGH (PET-584). `vault kv put` replaces the whole
 # secret, so a payload of these four fields alone dropped github_updates_token and would
@@ -52,12 +52,7 @@ step "Credentials"
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
-if [ -z "${VAULT_TOKEN:-}" ]; then
-  # ⚠ A non-TTY run reaches EOF here and `read` returns non-zero, which under `set -e`
-  # exits with no message at all. Test for a terminal first so cron says why.
-  [ -t 0 ] || die "no VAULT_TOKEN, no Keychain item, and stdin is not a terminal."
-  read -rsp "Vault token: " VAULT_TOKEN; echo
-fi
+[ -n "${VAULT_TOKEN:-}" ] || die "no Vault token: set VAULT_TOKEN or add the Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM"
 export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault token invalid, or Vault is sealed/unreachable."
 echo "  vault reachable and token valid"

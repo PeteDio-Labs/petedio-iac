@@ -629,3 +629,35 @@ claude_ops_pm_dest: petedio-pm
 claude_ops_pm_remote_name: pm
 # Root-owned, so a session cannot rewrite what the unit runs at its next start.
 claude_ops_pm_serve_bin: /usr/local/libexec/claude-ops-pm-serve
+
+# --- Pedro's phone SSH, over the tailnet (PET-713) -------------------------------------------
+# tasks/operator-ssh.yml carries the design. DEFAULT FALSE, like every delivery in this role:
+# host_vars/claude-247.yml turns it on once the phone's public key is committed below.
+claude_operator_ssh_enable: false
+
+# The account that holds no Claude session and runs the break-glass Vault login (PET-714).
+claude_operator_user: pedro
+
+# PUBLIC keys only, one per phone or security key. Empty on purpose: the play refuses to run
+# with the flag on and no key here.
+claude_operator_ssh_keys: []
+
+# Key types a phone's Secure Enclave or a security key produces. ssh-ed25519 and ssh-rsa are
+# left out on purpose: phone apps make those in software, where the private key can be copied.
+claude_operator_ssh_key_types:
+  - ecdsa-sha2-nistp256
+  - sk-ecdsa-sha2-nistp256@openssh.com
+  - sk-ssh-ed25519@openssh.com
+
+# Where a phone login comes from. pete-pi-1 is the tailnet's only subnet router since 244 died
+# (vault Hosts/244-tailscale.md), and it SNATs tailnet traffic to its LAN address. Add 244's
+# 192.168.50.244 here if it is restored as a second router.
+claude_operator_ssh_from:
+  - 192.168.50.4
+claude_operator_ssh_key_options: >-
+  from="{{ claude_operator_ssh_from | join(',') }}",no-agent-forwarding,no-X11-forwarding
+
+# The accounts whose logins DM Pedro.
+claude_operator_notify_users:
+  - "{{ claude_operator_user }}"
+  - "{{ claude_ops_user }}"

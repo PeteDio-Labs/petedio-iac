@@ -1,0 +1,28 @@
+# Calls the reusable gitleaks workflow for this repository (PET-684). Other repositories copy
+# this file and call `PeteDio-Labs/petedio-iac/.github/workflows/gitleaks.yml@main`. This
+# repository calls its own copy by path, so a PR that edits the workflow tests the edit.
+#
+# pull_request scans the commits the PR adds. The weekly schedule scans every ref.
+name: gitleaks-caller
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 9 * * 1" # Monday 09:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pr:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/gitleaks.yml
+    with:
+      mode: pr
+
+  full:
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/gitleaks.yml
+    with:
+      mode: full

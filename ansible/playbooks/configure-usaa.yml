@@ -22,6 +22,13 @@
 # Both are seeded by the PET-590 vault-seeds change, not by this play. There is no default
 # for either: a committed placeholder would become the live credential on a bare re-run.
 #
+# OPTIONAL SECRETS for the month view (PET-590, 2026-10-20). Each defaults to empty, and an
+# empty one leaves its line out of the env file, so the app reports that part as off:
+#   usaa_bobberto_bearer  kv/services/usaa field bobberto_bearer_token   Bobberto's feed token
+#   usaa_calendar_ics_url kv/services/usaa field calendar_ics_url        the Finance calendar's
+#                                                                         secret iCal address
+#   usaa_notify_bearer    kv/services/pete-bot field notify_bearer_token  pete-bot /v1/notify
+#
 # PREREQUISITES: usaa-238 exists (usaa.tf) and the `usaa` database and role exist
 # (databases.tf). The play does not create either, and the health check fails loudly if the
 # database is unreachable.
@@ -52,6 +59,11 @@
     usaa_viewers:
       pedelgadillo@gmail.com: { name: Pedro, ledger: true }
       soniasdelgadillo@gmail.com: { name: Sonia, ledger: false }
+    # Where alerts go: pete-bot's free-text DM route on media-dash-237 (configure-pete-bot.yml).
+    usaa_notify_url: http://192.168.50.237:3015/v1/notify
+    usaa_bobberto_bearer: ""
+    usaa_calendar_ics_url: ""
+    usaa_notify_bearer: ""
     # Controller path to the compiled binary. scripts/deploy-usaa.sh sets it. There is no
     # default: the play fails below when it is missing.
     # usaa_binary_src: <path to dist/petedio-usaa>
@@ -62,11 +74,17 @@
         that:
           - usaa_db_password is defined and usaa_db_password | length > 0
           - usaa_batsy_bearer is defined and usaa_batsy_bearer is match('\\A[A-Za-z0-9_-]+\\Z')
+          - usaa_bobberto_bearer == "" or usaa_bobberto_bearer is match('\\A[A-Za-z0-9_-]{16,}\\Z')
+          - usaa_bobberto_bearer != usaa_batsy_bearer
+          - usaa_notify_bearer == "" or usaa_notify_bearer is match('\\A[A-Za-z0-9_-]+\\Z')
+          # The URL sits single-quoted in the env file, so no quote, space or newline.
+          - usaa_calendar_ics_url == "" or usaa_calendar_ics_url is match("\\Ahttps://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+\\Z")
         fail_msg: >-
           Missing or malformed secret extra-vars. Run scripts/deploy-usaa.sh, which
-          resolves them from Vault (kv/db/usaa and kv/services/usaa). usaa_batsy_bearer
-          must match \A[A-Za-z0-9_-]+\Z: a space, quote or newline would corrupt the
-          line it sits on in the env file.
+          resolves them from Vault (kv/db/usaa and kv/services/usaa). Each bearer
+          must match \A[A-Za-z0-9_-]+\Z, and the calendar URL must be https with no
+          space or quote: either would corrupt the line it sits on in the env file.
+          Bobberto's token must differ from Batsy's.
       no_log: true
 
     - name: Assert the Access audience was provided (use scripts/deploy-usaa.sh)

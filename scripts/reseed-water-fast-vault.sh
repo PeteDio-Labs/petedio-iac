@@ -6,7 +6,7 @@
 # Modeled on reseed-openfaas-vault.sh (token resolution + secret hygiene). Writing
 # kv/services/* needs a privileged token — the read-only AppRoles cannot write here — so
 # this resolves the Vault token the same way the other reseed scripts do:
-#   $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM, else prompt.
+#   $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt (PET-519).
 #
 # Usage:
 #   ./scripts/reseed-water-fast-vault.sh --aud <ACCESS_AUD> [--team-domain <domain>]
@@ -44,12 +44,12 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$AUD" ] || die "--aud is required (Cloudflare dashboard > Access > Applications > fast.pdlab.dev)."
 
-# Vault token: env -> Keychain -> prompt. Never echoed. Use -w (emits only to the
+# Vault token: env -> Keychain; no prompt (PET-519). Never echoed. Use -w (emits only to the
 # command-substitution capture); NEVER use -g (that prints the secret to stderr).
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
-[ -n "${VAULT_TOKEN:-}" ] || { read -rsp "Vault token: " VAULT_TOKEN; echo; }
+[ -n "${VAULT_TOKEN:-}" ] || die "no Vault token: set VAULT_TOKEN or add the Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM"
 export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault token invalid / Vault unreachable."
 

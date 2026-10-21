@@ -42,7 +42,7 @@ for t in vault ansible-playbook python3; do command -v "$t" >/dev/null || die "$
   || die "ansible AppRole creds not in $SECRETS."
 
 applogin(){ local rid sid; rid="$(cat "$SECRETS/$1.role_id")"; sid="$(cat "$SECRETS/$1.secret_id")"
-  vault write -field=token auth/approle/login role_id="$rid" secret_id="$sid" 2>/dev/null \
+  printf '{"role_id":"%s","secret_id":"%s"}' "$rid" "$sid" | vault write -field=token auth/approle/login - 2>/dev/null \
     || die "AppRole login failed for '$1'."; }
 
 step "Vault: login as the ansible AppRole"
@@ -63,7 +63,8 @@ MQ_PW="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=mq_password kv/services/pla
   || die "cannot read kv/services/plane field 'mq_password'."
 MCP_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=api_key kv/services/plane)" \
   || die "cannot read kv/services/plane field 'api_key'."
-# One personal MCP site each. Keep this list equal to plane_mcp_members in configure-plane.yml;
+# One personal MCP site each. Keep this list equal to plane_mcp_members in configure-plane.yml,
+# and give each name a kv/data/services/plane-<name> path in vault-config's ansible-247 policy;
 # the play stops when a member's PAT is missing.
 MCP_MEMBERS="tom sonia"
 for name in $MCP_MEMBERS; do

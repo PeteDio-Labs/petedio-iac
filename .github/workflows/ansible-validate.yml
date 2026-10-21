@@ -88,6 +88,25 @@ jobs:
       - name: Install the collections this repo declares
         run: ansible-galaxy collection install -r requirements.yml
 
+      # PET-613: `inject_facts_as_vars = False` makes a legacy fact read fail only when its task
+      # runs, and `--syntax-check` runs nothing. This step fails on any top-level injected fact
+      # name, so a missed reference goes red here instead of in ansible-core 2.24. The canary
+      # proves the pattern still matches; without it a broken regex would pass every tree.
+      - name: Reject legacy injected fact variables
+        run: |
+          set -uo pipefail
+          PATTERN='\bansible_(distribution[a-z_]*|os_family|hostname|fqdn|nodename|domain|default_ipv[46]|all_ipv[46]_addresses|architecture|machine|kernel|kernel_version|user_id|user_uid|user_gid|env|date_time|interfaces|devices|mounts|pkg_mgr|service_mgr|processor[a-z_]*|memtotal_mb|swaptotal_mb|memory_mb|system|lsb|cmdline|selinux|virtualization_[a-z]+|dns)\b'
+          printf '{{ ansible_distribution_release }}\n' > /tmp/canary.yml
+          if ! grep -qE "$PATTERN" /tmp/canary.yml; then
+            echo "::error::the legacy-fact pattern no longer matches its canary"; exit 1
+          fi
+          SCANNED=$(find . -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.j2' \) | wc -l)
+          if [ "$SCANNED" -eq 0 ]; then echo "::error::scanned 0 files"; exit 1; fi
+          if grep -rnE "$PATTERN" --include='*.yml' --include='*.yaml' --include='*.j2' .; then
+            echo "::error::read facts as ansible_facts['name'], not as ansible_<name> (PET-613)"; exit 1
+          fi
+          echo "Scanned $SCANNED yml/yaml/j2 files under ansible/: 0 legacy fact reads."
+
       - name: Count what is about to be examined
         id: scope
         run: |

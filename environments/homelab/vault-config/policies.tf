@@ -13,6 +13,12 @@
 # ci-read: the policy GitHub Actions gets via the JWT/OIDC role. Narrow read scope
 # limited to the secrets CI actually needs (Proxmox/MinIO/LXC-SSH creds + kv/poker/db).
 #
+# NO kv/admin/* GRANT (PET-702, audit H4). That prefix holds the Vault root token and the
+# unseal material, and nothing here reads it: the one named path, kv/admin/db, belonged to
+# the Co-latro admin database that PET-366 destroyed. This policy, `terraform` and `ansible`
+# all carried the grant until PET-702. Add one named path with its own comment if a read
+# ever needs it, never the prefix.
+#
 # ⚠ THE kv/poker/* GRANTS BELOW STAY, THOUGH CO-LATRO IS GONE (PET-366). They do not
 # serve the poker app any more — they serve the postgresql PROVIDER, whose server-wide
 # admin credential still lives at kv/poker/db under that historical name. Revoking them
@@ -69,10 +75,6 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
-    path "kv/data/admin/*" {
-      capabilities = ["read"]
-    }
-
     path "kv/metadata/iac/*" {
       capabilities = ["list"]
     }
@@ -82,10 +84,6 @@ resource "vault_policy" "ci_read" {
     }
 
     path "kv/metadata/poker/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/admin/*" {
       capabilities = ["list"]
     }
   EOT
@@ -104,10 +102,6 @@ resource "vault_policy" "terraform" {
       capabilities = ["read"]
     }
 
-    path "kv/data/admin/*" {
-      capabilities = ["read"]
-    }
-
     path "kv/metadata/iac/*" {
       capabilities = ["list"]
     }
@@ -115,9 +109,69 @@ resource "vault_policy" "terraform" {
     path "kv/metadata/poker/*" {
       capabilities = ["list"]
     }
+  EOT
+}
 
-    path "kv/metadata/admin/*" {
-      capabilities = ["list"]
+# ansible-247: the AppRole policy that claude-ops on claude-247 logs in with (PET-674).
+# Pedro asked on 2026-10-19 for 247 to run the deploy scripts the way the Mac does, from
+# .secrets/ansible.{role_id,secret_id}.
+#
+# EXACT PATHS, NO LIST, NO APP KEYS: the PET-531 boundary the claude-ops policy below keeps.
+# Each path is one that an AppRole deploy script reads and that holds no GitHub App key:
+#   deploy-backup-store.sh     kv/services/backup-health
+#   deploy-minio-data.sh       kv/iac/minio-data-root
+#   deploy-palworld-panel.sh   kv/services/palworld-panel
+#   deploy-plane.sh            kv/db/plane, kv/services/plane, kv/services/plane-<member>
+#   deploy-resume-builder.sh   kv/services/resume-builder
+#   deploy-water-fast.sh       kv/services/water-fast
+# Those scripts run on 247. These stay on the Mac, by design:
+#   deploy-claude-247.sh  reads four App keys (claude-*); see the claude-ops exclusions.
+#   deploy-codex-248.sh   reads kv/services/codex-review-app, the Codex reviewer's App key.
+#   deploy-uptime-kuma.sh needs macOS `security`.
+#   deploy-pete-bot.sh, deploy-usaa.sh, deploy-search.sh, deploy-media-dash.sh log in with
+#     an admin token, not this AppRole.
+# NEVER kv/admin/*: the root token and the unseal material live there.
+#
+# A deploy script that moves to 247, or a Plane member added to MCP_MEMBERS in
+# deploy-plane.sh, needs its path here. That is a reviewable diff, by design.
+resource "vault_policy" "ansible_247" {
+  name = "ansible-247"
+
+  policy = <<-EOT
+    path "kv/data/db/plane" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/minio-data-root" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/backup-health" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/palworld-panel" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane-sonia" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane-tom" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/resume-builder" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/water-fast" {
+      capabilities = ["read"]
     }
   EOT
 }
@@ -150,10 +204,6 @@ resource "vault_policy" "ansible" {
       capabilities = ["read"]
     }
 
-    path "kv/data/admin/*" {
-      capabilities = ["read"]
-    }
-
     path "kv/metadata/iac/*" {
       capabilities = ["list"]
     }
@@ -163,10 +213,6 @@ resource "vault_policy" "ansible" {
     }
 
     path "kv/metadata/db/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/admin/*" {
       capabilities = ["list"]
     }
   EOT
@@ -609,7 +655,7 @@ resource "vault_policy" "claude_247_deploy" {
 # path is a reviewable diff, not a standing grant that widens itself.
 #
 # ⚠ NEVER kv/data/admin/*. Every other broad-scoped policy in this file (ci-read, terraform,
-# ansible) reads kv/data/admin/*, but that prefix is where the Vault ROOT TOKEN and the
+# ansible) read kv/data/admin/* until PET-702, and that prefix is where the Vault ROOT TOKEN and the
 # unseal material are documented (vault/Systems/vault-and-secrets.md) — exactly what Pedro's
 # decision for PET-531 rules out landing on 247 by any path. Granting it here would make a
 # renewing token on 247 equivalent to the one credential this whole design exists to keep
