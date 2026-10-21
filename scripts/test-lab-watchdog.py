@@ -50,6 +50,7 @@ def render(targets, daily_hour=24):
 SHIM = r'''#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$LW_ARGV"
 url="${@: -1}"
+case "$*" in *heartbeat*) [ -n "${LW_FAIL_BEAT:-}" ] && exit 22; exit 0 ;; esac
 body=""; while [ $# -gt 0 ]; do case "$1" in -d) body="$2"; shift ;; esac; shift; done
 if [ -n "$body" ]; then
   cat > /dev/null
@@ -72,19 +73,20 @@ class Rig:
         script = render(targets, daily_hour)
         script = script.replace("STATE=/var/lib/lab-watchdog", "STATE=%s/state" % t)
         script = script.replace("HOOK_FILE=/etc/lab-watchdog/discord_webhook", "HOOK_FILE=%s/hook" % t)
+        script = script.replace("BEAT_FILE=/etc/lab-watchdog/heartbeat", "BEAT_FILE=%s/heartbeat" % t)
         self.path = os.path.join(t, "lw.sh")
         open(self.path, "w").write(script)
         open(os.path.join(t, "hook"), "w").write(SECRET + "\n")
         self.answers = {}
 
-    def run(self, answers, fail_msg="", *args):
+    def run(self, answers, fail_msg="", *args, fail_beat=False):
         t = self.tmp
         with open(os.path.join(t, "answers"), "w") as f:
             for url, code in answers.items():
                 f.write("%s=%s\n" % (url, code))
         env = dict(os.environ, PATH=os.path.join(t, "bin") + ":" + os.environ["PATH"],
                    LW_ANSWERS=os.path.join(t, "answers"), LW_ARGV=os.path.join(t, "argv"),
-                   LW_FAIL_MSG=fail_msg)
+                   LW_FAIL_MSG=fail_msg, LW_FAIL_BEAT="1" if fail_beat else "")
         r = subprocess.run(["bash", self.path, *args], env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
         return r
 
@@ -151,6 +153,25 @@ check("the daily line posts once a day", len(r.posts()) == 1)
 r = Rig(TARGETS, daily_hour=0)
 res = r.run(UP, fail_msg="alive")
 check("a failed daily post exits non-zero and retries", res.returncode != 0 and r.run(UP).returncode == 0)
+
+# 7. The off-site heartbeat (PET-722): sent each run when configured, never by --check, and a
+# failed beat exits non-zero without blocking alerts.
+r = Rig(TARGETS)
+open(os.path.join(r.tmp, "heartbeat"), "w").write('url = "https://beat.test/"\n')
+r.run(UP)
+check("a run sends the heartbeat", "heartbeat" in r.argv_text())
+r = Rig(TARGETS)
+open(os.path.join(r.tmp, "heartbeat"), "w").write('url = "https://beat.test/"\n')
+r.run(UP, "", "--check")
+check("--check sends no heartbeat", "heartbeat" not in r.argv_text())
+r = Rig(TARGETS)
+open(os.path.join(r.tmp, "heartbeat"), "w").write('url = "https://beat.test/"\n')
+r.run(DOWN)
+res = r.run(DOWN, "", fail_beat=True)
+check("a failed heartbeat exits non-zero", res.returncode != 0)
+check("a failed heartbeat still posts the DOWN alerts", len(r.posts()) == 2)
+check("no heartbeat file means no beat and a clean exit",
+      Rig(TARGETS).run(UP).returncode == 0)
 
 print("\n%d failure(s)" % len(failures))
 sys.exit(1 if failures else 0)
