@@ -16,7 +16,7 @@
 #
 # This script reads discord_token and owner_user_id from kv/services/pete-bot, opens the DM
 # through Discord's API, and writes the two fields to both paths. It keeps every other field in
-# those paths. No value reaches argv or the screen: Vault reads go to variables, the token
+# those paths, and creates a path that has no record. No value reaches argv or the screen: Vault reads go to variables, the token
 # reaches curl as a config line on stdin, and Vault takes the write from a 0700 temp file.
 #
 # THE ORDER:
@@ -86,9 +86,16 @@ trap 'rm -rf "$TMP"' EXIT
 T="$BOT_TOKEN" C="$CHANNEL_ID" jq -n '{discord_bot_token: env.T, discord_dm_channel_id: env.C}' > "$TMP/data.json"
 unset BOT_TOKEN OWNER_ID REPLY
 for path in "${TARGETS[@]}"; do
-  # patch -method=rw merges into the record, so the AWS keys and heartbeat secret survive, and
-  # creates the record when it does not exist yet.
-  vault kv patch -method=rw "$path" @"$TMP/data.json" >/dev/null
+  # A patch merges into the record, so the AWS keys and heartbeat secret survive. A patch to a
+  # path with no record fails, so a missing record takes a plain put. Only a "no value found"
+  # answer counts as missing: any other read error stops here instead of overwriting the record.
+  if OUT="$(vault kv get -format=json "$path" 2>&1 >/dev/null)"; then
+    vault kv patch -method=rw "$path" @"$TMP/data.json" >/dev/null
+  elif printf '%s' "$OUT" | grep -q 'No value found'; then
+    vault kv put "$path" @"$TMP/data.json" >/dev/null
+  else
+    die "could not read $path: $OUT"
+  fi
   for f in discord_bot_token discord_dm_channel_id; do
     GOT="$(vault kv get -field="$f" "$path" 2>/dev/null || true)"
     [ -n "$GOT" ] || die "wrote $path but read no $f back."

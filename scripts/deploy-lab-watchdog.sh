@@ -39,12 +39,34 @@ step "Reading the Discord credentials from Vault (ansible AppRole)"
 AN_TOKEN="$(vault write -field=token auth/approle/login \
   role_id=@"$SECRETS/ansible.role_id" secret_id=@"$SECRETS/ansible.secret_id" 2>/dev/null)" \
   || die "AppRole login failed for 'ansible'. Run ./scripts/pet-secrets doctor to see whether Vault is sealed."
-DISCORD_BOT_TOKEN="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=discord_bot_token kv/services/lab-watchdog 2>/dev/null || true)"
-DISCORD_DM_CHANNEL_ID="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=discord_dm_channel_id kv/services/lab-watchdog 2>/dev/null || true)"
+umask 077
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# read_record PATH -> prints the record as JSON. A path with no record prints {}, so "absent"
+# is reported as absent. Any other failure (a denied read, a sealed Vault) stops the deploy,
+# because an unread record must not read as an unseeded one.
+read_record() {
+  local out
+  if out="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -format=json "$1" 2>"$TMP/err")"; then
+    printf '%s' "$out" | jq -c '.data.data'
+  elif grep -q 'No value found' "$TMP/err"; then
+    echo '{}'
+  else
+    die "could not read $1: $(head -c 300 "$TMP/err")"
+  fi
+}
+field() { printf '%s' "$1" | jq -r --arg k "$2" '.[$k] // empty'; }
+
+LAB_REC="$(read_record kv/services/lab-watchdog)"
 # The off-site heartbeat (PET-722) is optional: absent, the in-lab probe still runs.
-HB_URL="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=heartbeat_url kv/services/aws-watchdog 2>/dev/null || true)"
-HB_SECRET="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=heartbeat_secret kv/services/aws-watchdog 2>/dev/null || true)"
+AWS_REC="$(read_record kv/services/aws-watchdog)"
 unset AN_TOKEN
+DISCORD_BOT_TOKEN="$(field "$LAB_REC" discord_bot_token)"
+DISCORD_DM_CHANNEL_ID="$(field "$LAB_REC" discord_dm_channel_id)"
+HB_URL="$(field "$AWS_REC" heartbeat_url)"
+HB_SECRET="$(field "$AWS_REC" heartbeat_secret)"
+unset LAB_REC AWS_REC
 [ -n "$DISCORD_BOT_TOKEN" ] && [ -n "$DISCORD_DM_CHANNEL_ID" ] \
   || die "kv/services/lab-watchdog has no discord_bot_token or discord_dm_channel_id. Run ./scripts/seed-watchdog-discord.sh first."
 case "$DISCORD_DM_CHANNEL_ID" in
@@ -58,9 +80,6 @@ else
 fi
 export DISCORD_BOT_TOKEN DISCORD_DM_CHANNEL_ID HB_URL HB_SECRET
 
-umask 077
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 jq -n '{lab_watchdog_discord_bot_token: env.DISCORD_BOT_TOKEN,
   lab_watchdog_discord_dm_channel_id: env.DISCORD_DM_CHANNEL_ID,
   lab_watchdog_heartbeat_url: env.HB_URL, lab_watchdog_heartbeat_secret: env.HB_SECRET}' > "$TMP/extra.json"

@@ -54,6 +54,9 @@ The two `AWS_*` variables are the MinIO state backend's keys. The AWS provider i
 authenticates from Vault, so the two never collide. Read the plan before the apply: expect 14
 resources to add (three SSM parameters, the table, a log group, a role and its policy, the function,
 its URL and two URL permissions, an EventBridge rule, its target and permission).
+The plan should show no destroys. PET-722 had not been applied when PET-728 replaced the
+`discord_webhook` parameter, so no state holds it. A destroy of `aws_ssm_parameter.discord_webhook`
+means someone applied the earlier version: read it, and accept it.
 
 After the apply, run `scripts/seed-aws-watchdog-vault.sh --heartbeat-url` with the
 `heartbeat_url` output, then `scripts/deploy-lab-watchdog.sh` to land the heartbeat on 247.
