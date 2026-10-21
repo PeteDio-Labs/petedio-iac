@@ -3,8 +3,9 @@
 # PeteDio-Labs repositories (PET-683), then read the setting back.
 #
 # Run it as Pedro, signed in to `gh` with admin rights on each repo:
-#   scripts/enable-secret-scanning.sh            # petedio-iac and pete-bot
-#   scripts/enable-secret-scanning.sh <repo>...  # other public repos
+#   bash scripts/enable-secret-scanning.sh            # petedio-iac and pete-bot
+#   bash scripts/enable-secret-scanning.sh <repo>...  # other public repos
+# The file has no executable bit, so call it with bash.
 #
 # Private repos need paid GitHub Advanced Security, so the gitleaks check covers them.
 #
