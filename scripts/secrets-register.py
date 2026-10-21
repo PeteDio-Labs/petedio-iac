@@ -103,7 +103,8 @@ def covers(entry_path: str, ref: str) -> bool:
     if m:
         prefix = ref[: m.start()]
         return entry_path.startswith(prefix) or fnmatch.fnmatch(prefix, entry_path.rstrip("/") + "*")
-    return fnmatch.fnmatch(ref, entry_path) or ref.startswith(entry_path.rstrip("/") + "/")
+    # Nested KV paths are distinct secrets, not fields of their parent, so match exactly.
+    return fnmatch.fnmatch(ref, entry_path)
 
 
 def load_register(path: str) -> list[dict]:
@@ -163,6 +164,10 @@ def check(entries: list[dict], refs: dict[str, set[str]], today: dt.date,
         for field in ("path", "owner", "rotation", "expiry"):
             if field not in e:
                 problems.append(f"entry {e.get('path', e)!r} has no `{field}`")
+        for field in ("path", "owner", "rotation"):
+            v = e.get(field)
+            if field in e and not (isinstance(v, str) and v.strip()):
+                problems.append(f"entry {e.get('path', e)!r}: `{field}` must be a non-empty string")
         p = e.get("path", "")
         if p in seen:
             problems.append(f"{p}: listed twice")
@@ -263,10 +268,13 @@ def self_test() -> int:
     gone = {"kv/services/probe": None}
     retired = check([dict(later, status="retired")], refs, today, gone)
     live_gone = check([later], refs, today, gone)
+    blank = check([dict(later, owner=None, rotation="  ")], refs, today, None)
+    child = check([later], {**refs, "kv/services/probe/child": {"scripts/z.sh"}}, today, None)
     wild = check([dict(later, path="kv/services/probe-*")], refs, today, None)
     ok = (bool(bad) and not good and any("no owner" in p for p in orphan)
           and quoted and unknown and empty and not retired and live_gone
-          and any("wildcard" in p for p in wild))
+          and any("wildcard" in p for p in wild)
+          and len(blank) >= 2 and any("no owner" in p for p in child))
     print(f"self-test: quoted date / unknown rule / empty expiry -> {bool(quoted and unknown and empty)}")
     print(f"self-test: retired 404 passes -> {not retired}; live 404 fails -> {bool(live_gone)}")
     print(f"self-test: 7-day entry -> {bad or 'NO PROBLEM (wrong)'}")

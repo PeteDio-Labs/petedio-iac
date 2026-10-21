@@ -104,7 +104,7 @@ variable "cloudflare_api_token" {
     TF_VAR_cloudflare_api_token in CI — never committed. Defaults to null so
     validate/plan without Vault degrade cleanly; the resolver falls back to the
     Vault data-source value and an explicit TF_VAR wins as break-glass. Distinct
-    from the cloudflared daemon token at kv/services/cloudflare/tunnel_token
+    from the cloudflared daemon token at the tunnel_token field of kv/services/cloudflare
     (consumed by Ansible, not Terraform).
   EOT
   type        = string
