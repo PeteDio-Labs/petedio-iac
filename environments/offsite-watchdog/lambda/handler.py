@@ -19,7 +19,9 @@ import socket
 import ssl
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 HEARTBEAT_ID = "heartbeat"
@@ -69,11 +71,17 @@ def probe(check, timeout=8):
     return code, days
 
 
+def host_port(url):
+    """The host and port a URL names, with 443 only when it names none."""
+    parts = urllib.parse.urlsplit(url)
+    return parts.hostname, parts.port or 443
+
+
 def cert_days(url, timeout):
-    host = url.split("/")[2].split(":")[0]
+    host, port = host_port(url)
     try:
         ctx = ssl.create_default_context()
-        with socket.create_connection((host, 443), timeout=timeout) as sock:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
             with ctx.wrap_socket(sock, server_hostname=host) as tls:
                 not_after = ssl.cert_time_to_seconds(tls.getpeercert()["notAfter"])
         return int((not_after - time.time()) // 86400)
@@ -116,14 +124,6 @@ def run_checks(store, now, probe_fn=probe, post_fn=discord):
     age = int(now) - int(beat["ts"])
     results.append(("lab-heartbeat", age <= max_age, "last heartbeat %d s ago" % age))
 
-    for check in checks:
-        code, days = probe_fn(check)
-        up = code in check.get("ok", [200])
-        detail = "status %s" % code
-        if up and check.get("min_cert_days") and days is not None and days < check["min_cert_days"]:
-            up, detail = False, "certificate expires in %d days" % days
-        results.append((check["name"], up, detail))
-
     def post(text):
         try:
             post_fn(webhook, text)
@@ -133,7 +133,7 @@ def run_checks(store, now, probe_fn=probe, post_fn=discord):
             failed_posts.append(text)
             return False
 
-    for name, up, detail in results:
+    def process(name, up, detail):
         state = store.get("state#" + name) or {"fails": 0, "posted": False}
         fails, posted = int(state["fails"]), bool(state["posted"])
         if up:
@@ -147,6 +147,22 @@ def run_checks(store, now, probe_fn=probe, post_fn=discord):
             ):
                 posted = True
         store.put("state#" + name, fails=fails, posted=posted)
+
+    # The heartbeat is judged and posted before any probe runs, so a slow public check can never
+    # delay the alert that matters most.
+    process(*results[0])
+
+    # The probes run in parallel, so total time is one probe, not the sum of them.
+    if checks:
+        with ThreadPoolExecutor(max_workers=len(checks)) as pool:
+            outcomes = list(pool.map(probe_fn, checks))
+        for check, (code, days) in zip(checks, outcomes):
+            up = code in check.get("ok", [200])
+            detail = "status %s" % code
+            if up and check.get("min_cert_days") and days is not None and days < check["min_cert_days"]:
+                up, detail = False, "certificate expires in %d days" % days
+            results.append((check["name"], up, detail))
+            process(check["name"], up, detail)
 
     today = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d")
     hour = datetime.fromtimestamp(now, timezone.utc).hour

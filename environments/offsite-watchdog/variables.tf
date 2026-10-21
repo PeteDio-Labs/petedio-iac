@@ -1,7 +1,12 @@
 variable "aws_region" {
-  description = "Region for the watchdog. us-east-1 unless Pedro picks another."
+  description = "Region for the watchdog. us-east-2 is the region of the Dream It Ship It account."
   type        = string
-  default     = "us-east-1"
+  default     = "us-east-2"
+}
+
+variable "permissions_boundary_arn" {
+  description = "ARN of the petedio-watchdog-boundary IAM policy Pedro creates (README). Required: the apply user may create the function role only with this boundary."
+  type        = string
 }
 
 variable "heartbeat_max_age_seconds" {

@@ -91,9 +91,11 @@ else
     BEAT="$(openssl rand -hex 24)"
     echo "  heartbeat_secret: generated"
   fi
-  K="$KID" S="$KSECRET" W="$HOOK" B="$BEAT" jq -n --argjson old "$EXISTING" \
-    '$old + {aws_access_key_id: env.K, aws_secret_access_key: env.S,
-             discord_webhook_url: env.W, heartbeat_secret: env.B}' > "$TMP/data.json"
+  # The stored record holds the old secrets, so it reaches jq as a file, never as an argument.
+  printf '%s' "$EXISTING" > "$TMP/old.json"
+  K="$KID" S="$KSECRET" W="$HOOK" B="$BEAT" jq -n --slurpfile old "$TMP/old.json" \
+    '$old[0] + {aws_access_key_id: env.K, aws_secret_access_key: env.S,
+                discord_webhook_url: env.W, heartbeat_secret: env.B}' > "$TMP/data.json"
   unset KID KSECRET HOOK BEAT
 fi
 

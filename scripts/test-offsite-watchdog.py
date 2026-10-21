@@ -147,5 +147,31 @@ fail_on.clear()
 run(s, noon + 300)
 check("a failed daily post is retried", len([p for p in posts if "alive" in p]) == 1)
 
+# 7. The heartbeat alert goes out before any probe starts, and probes run in parallel.
+configure([{"name": "slow%d" % i, "url": "https://s%d.test/" % i} for i in range(4)])
+s = Store()
+s.put("heartbeat", ts=T0)
+s.put("state#lab-heartbeat", fails=1, posted=False)
+posts.clear()
+events = []
+import threading
+import time as _time
+gate = threading.Barrier(4, timeout=5)
+
+
+def slow_probe(c):
+    events.append("probe-start:%d" % len(posts))
+    gate.wait()  # all four must be in flight at once, or this raises
+    return 0, None
+
+
+run(s, T0 + 2000, slow_probe)
+check("the heartbeat DOWN posts before any probe starts", events[0] == "probe-start:1", str(events))
+check("probes run in parallel", len(events) == 4)
+
+# 8. A certificate check uses the URL's own port.
+check("host_port reads a nonstandard port", h.host_port("https://example.test:32400/x") == ("example.test", 32400))
+check("host_port defaults to 443", h.host_port("https://example.test/x") == ("example.test", 443))
+
 print("\n%d failure(s)" % len(failures))
 sys.exit(1 if failures else 0)

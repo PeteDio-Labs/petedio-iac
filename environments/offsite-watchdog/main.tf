@@ -73,9 +73,13 @@ data "aws_iam_policy_document" "assume" {
   }
 }
 
+# The permissions boundary caps what this role can ever do, whatever policy is attached to it.
+# The apply user may create a role only with this boundary (README), so it cannot mint a role
+# more powerful than the watchdog needs.
 resource "aws_iam_role" "fn" {
-  name               = "${local.name}-fn"
-  assume_role_policy = data.aws_iam_policy_document.assume.json
+  name                 = "${local.name}-fn"
+  assume_role_policy   = data.aws_iam_policy_document.assume.json
+  permissions_boundary = var.permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "fn" {
@@ -112,7 +116,7 @@ resource "aws_lambda_function" "fn" {
   handler          = "handler.handler"
   filename         = data.archive_file.fn.output_path
   source_code_hash = data.archive_file.fn.output_base64sha256
-  timeout          = 30
+  timeout          = 60
   memory_size      = 128
 
   environment {
