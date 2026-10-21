@@ -76,21 +76,43 @@ die()  { printf '\033[31mERROR\033[0m %s\n' "$*" >&2; exit 1; }
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '  \033[33mWARN\033[0m %s\n' "$*" >&2; }
 
-for t in vault jq ssh ssh-keygen awk; do command -v "$t" >/dev/null || die "$t not in PATH"; done
-[ -f "$PVE_SSH_KEY" ] || die "No SSH key at $PVE_SSH_KEY. Set PVE_SSH_KEY to the key root on the nodes accepts."
-[ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'. Run from inside the repo or export it."
-
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-
 material() { awk '{print $2}' <<<"$1"; }
 valid_material() { [[ "$1" =~ ^[A-Za-z0-9+/=]{40,}$ ]]; }
 
 # has_key <vmid> <node> <material>: 0 present, 1 absent, anything else is a fault.
+# A container with no $AUTH trusts no key from that file, so a missing file is "absent" (1).
+# grep exits 2 on any other read error, and a failed pct exec or ssh exits with its own code;
+# both stay faults.
 has_key() {
   local rc=0
-  on_node "$2" "pct exec $1 -- grep -qF '$3' $AUTH" >/dev/null 2>&1 || rc=$?
+  on_node "$2" "pct exec $1 -- sh -c '[ -f $AUTH ] || exit 1; grep -qF $3 $AUTH'" >/dev/null 2>&1 || rc=$?
   return "$rc"
+}
+
+# config_ip: reads `pct config` on stdin, prints the first static IPv4 across every netN line
+# (seerr 101 keeps its address on net1), or nothing when every netN is DHCP or has no ip=.
+config_ip() {
+  sed -n 's/^net[0-9][0-9]*:.*,ip=\([0-9][0-9.]*\)\/.*/\1/p' | head -1
+}
+
+# pick_ip: reads candidate IPv4 addresses on stdin, one per line. Prints the first one on the
+# lab LAN (192.168.50.0/24), else the first one, else nothing.
+pick_ip() {
+  local all
+  all="$(grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+  { grep -m1 '^192\.168\.50\.' <<<"$all" || true; } | grep . || head -1 <<<"$all"
+}
+
+# live_ip <vmid> <node>: asks the running container for its address, for DHCP containers
+# (flaresolverr 102). Prints nothing when none comes back.
+live_ip() {
+  local out
+  out="$(on_node "$2" "pct exec $1 -- hostname -I" 2>/dev/null | tr ' ' '\n' || true)"
+  if ! grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' <<<"$out"; then
+    out="$(on_node "$2" "pct exec $1 -- ip -4 -o addr show scope global" 2>/dev/null \
+      | grep -oE 'inet [0-9.]+' | awk '{print $2}' || true)"
+  fi
+  pick_ip <<<"$out"
 }
 
 # login <ip> <keyfile>: prints ok, denied or unreachable.
@@ -103,6 +125,16 @@ login() {
   else echo unreachable
   fi
 }
+
+# Tests source this file for the functions above; nothing below runs then.
+[ "${ROTATE_LXC_SSH_SOURCE_ONLY:-}" = 1 ] && return 0
+
+for t in vault jq ssh ssh-keygen awk; do command -v "$t" >/dev/null || die "$t not in PATH"; done
+[ -f "$PVE_SSH_KEY" ] || die "No SSH key at $PVE_SSH_KEY. Set PVE_SSH_KEY to the key root on the nodes accepts."
+[ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'. Run from inside the repo or export it."
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
 step "Authenticating to Vault"
 if [ -z "${VAULT_TOKEN:-}" ]; then
@@ -147,7 +179,8 @@ for node in "${NODES[@]}"; do
   while read -u 3 -r vmid status _; do
     [[ "$vmid" =~ ^[0-9]+$ ]] || continue
     cfg="$(on_node "$node" "pct config $vmid" 2>/dev/null || true)"
-    ip="$(sed -n 's/^net0:.*[,]ip=\([0-9.]*\)\/.*/\1/p' <<<"$cfg" | head -1)"
+    ip="$(config_ip <<<"$cfg")"
+    if [ -z "$ip" ] && [ "$status" = running ]; then ip="$(live_ip "$vmid" "$node")"; fi
     printf '%s %s %s %s\n' "$node" "$vmid" "${ip:-none}" "$status" >> "$ROWS"
   done 3<<<"$(tail -n +2 <<<"$LIST")"
 done
@@ -172,7 +205,7 @@ while read -u 3 -r node vmid ip status; do
     # Not in $AUTH does not mean the old key is refused: a second file or another sshd
     # setting can still trust it. Probe it with the old private key where we hold one.
     if [ -f "$TMP/old_key" ]; then
-      [ "$ip" != none ] || { FAULTS+=("$vmid:no-static-ip"); continue; }
+      [ "$ip" != none ] || { FAULTS+=("$vmid:no-address"); continue; }
       r="$(login "$ip" "$TMP/old_key")"
       case "$r" in
         denied) ;;
@@ -182,7 +215,7 @@ while read -u 3 -r node vmid ip status; do
     fi
     continue
   fi
-  if [ "$ip" = none ]; then FAULTS+=("$vmid:no-static-ip"); continue; fi
+  if [ "$ip" = none ]; then FAULTS+=("$vmid:no-address"); continue; fi
   printf '%s %s %s %s %s\n' "$node" "$vmid" "$ip" "$hasold" "$hasnew" >> "$TARGETS"
   echo "  CT $vmid ($ip): old=$hasold new=$hasnew"
 done 3< "$ROWS"

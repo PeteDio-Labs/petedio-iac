@@ -24,6 +24,13 @@ then proves the old private key gets `Permission denied`. A stopped container st
 run fails after Vault changes, re-run it: Vault's `previous_public_key` field lets it resume
 (it cannot test the old private key then, and says so).
 
+## How it finds addresses
+
+The script takes the first static `ip=` across every `netN` line of `pct config`. For a DHCP
+container it asks the container (`hostname -I`) and prefers an address on `192.168.50.0/24`.
+A container with no `/root/.ssh/authorized_keys` counts as not trusting the key. To test the
+parsing and exit codes without the lab, run `./scripts/test-rotate-lxc-ssh.sh`.
+
 ## What it does not reach
 
 VMs, bare-metal hosts, and any container that trusts the key from a file other than
