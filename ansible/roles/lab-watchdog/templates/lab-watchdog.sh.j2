@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# lab-watchdog — probe the lab and post to Discord. Managed by Ansible: roles/lab-watchdog (PET-707).
+#
+# It posts when a target has failed {{ lab_watchdog_fail_threshold }} runs in a row, once, and posts again when
+# the target answers. It posts nothing while everything is up, except one line a day
+# that proves this timer runs. A failed post exits non-zero, so the unit shows it.
+#
+#   lab-watchdog            probe, post on a state change
+#   lab-watchdog --check    probe and print, post nothing, change no state
+#   lab-watchdog --test     post one test line to prove the webhook
+set -uo pipefail
+
+STATE=/var/lib/lab-watchdog
+HOOK_FILE=/etc/lab-watchdog/discord_webhook
+THRESHOLD={{ lab_watchdog_fail_threshold }}
+DAILY_HOUR={{ lab_watchdog_daily_hour }}
+MODE=run
+case "${1:-}" in
+  --check) MODE=check ;;
+  --test) MODE=test ;;
+  "") ;;
+  *) echo "usage: lab-watchdog [--check|--test]" >&2; exit 2 ;;
+esac
+
+HOST="$(hostname)"
+RC=0
+
+# post MESSAGE -> returns 0 when Discord accepted it. A failure also sets RC, the run's exit
+# status, but callers decide each marker from this call's own result, so one failed post
+# cannot leave an unrelated target's marker unwritten.
+post() {
+  local body hook
+  hook="$(cat "$HOOK_FILE" 2>/dev/null)" || { echo "no webhook at $HOOK_FILE" >&2; RC=1; return 1; }
+  # Messages hold only target names, status codes and the hostname, so there is nothing to escape.
+  body="{\"username\":\"lab-watchdog\",\"content\":\"$1\"}"
+  # The URL is the credential, so it goes to curl on stdin as a config line, never in argv
+  # where `ps` would show it.
+  if ! printf 'url = "%s"\n' "$hook" \
+      | curl -sS -f -m 10 -o /dev/null -K - -H 'Content-Type: application/json' -d "$body"; then
+    echo "Discord post failed: $1" >&2
+    RC=1
+    return 1
+  fi
+}
+
+if [ "$MODE" = test ]; then
+  post "lab-watchdog test from $HOST. If you can read this, the webhook works." && echo "posted"
+  exit "$RC"
+fi
+
+# probe NAME URL "OK CODES" INSECURE -> prints the status code, or 000 on no answer
+probe() {
+  local opts=(-sS -o /dev/null -m 8 -w '%{http_code}')
+  [ "$4" = true ] && opts+=(-k)
+  curl "${opts[@]}" "$2" 2>/dev/null || true
+}
+
+examined=0
+answering=0
+{% for t in lab_watchdog_targets %}
+name={{ t.name | quote }}
+code="$(probe "$name" {{ t.url | quote }} {{ t.ok | quote }} {{ (t.insecure | default(false)) | string | lower | quote }})"
+examined=$((examined + 1))
+case " {{ t.ok }} " in *" $code "*) up=1; answering=$((answering + 1)) ;; *) up=0 ;; esac
+printf '%-10s status=%s %s\n' "$name" "$code" "$([ "$up" = 1 ] && echo up || echo DOWN)"
+if [ "$MODE" = run ]; then
+  fails="$(cat "$STATE/$name.fails" 2>/dev/null || echo 0)"
+  posted="$([ -e "$STATE/$name.posted" ] && echo 1 || echo 0)"
+  if [ "$up" = 1 ]; then
+    if [ "$posted" = 1 ]; then
+      post "RECOVERED: $name answers again (status $code). Probe host: $HOST." \
+        && rm -f "$STATE/$name.posted"
+    fi
+    echo 0 > "$STATE/$name.fails"
+  else
+    fails=$((fails + 1))
+    echo "$fails" > "$STATE/$name.fails"
+    if [ "$fails" -ge "$THRESHOLD" ] && [ "$posted" = 0 ]; then
+      post "DOWN: $name (status $code) failed $fails runs in a row. Probe host: $HOST." \
+        && : > "$STATE/$name.posted"
+    fi
+  fi
+fi
+{% endfor %}
+
+if [ "$MODE" = run ]; then
+  today="$(date +%F)"
+  if [ "$(date +%-H)" -ge "$DAILY_HOUR" ] && [ "$(cat "$STATE/daily" 2>/dev/null)" != "$today" ]; then
+    post "lab-watchdog alive on $HOST: $answering of $examined targets answering." \
+      && echo "$today" > "$STATE/daily"
+  fi
+fi
+echo "examined $examined targets, $answering answering"
+exit "$RC"

@@ -11,6 +11,12 @@
 # Both are seeded by the PET-590 vault-seeds change. This script reads them and mints
 # nothing.
 #
+# The month view (PET-590, 2026-10-20) adds three optional values. A missing one prints a
+# warning and leaves that part of the app off, so a deploy before its seed still works:
+#   kv/services/usaa      field bobberto_bearer_token   seed-usaa-batsy-token.sh --agent bobberto
+#   kv/services/usaa      field calendar_ics_url        seed-usaa-calendar-url.sh
+#   kv/services/pete-bot  field notify_bearer_token     already seeded for pete-bot (PET-584)
+#
 # It also reads the usaa_access_aud Terraform output (the Access application audience tag
 # for savings.pdlab.dev, which the app checks on the Cf-Access-Jwt-Assertion JWT). That is an
 # identifier, not a secret, and it goes in the same extra-vars file to keep argv clean. The
@@ -68,21 +74,36 @@ vault kv get -format=json "$DB_PATH" >"$TMP/db.json" \
   || die "cannot read $DB_PATH: run the PET-590 kv/db/usaa seed, and check that the ci-read grant is applied."
 vault kv get -format=json "$SERVICE_PATH" >"$TMP/svc.json" \
   || die "cannot read $SERVICE_PATH: run the PET-590 kv/services/usaa seed."
+# Optional: pete-bot's notify token, for the month view's Discord alerts. An unreadable
+# path is a warning, not a stop, because the app runs without alerts.
+vault kv get -format=json kv/services/pete-bot >"$TMP/pb.json" 2>/dev/null || echo '{"data":{"data":{}}}' >"$TMP/pb.json"
 python3 -c '
 import json, os, sys, yaml
 db = json.load(open(sys.argv[2]))["data"]["data"]
 svc = json.load(open(sys.argv[3]))["data"]["data"]
+pb = json.load(open(sys.argv[4]))["data"]["data"] or {}
 if not db.get("password"):
     sys.exit("kv/db/usaa has no password field: run the PET-590 kv/db/usaa seed (M1).")
 if not svc.get("batsy_bearer_token"):
     sys.exit("kv/services/usaa has no batsy_bearer_token field: run the PET-590 kv/services/usaa seed (M1).")
-yaml.safe_dump({
+optional = {
+    "usaa_bobberto_bearer": (svc, "bobberto_bearer_token", "Bobberto cannot push or read: run seed-usaa-batsy-token.sh --agent bobberto"),
+    "usaa_calendar_ics_url": (svc, "calendar_ics_url", "the month view has no calendar: run seed-usaa-calendar-url.sh"),
+    "usaa_notify_bearer": (pb, "notify_bearer_token", "alerts stay on /month and reach no DM"),
+}
+out = {
     "usaa_db_password": db["password"],
     "usaa_batsy_bearer": svc["batsy_bearer_token"],
     "usaa_access_aud": os.environ["USAA_ACCESS_AUD"],
-}, open(sys.argv[1], "w"))
-' "$TMP/extra.yml" "$TMP/db.json" "$TMP/svc.json"
-rm -f "$TMP/db.json" "$TMP/svc.json"
+}
+for var, (src, field, why) in optional.items():
+    out[var] = src.get(field) or ""
+    # Say which field is missing, never what a present one holds.
+    # No single quote anywhere in this program: the shell passes it single-quoted.
+    print("  " + field + ": " + ("present" if out[var] else "MISSING, " + why), file=sys.stderr)
+yaml.safe_dump(out, open(sys.argv[1], "w"))
+' "$TMP/extra.yml" "$TMP/db.json" "$TMP/svc.json" "$TMP/pb.json"
+rm -f "$TMP/db.json" "$TMP/svc.json" "$TMP/pb.json"
 
 step "Compiling the binary"
 # ⚠ NAME THE TARGET. `bun build --compile` builds for the machine it runs on, and a Mac

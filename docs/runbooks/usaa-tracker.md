@@ -17,10 +17,11 @@ bucket (see [usaa-statement-backup.md](usaa-statement-backup.md)).
 | Config | `/etc/usaa/usaa.env` (root:usaa 0640), data dir `/var/lib/usaa` (0750 usaa) |
 | Database | `usaa` on postgres-rds-231, role `usaa`, password at `kv/db/usaa` field `password` |
 | `savings.pdlab.dev` | Cloudflare Access with the Authentik IdP, allow-list Pedro and Sonia |
-| `savings-feed.pdlab.dev` | no Access, one path `/api/v1/totals`, gated by the app's bearer check |
+| `savings-feed.pdlab.dev` | no Access, two paths, `/api/v1/totals` and `/api/v1/month`, gated by the app's bearer check |
 
-Batsy, Sonia's agent, posts totals to `savings-feed.pdlab.dev` from outside the lab. The
-bearer is `kv/services/usaa` field `batsy_bearer_token`. Every other path on that hostname
+Batsy, Sonia's agent, and Bobberto, Pedro's, post totals to `savings-feed.pdlab.dev` from
+outside the lab and read the month view there. The bearers are `kv/services/usaa` fields
+`batsy_bearer_token` and `bobberto_bearer_token`. Every other path on that hostname
 gets the tunnel's catch-all 404, and the app also refuses non-feed paths on that Host.
 
 Postgres 231 already admits the whole LAN: `configure-postgres.yml` has one
@@ -96,6 +97,37 @@ grant fails it with permission denied.
 
 If the script says a field is empty, the M1 seed has not run. Do not write the value by
 hand.
+
+## Turn on the month view
+
+The month view (`/month`, `GET /api/v1/month`) reads the Finance calendar and the balances
+the agents push. Each of its three inputs is optional, and `deploy-usaa.sh` names any that is
+missing. To turn it on, Pedro runs these on the Mac, in this order:
+
+1. **Bobberto's token.** Run `./scripts/seed-usaa-batsy-token.sh --agent bobberto`.
+2. **The calendar address.** In Google Calendar, open Settings, the Finance calendar,
+   "Integrate calendar", and copy "Secret address in iCal format". Run
+   `./scripts/seed-usaa-calendar-url.sh` and paste it at the hidden prompt.
+3. **Deploy.** Run `./scripts/deploy-usaa.sh`. It reads both fields and pete-bot's
+   `notify_bearer_token` from `kv/services/pete-bot`, so alerts reach Pedro's DM.
+4. **Give each agent its token.** Pedro places Bobberto's token in Bobberto, and Batsy's in
+   Batsy, reading each with `vault kv get -field=<agent>_bearer_token kv/services/usaa` in
+   his own terminal. No session reads or relays either value.
+5. **Tell each agent the contract.** Once a day, post each account's balance to
+   `POST https://savings-feed.pdlab.dev/api/v1/totals`, and read
+   `GET https://savings-feed.pdlab.dev/api/v1/month` for the answer. The body and the
+   account list are in the app's `README.md`, "The feed".
+
+To check it, read the service's hourly log line. It names what it read and what it sent:
+
+```bash
+ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.238 'journalctl -u usaa --since -2h | grep tick:'
+```
+
+A healthy line reads `calendar ok, <N> events`. `calendar error` means 238 could not fetch
+the address, and the month view raises the same alert. The app needs outbound HTTPS from
+238 to `calendar.google.com`, and HTTP to pete-bot on `192.168.50.237:3015`. Neither path
+was tested before the first deploy.
 
 ## Import the ledger
 
