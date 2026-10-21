@@ -315,10 +315,6 @@ resource "vault_policy" "pete_bot_cd" {
   name = "pete-bot-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/pete-bot" {
       capabilities = ["read"]
     }
@@ -374,10 +370,6 @@ resource "vault_policy" "media_dash_cd" {
   name = "media-dash-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/media/dashboard" {
       capabilities = ["read"]
     }
