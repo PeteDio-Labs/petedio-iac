@@ -64,6 +64,10 @@
     usaa_bobberto_bearer: ""
     usaa_calendar_ics_url: ""
     usaa_notify_bearer: ""
+    # The public half of the usaa-cd deploy key (PET-695), from kv/services/usaa field
+    # deploy_ssh_public_key. Empty skips the task. The GitHub deploy connects with the
+    # private half, so this grants root on usaa-238 only, never on another LXC.
+    usaa_cd_public_key: ""
     # Controller path to the compiled binary. scripts/deploy-usaa.sh sets it. There is no
     # default: the play fails below when it is missing.
     # usaa_binary_src: <path to dist/petedio-usaa>
@@ -142,6 +146,14 @@
         quiet: true
 
   tasks:
+    - name: Authorize the usaa-cd deploy key for root on this host only
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ usaa_cd_public_key }}"
+        comment: usaa-cd
+        state: present
+      when: usaa_cd_public_key | length > 0
+
     - name: Create the service group
       ansible.builtin.group:
         name: "{{ usaa_group }}"

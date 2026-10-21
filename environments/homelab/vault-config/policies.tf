@@ -319,8 +319,11 @@ resource "vault_policy" "pete_bot_cd" {
   EOT
 }
 
-# usaa-cd: the savings tracker's deploy (PET-695). It reads the app's own credentials, the
-# SSH key the playbook connects with, and nothing else.
+# usaa-cd: the savings tracker's deploy (PET-695). It reads the app's own credentials and its
+# own SSH key, both under the app's paths, and nothing else. It does NOT read
+# kv/iac/lxc-ssh: that key opens root on every Terraform-built LXC, and the deploy needs
+# only usaa-238. seed-usaa-cd.sh generates a key for this app, and configure-usaa.yml
+# installs its public half on usaa-238 alone.
 #
 # ⚠ It does NOT read kv/services/pete-bot. Vault cannot scope a read to one field, and that
 # path holds the Discord token and the desk App's key. The notify token the app needs is a
@@ -330,10 +333,6 @@ resource "vault_policy" "usaa_cd" {
   name = "usaa-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/db/usaa" {
       capabilities = ["read"]
     }
