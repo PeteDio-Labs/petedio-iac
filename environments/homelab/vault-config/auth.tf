@@ -190,6 +190,30 @@ resource "vault_jwt_auth_backend_role" "pete_bot_cd" {
   token_ttl      = 900
 }
 
+# usaa-cd role -> usaa-cd policy (PET-695). The petedio-usaa repo's deploy.yml builds the
+# binary and runs configure-usaa.yml against usaa-238. Bound on repository + ref, not sub,
+# for the reason the roles above give. Main-push only: a PR run carries
+# ref=refs/pull/N/merge and is excluded. event_name pins push, so a workflow_dispatch run
+# cannot mint it. workflow_ref pins the file, so no other workflow in the repo can mint it. petedio-usaa is private on a plan without branch protection,
+# so a direct push to main is not blocked: the pin limits what a pushed workflow can reach,
+# not who can push.
+resource "vault_jwt_auth_backend_role" "usaa_cd" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "usaa-cd"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository   = var.usaa_repo
+    ref          = "refs/heads/main"
+    event_name   = "push"
+    workflow_ref = "${var.usaa_repo}/.github/workflows/deploy.yml@refs/heads/main"
+  }
+  token_policies = [vault_policy.usaa_cd.name]
+  token_ttl      = 900
+}
+
 # media-updates role → media-updates policy (PET-395). pete-bot's /update dispatches
 # petedio-media-iac's media-updates.yml, and this is the only role that workflow mints.
 #

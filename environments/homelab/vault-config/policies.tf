@@ -337,6 +337,34 @@ resource "vault_policy" "pete_bot_cd" {
   EOT
 }
 
+# usaa-cd: the savings tracker's deploy (PET-695). It reads the app's own credentials and its
+# own SSH key, both under the app's paths, and nothing else. It does NOT read
+# kv/iac/lxc-ssh: that key opens root on every Terraform-built LXC, and the deploy needs
+# only usaa-238. seed-usaa-cd.sh generates a key for this app, and configure-usaa.yml
+# installs its public half on usaa-238 alone.
+#
+# ⚠ It does NOT read kv/services/pete-bot. Vault cannot scope a read to one field, and that
+# path holds the Discord token and the desk App's key. The notify token the app needs is a
+# copy in kv/services/usaa, written by scripts/seed-usaa-cd.sh. Rotating pete-bot's token
+# means running that script again.
+resource "vault_policy" "usaa_cd" {
+  name = "usaa-cd"
+
+  policy = <<-EOT
+    path "kv/data/db/usaa" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/usaa" {
+      capabilities = ["read"]
+    }
+
+    path "kv/metadata/services/usaa" {
+      capabilities = ["list"]
+    }
+  EOT
+}
+
 # media-updates: what pete-bot's update workflow may read (PET-395). The Ansible SSH key
 # and nothing else: not MinIO, not Proxmox, not mtrace's key. media-ci carries those for
 # Terraform; an update run needs none of them.

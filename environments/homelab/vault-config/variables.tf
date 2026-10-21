@@ -84,6 +84,12 @@ variable "pete_bot_repo" {
   default     = "PeteDio-Labs/pete-bot"
 }
 
+variable "usaa_repo" {
+  description = "owner/repo whose CD mints the usaa-cd role."
+  type        = string
+  default     = "PeteDio-Labs/petedio-usaa"
+}
+
 # GitHub's numeric IDs, used to build the IMMUTABLE OIDC subject form. GitHub is
 # migrating repositories from name-based to ID-based subjects, and a migrated repo
 # stops sending the name form entirely. Read the current prefix for any repo with:
