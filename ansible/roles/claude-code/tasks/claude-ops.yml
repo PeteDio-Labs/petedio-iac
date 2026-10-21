@@ -7,7 +7,7 @@
 # the last place to hand a workflows:write token or a root SSH key to the Proxmox nodes.
 # claude-ops exists so Pedro's OWN sessions get Mac parity — read Vault, run
 # terraform/ansible, reach pve02 and pve03 — without that reach passing through `claude` or
-# Bobbert. Nothing in this role sets a bot identity to claude_ops_user, and the assert below
+# Muse. Nothing in this role sets a bot identity to claude_ops_user, and the assert below
 # refuses the collision with claude_user by name.
 #
 # NOT ROOT, EITHER (Pedro's decision). claude-ops gets a POLICY Vault token — read-and-list

@@ -91,7 +91,8 @@
     # The scheduled reports (PET-701). They read GitHub as the desk's App and Plane with
     # pete_bot_plane_api_key (scripts/seed-pete-bot-plane-key.sh). Without both, the reports
     # stay off, so a deploy before the seed changes nothing.
-    pete_bot_reports_repos: petedio-iac,petedio-workspace,petedio-vault,petedio-pm,pete-bot
+    pete_bot_reports_repos: "petedio-iac,petedio-workspace,petedio-vault,petedio-pm,pete-bot,\
+      petedio-usaa,petedio-media-control,petedio-media-iac,petedio-palworld-panel,skills"
     pete_bot_reports_ready: >-
       {{ (pete_bot_desk_ready | bool)
          and (pete_bot_plane_api_key | default('') | length > 0) }}

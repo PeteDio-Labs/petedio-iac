@@ -303,7 +303,7 @@
   when: claude_pve_audit_enable | bool
 
 # --- claude-ops: a second, privileged session user (PET-531) --------------------------------
-# Pedro's Remote Control sessions, never the loop and never Bobbert — a distinct Unix user
+# Pedro's Remote Control sessions, never the loop and never Muse — a distinct Unix user
 # with its own Vault token, its own GitHub App, its own IaC toolchain install and SSH to the
 # Proxmox nodes. tasks/claude-ops.yml carries the design; defaults/main.yml carries why it is
 # a second user rather than a widened `claude`.

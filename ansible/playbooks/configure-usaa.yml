@@ -24,7 +24,7 @@
 #
 # OPTIONAL SECRETS for the month view (PET-590, 2026-10-20). Each defaults to empty, and an
 # empty one leaves its line out of the env file, so the app reports that part as off:
-#   usaa_bobberto_bearer  kv/services/usaa field bobberto_bearer_token   Bobberto's feed token
+#   usaa_bobberto_bearer  kv/services/usaa field bobberto_bearer_token   Muse's feed token
 #   usaa_calendar_ics_url kv/services/usaa field calendar_ics_url        the Finance calendar's
 #                                                                         secret iCal address
 #   usaa_notify_bearer    kv/services/pete-bot field notify_bearer_token  pete-bot /v1/notify
@@ -88,7 +88,7 @@
           resolves them from Vault (kv/db/usaa and kv/services/usaa). Each bearer
           must match \A[A-Za-z0-9_-]+\Z, and the calendar URL must be https with no
           space or quote: either would corrupt the line it sits on in the env file.
-          Bobberto's token must differ from Batsy's.
+          Muse's token must differ from Batsy's.
       no_log: true
 
     - name: Assert the Access audience was provided (use scripts/deploy-usaa.sh)
