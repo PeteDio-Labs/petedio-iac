@@ -1,0 +1,35 @@
+// Managed by Ansible (PET-709). Reads the journal, drops lines below warning unless the unit is
+// listed, and pushes to Loki.
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+}
+
+loki.source.journal "read" {
+  max_age       = "12h"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = { job = "journald", host = "{{ inventory_hostname }}" }
+  forward_to    = [loki.process.filter.receiver]
+}
+
+loki.process "filter" {
+  stage.match {
+    selector = "{level=~\"notice|info|debug\", unit!~\"{{ alloy_journal_always_units | join('|') }}\"}"
+    action   = "drop"
+  }
+  forward_to = [loki.write.lab.receiver]
+}
+
+loki.write "lab" {
+  endpoint {
+    url = "{{ alloy_journal_loki_url }}"
+  }
+}

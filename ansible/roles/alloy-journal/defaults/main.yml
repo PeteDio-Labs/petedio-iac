@@ -1,0 +1,20 @@
+---
+# alloy-journal (PET-709): Grafana Alloy reads this host's journal and pushes it to Loki.
+#
+# The item cuts scope: forward warnings and above, plus the units that already page. A journal line
+# below warning ships only when its unit is in alloy_journal_always_units.
+
+alloy_journal_apt_key_url: https://apt.grafana.com/gpg.key
+alloy_journal_loki_url: "http://192.168.50.240:3100/loki/api/v1/push"
+
+# Units whose every line ships. Match on the journal's unit name.
+alloy_journal_always_units:
+  - vault.service
+  - pete-bot.service
+  - lab-watchdog.service
+  - metric-alerts.service
+  - github-runner.service
+  - actions.runner.*
+
+# Alloy's own HTTP port, loopback only. The read-back asks it whether it is ready.
+alloy_journal_listen: "127.0.0.1:12345"
