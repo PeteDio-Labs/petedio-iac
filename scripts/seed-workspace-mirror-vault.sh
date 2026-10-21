@@ -16,7 +16,7 @@
 # 247 to petedio-workspace, petedio-search and lab-agent on 237 (PET-670) to petedio-vault.
 #
 # WHY FIVE (2026-09-30). The live installation also held petedio-iac, petedio-media-iac and
-# claude-skills when PET-542 read it, and Pedro chose to keep all five. Two are public, and
+# skills (named claude-skills until PET-736) when PET-542 read it, and Pedro chose to keep all five. Two are public, and
 # no consumer mints a token for the other three, but the key could. Narrow the list here and
 # on GitHub together.
 #
@@ -57,7 +57,7 @@ VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 VAULT_PATH="kv/services/claude-workspace-mirror"
 ORG="PeteDio-Labs"
 # The installation must reach exactly these, in `sort` order, and REPO_COUNT of them.
-REPOS="$ORG/claude-skills, $ORG/petedio-iac, $ORG/petedio-media-iac, $ORG/petedio-vault, $ORG/petedio-workspace"
+REPOS="$ORG/petedio-iac, $ORG/petedio-media-iac, $ORG/petedio-vault, $ORG/petedio-workspace, $ORG/skills"
 REPO_COUNT=5
 APP_SLUG="petedio-workspace-mirror"
 
