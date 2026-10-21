@@ -95,6 +95,17 @@ PENDING="$SECRETS/$ROLE.secret_id_accessor.pending"
 role_id="$(vault read -field=role_id "auth/approle/role/$ROLE/role-id")"
 [ -n "$role_id" ] || die "Vault returned no role_id for $ROLE."
 
+# List the secret_ids that exist BEFORE the mint, so the sweep never includes the new one, and a
+# listing failure stops the run before anything is minted.
+OTHERS=""
+if [ "$DESTROY_OTHERS" -eq 1 ]; then
+  LIST="$(vault list -format=json "auth/approle/role/$ROLE/secret-id")" \
+    || die "Could not list the secret_ids on $ROLE, so the old ones cannot be destroyed."
+  OTHERS="$(jq -r '.[]' <<<"$LIST")" \
+    || die "Could not parse the secret_id list for $ROLE, so the old ones cannot be destroyed."
+  echo "  found $(grep -c . <<<"$OTHERS" || true) existing secret_id(s) to destroy."
+fi
+
 step "Minting a secret_id"
 MINT="$(vault write -format=json -f "auth/approle/role/$ROLE/secret-id" \
   metadata='{"host":"mac","pet":"PET-687"}')"
@@ -141,6 +152,11 @@ step "Moving the new files into place"
 if [ -n "$OLD_ACCESSOR" ] && [ "$OLD_ACCESSOR" != "$NEW_ACCESSOR" ]; then
   printf '%s\n' "$OLD_ACCESSOR" >> "$PENDING"
 fi
+# The sweep's accessors are recorded the same way, so an interrupted first run is finished by
+# the next run, whether or not the operator passes --destroy-others again.
+if [ -n "$OTHERS" ]; then
+  printf '%s\n' "$OTHERS" >> "$PENDING"
+fi
 printf '%s' "$role_id" > "$SECRETS/$ROLE.role_id.new"
 printf '%s' "$NEW_ACCESSOR" > "$SECRETS/$ROLE.secret_id_accessor.new"
 mv -f "$SECRETS/$ROLE.role_id.new" "$SECRETS/$ROLE.role_id"
@@ -166,7 +182,7 @@ destroy() {
 
 # Destroy every pending accessor, rewriting the file as each one is confirmed.
 if [ -s "$PENDING" ]; then
-  step "Destroying the replaced secret_id(s)"
+  step "Destroying the replaced and older secret_id(s)"
   while read -r acc; do
     [ -n "$acc" ] && [ "$acc" != "$NEW_ACCESSOR" ] || continue
     destroy "$acc"
@@ -175,22 +191,6 @@ if [ -s "$PENDING" ]; then
   done < <(cat "$PENDING")
 fi
 [ -s "$PENDING" ] || rm -f "$PENDING"
-
-if [ "$DESTROY_OTHERS" -eq 1 ]; then
-  step "Destroying every other secret_id on $ROLE"
-  LIST="$(vault list -format=json "auth/approle/role/$ROLE/secret-id")" \
-    || die "Could not list the secret_ids on $ROLE, so the old ones were not destroyed."
-  ACCESSORS="$(jq -r '.[]' <<<"$LIST")" \
-    || die "Could not parse the secret_id list for $ROLE, so the old ones were not destroyed."
-  COUNT=0; SEEN=0
-  while read -r acc; do
-    [ -n "$acc" ] || continue
-    SEEN=$((SEEN + 1))
-    [ "$acc" != "$NEW_ACCESSOR" ] || continue
-    destroy "$acc"; COUNT=$((COUNT + 1))
-  done <<<"$ACCESSORS"
-  echo "  read $SEEN accessor(s); destroyed $COUNT other secret_id(s). The new one is the only one left."
-fi
 
 step "Next"
 cat <<TXT
