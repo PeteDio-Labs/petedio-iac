@@ -12,3 +12,6 @@ X11Forwarding no
 # The phone's agent never reaches this host: a session here could use a forwarded agent to
 # sign as Pedro anywhere his key opens.
 AllowAgentForwarding no
+# /etc/ssh/sshrc sends the login notice. A user's own ~/.ssh/rc would run INSTEAD of it, and
+# both monitored accounts own their .ssh directories, so a session could silence the notice.
+PermitUserRC no

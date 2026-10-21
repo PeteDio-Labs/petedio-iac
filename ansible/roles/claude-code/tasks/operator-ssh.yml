@@ -95,7 +95,8 @@
   notify: Reload sshd
 
 # sshd runs /etc/ssh/sshrc as the user at every login. It DMs Pedro for a login to the two
-# accounts the phone key opens, so a login he did not make shows up on his phone.
+# accounts the phone key opens, so a login he did not make shows up on his phone. The drop-in
+# above sets PermitUserRC no, because a ~/.ssh/rc would otherwise run instead of this file.
 - name: Install the login notice
   ansible.builtin.template:
     src: sshrc.j2
