@@ -1,0 +1,48 @@
+# {{ ansible_managed }}
+# lab-agent (PET-669, PET-670). Answers pete-bot's /lab with read-only lab tools.
+#
+# It holds lab-map's gateway bearer, a read-only Proxmox token, a metadata-only Vault token
+# and the read-only mirror App's key. It listens on loopback only, and nothing else can write to it.
+[Unit]
+Description=lab-agent — read-only answers about the lab (PET-669)
+After=network-online.target pete-bot.service
+Wants=network-online.target
+
+# In [Unit], not [Service], for the reason pete-bot.service gives: under [Service] systemd
+# ignores them and a crash loop never reaches the failed state.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User={{ lab_agent_user }}
+Group={{ lab_agent_user }}
+EnvironmentFile={{ lab_agent_env_file }}
+# git reads its config from HOME. The account has no home, so it is the state directory.
+Environment=HOME={{ lab_agent_state_dir }}
+ExecStart={{ lab_agent_bin }}
+Restart=on-failure
+RestartSec=5s
+
+# 237 has little memory and pete-bot shares it. lab-agent is killed before pete-bot is.
+MemoryMax=256M
+OOMScoreAdjust=500
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# AF_UNIX for systemd's bus, which the systemd_status tool reads.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# The one writable path: the three clones. Same reason as pete-bot's StateDirectory=.
+StateDirectory=lab-agent
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target
