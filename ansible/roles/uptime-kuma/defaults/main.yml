@@ -242,7 +242,7 @@ uptime_kuma_monitors:
   - name: mtrace
     type: http
     url: "http://192.168.50.237:8237/health"
-    description: "Media triage API on 237. Liveness only; Bobbert is its caller."
+    description: "Media triage API on 237. Liveness only; Muse is its caller."
 
   # -- services that ran unwatched (PET-706) -----------------------------------
   # /healthz answers {"ok":true,"db":<bool>}. A 200 alone does not prove the database

@@ -3,7 +3,7 @@
 #
 # petedio-search (repo PeteDio-Labs/petedio-search, private) is the shared, meaning-based
 # search over the vault, Plane (PET, MSG and DAY items and comments) and the lab digest.
-# Claude and Bobbert call it with one bearer token each.
+# Claude and Muse call it with one bearer token each.
 #
 # WHY OLLAMA-HOST. The embeddings come from the :11435 lane on this host
 # (qwen3-embedding:0.6b, resident), so the service reaches Ollama over loopback. The host
@@ -70,7 +70,7 @@
           - search_bind not in ['0.0.0.0', '::', '127.0.0.1']
         fail_msg: >-
           search_bind must be the host's LAN address. A wildcard bind would also answer
-          on the tailnet and the Docker bridges, and loopback would shut out Bobbert.
+          on the tailnet and the Docker bridges, and loopback would shut out Muse.
 
     - name: Assert the secret extra-vars were provided (use scripts/deploy-search.sh)
       ansible.builtin.assert:

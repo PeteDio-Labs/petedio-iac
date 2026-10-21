@@ -21,7 +21,7 @@
 #     script warns and the play leaves the three clones' git config as it found it.
 #   kv/services/claude-ops-github        -> app_id, installation_id, app_pem   (optional)
 #     The claude-ops identity (PET-531). contents, pull_requests AND workflows write on
-#     PeteDio-Labs, for Pedro's Remote Control sessions as claude-ops only — never Bobbert. Absent, this script warns and the play leaves claude-ops without GitHub
+#     PeteDio-Labs, for Pedro's Remote Control sessions as claude-ops only — never Muse. Absent, this script warns and the play leaves claude-ops without GitHub
 #     access until it is seeded.
 #   kv/services/pete-bot                 -> notify_bearer_token               (optional)
 #     The notify-pedro token (PET-584). It opens pete-bot's /v1/notify alone, and every
