@@ -15,6 +15,19 @@ names, versions and timestamps) and one secret, `kv/services/secrets-register`. 
 through pete-bot when it fails. The last line of every run says what it examined, and a run
 below 10 entries or 40 files fails.
 
+## Read the generated register
+
+`scripts/secrets-register.py --report [FILE]` renders the register as a table: Vault path, owner,
+the Vault roles that can read it (from `vault-config/policies.tf`), the code that reads it,
+rotation method, last write and expiry. Every `pull_request` run attaches it as the
+`secrets-register` artifact and to the job summary. The nightly run adds a live copy with
+last-write times from Vault KV metadata. The report runs the checks first, so a failing register
+exits non-zero. It holds no values.
+
+An entry can list `fields` for a credential that shares a path with others, such as the
+per-app deploy key in `kv/services/pete-bot` (`PET-724`). A `kind: external` entry can carry
+`rotated: YYYY-MM-DD`, which the report prints as its last write.
+
 ## Add a secret
 
 1. Add an entry to `secrets/register.yml` in the same pull request that adds the code.
