@@ -53,5 +53,5 @@ description = "A runbook reads the metrics key with a Vault lookup and holds no 
 condition = "AND"
 targetRules = ["curl-auth-user"]
 paths = ['''docs/runbooks/uptime-kuma-fault-study\.md$''']
-regexTarget = "match"
-regexes = ['''-u ":\$\(vault kv get -field=metrics_api_key kv/services/uptime-kuma\)"''']
+regexTarget = "secret"
+regexes = ['''^":\$\(vault kv get -field=metrics_api_key kv/services/uptime-kuma\)"$''']
