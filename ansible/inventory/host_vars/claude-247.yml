@@ -101,3 +101,21 @@ claude_ops_enable: true
 # petedio-pm clone. The role clones it only once the claude-ops App can read the repo, and
 # starts the unit only after that directory's trust is on disk.
 claude_ops_pm_enable: true
+
+# PET-713: Pedro's phone SSH, over the tailnet. tasks/operator-ssh.yml carries the design.
+claude_operator_ssh_enable: true
+
+# ⚠ A SOFTWARE KEY, BY PEDRO'S CHOICE (2026-10-21). He uses Termius's free tier, which makes
+# ssh-ed25519 keys in the app, not in the Secure Enclave, so malware on the phone could copy
+# the private key. He declined a paid app and a web terminal. What bounds the key: the from=
+# option admits only pete-pi-1's tailnet SNAT address, the account holds no Claude session and
+# no standing Vault admin, and every login DMs him. To harden it later, replace this key with
+# a Secure Enclave or security key and drop ssh-ed25519 from the list below.
+claude_operator_ssh_key_types:
+  - ecdsa-sha2-nistp256
+  - sk-ecdsa-sha2-nistp256@openssh.com
+  - sk-ssh-ed25519@openssh.com
+  - ssh-ed25519
+claude_operator_ssh_keys:
+  # Termius on Pedro's iPhone. SHA256:sCBBOscav/geXhURQcUBXHU2xa0hkwJG5D4Pmi4kc+k
+  - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGXAJpChcCXn4s27WEGYfdPfVUNqpDjHtN4soJNJYY3N pedro-iphone-termius
