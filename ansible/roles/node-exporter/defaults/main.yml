@@ -13,11 +13,8 @@ node_exporter_include_guests: true
 # Guests that take no exporter. 248 (codex-248) has no route to the LAN or the mesh by design,
 # so the metrics host could not scrape it and the install could not reach apt.
 node_exporter_skip_guests: ["248"]
-<<<<<<< HEAD
-=======
 
 # Guests that run no Debian userland and are covered by another item. Any other guest that reports
 # NOT-DEBIAN fails the play: a Debian guest with a broken os-release must not read as covered.
 # 112 is Alpine (PET-718).
 node_exporter_non_debian_guests: ["112"]
->>>>>>> origin/main
