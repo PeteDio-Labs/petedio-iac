@@ -68,7 +68,7 @@ resource "vault_jwt_auth_backend" "github" {
 # (.github/workflows/terraform.yml), so nothing on a PR needs — or may mint — a token
 # here. Matches the openfaas-ci role's main-only pattern below.
 #
-# bound_claims_type = "string" → EXACT match (not glob): the sub is a fixed string
+# bound_claims_type = "string" → EXACT match (not glob): each claim is a fixed string
 # with no wildcard.
 #
 # NOTE (sibling exposure, separate issue): media-ci below binds only its main-push sub
@@ -83,8 +83,17 @@ resource "vault_jwt_auth_backend_role" "github_actions" {
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
+  # ⚠ BOUND TO THE FILE AND THE EVENT, NOT ONLY THE BRANCH (PET-675). It bound only
+  # sub, and a workflow_dispatch on main sends the same sub as a push to main, so any
+  # workflow on main could mint this role. That was safe only while every workflow on
+  # main runs reviewed code. A dispatched job that checks out a PR head breaks that,
+  # so the role names terraform.yml and push, as claude-247-deploy does. Claims, not
+  # sub, because sub cannot name a file and the id-based migration (PET-360) changes it.
   bound_claims = {
-    sub = "repo:${var.github_repo}:ref:refs/heads/main"
+    repository   = var.github_repo
+    ref          = "refs/heads/main"
+    event_name   = "push"
+    workflow_ref = "${var.github_repo}/.github/workflows/terraform.yml@refs/heads/main"
   }
   token_policies = [vault_policy.ci_read.name]
   token_ttl      = 900
@@ -347,9 +356,9 @@ resource "vault_jwt_auth_backend_role" "infra_reconcile" {
 
 # openfaas-ci role → openfaas-ci policy. ⚠ MISNAMED, NOT DEAD — see the policy's comment in
 # policies.tf. `.github/workflows/ansible-stack.yml` mints as this role (lines 102, 116) to
-# deploy the arr stack; openfaas-241 itself is gone. Bound to petedio-iac's main-push sub
-# only, so a PR cannot mint it. Values captured from live Vault on 2026-09-12, not
-# reconstructed, so this apply is a no-op against what is already there (PET-423).
+# deploy the palworld stack; openfaas-241 itself is gone. Bound to a push to petedio-iac's
+# main through ansible-stack.yml only, so a PR or a dispatch cannot mint it. The other
+# values were captured from live Vault on 2026-09-12, not reconstructed (PET-423).
 resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "openfaas-ci"
@@ -357,8 +366,17 @@ resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
   bound_claims_type = "string"
+  # ⚠ BOUND TO THE REUSABLE FILE AND THE EVENT (PET-675), for the reason on the
+  # github-actions role above: a sub alone lets any workflow on main mint the lxc-ssh
+  # key. ansible-stack.yml is a reusable workflow, so workflow_ref names its caller
+  # (ansible-palworld.yml) and job_workflow_ref names ansible-stack.yml itself. Pinning
+  # job_workflow_ref lets a new stack caller work with no change here, and event_name
+  # still refuses a dispatch or a schedule.
   bound_claims = {
-    sub = "repo:PeteDio-Labs/petedio-iac:ref:refs/heads/main"
+    repository       = var.github_repo
+    ref              = "refs/heads/main"
+    event_name       = "push"
+    job_workflow_ref = "${var.github_repo}/.github/workflows/ansible-stack.yml@refs/heads/main"
   }
   token_policies = [vault_policy.openfaas_ci.name]
   token_ttl      = 900
