@@ -1,0 +1,9 @@
+---
+- name: Restart journald and trim it
+  ansible.builtin.shell: |
+    set -o pipefail
+    systemctl restart systemd-journald
+    journalctl --flush
+    journalctl --vacuum-size={{ journald_system_max_use }}
+  args: { executable: /bin/bash }
+  changed_when: true
