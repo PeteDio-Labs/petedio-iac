@@ -1,0 +1,16 @@
+---
+# configure-metrics.yml — the metrics host: Prometheus on LXC 240 (metrics-240). (PET-708)
+#
+# Terraform creates the container (environments/homelab/metrics.tf). This play installs and
+# configures the store, then reads back how many targets it holds and how many answered. Run
+# configure-node-exporter.yml to put an exporter on each target.
+#
+#   ansible-playbook playbooks/configure-metrics.yml
+#
+# Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
+
+- name: Configure the metrics host
+  hosts: metrics
+  become: true
+  roles:
+    - prometheus

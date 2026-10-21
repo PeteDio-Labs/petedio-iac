@@ -1,0 +1,72 @@
+---
+# See defaults/main.yml for why this exists.
+
+- name: Install prometheus and the exporter for this host
+  ansible.builtin.apt:
+    name:
+      - prometheus
+      - prometheus-node-exporter
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Set retention and the listen address
+  ansible.builtin.copy:
+    content: |
+      ARGS="--storage.tsdb.retention.time={{ prometheus_retention }} --web.listen-address={{ prometheus_listen }}"
+    dest: /etc/default/prometheus
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart prometheus
+
+# promtool refuses a config that does not parse, so a bad scrape list never reaches the live file.
+- name: Land the scrape config
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: root
+    group: root
+    mode: "0644"
+    validate: promtool check config %s
+  notify: Restart prometheus
+
+- name: Apply a pending restart now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start prometheus and the node exporter
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [prometheus, prometheus-node-exporter]
+
+# A green unit is not a working store. Wait until Prometheus is ready, then ask it how many
+# targets it holds and how many answered, so the result names what was examined.
+- name: Wait until prometheus is ready
+  ansible.builtin.uri:
+    url: "http://{{ prometheus_listen }}/-/ready"
+    return_content: true
+  register: prometheus_ready
+  until: prometheus_ready.status == 200
+  retries: 15
+  delay: 2
+
+- name: Let the first scrapes land
+  ansible.builtin.pause:
+    seconds: 45
+
+- name: Read back the targets
+  ansible.builtin.uri:
+    url: "http://{{ prometheus_listen }}/api/v1/targets?state=active"
+    return_content: true
+  register: prometheus_targets
+
+- name: Report what the store examined
+  ansible.builtin.debug:
+    msg: >-
+      prometheus holds {{ prometheus_targets.json.data.activeTargets | length }} active targets,
+      {{ prometheus_targets.json.data.activeTargets | selectattr('health', 'equalto', 'up') | list | length }} up.
+      Down: {{ prometheus_targets.json.data.activeTargets | rejectattr('health', 'equalto', 'up')
+               | map(attribute='labels') | map(attribute='host', default='?') | list }}.
+      A down node target means roles/node-exporter has not reached that host yet.
