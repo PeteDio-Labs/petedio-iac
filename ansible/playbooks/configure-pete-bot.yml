@@ -132,6 +132,15 @@
     # reaches the private vault over https with a token it mints from the read-only
     # petedio-workspace-mirror App, scoped to petedio-vault with contents:read (PET-542).
     lab_agent_github_key_file: /etc/lab-agent/github-app.pem
+    # The lab MCP (PET-667). The route pdlab.dev/mcp/lab sends here through cloudflared on
+    # LXC 112, the only source the allowlist and lab-agent admit.
+    lab_agent_mcp_port: 3017
+    lab_agent_mcp_peer: 192.168.50.112
+    lab_agent_access_team_domain: petedillo-labs.cloudflareaccess.com
+    lab_agent_access_emails: [pedelgadillo@gmail.com]
+    # The Access app's audience tag: `terraform output -raw lab_mcp_access_aud` in
+    # environments/homelab, after the route is applied. Not a secret. Empty keeps the MCP off.
+    lab_agent_access_aud: ""
     lab_agent_repos:
       vault: https://github.com/PeteDio-Labs/petedio-vault.git
       iac: https://github.com/PeteDio-Labs/petedio-iac.git
@@ -201,6 +210,14 @@
           kv/services/lab-agent-pve with playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
           and kv/services/lab-agent with scripts/seed-lab-agent.sh, then deploy again.
           kv/services/claude-workspace-mirror comes from scripts/seed-workspace-mirror-vault.sh.
+
+    - name: Assert the lab MCP's audience tag is empty or well formed
+      ansible.builtin.assert:
+        that:
+          - lab_agent_access_aud | length == 0 or lab_agent_access_aud is match('\\A[0-9a-f]{64}\\Z')
+        fail_msg: >-
+          lab_agent_access_aud must be empty (MCP off) or the 64-hex audience tag from
+          `terraform output -raw lab_mcp_access_aud`.
 
     - name: Look for the lab-agent binary on the controller
       ansible.builtin.stat:
@@ -500,6 +517,27 @@
           loop_control:
             label: "{{ item.key }}"
           changed_when: false
+
+        - name: Install the lab MCP's allowlist
+          ansible.builtin.template:
+            src: "{{ item.src }}"
+            dest: "{{ item.dest }}"
+            owner: root
+            group: root
+            mode: "0644"
+          loop:
+            - { src: lab-mcp-allowlist.nft.j2, dest: "{{ lab_agent_conf_dir }}/lab-mcp-allowlist.nft" }
+            - { src: lab-mcp-allowlist.service.j2, dest: /etc/systemd/system/lab-mcp-allowlist.service }
+          register: lab_mcp_allowlist_files
+
+        # restarted, not started, when the table changed: a oneshot with RemainAfterExit stays
+        # "active" and would not reload a changed file on `started`.
+        - name: Load the lab MCP's allowlist
+          ansible.builtin.systemd_service:
+            name: lab-mcp-allowlist
+            enabled: true
+            state: "{{ 'restarted' if lab_mcp_allowlist_files is changed else 'started' }}"
+            daemon_reload: true
 
         # Read by systemd, as root, before it drops to the service account. So 0600 root.
         - name: Install lab-agent's environment file

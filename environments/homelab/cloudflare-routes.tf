@@ -88,6 +88,33 @@ module "cloudflare_ingress" {
       }
     }
 
+    # The lab MCP (PET-667): lab-agent's read-only lab tools, for claude.ai project threads.
+    # The origin is lab-agent's second listener on media-dash-237 (:3017), a LAN address because
+    # cloudflared runs on LXC 112.
+    #
+    # ⚠ TWO CHECKS AT THE ORIGIN, UNLIKE THE PLANE SHIM. lab-agent admits only 112's address
+    # and verifies the Cf-Access-Jwt-Assertion JWT against this app's audience tag and the
+    # email below. The lab-mcp allowlist on 237 also drops every other source. Either check
+    # alone still holds when the other fails.
+    #
+    # Every tool is a read, so the route can read the lab and change nothing. It still sees
+    # Proxmox and Vault metadata, so access_emails stays one person.
+    "pdlab.dev/mcp/lab" = {
+      hostname      = "pdlab.dev"
+      path          = "^/mcp/lab(/.*)?$"
+      access_path   = "/mcp/lab"
+      service       = "http://192.168.50.237:3017"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+
+      managed_oauth = {
+        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        access_token_lifetime = "15m"
+        session_duration      = "168h"
+      }
+    }
+
     # Tom's Plane MCP (PET-610), a copy of pdlab.dev/mcp/plane with a different origin port and email.
     # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
     # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same
@@ -287,4 +314,13 @@ resource "cloudflare_dns_record" "registry" {
   # cloudflare_ingress routes map. Cloudflare rejects two records on one name,
   # so the destroy must land first.
   depends_on = [module.cloudflare_ingress]
+}
+
+# The Access application audience tag for pdlab.dev/mcp/lab (PET-667). lab-agent checks it
+# against the `aud` claim of the Cf-Access-Jwt-Assertion JWT, so a token issued for another
+# Access app in the team cannot reach the lab tools. It is an identifier, not a secret.
+# configure-pete-bot.yml carries it as lab_agent_access_aud, and the MCP stays off until it does.
+output "lab_mcp_access_aud" {
+  description = "Access application audience tag for pdlab.dev/mcp/lab, which lab-agent checks on the Cf-Access-Jwt-Assertion JWT. It is not a secret."
+  value       = module.cloudflare_ingress.access_application_auds["pdlab.dev/mcp/lab"]
 }
