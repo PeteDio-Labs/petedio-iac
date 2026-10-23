@@ -9,7 +9,8 @@
 # it by hand; this script replaces that step.
 #
 # IDEMPOTENT. A path that already holds a working credential is left alone. Pass --refresh
-# to mint a new vault-snapshots svcacct and to overwrite kv/iac/minio-root.
+# to overwrite kv/iac/minio-root, and to mint a new vault-snapshots svcacct and revoke the
+# one Vault held.
 #
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt (PET-519)
 #   MinIO root:  $MINIO_ROOT_USER/$MINIO_ROOT_PASSWORD, else $MINIO_CREDS_FILE
@@ -62,8 +63,20 @@ echo "  reachable, and the token is valid"
 step "MinIO root credential for $MINIO_ENDPOINT (used locally)"
 MROOT_U="${MINIO_ROOT_USER:-}"; MROOT_P="${MINIO_ROOT_PASSWORD:-}"
 if { [ -z "$MROOT_U" ] || [ -z "$MROOT_P" ]; } && [ -f "$MINIO_CREDS_FILE" ]; then
-  MROOT_U="$(grep -iE 'ROOT_USER'     "$MINIO_CREDS_FILE" | head -1 | sed 's/.*[=:][[:space:]]*//' | tr -d ' "'\''')"
-  MROOT_P="$(grep -iE 'ROOT_PASSWORD' "$MINIO_CREDS_FILE" | head -1 | sed 's/.*[=:][[:space:]]*//' | tr -d ' "'\''')"
+  # Match the exact key at the start of a line, split at the FIRST = or :, and strip only a
+  # trailing CR and one pair of surrounding quotes. Every other byte of the value stays.
+  cred(){ KEY="$1" FILE="$MINIO_CREDS_FILE" python3 -c '
+import os, re
+for line in open(os.environ["FILE"], encoding="utf-8").read().splitlines():
+    m = re.match(r"^\s*(?:export\s+)?" + re.escape(os.environ["KEY"]) + r"\s*[=:]\s*(.*)$", line, re.I)
+    if m:
+        v = m.group(1)
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"\x27":
+            v = v[1:-1]
+        print(v, end="")
+        break'; }
+  [ -n "$MROOT_U" ] || MROOT_U="$(cred ROOT_USER)"
+  [ -n "$MROOT_P" ] || MROOT_P="$(cred ROOT_PASSWORD)"
 fi
 [ -n "$MROOT_U" ] && [ -n "$MROOT_P" ] \
   || die "no MinIO root credential. Export MINIO_ROOT_USER and MINIO_ROOT_PASSWORD, or write them to $MINIO_CREDS_FILE."
@@ -143,10 +156,11 @@ fi
 # in_scope ALIAS ACCESS_KEY proves a key against MinIO: it lists the bucket, sees no other
 # bucket, and its policy read back from MinIO grants only these actions on this one bucket.
 in_scope(){
-  local alias="$1" ak="$2" visible info
+  local alias="$1" ak="$2" listing info
   m ls "$alias/$BUCKET/" >/dev/null 2>&1 || { echo "  cannot list $BUCKET" >&2; return 1; }
-  visible="$(m ls "$alias" 2>/dev/null | grep -c . || true)"
-  [ "$visible" -le 1 ] || { echo "  sees $visible buckets, expected 1" >&2; return 1; }
+  listing="$(m ls "$alias" 2>/dev/null)" || { echo "  cannot list its buckets, so its scope is unproven" >&2; return 1; }
+  [ "$(printf '%s\n' "$listing" | grep -c .)" = "1" ] && printf '%s' "$listing" | grep -q "$BUCKET/\?\$" \
+    || { echo "  does not see exactly the one bucket $BUCKET" >&2; return 1; }
   info="$(m admin user svcacct info --json adm "$ak" 2>/dev/null)" \
     || { echo "  MinIO has no service account with that key" >&2; return 1; }
   INFO="$info" BUCKET="$BUCKET" python3 -c '
@@ -211,9 +225,14 @@ print(json.dumps({"access_key": os.environ["NK"], "secret_key": os.environ["NS"]
     || die "the read-back of $SNAP_PATH does not match."
   echo "  written, and the read-back matches"
   unset NEW_SK
-  if [ -n "$OLD_AK" ]; then
-    echo "  the previous key ($OLD_AK) is still valid on MinIO. After the next snapshot run succeeds,"
-    echo "  remove it with: mc admin user svcacct rm adm $OLD_AK"
+  if [ -n "$OLD_AK" ] && [ "$OLD_AK" != "$NEW_AK" ]; then
+    # Revoke the key Vault held. The snapshot job reads Vault on each run, so it picks up
+    # the new key. MinIO keeps a replaced service account valid until it is removed.
+    m admin user svcacct rm adm "$OLD_AK" >/dev/null 2>&1 || true
+    if m admin user svcacct info --json adm "$OLD_AK" >/dev/null 2>&1; then
+      die "the new key is in Vault, but the previous key ($OLD_AK) is still valid on MinIO. Run: mc admin user svcacct rm adm $OLD_AK"
+    fi
+    echo "  revoked the previous key ($OLD_AK), and MinIO no longer knows it"
   fi
 fi
 unset MROOT_P
