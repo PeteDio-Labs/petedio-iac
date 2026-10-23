@@ -43,7 +43,7 @@ uptime_kuma_max_retries: 1
 uptime_kuma_retry_interval: 20
 
 # Raw beats are pruned on this schedule. 45 > the 30 days the study needs, and
-# 18 active monitors x 4320 beats/day x 45 days is ~3.5M rows — a few hundred MB of
+# 21 active monitors x 4320 beats/day x 45 days is ~4.1M rows — a few hundred MB of
 # SQLite, comfortable on 49G free.
 uptime_kuma_retention_days: 45
 
