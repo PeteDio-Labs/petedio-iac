@@ -36,8 +36,7 @@ host, so unlike the postgres RDS host there's no LAN bind, no CIDR allowlist.
   `resume-mongo-backups` bucket (fields `mc_access_key` / `mc_secret_key`), same Vault
   path. Only required if `mongodb_backup_enabled` (default `true`).
 
-Pass both via a 0600 JSON `@file`, same pattern as `configure-postgres.yml` /
-`scripts/deploy-poker-api.sh` — see `configure-mongodb.yml`'s header for the exact
+Pass both via a 0600 JSON `@file`, same pattern as `configure-postgres.yml` — see `configure-mongodb.yml`'s header for the exact
 command. Neither has a default; a bare re-run without them fails the `assert` at the top
 of `tasks/main.yml` rather than silently reusing a stale/placeholder value.
 
