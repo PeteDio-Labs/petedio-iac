@@ -23,6 +23,9 @@
 # Env (optional):
 #   PROXMOX_API_TOKEN  full 'user@realm!tokenid=secret' (else TF_VAR_proxmox_api_token). Never printed.
 #   PROXMOX_PREFLIGHT_ENDPOINT   default https://192.168.50.10:8006 (matches var.proxmox_endpoint).
+#   PROXMOX_CA_FILE    the Proxmox cluster CA the script pins with --cacert (default
+#                      environments/homelab/proxmox-ca.crt). The script fails closed when the file
+#                      is missing. scripts/export-proxmox-ca.sh writes it (PET-541).
 #
 # Exit: 0 = all required privs present (or --dry-run); 1 = a priv is missing (message names it +
 # the fix); 2 = harness error (no token / endpoint unreachable).
@@ -42,6 +45,8 @@ while [ $# -gt 0 ]; do
 done
 [ "${#REQUIRE[@]}" -gt 0 ] || die "give at least one --require <Priv>. See --help."
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CA_FILE="${PROXMOX_CA_FILE:-$SCRIPT_DIR/../environments/homelab/proxmox-ca.crt}"
 ENDPOINT="${PROXMOX_PREFLIGHT_ENDPOINT:-https://192.168.50.10:8006}"
 ENDPOINT="${ENDPOINT%/}"
 
@@ -56,9 +61,12 @@ for t in curl python3; do command -v "$t" >/dev/null || die "$t not in PATH."; d
 TOKEN="${PROXMOX_API_TOKEN:-${TF_VAR_proxmox_api_token:-}}"
 [ -n "$TOKEN" ] || die "no IaC token in env (PROXMOX_API_TOKEN / TF_VAR_proxmox_api_token). In CI this is minted from Vault by the OIDC step."
 
-# Read-only: the token's own effective permissions. -k: self-signed homelab cert (insecure=true
-# in providers.tf). The token is sent in the header only, never logged.
-resp="$(curl -fsSk -H "Authorization: PVEAPIToken=${TOKEN}" "${ENDPOINT}/api2/json/access/permissions")" ||
+[ -s "$CA_FILE" ] || die "Proxmox CA not found at $CA_FILE. Run scripts/export-proxmox-ca.sh, or set PROXMOX_CA_FILE. The script never sends the token without verifying the server."
+
+# Read-only: the token's own effective permissions. --cacert pins the Proxmox cluster CA, so
+# the token never goes to an unverified server (PET-541). The token is sent in the header
+# only, never logged.
+resp="$(curl -fsS --cacert "$CA_FILE" -H "Authorization: PVEAPIToken=${TOKEN}" "${ENDPOINT}/api2/json/access/permissions")" ||
   die "GET ${ENDPOINT}/api2/json/access/permissions failed (token valid? node reachable from here?)."
 
 # Build the ancestor path list for the target (e.g. /pool/homelab -> "/","/pool","/pool/homelab").
