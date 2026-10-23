@@ -4,7 +4,7 @@
 # Run it after configure-pve04.yml has passed both GPUs into the container. Run from
 # ansible/:
 #
-#   ansible-playbook playbooks/configure-ollama-246.yml -e nvidia_driver_sha256=<sha>
+#   ansible-playbook playbooks/configure-ollama-246.yml
 #
 # It installs the NVIDIA userspace of the version pve04's module runs, then the two
 # Ollama lanes and their models. petedio-search follows with scripts/deploy-search.sh,

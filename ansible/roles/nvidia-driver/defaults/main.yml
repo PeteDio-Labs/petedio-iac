@@ -18,10 +18,11 @@ nvidia_driver_mode: host
 # 580.178.04 ran both cards on ollama-host under Ubuntu (PET-762 read-back).
 nvidia_driver_version: "580.178.04"
 
-# ⚠ REQUIRED, and there is no default on purpose. Pin it from the file you downloaded:
+# ⚠ REQUIRED, and it moves with the version. Pin it from the file you downloaded:
 #   curl -fsSLO <nvidia_driver_url> && shasum -a 256 NVIDIA-Linux-x86_64-<version>.run
 # Record the value on the PET item in the same step, then commit it here.
-nvidia_driver_sha256: ""
+# This value: the Mac's download of 580.178.04 on 2026-10-23, read by Pedro (PET-528).
+nvidia_driver_sha256: "5975a86ee45bffcb626f51ae33d1169b108186a2ea47ad651e72f13fa4b6d6f9"
 
 nvidia_driver_url: >-
   https://download.nvidia.com/XFree86/Linux-x86_64/{{ nvidia_driver_version }}/NVIDIA-Linux-x86_64-{{ nvidia_driver_version }}.run

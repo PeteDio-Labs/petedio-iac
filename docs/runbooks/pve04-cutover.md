@@ -96,7 +96,7 @@ the two-lane layout that `host_vars/ollama-246.yml` already describes.
 
 Run from the PR branch until it merges, from `ansible/`:
 
-1. `ansible-playbook playbooks/configure-pve04.yml -e nvidia_driver_sha256=<sha> -e nvidia_driver_allow_reboot=true`.
+1. `ansible-playbook playbooks/configure-pve04.yml -e nvidia_driver_allow_reboot=true`.
    It ends with "CT 246 does not exist yet". That message is expected at this point.
    Gate: the `nvidia-smi` line lists both UUIDs at `580.178.04`, and `dkms status`
    covers the running kernel.
@@ -116,8 +116,8 @@ store is disabled, every job fails.
    `module.ollama` created, `module.pve04_host` updated in place, and nothing destroyed.
 2. From `main`, run:
    - `ansible-playbook playbooks/configure-lxc-features.yml`, then `pct reboot 246` on pve04.
-   - `ansible-playbook playbooks/configure-pve04.yml -e nvidia_driver_sha256=<sha> -e lxc_gpu_allow_restart=true`
-   - `ansible-playbook playbooks/configure-ollama-246.yml -e nvidia_driver_sha256=<sha>`
+   - `ansible-playbook playbooks/configure-pve04.yml -e lxc_gpu_allow_restart=true`
+   - `ansible-playbook playbooks/configure-ollama-246.yml`
    - `./scripts/deploy-search.sh`. It targets the `ollama` group, which holds only ollama-246.
 3. Repoint the consumers: `./scripts/deploy-uptime-kuma.sh`, then
    `ansible-playbook playbooks/configure-pete-bot.yml`.

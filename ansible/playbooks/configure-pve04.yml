@@ -6,7 +6,7 @@
 # step. No workflow applies it on merge. Run from ansible/:
 #
 #   ansible-playbook playbooks/configure-pve04.yml --check
-#   ansible-playbook playbooks/configure-pve04.yml -e nvidia_driver_sha256=<sha> -e nvidia_driver_allow_reboot=true
+#   ansible-playbook playbooks/configure-pve04.yml -e nvidia_driver_allow_reboot=true
 #
 # WHAT IT DOES, in order. Each step fails the run rather than skipping silently.
 #   1. Asserts pve04 is a quorate member of the cluster. A node that never joined would

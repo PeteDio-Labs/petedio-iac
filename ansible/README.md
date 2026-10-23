@@ -48,8 +48,8 @@ playbooks/wake-ollama-host.yml       # WoL for pve04 (same MAC and address)
 Run from this `ansible/` directory, in the order `docs/runbooks/pve04-cutover.md` gives:
 
 ```sh
-ansible-playbook playbooks/configure-pve04.yml -e nvidia_driver_sha256=<sha> -e nvidia_driver_allow_reboot=true
-ansible-playbook playbooks/configure-ollama-246.yml -e nvidia_driver_sha256=<sha>
+ansible-playbook playbooks/configure-pve04.yml -e nvidia_driver_allow_reboot=true
+ansible-playbook playbooks/configure-ollama-246.yml
 ```
 
 **Wake the node** when it is powered off (WoL magic packet):
