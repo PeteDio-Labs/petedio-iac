@@ -142,12 +142,13 @@ the store is disabled, every job fails. It doesn't need the driver.
 1. Turn pve01's own host firewall off:
    `ansible-playbook playbooks/configure-pve-firewall.yml --limit pve01`. The datacenter
    firewall is on, and a node with no `host.fw` drops inbound traffic, NFS included.
-   Gate: `/etc/pve/nodes/pve01/host.fw` holds `enable: 0`, and
-   `nc -zv 192.168.50.12 2049` from pve02 connects.
+   Gate: `/etc/pve/nodes/pve01/host.fw` holds `enable: 0`. Port 2049 has no listener
+   until step 2 installs the NFS server, so don't test it here.
 2. Rebuild the NFS server first:
    `ansible-playbook playbooks/configure-backup-store.yml --limit pve01`. The reinstall
    removed its exports, and A4 unmounted every client, so no client can mount until
-   this runs. Gate: `exportfs` on pve01 lists `/srv/backups` and `/srv/backups/pete-pi`.
+   this runs. Gate: `exportfs` on pve01 lists `/srv/backups` and `/srv/backups/pete-pi`,
+   and `nc -zv 192.168.50.12 2049` from pve02 connects.
 3. On pve02, mount the store and re-enable it: `mount /mnt/ollama-backups`, check
    that `findmnt /mnt/ollama-backups` shows the NFS mount from `.12`, then run
    `pvesm set ollama-backups --disable 0`. Re-enable it before the client play: the
