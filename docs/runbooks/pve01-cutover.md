@@ -174,11 +174,18 @@ the store is disabled, every job fails. It doesn't need the driver.
    `module.ollama` created, `module.pve01_host` updated in place, and nothing destroyed.
 2. From `main`, run:
    - `ansible-playbook playbooks/configure-lxc-features.yml`, then `pct reboot 246` on pve01.
-   - `ansible-playbook playbooks/configure-pve01.yml -e lxc_gpu_allow_restart=true`
+     Gate: `pct config 246 --current` shows `nesting=1`. The play also exits 2 for any
+     other container with a restart pending, such as 240 or 249. Reboot only 246 here:
+     each other restart needs its own window from Pedro.
+   - `ansible-playbook playbooks/configure-pve01.yml -e lxc_gpu_allow_restart=true`.
+     Gate, from the host: `pct config 246 --current` lists each `/dev/nvidia*` entry
+     with `mode=0666`, and `pct exec 246 -- ls -l /dev/nvidia0 /dev/nvidia1` shows both
+     device nodes. Don't run `nvidia-smi` in the container yet: the next play installs it.
    - `ansible-playbook playbooks/configure-ollama-246.yml`. Run it from a `main` that
-     holds the allowlist drop-ins (`PET-528`, Codex P1 on 26f7ee1). Gate: its last play
-     reports that every installed guarded unit requires and follows
-     `ollama-allowlist.service`.
+     holds the allowlist drop-ins (`PET-528`, Codex P1 on 26f7ee1). It installs the
+     NVIDIA userspace before Ollama. Gate: `pct exec 246 -- nvidia-smi -L` lists both
+     UUIDs, and the play's last play reports that every installed guarded unit requires
+     and follows `ollama-allowlist.service`.
    - `./scripts/deploy-search.sh`. It places the service's secrets, so Pedro runs it, or
      a Mac session runs it on his word in its own chat (`PET-511`). It targets the
      `ollama` group, which holds only ollama-246.
