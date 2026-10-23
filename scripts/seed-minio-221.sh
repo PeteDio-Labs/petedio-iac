@@ -68,54 +68,113 @@ fi
 [ -n "$MROOT_U" ] && [ -n "$MROOT_P" ] \
   || die "no MinIO root credential. Export MINIO_ROOT_USER and MINIO_ROOT_PASSWORD, or write them to $MINIO_CREDS_FILE."
 MCCFG="$(mktemp -d)"; trap 'rm -rf "$MCCFG"' EXIT
-# MC_HOST_<alias> carries the credential in the environment, so it never reaches argv.
-export MC_HOST_adm="${MINIO_ENDPOINT%%://*}://${MROOT_U}:${MROOT_P}@${MINIO_ENDPOINT#*://}"
-mc --config-dir "$MCCFG" ls adm >/dev/null 2>&1 \
-  || die "$MINIO_ENDPOINT rejected the root credential, or it is unreachable (is the tailnet up?)."
+m(){ mc --config-dir "$MCCFG" "$@"; }
+# set_alias ALIAS USER PASS stores an alias. `mc alias set` reads both keys from stdin, and
+# printf is a builtin, so neither key reaches argv. An MC_HOST_<alias> URL breaks on a raw
+# `:`, `@` or `%` in a secret (seed-usaa-minio.sh).
+set_alias(){
+  printf '%s\n%s\n' "$2" "$3" | m alias set "$1" "$MINIO_ENDPOINT" --api s3v4 --path auto >/dev/null 2>&1
+}
+set_alias adm "$MROOT_U" "$MROOT_P" && m ls adm >/dev/null 2>&1 \
+  || die "$MINIO_ENDPOINT rejected the root credential, or it is unreachable (is this machine on the .50 LAN?)."
 echo "  the root credential authenticates (user length ${#MROOT_U})"
 
-# vget PATH FIELD prints the field, or nothing when the path or field is absent.
-vget(){
-  local out
-  if out="$(vault kv get -field="$2" "$1" 2>&1)"; then printf '%s' "$out"; return 0; fi
-  case "$out" in
-    "No value found at "*|*"no field named"*|*"Field \""*"not present"*) return 0 ;;
-    *) die "Vault failed the read of $1: $(printf '%s' "$out" | tr -s '\n\t' '  ' | cut -c1-200)" ;;
-  esac
+
+# snap PATH reads PATH into SNAPSHOT and sets VERSION: 0 when Vault says "No value found",
+# else the current version. Any other failure (403, sealed, timeout) aborts, so an error never
+# reads as absent. A soft-deleted current version aborts too.
+snap(){
+  local err
+  if SNAPSHOT="$(vault kv get -format=json "$1" 2>/dev/null)"; then
+    VERSION="$(SNAPSHOT="$SNAPSHOT" python3 -c '
+import json, os
+d = json.loads(os.environ["SNAPSHOT"])["data"]
+print("deleted" if d.get("data") is None else d["metadata"]["version"])')" || die "could not parse the read of $1."
+    [ "$VERSION" != "deleted" ] || die "the current version of $1 is deleted. Undelete or destroy it by hand, then run this again."
+  elif err="$(vault kv metadata get "$1" 2>&1 >/dev/null)"; then
+    die "$1 has metadata, but the token cannot read its data. Check the token's policy."
+  else
+    case "$err" in
+      "No value found at "*) VERSION=0; SNAPSHOT='{}' ;;
+      *) die "Vault failed the read of $1: $(printf '%s' "$err" | tr -s '\n\t' '  ' | cut -c1-200)" ;;
+    esac
+  fi
+}
+# field NAME prints a field of SNAPSHOT, or nothing.
+field(){ SNAPSHOT="$SNAPSHOT" python3 -c '
+import json, os, sys
+try:
+    d = json.loads(os.environ["SNAPSHOT"])["data"]["data"] or {}
+except Exception:
+    d = {}
+print(d.get(sys.argv[1], ""))' "$1"; }
+# write PATH JSON-ON-STDIN is check-and-set against VERSION: it creates only when the read found
+# the path absent, patches (keeping other fields) when it exists, and fails if another writer
+# changed the path since the read.
+write(){
+  if [ "$VERSION" = "0" ]; then vault kv put -cas=0 "$1" - >/dev/null
+  else vault kv patch -cas="$VERSION" "$1" - >/dev/null; fi
 }
 
 step "$ROOT_PATH"
-CUR_U="$(vget "$ROOT_PATH" root_user)"; CUR_P="$(vget "$ROOT_PATH" root_password)"
-if [ "$REFRESH" = "0" ] && [ -n "$CUR_U" ] && [ -n "$CUR_P" ]; then
+snap "$ROOT_PATH"
+if [ "$REFRESH" = "0" ] && [ -n "$(field root_user)" ] && [ -n "$(field root_password)" ]; then
   echo "  already holds a root credential. Leaving it alone."
 else
-  # JSON on stdin, so neither value reaches argv.
   MU="$MROOT_U" MP="$MROOT_P" python3 -c '
 import json, os
 print(json.dumps({"root_user": os.environ["MU"], "root_password": os.environ["MP"]}))' \
-    | vault kv put "$ROOT_PATH" - >/dev/null || die "vault kv put failed for $ROOT_PATH."
-  [ "$(vget "$ROOT_PATH" root_user)" = "$MROOT_U" ] && [ "$(vget "$ROOT_PATH" root_password)" = "$MROOT_P" ] \
+    | write "$ROOT_PATH" || die "the write to $ROOT_PATH failed, so Vault keeps what it held. Run this again."
+  snap "$ROOT_PATH"
+  [ "$(field root_user)" = "$MROOT_U" ] && [ "$(field root_password)" = "$MROOT_P" ] \
     || die "the read-back of $ROOT_PATH does not match."
   echo "  written, and the read-back matches"
 fi
-unset CUR_U CUR_P
 
 step "Bucket $BUCKET"
-if mc --config-dir "$MCCFG" ls "adm/$BUCKET" >/dev/null 2>&1; then
+if m ls "adm/$BUCKET" >/dev/null 2>&1; then
   echo "  exists"
 else
-  mc --config-dir "$MCCFG" mb "adm/$BUCKET" >/dev/null || die "could not create the bucket $BUCKET."
-  mc --config-dir "$MCCFG" version enable "adm/$BUCKET" >/dev/null || die "could not enable versioning on $BUCKET."
+  m mb "adm/$BUCKET" >/dev/null || die "could not create the bucket $BUCKET."
+  m version enable "adm/$BUCKET" >/dev/null || die "could not enable versioning on $BUCKET."
   echo "  created, with versioning"
 fi
 
+# in_scope ALIAS ACCESS_KEY proves a key against MinIO: it lists the bucket, sees no other
+# bucket, and its policy read back from MinIO grants only these actions on this one bucket.
+in_scope(){
+  local alias="$1" ak="$2" visible info
+  m ls "$alias/$BUCKET/" >/dev/null 2>&1 || { echo "  cannot list $BUCKET" >&2; return 1; }
+  visible="$(m ls "$alias" 2>/dev/null | grep -c . || true)"
+  [ "$visible" -le 1 ] || { echo "  sees $visible buckets, expected 1" >&2; return 1; }
+  info="$(m admin user svcacct info --json adm "$ak" 2>/dev/null)" \
+    || { echo "  MinIO has no service account with that key" >&2; return 1; }
+  INFO="$info" BUCKET="$BUCKET" python3 -c '
+import json, os, sys
+pol = json.loads(os.environ["INFO"]).get("policy")
+if isinstance(pol, str):
+    pol = json.loads(pol) if pol else None
+if not pol:
+    sys.exit("  the key has no embedded policy, so it inherits the root policy")
+b = os.environ["BUCKET"]
+allowed = {"s3:ListBucket", "s3:GetBucketLocation", "s3:GetObject", "s3:PutObject",
+           "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"}
+scope = {f"arn:aws:s3:::{b}", f"arn:aws:s3:::{b}/*"}
+for st in pol.get("Statement", []):
+    acts = st.get("Action", []); acts = [acts] if isinstance(acts, str) else acts
+    res = st.get("Resource", []); res = [res] if isinstance(res, str) else res
+    if st.get("Effect") != "Allow" or not set(acts) <= allowed or not set(res) <= scope:
+        sys.exit("  the policy grants more than the intended actions on this bucket")
+' || return 1
+}
+
 step "$SNAP_PATH"
-OLD_AK="$(vget "$SNAP_PATH" access_key)"; OLD_SK="$(vget "$SNAP_PATH" secret_key)"
+snap "$SNAP_PATH"
+OLD_AK="$(field access_key)"; OLD_SK="$(field secret_key)"
 if [ "$REFRESH" = "0" ] && [ -n "$OLD_AK" ] && [ -n "$OLD_SK" ] \
-   && MC_HOST_old="${MINIO_ENDPOINT%%://*}://${OLD_AK}:${OLD_SK}@${MINIO_ENDPOINT#*://}" \
-        mc --config-dir "$MCCFG" ls "old/$BUCKET" >/dev/null 2>&1; then
+   && set_alias old "$OLD_AK" "$OLD_SK" && in_scope old "$OLD_AK" 2>/dev/null; then
   unset OLD_SK
-  echo "  holds a credential that still reaches $BUCKET. Leaving it alone."
+  echo "  holds a credential that reaches $BUCKET with the intended scope. Leaving it alone."
 else
   unset OLD_SK
   # The snapshot script uploads objects and the restore runbook lists and reads them.
@@ -128,26 +187,34 @@ else
    "Resource":["arn:aws:s3:::$BUCKET/*"]}
 ]}
 JSON
-  SVC_JSON="$(mc --config-dir "$MCCFG" admin user svcacct add --policy "$POLICY" --json adm "$MROOT_U")"
+  NAME="vault-snapshots-$(date -u +%Y%m%dT%H%M)"
+  SVC_JSON="$(m admin user svcacct add --policy "$POLICY" --name "$NAME" \
+    --description "PET-741 $BUCKET" --json adm "$MROOT_U")" \
+    || die "MinIO refused the service account."
   NEW_AK="$(printf '%s' "$SVC_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("accessKey") or "")')"
   NEW_SK="$(printf '%s' "$SVC_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("secretKey") or "")')"
   unset SVC_JSON
-  [ -n "$NEW_AK" ] && [ -n "$NEW_SK" ] || die "could not mint or parse the service account."
-  export MC_HOST_chk="${MINIO_ENDPOINT%%://*}://${NEW_AK}:${NEW_SK}@${MINIO_ENDPOINT#*://}"
-  mc --config-dir "$MCCFG" ls chk >/dev/null 2>&1 \
-    || die "the new service account did not authenticate."
-  mc --config-dir "$MCCFG" ls "chk/$BUCKET/" >/dev/null 2>&1 \
-    || die "the new service account cannot list $BUCKET."
-  [ "$(mc --config-dir "$MCCFG" ls chk 2>/dev/null | grep -c .)" -le 1 ] \
-    || die "the new service account sees more than one bucket. The policy is wider than intended."
+  [ -n "$NEW_AK" ] && [ -n "$NEW_SK" ] || die "could not parse the minted service account. Check for $NAME with mc admin user svcacct ls."
+  echo "  minted $NAME"
+  set_alias chk "$NEW_AK" "$NEW_SK" \
+    || die "mc could not store the alias for the new key. Remove $NAME with mc admin user svcacct rm."
+  in_scope chk "$NEW_AK" \
+    || die "the new key fails the checks above. Remove $NAME with mc admin user svcacct rm, then fix the policy."
+  echo "  lists $BUCKET, sees no other bucket, and its policy holds only the intended actions"
   NK="$NEW_AK" NS="$NEW_SK" python3 -c '
 import json, os
 print(json.dumps({"access_key": os.environ["NK"], "secret_key": os.environ["NS"]}))' \
-    | vault kv put "$SNAP_PATH" - >/dev/null || die "vault kv put failed for $SNAP_PATH."
-  [ "$(vget "$SNAP_PATH" access_key)" = "$NEW_AK" ] && [ "$(vget "$SNAP_PATH" secret_key)" = "$NEW_SK" ] \
+    | write "$SNAP_PATH" \
+    || die "the write to $SNAP_PATH failed, so Vault keeps what it held. Remove $NAME with mc admin user svcacct rm, then run this again."
+  snap "$SNAP_PATH"
+  [ "$(field access_key)" = "$NEW_AK" ] && [ "$(field secret_key)" = "$NEW_SK" ] \
     || die "the read-back of $SNAP_PATH does not match."
-  echo "  minted a service account scoped to $BUCKET (access key length ${#NEW_AK}) and wrote it"
+  echo "  written, and the read-back matches"
   unset NEW_SK
+  if [ -n "$OLD_AK" ]; then
+    echo "  the previous key ($OLD_AK) is still valid on MinIO. After the next snapshot run succeeds,"
+    echo "  remove it with: mc admin user svcacct rm adm $OLD_AK"
+  fi
 fi
 unset MROOT_P
 
