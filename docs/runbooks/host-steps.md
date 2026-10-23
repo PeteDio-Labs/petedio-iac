@@ -74,5 +74,4 @@ first (`vault-breakglass` on 247).
   (`deploy-vault-unseal.sh`) unseals it within minutes.
 - **Command:** `curl -s --cacert environments/homelab/vault-ca.crt https://192.168.50.223:8200/v1/sys/seal-status`
 - **Expected:** `"sealed": false`.
-- **Bad:** `"sealed": true` for more than 10 minutes. Unsealing needs the key, which lives in
-  the Mac's Keychain and nowhere else. Follow `vault/Systems/vault-and-secrets.md`.
+- **Bad:** `"sealed": true` for more than 10 minutes. Unsealing needs the key. The Mac's Keychain holds the record of truth, and the Pi holds a copy for its timer. Follow `vault/Systems/vault-and-secrets.md`.

@@ -296,7 +296,7 @@ curl -s --cacert environments/homelab/vault-ca.crt \
 Work down the list. Every one of these should pass before you call the move done. Run
 them from the repo root — two use `environments/homelab/vault-ca.crt` as a relative path.
 
-**Cluster is quorate and every guest is running.** 18 on `pve01`, 3 on `pve02`:
+**Cluster is quorate and every guest is running.** 18 on `pve03`, 4 on `pve02`:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 \
@@ -591,10 +591,6 @@ NATs outbound. Verified 2026-08-28:
 
 Two consequences.
 
-**The vault is wrong about Pete-Pi.** `004-pete-pi.md` says the `.86` leg is *"the only path
-to plex on 192.168.86.140"*, and the Uptime Kuma monitor design cites it. That is false —
-`.50` reaches `.86` fine. The `wlan0` leg is not needed for that monitor.
-
 **Pete-Pi is your way in when the tailnet is down.** `tailscale-244` is a guest on pve01, so
 it dies with that host, and a Mac on `.86` then has no route into `.50`. Pete-Pi is
 dual-homed and reachable from `.86`, which makes it the jump host:
@@ -832,7 +828,7 @@ experiment. Decide which you want rather than drifting into it.
 
 ### 6. Renumber the media block
 
-`VMID == last IP octet` holds for all fourteen guests from 112 up. It breaks for the nine
+`VMID == last IP octet` holds for the 2xx guests. It breaks for the nine
 legacy ones: `100→.14`, `101→.33`, `102→dhcp`, `104→.15`, `105→.16`, `106→.111`,
 `109→.20`, `110→.21`, and `103` on the `.86` network.
 
