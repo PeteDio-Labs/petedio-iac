@@ -133,6 +133,9 @@ LAB_GH_APP_PEM="$(field app_pem 2>/dev/null || true)"
 # Optional (PET-672): the Plane token for plane_item. Absent leaves the tool off.
 SNAPSHOT="$(read_optional kv/services/lab-agent-plane)"
 LAB_PLANE_TOKEN="$(field token 2>/dev/null || true)"
+# Optional (PET-745): the petedio-search bearer for search_lab. Absent leaves the tool off.
+SNAPSHOT="$(read_optional kv/services/lab-agent-search)"
+LAB_SEARCH_TOKEN="$(field token 2>/dev/null || true)"
 unset SNAPSHOT
 echo "  resolved the 5 required values"
 if [ -n "$PB_DESK_APP_ID" ] && [ -n "$PB_DESK_INSTALLATION_ID" ] && [ -n "$PB_DESK_APP_PEM" ]; then
@@ -149,6 +152,11 @@ if [ -n "$LAB_PLANE_TOKEN" ]; then
   echo "  lab-agent: Plane token present, so plane_item is offered"
 else
   echo "  lab-agent: kv/services/lab-agent-plane is not seeded, so plane_item is off"
+fi
+if [ -n "$LAB_SEARCH_TOKEN" ]; then
+  echo "  lab-agent: search token present, so search_lab is offered"
+else
+  echo "  lab-agent: kv/services/lab-agent-search is not seeded, so search_lab is off"
 fi
 if [ -n "$PB_UPDATES_TOKEN" ]; then
   echo "  /update: token present"
@@ -234,6 +242,7 @@ json.dump({
     "pete_bot_plane_api_key":        os.environ.get("PB_PLANE_API_KEY", ""),
     "pete_bot_cd_public_key":        os.environ.get("PB_CD_PUBLIC_KEY", ""),
     "lab_agent_plane_token":         os.environ.get("LAB_PLANE_TOKEN", ""),
+    "lab_agent_search_token":        os.environ.get("LAB_SEARCH_TOKEN", ""),
 }, open(os.environ["OUT"], "w"))
 '
 
