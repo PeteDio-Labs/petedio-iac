@@ -35,6 +35,15 @@ eq "no non-LAN fallback" "" "$(pick_ip <<<$'192.168.86.4\n10.1.1.1')"
 eq "ignores noise" "" "$(pick_ip <<<$'fe80::1\n\n')"
 eq "empty" "" "$(pick_ip </dev/null)"
 
+echo "login (ssh stubbed with recorded stderr)"
+ssh() { printf '%s\n' "$STUB_ERR" >&2; return "$STUB_RC"; }
+STUB_RC=255 STUB_ERR='root@x: Permission denied (publickey).' ; eq "denied" denied "$(login 10.0.0.1 /dev/null)"
+STUB_RC=255 STUB_ERR='ssh: connect to host 10.0.0.1 port 22: Connection refused' ; eq "closed port 22 (112)" refused "$(login 10.0.0.1 /dev/null)"
+STUB_RC=255 STUB_ERR='ssh: connect to host 10.0.0.1 port 22: Connection timed out' ; eq "timeout stays a fault" unreachable "$(login 10.0.0.1 /dev/null)"
+STUB_RC=0 STUB_ERR='' ; eq "key accepted" ok "$(login 10.0.0.1 /dev/null)"
+eq "no address" unreachable "$(login "" /dev/null)"
+unset -f ssh
+
 echo "has_key exit codes (pct stubbed to run the command locally)"
 export AUTH="$T/authorized_keys"
 MAT=AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExample1234567
