@@ -110,12 +110,13 @@
       {% for u in claude_operator_notify_users %}
       d {{ claude_operator_ssh_notify_dir }}/{{ u }} 0700 {{ u }} {{ u }} -
       {% endfor %}
-  register: ssh_notify_tmpfiles
 
-- name: Create the login-notice lock directories now
+# Every play, not only after a change to the file: the directories live on tmpfs, and a play
+# that follows a reboot finds the file unchanged and the directories gone. The command is
+# idempotent, so it reports no change.
+- name: Create the login-notice lock directories
   ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/petedio-ssh-notify.conf
-  changed_when: true
-  when: ssh_notify_tmpfiles is changed
+  changed_when: false
 
 # sshd runs /etc/ssh/sshrc as the user at every login. It DMs Pedro for a login to the two
 # accounts the phone key opens, so a login he did not make shows up on his phone. The drop-in
