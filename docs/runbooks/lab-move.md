@@ -365,7 +365,7 @@ is healthy.
 
 **Public URLs resolve through the tunnel.** `cloudflared` on 112 is outbound-only and
 token-managed, so it reconnects on its own with no port forward and no new public IP
-to register: `auth`, `seer` and `palworld` on `pdlab.dev`.
+to register: `auth`, `seer`, `savings` and `plane` on `pdlab.dev`.
 
 **Postgres has its databases.** Expect `plane` and the other live app databases:
 
