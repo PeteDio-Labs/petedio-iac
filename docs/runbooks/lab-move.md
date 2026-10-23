@@ -93,7 +93,7 @@ with the lab and re-register themselves on the way back — no action needed the
 ### Take backups off-site
 
 Every backup target currently travels in the same truck as its source:
-`/mnt/backups` is on `pve02`'s single HDD, Vault snapshots live in MinIO on `pve01`,
+`/mnt/backups` is on `pve02`'s single HDD, Vault snapshots live in MinIO on `pve03`,
 and Uptime Kuma's history is on the Pi's SD card. For a few days in transit, get a
 copy onto something that is not going in the truck.
 
@@ -365,9 +365,9 @@ is healthy.
 
 **Public URLs resolve through the tunnel.** `cloudflared` on 112 is outbound-only and
 token-managed, so it reconnects on its own with no port forward and no new public IP
-to register: `auth`, `seer`, `co-latro`, `admin`, `cv` and `fast` on `pdlab.dev`.
+to register: `auth`, `seer` and `palworld` on `pdlab.dev`.
 
-**Postgres has its databases.** Expect `admin`, `plane`, `poker` and `waterfast`:
+**Postgres has its databases.** Expect `plane` and the other live app databases:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.231 'su - postgres -c "psql -lt" | cut -d"|" -f1'
