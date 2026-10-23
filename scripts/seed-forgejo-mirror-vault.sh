@@ -21,12 +21,12 @@
 # It does not create or install the App. It deploys nothing: scripts/deploy-forgejo-mirror.sh
 # reads this path. The key is never printed or passed in argv.
 #
-#   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. Never prompts.
+#   Vault token: $VAULT_TOKEN (a `vault-breakglass` shell on 247), else macOS Keychain item
+#   $VAULT_TOKEN_KEYCHAIN_ITEM on the Mac. Never prompts.
 #
 # Usage:
-#   ./scripts/seed-forgejo-mirror-vault.sh ~/Downloads/petedio-forgejo-mirror.*.private-key.pem
-#   ./scripts/seed-forgejo-mirror-vault.sh --shred <pem>   # overwrite + delete the file after
-#   APP_ID=... INSTALLATION_ID=... ./scripts/seed-forgejo-mirror-vault.sh <pem>
+#   APP_ID=<numeric App ID> ./scripts/seed-forgejo-mirror-vault.sh --shred <pem>   # delete the file after
+#   APP_ID=<numeric App ID> ./scripts/seed-forgejo-mirror-vault.sh [--shred] <pem>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -70,46 +70,40 @@ openssl rsa -in "$PEM_FILE" -noout -check >/dev/null 2>&1 \
   || die "openssl cannot parse $PEM_FILE as a private key."
 echo "  $LINES lines, header present, openssl parses it."
 
-step "Resolving app_id and installation_id"
+step "Asking GitHub what the App is (JWT only, no gh login needed)"
+# APP_ID is on the App's settings page. The installation is found by asking GitHub which
+# installations this App holds, so neither gh nor a Mac is needed (it runs in a 247 break-glass shell).
 APP_ID="${APP_ID:-}"
-INSTALLATION_ID="${INSTALLATION_ID:-}"
-INST_JSON=""
-if command -v gh >/dev/null 2>&1; then
-  INST_JSON="$(gh api "/orgs/$ORG/installations" \
-      --jq ".installations[] | select(.app_slug==\"$APP_SLUG\")" 2>/dev/null || true)"
-fi
-[ -n "$INST_JSON" ] || [ -n "$APP_ID$INSTALLATION_ID" ] \
-  || die "No installation of '$APP_SLUG' found on $ORG, and gh could not be asked.
-  Create and install the App first (see --help), or set APP_ID and INSTALLATION_ID."
-
-if [ -n "$INST_JSON" ]; then
-  APP_ID="${APP_ID:-$(printf '%s' "$INST_JSON" | jq -r '.app_id')}"
-  INSTALLATION_ID="${INSTALLATION_ID:-$(printf '%s' "$INST_JSON" | jq -r '.id')}"
-  SEL="$(printf '%s' "$INST_JSON" | jq -r '.repository_selection')"
-  [ "$SEL" = "all" ] || die "The '$APP_SLUG' installation has repository_selection=$SEL.
-  The mirror copies every repo, so install it on 'All repositories' of $ORG. With 'selected',
-  a new repo would be silently missing from the mirror."
-  GOT_PERMS="$(printf '%s' "$INST_JSON" | jq -r '.permissions | to_entries | sort_by(.key) | map("\(.key)=\(.value)") | join(",")')"
-  [ "$GOT_PERMS" = "$WANT_PERMS" ] || die "The '$APP_SLUG' App holds permissions: $GOT_PERMS
-  It must hold exactly: $WANT_PERMS
-  Fix it at github.com/organizations/$ORG/settings/apps/$APP_SLUG/permissions, accept the change
-  on the installation, and re-run."
-  echo "  repository_selection=all, permissions=$GOT_PERMS"
-fi
-case "$APP_ID" in ''|*[!0-9]*) die "app_id is not numeric: '$APP_ID'" ;; esac
-case "$INSTALLATION_ID" in ''|*[!0-9]*) die "installation_id is not numeric: '$INSTALLATION_ID'" ;; esac
-echo "  app_id=$APP_ID  installation_id=$INSTALLATION_ID"
-
-step "Asking the App what it can actually do"
+case "$APP_ID" in ''|*[!0-9]*) die "Set APP_ID=<the numeric App ID from the App settings page>." ;; esac
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 NOW="$(date +%s)"
 JWT_H="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
 JWT_P="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((NOW - 60))" "$((NOW + 480))" "$APP_ID" | b64url)"
 JWT_S="$(printf '%s.%s' "$JWT_H" "$JWT_P" | openssl dgst -sha256 -sign "$PEM_FILE" -binary | b64url)"
 # The JWT and the token go to curl on STDIN, never argv: `ps` reads argv.
-TOK_JSON="$(printf 'Authorization: Bearer %s.%s.%s\n' "$JWT_H" "$JWT_P" "$JWT_S" | curl -sS --max-time 20 -X POST -H @- \
-  -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
-  "https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens")"
+gh_jwt() { printf 'Authorization: Bearer %s.%s.%s\n' "$JWT_H" "$JWT_P" "$JWT_S" | curl -sS --max-time 20 -H @- \
+  -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$@"; }
+
+INSTALLS="$(gh_jwt "https://api.github.com/app/installations?per_page=100")"
+printf '%s' "$INSTALLS" | jq -e 'type == "array"' >/dev/null 2>&1 || die "GitHub would not list this App's installations. It said:
+  $(printf '%s' "$INSTALLS" | jq -r '.message // .' | head -c 300)
+  The usual cause is an APP_ID that does not belong to this key."
+INST_JSON="$(printf '%s' "$INSTALLS" | jq -c --arg o "$ORG" '[.[] | select(.account.login == $o)] | first // empty')"
+[ -n "$INST_JSON" ] || die "'$APP_SLUG' is not installed on $ORG. Install it with 'All repositories' and re-run."
+INSTALLATION_ID="$(printf '%s' "$INST_JSON" | jq -r '.id')"
+SEL="$(printf '%s' "$INST_JSON" | jq -r '.repository_selection')"
+[ "$SEL" = "all" ] || die "The installation has repository_selection=$SEL.
+  The mirror copies every repo, so install it on 'All repositories' of $ORG. With 'selected',
+  a new repo would be silently missing from the mirror."
+GOT_PERMS="$(printf '%s' "$INST_JSON" | jq -r '.permissions | to_entries | sort_by(.key) | map("\(.key)=\(.value)") | join(",")')"
+[ "$GOT_PERMS" = "$WANT_PERMS" ] || die "The App holds permissions: $GOT_PERMS
+  It must hold exactly: $WANT_PERMS
+  Fix it at github.com/organizations/$ORG/settings/apps/$APP_SLUG/permissions, accept the change
+  on the installation, and re-run."
+echo "  app_id=$APP_ID  installation_id=$INSTALLATION_ID  repository_selection=all  permissions=$GOT_PERMS"
+
+step "Asking the App what it can actually do"
+TOK_JSON="$(gh_jwt -X POST "https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens")"
 unset JWT_S
 TOKEN="$(printf '%s' "$TOK_JSON" | jq -r '.token // empty')"
 [ -n "$TOKEN" ] || die "GitHub would not mint an installation token. It said:
@@ -132,7 +126,7 @@ step "Authenticating to Vault"
 if [ -z "${VAULT_TOKEN:-}" ]; then
   VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
 fi
-[ -n "${VAULT_TOKEN:-}" ] || die "No Vault token: set VAULT_TOKEN or add the Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM."
+[ -n "${VAULT_TOKEN:-}" ] || die "No Vault token. On 247, run vault-breakglass first (the claude-ops token cannot write this path). On the Mac, add the Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM."
 export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "Vault rejected the token, or $VAULT_ADDR is unreachable. Run ./scripts/pet-secrets doctor."
 

@@ -27,20 +27,33 @@ writes. A change pushed to one is overwritten on the next run.
 
 1. **Create the App.** Open `github.com/organizations/PeteDio-Labs/settings/apps/new`. Name it
    `petedio-forgejo-mirror`, turn webhooks off, set only Repository permissions Contents and
-   Metadata to Read-only, and allow install on this account only.
+   Metadata to Read-only, and allow install on this account only. Note the numeric **App ID**.
 2. **Generate a private key** on the App page, and **install** the App on `PeteDio-Labs` with
    **All repositories**.
-3. **Seed Vault** from the Mac or 247:
-   `./scripts/seed-forgejo-mirror-vault.sh --shred ~/Downloads/petedio-forgejo-mirror.*.private-key.pem`.
-   The script refuses an App that can write, or an install on selected repositories.
+3. **Seed Vault from 247.** The `claude-ops` token cannot write `kv/services/forgejo-mirror`, so
+   use a break-glass shell. SSH to 247 as `pedro` and run `vault-breakglass`. Then put the key on
+   the host without writing it anywhere but your home directory:
+
+   ```bash
+   umask 077
+   cat > ~/forgejo-mirror.pem      # paste the whole .pem, then press Ctrl-D
+   cd ~/work/petedio/iac && git pull --ff-only
+   APP_ID=<numeric App ID> ./scripts/seed-forgejo-mirror-vault.sh --shred ~/forgejo-mirror.pem
+   ```
+
+   The script finds the installation itself. It refuses an App that can write, an install on
+   selected repositories, or a key that lost its newlines.
 
 ## 247 steps
 
 1. Merge the PET-756 PR. Apply-on-merge creates LXC 249. Confirm `forgejo_id = 249` in the apply log.
-2. Run `./scripts/deploy-forgejo-mirror.sh`. The play fails unless the first sync examined the
-   repos GitHub reported and synced each one.
-3. Read the result: `ssh root@192.168.50.249 cat /var/lib/forgejo-mirror/status.json`. `examined`
-   must equal `github_total`, and `failed` must be 0.
+2. In the same `vault-breakglass` shell, run `./scripts/deploy-forgejo-mirror.sh`. The shell holds
+   the only token that can read `kv/iac/lxc-ssh`, which the script uses for SSH to 249 because
+   247 holds no `id_ed25519_ansible`. The play fails unless the first sync examined the repos
+   GitHub reported and synced each one.
+3. Read the result: `ssh root@192.168.50.249 cat /var/lib/forgejo-mirror/status.json` with the
+   same key, or read the play's final message. `examined` must equal `github_total`, and
+   `failed` must be 0.
 
 ## Sign in
 
