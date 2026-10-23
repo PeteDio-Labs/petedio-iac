@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# vault-breakglass (PET-714): a one-hour Vault admin shell for {{ claude_operator_user }} on
+# this host. environments/homelab/vault-config/breakglass.tf carries the design.
+#
+#   vault-breakglass      asks for the password and a TOTP code, then opens a shell
+#   exit                  ends the shell and revokes the token
+#
+# The token lives in this shell's environment only. It is never written to disk (-token-only
+# implies -no-store), and claude-ops, another UID with no sudo, cannot read it. Vault ends it
+# after an hour whatever happens here, and refuses it from any address but this host's.
+set -euo pipefail
+
+[ "$(id -un)" = "{{ claude_operator_user }}" ] || {
+  echo "vault-breakglass: run this as {{ claude_operator_user }}, not $(id -un)." >&2
+  exit 2
+}
+
+export VAULT_ADDR="{{ claude_operator_vault_addr }}"
+export VAULT_CACERT="{{ claude_operator_vault_ca_path }}"
+
+token="$(/usr/local/bin/vault login -method=userpass -token-only \
+  username="{{ claude_operator_vault_username }}")" || {
+  echo "vault-breakglass: Vault refused the login." >&2
+  exit 1
+}
+[ -n "$token" ] || { echo "vault-breakglass: Vault returned no token." >&2; exit 1; }
+
+# A notice for every unlock, so one Pedro did not make shows up on his phone. A pete-bot outage
+# must not block the unlock, so a failed notice is reported and the shell opens anyway.
+/usr/local/bin/notify-pedro "Vault break-glass opened on $(hostname) by $(id -un)" >/dev/null 2>&1 \
+  || echo "vault-breakglass: notify-pedro failed; the Vault audit log still records this login." >&2
+
+revoke() { VAULT_TOKEN="$token" /usr/local/bin/vault token revoke -self >/dev/null 2>&1 || true; }
+trap revoke EXIT
+
+echo "Vault admin for up to one hour. Type exit to end it and revoke the token."
+# --norc keeps the PS1 below; TMOUT closes an idle shell after 15 minutes.
+VAULT_TOKEN="$token" PS1='[VAULT ADMIN] \u@\h:\w\$ ' TMOUT=900 bash --norc -i || true
