@@ -122,9 +122,14 @@ open "$QR_DIR/totp.png" 2>/dev/null || echo "Open $QR_DIR/totp.png yourself."
 read -rp "Scan the code into your authenticator app, then press Enter to delete it. "
 
 step "Reading the user back"
+# Vault returns a /32 bound CIDR as the bare address (192.168.50.247), not as written, so the
+# check compares both sides with a trailing /32 removed. A /24 or any other length still
+# differs and fails (PET-714).
 vault read -format=json "auth/$MOUNT/users/$USERNAME" | jq -e --arg p "$POLICY" --arg c "$BOUND_CIDR" '
+  def host: sub("/32$"; "");
   .data.token_policies == [$p] and .data.token_ttl == 3600 and .data.token_max_ttl == 3600
-  and .data.token_explicit_max_ttl == 3600 and .data.token_bound_cidrs == [$c]' >/dev/null \
+  and .data.token_explicit_max_ttl == 3600
+  and (.data.token_bound_cidrs | map(host)) == [($c | host)]' >/dev/null \
   || die "the user's token settings did not read back as written."
 echo "user $USERNAME: policy $POLICY, 1-hour token with a fixed 1-hour ceiling, bound to $BOUND_CIDR"
 echo
