@@ -658,7 +658,8 @@ before relying on the App for anything past opening a PR.
 | Login | the `vault-breakglass` one: password, then the TOTP code with no prompt. One hour, bound to 247's /32 |
 | Where the token lives | the environment of the processes under `vault-breakglass`. Never on disk, never in the tmux server's environment |
 | When it ends | `vault-breakglass` stops Claude Code when the token's TTL ends and revokes the token on any exit. Child processes Claude Code started keep running, but Vault rejects their token |
-| Permission mode | `default`: every tool call asks, and the prompt reaches the phone. This is the control on the session: a prompt-injected session holds a live admin token for up to an hour, so read each request before you approve it |
+| Permission mode | `default`. Edits and most shell commands ask, and the prompt reaches the phone. File reads, searches and read-only shell commands run without asking. `bypassPermissions` is disabled |
+| Settings | only user settings and a root-owned file, so a repository in DIR cannot pre-approve a command. No MCP server and no claude.ai connector loads. An allow rule in `~pedro/.claude/settings.json` still applies, so keep none there |
 | Survives a dropped SSH | yes. tmux holds it; detach with `Ctrl-b d`, and `claude-vault` again reattaches |
 
 To set it up once, after the role lands, sign in as the operator:
@@ -674,7 +675,8 @@ Claude app as `vault-admin-HHMM`. To work in another directory, pass it: `claude
 The account's claude.ai login is a credential it did not hold before PET-763. The login adds
 no reach, because the phone key that opens `pedro` also opens `claude-ops`, which holds one
 already. The session does add one exposure: it holds Vault admin while it runs, so the
-permission prompts above are what stand between a hostile input and the token.
+permission prompts above are what stand between a hostile input and the token. A prompt-injected
+session holds a live admin token for up to an hour, so read each request before you approve it.
 
 ## Verify
 

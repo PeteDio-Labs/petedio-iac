@@ -61,9 +61,14 @@ auth_method="$(printf '%s' "$auth_json" | jq -r '.authMethod // "none"' 2>/dev/n
 }
 
 rc=0
+# --setting-sources user: a repository in DIR cannot pre-approve a command through its
+# .claude/settings*.json. --strict-mcp-config with no --mcp-config loads no MCP server.
 /usr/local/bin/vault-breakglass "$claude_bin" \
   --remote-control "vault-admin-$(date +%H%M)" \
-  --permission-mode {{ claude_operator_claude_vault_permission_mode }} || rc=$?
+  --permission-mode {{ claude_operator_claude_vault_permission_mode }} \
+  --setting-sources user \
+  --settings {{ claude_operator_claude_vault_settings_path }} \
+  --strict-mcp-config || rc=$?
 
 echo "claude-vault: the session ended (exit $rc). The token is revoked unless a REVOKE FAILED line shows above." >&2
 read -r -t 300 -p "Press Enter to close." _ || true

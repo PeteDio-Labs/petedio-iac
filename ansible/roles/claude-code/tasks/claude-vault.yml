@@ -101,6 +101,18 @@
     group: "{{ claude_operator_user }}"
     mode: "0700"
 
+# Root-owned, so the session cannot loosen its own settings. defaults/main.yml says what each
+# flag claude-vault passes with it keeps out.
+- name: Install the claude-vault session settings
+  ansible.builtin.copy:
+    dest: "{{ claude_operator_claude_vault_settings_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {{ {'disableClaudeAiConnectors': true,
+          'permissions': {'disableBypassPermissionsMode': 'disable'}} | to_nice_json }}
+
 # Root-owned, like vault-breakglass, so no session can rewrite what Pedro runs to unlock.
 - name: Install claude-vault
   ansible.builtin.template:
