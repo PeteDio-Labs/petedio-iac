@@ -18,13 +18,30 @@
     # petedio-search. The allowlist loads before any of them starts.
     ollama_allow_ports: "{{ [ollama_port | default(11434)] + (ollama_extra_instances | map(attribute='port') | list) + [8526] }}"
     ollama_allow_subnet: 192.168.50.0/24
+    # Every unit that listens on one of those ports. Each gets a drop-in that requires the
+    # allowlist, so none can start while the table is missing.
+    ollama_allow_guarded_units: >-
+      {{ [(ollama_service_name | default('ollama')) ~ '.service']
+         + (ollama_extra_instances | map(attribute='name') | map('regex_replace', '$', '.service') | list)
+         + ['petedio-search.service'] }}
   handlers:
+    # reloaded, not restarted: a restart propagates through Requires= to every guarded
+    # service. See the unit's header.
     - name: Reload the allowlist
       ansible.builtin.systemd_service:
         name: ollama-allowlist
-        state: restarted
+        state: reloaded
+        daemon_reload: true
+
+    - name: Load the drop-ins
+      ansible.builtin.systemd_service:
         daemon_reload: true
   tasks:
+    # A fact outlives this play, so the read-back play at the end checks the same list.
+    - name: Record the guarded units
+      ansible.builtin.set_fact:
+        ollama_allow_guarded: "{{ ollama_allow_guarded_units }}"
+
     # The Debian template carries neither. The Ollama installer needs curl, and both it
     # and the NVIDIA installer probe the cards through lspci.
     - name: Install the base tools
@@ -69,6 +86,21 @@
         state: started
         daemon_reload: true
 
+    - name: Create a drop-in directory for each guarded service
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}.d"
+        state: directory
+        mode: "0755"
+      loop: "{{ ollama_allow_guarded_units }}"
+
+    - name: Make each guarded service require the allowlist
+      ansible.builtin.template:
+        src: ollama-allowlist-dropin.conf.j2
+        dest: "/etc/systemd/system/{{ item }}.d/10-ollama-allowlist.conf"
+        mode: "0644"
+      loop: "{{ ollama_allow_guarded_units }}"
+      notify: Load the drop-ins
+
     - name: Flush handlers so the allowlist is live before any service binds
       ansible.builtin.meta: flush_handlers
 
@@ -100,3 +132,36 @@
 
 - name: Pull and warm the declared models
   ansible.builtin.import_playbook: ollama-models.yml
+
+# The drop-ins were written before any guarded unit existed, so read them back now that
+# the Ollama units are installed. petedio-search.service arrives later with
+# scripts/deploy-search.sh, so a guarded unit that isn't loaded yet is reported, not failed.
+- name: Prove every installed guarded service requires the allowlist
+  hosts: ollama
+  become: true
+  tasks:
+    # noqa reason: systemd_service fails on a unit that isn't installed, and
+    # petedio-search.service may not be. `systemctl show` reads LoadState=not-found instead.
+    - name: Read each guarded unit's dependencies  # noqa: command-instead-of-module
+      ansible.builtin.command: systemctl show -p LoadState -p Requires -p After {{ item }}
+      loop: "{{ ollama_allow_guarded }}"
+      register: ollama_allow_deps
+      changed_when: false
+      check_mode: false
+
+    - name: Assert each loaded unit requires and follows the allowlist
+      ansible.builtin.assert:
+        that:
+          - item.stdout is search('(?m)^Requires=.*\\bollama-allowlist\\.service\\b')
+          - item.stdout is search('(?m)^After=.*\\bollama-allowlist\\.service\\b')
+        fail_msg: "{{ item.item }} does not require and follow ollama-allowlist.service: {{ item.stdout_lines }}"
+      loop: "{{ ollama_allow_deps.results | selectattr('stdout', 'search', 'LoadState=loaded') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Report what the read-back covered
+      ansible.builtin.debug:
+        msg: >-
+          Checked {{ ollama_allow_deps.results | selectattr('stdout', 'search', 'LoadState=loaded') | list | length }}
+          of {{ ollama_allow_guarded | length }} guarded units. Not installed yet:
+          {{ ollama_allow_deps.results | rejectattr('stdout', 'search', 'LoadState=loaded') | map(attribute='item') | list }}.

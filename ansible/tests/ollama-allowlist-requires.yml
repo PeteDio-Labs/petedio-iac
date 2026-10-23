@@ -1,0 +1,191 @@
+# ollama-allowlist-requires.yml — a guarded service never starts after a failed allowlist.
+#
+# Runs on localhost. Run it from `ansible/`:
+#
+#   ansible-playbook tests/ollama-allowlist-requires.yml
+#
+# WHAT THIS EXISTS TO CATCH. Codex's P1 on 26f7ee1 (PET-528): ollama-allowlist.service
+# ordered itself Before= the services it guards, and nothing required it. When its nft
+# load failed on a boot, Ollama and petedio-search started anyway, with every port open.
+# The fix gives each guarded service a drop-in with Requires= and After= on the loader.
+#
+#   1. The rendered drop-in names the loader in both Requires= and After=, and the
+#      loader's Before= lists every unit the play guards.
+#   2. Under systemd, a guarded unit refuses to start when its loader fails.
+#   3. Under systemd, the same guarded unit starts when its loader succeeds, so case 2
+#      can't pass because the guarded unit never runs at all.
+#
+# Cases 2 and 3 create two throwaway units under /run/systemd/system, which a reboot
+# clears, and remove them at the end. They need root and a systemd-booted host, which the
+# GitHub runner is. Without systemd they don't run, and the play says so in a line that
+# can't be read as a pass. Under CI they must run, so a missing systemd fails the suite.
+---
+- name: Guard every Ollama port with the allowlist, configure-ollama-246.yml
+  hosts: localhost
+  gather_facts: false
+  # ansible.cfg sets become for every play. Case 1 reads and renders, unprivileged.
+  become: false
+  vars:
+    templates: "{{ playbook_dir }}/../playbooks/templates"
+    ollama_service_name: ollama
+    ollama_extra_instances: [{ name: ollama-1660s, port: 11435 }]
+    ollama_allow_guarded_units: >-
+      {{ [(ollama_service_name | default('ollama')) ~ '.service']
+         + (ollama_extra_instances | map(attribute='name') | map('regex_replace', '$', '.service') | list)
+         + ['petedio-search.service'] }}
+    test_loader: petedio-test-allowlist-loader.service
+    test_guarded: petedio-test-allowlist-guarded.service
+    test_dir: /run/systemd/system
+  tasks:
+    # --- 1. The rendered units ------------------------------------------------------
+    - name: Case 1, render the drop-in and the loader
+      ansible.builtin.set_fact:
+        test_dropin: "{{ lookup('ansible.builtin.template', templates ~ '/ollama-allowlist-dropin.conf.j2') }}"
+        test_unit: "{{ lookup('ansible.builtin.template', templates ~ '/ollama-allowlist.service.j2') }}"
+
+    - name: Case 1, the drop-in requires and follows the loader, and the loader names every guarded unit
+      ansible.builtin.assert:
+        that:
+          - test_dropin is search('(?m)^Requires=ollama-allowlist\\.service$')
+          - test_dropin is search('(?m)^After=ollama-allowlist\\.service$')
+          - (test_unit | regex_search('(?m)^Before=.*$')).split('=')[1].split() | sort == ollama_allow_guarded_units | sort
+          - test_unit is search('(?m)^ExecReload=')
+          - test_unit is not search('(?m)^ExecStop=')
+        fail_msg: |-
+          The drop-in or the loader lost a guard.
+          drop-in: {{ test_dropin }}
+          loader: {{ test_unit }}
+        success_msg: Every guarded unit requires and follows ollama-allowlist.service.
+
+    # --- 2 and 3. Real systemd --------------------------------------------------------
+    - name: Check for a systemd-booted host
+      ansible.builtin.stat:
+        path: /run/systemd/system
+      register: test_systemd
+
+    - name: Refuse to skip the systemd cases under CI
+      ansible.builtin.assert:
+        that: test_systemd.stat.isdir | default(false)
+        fail_msg: CI is set but /run/systemd/system is missing, so cases 2 and 3 would not run.
+      when: lookup('ansible.builtin.env', 'CI') | length > 0
+
+    - name: Say plainly that cases 2 and 3 did not run
+      ansible.builtin.debug:
+        msg: NOT RUN — cases 2 and 3 need a systemd-booted host. Only case 1 was checked.
+      when: not (test_systemd.stat.isdir | default(false))
+
+    - name: Cases 2 and 3, a failed loader blocks the guarded unit and a good one does not
+      when: test_systemd.stat.isdir | default(false)
+      become: true
+      block:
+        - name: Install a guarded unit that would run if started
+          ansible.builtin.copy:
+            dest: "{{ test_dir }}/{{ test_guarded }}"
+            mode: "0644"
+            content: |
+              [Service]
+              ExecStart=/bin/sleep 300
+
+        - name: Create the guarded unit's drop-in directory
+          ansible.builtin.file:
+            path: "{{ test_dir }}/{{ test_guarded }}.d"
+            state: directory
+            mode: "0755"
+
+        - name: Install the guarded unit's drop-in, rendered from the real template
+          ansible.builtin.copy:
+            dest: "{{ test_dir }}/{{ test_guarded }}.d/10-ollama-allowlist.conf"
+            mode: "0644"
+            content: >-
+              {{ lookup('ansible.builtin.template', templates ~ '/ollama-allowlist-dropin.conf.j2',
+                        template_vars={'ollama_allow_unit': test_loader}) }}
+
+        - name: Case 2, install a loader whose load fails
+          ansible.builtin.copy:
+            dest: "{{ test_dir }}/{{ test_loader }}"
+            mode: "0644"
+            content: |
+              [Service]
+              Type=oneshot
+              RemainAfterExit=yes
+              ExecStart=/bin/false
+
+        # The verdict is the units' state, not the start call's result: failed_when: false
+        # marks the call as not failed whatever systemctl returns. Case 3 proves the same
+        # unit does start, so "not active" here means the guard held.
+        - name: Case 2, start the guarded unit
+          ansible.builtin.systemd_service:
+            name: "{{ test_guarded }}"
+            state: started
+            daemon_reload: true
+          failed_when: false
+
+        # noqa reason: the assert needs each unit's raw is-active word, failed included.
+        # systemd_service reports facts and fails the task on a failed unit.
+        - name: Case 2, read both units  # noqa: command-instead-of-module
+          ansible.builtin.command: systemctl is-active {{ test_loader }} {{ test_guarded }}
+          register: test_case2_state
+          changed_when: false
+          failed_when: false
+
+        - name: Case 2, the guarded unit did not start
+          ansible.builtin.assert:
+            that:
+              - test_case2_state.stdout_lines[0] == 'failed'
+              - test_case2_state.stdout_lines[1] != 'active'
+            fail_msg: "The guarded unit started after its loader failed: {{ test_case2_state.stdout_lines }}"
+            success_msg: A failed allowlist keeps the guarded unit down.
+
+        - name: Case 3, make the loader succeed
+          ansible.builtin.copy:
+            dest: "{{ test_dir }}/{{ test_loader }}"
+            mode: "0644"
+            content: |
+              [Service]
+              Type=oneshot
+              RemainAfterExit=yes
+              ExecStart=/bin/true
+
+        - name: Case 3, clear case 2's failure and start the guarded unit
+          ansible.builtin.command: systemctl reset-failed {{ test_loader }} {{ test_guarded }}
+          changed_when: false
+          failed_when: false
+
+        - name: Case 3, start the guarded unit
+          ansible.builtin.systemd_service:
+            name: "{{ test_guarded }}"
+            state: started
+            daemon_reload: true
+
+        # noqa reason: as in case 2, the assert reads the raw is-active words.
+        - name: Case 3, read both units  # noqa: command-instead-of-module
+          ansible.builtin.command: systemctl is-active {{ test_loader }} {{ test_guarded }}
+          register: test_case3_state
+          changed_when: false
+          failed_when: false
+
+        - name: Case 3, the guarded unit started
+          ansible.builtin.assert:
+            that: test_case3_state.stdout_lines == ['active', 'active']
+            fail_msg: "The guarded unit did not start after a good load: {{ test_case3_state.stdout_lines }}"
+            success_msg: A loaded allowlist lets the guarded unit start.
+      always:
+        # noqa reason: cleanup must not fail on a unit that never started or is gone,
+        # and systemd_service errors on both.
+        - name: Stop the test units  # noqa: command-instead-of-module
+          ansible.builtin.command: systemctl stop {{ test_guarded }} {{ test_loader }}
+          changed_when: false
+          failed_when: false
+
+        - name: Remove the test units
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ test_dir }}/{{ test_guarded }}"
+            - "{{ test_dir }}/{{ test_guarded }}.d"
+            - "{{ test_dir }}/{{ test_loader }}"
+
+        - name: Forget them
+          ansible.builtin.systemd_service:
+            daemon_reload: true

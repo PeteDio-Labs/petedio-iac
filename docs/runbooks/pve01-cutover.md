@@ -135,23 +135,34 @@ the two-lane layout that `host_vars/ollama-246.yml` already describes.
 
 ## D. Bring the backup store and the GPU node back (Mac session)
 
-Run from the PR branch until it merges, from `ansible/`. The backup store comes first,
+Run from `main`, from `ansible/`. The backup store comes first,
 because the nightly vzdump jobs run at 02:30 (pve02) and 02:45 (pve03) Eastern, and while
 the store is disabled, every job fails. It doesn't need the driver.
 
-1. On pve02, check that `findmnt /mnt/ollama-backups` shows the NFS mount from `.12`,
-   then run `pvesm set ollama-backups --disable 0`. Re-enable it before the play: the
+1. Turn pve01's own host firewall off:
+   `ansible-playbook playbooks/configure-pve-firewall.yml --limit pve01`. The datacenter
+   firewall is on, and a node with no `host.fw` drops inbound traffic, NFS included.
+   Gate: `/etc/pve/nodes/pve01/host.fw` holds `enable: 0`. Port 2049 has no listener
+   until step 2 installs the NFS server, so don't test it here.
+2. Rebuild the NFS server first:
+   `ansible-playbook playbooks/configure-backup-store.yml --limit pve01`. The reinstall
+   removed its exports, and A4 unmounted every client, so no client can mount until
+   this runs. Gate: `exportfs` on pve01 lists `/srv/backups` and `/srv/backups/pete-pi`,
+   and `nc -zv 192.168.50.12 2049` from pve02 connects.
+3. On pve02, mount the store and re-enable it: `mount /mnt/ollama-backups`, check
+   that `findmnt /mnt/ollama-backups` shows the NFS mount from `.12`, then run
+   `pvesm set ollama-backups --disable 0`. Re-enable it before the client play: the
    role proves the mounted store reads `active`, and a disabled store never does.
    `is_mountpoint` keeps any node without the mount from writing to its root disk.
-2. `ansible-playbook playbooks/configure-backup-store.yml`, then
+4. `ansible-playbook playbooks/configure-backup-store.yml`, then
    `ansible-playbook playbooks/configure-wd-disk.yml`. On pete-pi-1, restart the
    automount: `sudo systemctl restart 'mnt-ollama\x2dbackups.automount'`.
-3. Gate: `pvesm status --storage ollama-backups` shows `active` on pve02 and pve03,
+5. Gate: `pvesm status --storage ollama-backups` shows `active` on pve02 and pve03,
    and `ls /mnt/ollama-backups/dump | wc -l` on pve02 and pve03 matches the survey's
    count (804). Count on a node, not on pete-pi-1: the Pi mounts only its own export,
    `/srv/backups/pete-pi`, which holds `uptime-kuma` and no `dump`. On the Pi, check
    that `findmnt /mnt/ollama-backups` shows that NFS mount.
-4. `ansible-playbook playbooks/configure-pve01.yml -e nvidia_driver_allow_reboot=true`.
+6. `ansible-playbook playbooks/configure-pve01.yml -e nvidia_driver_allow_reboot=true`.
    It sets the time zone and the `.lab` domain, downloads the template with `pveam`,
    and installs the driver. It ends with "CT 246 does not exist yet". That message is
    expected at this point. Gate: the `nvidia-smi` line lists both UUIDs at
@@ -164,8 +175,13 @@ the store is disabled, every job fails. It doesn't need the driver.
 2. From `main`, run:
    - `ansible-playbook playbooks/configure-lxc-features.yml`, then `pct reboot 246` on pve01.
    - `ansible-playbook playbooks/configure-pve01.yml -e lxc_gpu_allow_restart=true`
-   - `ansible-playbook playbooks/configure-ollama-246.yml`
-   - `./scripts/deploy-search.sh`. It targets the `ollama` group, which holds only ollama-246.
+   - `ansible-playbook playbooks/configure-ollama-246.yml`. Run it from a `main` that
+     holds the allowlist drop-ins (`PET-528`, Codex P1 on 26f7ee1). Gate: its last play
+     reports that every installed guarded unit requires and follows
+     `ollama-allowlist.service`.
+   - `./scripts/deploy-search.sh`. It places the service's secrets, so Pedro runs it, or
+     a Mac session runs it on his word in its own chat (`PET-511`). It targets the
+     `ollama` group, which holds only ollama-246.
 3. Bring pve01 into the node baseline. Each play reaches pve01 through `pve_gpu`:
    - `ansible-playbook playbooks/configure-pve-firewall.yml --check --diff`, then without
      `--check`. It writes pve01's `host.fw` with `enable: 0`, which every node needs
@@ -184,8 +200,16 @@ the store is disabled, every job fails. It doesn't need the driver.
 
 Before part E passes, you can boot Ubuntu again. Power off, unplug the 128 GB drive,
 and boot sda. ollama-host comes back at `.12` with Ollama, search and the export as
-they were. Then run `pvecm delnode pve01` on pve03 and re-add the QDevice
-(`roles/cluster-qdevice`, through `playbooks/configure-pete-pi.yml`).
+they were. Then restore the two-node cluster's third vote:
+
+1. On pve03, run `pvecm delnode pve01`. The cluster then has two votes and needs both.
+2. On pve03, register the QDevice: `pvecm qdevice setup 192.168.50.4`. It asks for the
+   Pi's root password, which Pedro types. `roles/cluster-qdevice` never runs this step;
+   it only installs and serves qnetd.
+3. `ansible-playbook playbooks/configure-pete-pi.yml --tags qdevice`. The setup leaves
+   qnetd's certificate store owned by root, and the role gives it back to `coroqnetd`.
+4. Gate: `pvecm status` on pve03 shows `Expected votes: 3` and the QDevice line reads
+   `A,V`. `A,NV` means the QDevice is registered and casts no vote.
 
 ## After it passes
 
