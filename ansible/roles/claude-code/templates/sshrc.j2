@@ -8,17 +8,46 @@ case "$(id -un)" in
 {% endfor %}
   *) exit 0 ;;
 esac
-# sshd runs this file once per session channel, and an SSH app opens several channels on one
-# connection (shell, SFTP, status probes). SSH_CONNECTION is the same for every channel of a
-# connection, so the first channel takes an atomic mkdir lock in the sticky /dev/shm and the
-# others exit. The lock is the user's own, so it can only silence later channels of a
-# connection that already sent its notice.
-key="$(printf '%s' "$SSH_CONNECTION" | sha256sum | cut -c1-16)"
-lock="/dev/shm/petedio-ssh-notify.$(id -u).$key"
-find /dev/shm -maxdepth 1 -name "petedio-ssh-notify.$(id -u).*" -user "$(id -u)" -mmin +10 \
-    -exec rmdir {} + >/dev/null 2>&1
-mkdir "$lock" 2>/dev/null || exit 0
 src="${SSH_CONNECTION%% *}"
-( timeout 10 /usr/local/bin/notify-pedro "SSH login: $(id -un)@$(hostname) from ${src:-unknown}" \
-    >/dev/null 2>&1 & )
-exit 0
+notify() {
+  ( timeout 10 /usr/local/bin/notify-pedro "SSH login: $(id -un)@$(hostname) from ${src:-unknown}" \
+      >/dev/null 2>&1 & )
+  exit 0
+}
+
+# sshd runs this file once per session channel, and an SSH app opens several channels on one
+# connection (shell, SFTP, status probes). Every channel descends from the connection's own
+# sshd process, so the first channel takes an atomic mkdir lock named for that process and its
+# start time, and the later channels exit.
+#
+# FAIL OPEN. When the sshd ancestor, the lock directory or its ownership is not what the
+# play provisioned, send the notice: a duplicate DM costs less than a silenced alert.
+#
+# The lock directory is /run/petedio-ssh-notify/<user>, 0700 and owned by that user, made by
+# the play (tmpfiles.d), so no other local account can create a name in it. Locks are removed
+# once their sshd process has gone, so a lock lives exactly as long as its connection.
+lockdir="{{ claude_operator_ssh_notify_dir }}/$(id -un)"
+[ -d "$lockdir" ] && [ -O "$lockdir" ] || notify
+
+p="$PPID"
+n=0
+while [ "$n" -lt 4 ]; do
+  case "$(cat "/proc/$p/comm" 2>/dev/null)" in sshd*) break ;; esac
+  p="$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null)"
+  [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null || notify
+  n=$((n + 1))
+done
+case "$(cat "/proc/$p/comm" 2>/dev/null)" in sshd*) ;; *) notify ;; esac
+start="$(awk '{print $22}' "/proc/$p/stat" 2>/dev/null)"
+[ -n "$start" ] || notify
+
+for f in "$lockdir"/*; do
+  [ -d "$f" ] || continue
+  name="${f##*/}"
+  pid="${name%%.*}"
+  st="${name#*.}"
+  [ "$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null)" = "$st" ] || rmdir "$f" 2>/dev/null
+done
+
+mkdir "$lockdir/$p.$start" 2>/dev/null || exit 0
+notify
