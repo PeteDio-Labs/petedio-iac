@@ -9,6 +9,57 @@ case "$(id -un)" in
   *) exit 0 ;;
 esac
 src="${SSH_CONNECTION%% *}"
-( timeout 10 /usr/local/bin/notify-pedro "SSH login: $(id -un)@$(hostname) from ${src:-unknown}" \
-    >/dev/null 2>&1 & )
-exit 0
+notify() {
+  ( timeout 10 /usr/local/bin/notify-pedro "SSH login: $(id -un)@$(hostname) from ${src:-unknown}" \
+      >/dev/null 2>&1 & )
+  exit 0
+}
+
+# sshd runs this file once per session channel, and an SSH app opens several channels on one
+# connection (shell, SFTP, status probes). OpenSSH forks one child per channel, and that child
+# runs this file, so the first sshd ancestor is the channel's own child. Its parent is the
+# connection's sshd process, which every channel of the connection shares. The first channel
+# takes an atomic mkdir lock named for that process and its start time, and the later
+# channels exit.
+#
+# FAIL OPEN. A notice is suppressed only when the lock for THIS connection already exists.
+# When the sshd ancestors, the lock directory, its ownership or the lock creation is not what
+# the play provisioned, send the notice: a duplicate DM costs less than a silenced alert.
+#
+# The lock directory is /run/petedio-ssh-notify/<user>, 0700 and owned by that user, made by
+# the play (tmpfiles.d), so no other local account can create a name in it. Locks are removed
+# once their sshd process has gone, so a lock lives exactly as long as its connection.
+lockdir="{{ claude_operator_ssh_notify_dir }}/$(id -un)"
+[ -d "$lockdir" ] && [ -O "$lockdir" ] || notify
+
+p="$PPID"
+seen=0
+n=0
+while [ "$n" -lt 6 ]; do
+  case "$(cat "/proc/$p/comm" 2>/dev/null)" in
+    sshd*)
+      seen=$((seen + 1))
+      [ "$seen" -eq 2 ] && break
+      ;;
+  esac
+  p="$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null)"
+  [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null || notify
+  n=$((n + 1))
+done
+[ "$seen" -eq 2 ] || notify
+start="$(awk '{print $22}' "/proc/$p/stat" 2>/dev/null)"
+[ -n "$start" ] || notify
+
+for f in "$lockdir"/*; do
+  [ -d "$f" ] || continue
+  name="${f##*/}"
+  pid="${name%%.*}"
+  st="${name#*.}"
+  [ "$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null)" = "$st" ] || rmdir "$f" 2>/dev/null
+done
+
+lock="$lockdir/$p.$start"
+# Exit only when the lock already exists. A mkdir that fails for any other reason, such as a
+# directory the user made read-only, falls through to the notice.
+mkdir "$lock" 2>/dev/null || { [ -d "$lock" ] && exit 0; }
+notify

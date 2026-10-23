@@ -480,7 +480,7 @@ claude_pve_get: "{{ claude_home }}/.local/bin/pve-get"
 # Ansible toolchain, and SSH to the Proxmox nodes — through a SECOND Unix user, not through
 # `claude`. `claude` is the general session user, and it ran the retired work loop's
 # `claude -p` (PET-399, retired by PET-547). claude-ops runs no unattended process and no
-# Bobbert — nothing here ever sets a bot identity to claude_ops_user, and tasks/claude-ops.yml
+# Muse — nothing here ever sets a bot identity to claude_ops_user, and tasks/claude-ops.yml
 # asserts it differs from claude_user.
 #
 # DEFAULT FALSE, like every other delivery in this role. Do not set this true in host_vars
@@ -669,3 +669,11 @@ claude_operator_ssh_key_options: >-
 claude_operator_notify_users:
   - "{{ claude_operator_user }}"
   - "{{ claude_ops_user }}"
+
+# --- Break-glass Vault admin for the operator (PET-714) -------------------------------------
+# tasks/breakglass.yml installs /usr/local/bin/vault-breakglass. It needs the Vault CLI from
+# tasks/iac-tools.yml and notify-pedro, which configure-claude-code.yml installs.
+claude_operator_breakglass_enable: true
+claude_operator_vault_addr: https://192.168.50.223:8200
+claude_operator_vault_ca_path: /usr/local/share/petedio/vault-ca.crt
+claude_operator_vault_username: pedro

@@ -303,7 +303,7 @@
   when: claude_pve_audit_enable | bool
 
 # --- claude-ops: a second, privileged session user (PET-531) --------------------------------
-# Pedro's Remote Control sessions, never the loop and never Bobbert — a distinct Unix user
+# Pedro's Remote Control sessions, never the loop and never Muse — a distinct Unix user
 # with its own Vault token, its own GitHub App, its own IaC toolchain install and SSH to the
 # Proxmox nodes. tasks/claude-ops.yml carries the design; defaults/main.yml carries why it is
 # a second user rather than a widened `claude`.
@@ -318,6 +318,15 @@
 - name: Let Pedro SSH in from his phone over the tailnet
   ansible.builtin.include_tasks: operator-ssh.yml
   when: claude_operator_ssh_enable | bool
+
+# --- Break-glass Vault admin (PET-714) -------------------------------------------------------
+# A one-hour Vault admin shell for the operator account, unlocked with a password and TOTP.
+- name: Install the operator's break-glass Vault login
+  ansible.builtin.include_tasks: breakglass.yml
+  when:
+    - claude_operator_ssh_enable | bool
+    - claude_operator_breakglass_enable | bool
+    - claude_iac_tools_enable | bool
 
 # --- Claude Code settings ------------------------------------------------------------------
 # SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles

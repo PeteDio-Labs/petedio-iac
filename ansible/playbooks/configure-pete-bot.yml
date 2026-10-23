@@ -91,7 +91,8 @@
     # The scheduled reports (PET-701). They read GitHub as the desk's App and Plane with
     # pete_bot_plane_api_key (scripts/seed-pete-bot-plane-key.sh). Without both, the reports
     # stay off, so a deploy before the seed changes nothing.
-    pete_bot_reports_repos: petedio-iac,petedio-workspace,petedio-vault,petedio-pm,pete-bot
+    pete_bot_reports_repos: "petedio-iac,petedio-workspace,petedio-vault,petedio-pm,pete-bot,\
+      petedio-usaa,petedio-media-control,petedio-media-iac,petedio-palworld-panel,skills"
     pete_bot_reports_ready: >-
       {{ (pete_bot_desk_ready | bool)
          and (pete_bot_plane_api_key | default('') | length > 0) }}
@@ -120,6 +121,9 @@
     #   kv/services/claude-workspace-mirror: lab_agent_github_app_id,
     #   lab_agent_github_installation_id, lab_agent_github_app_pem.
     #   lab-map's bearer is pete_bot_gateway_token_lab_map above.
+    # Optional on its own, and not one of the values lab_agent_ready counts (PET-672):
+    #   lab_agent_plane_token, from kv/services/lab-agent-plane. Without it lab-agent runs
+    #   with no plane_item tool.
     lab_agent_user: lab-agent
     lab_agent_dir: /opt/lab-agent
     lab_agent_bin: /opt/lab-agent/lab-agent
@@ -132,6 +136,15 @@
     # reaches the private vault over https with a token it mints from the read-only
     # petedio-workspace-mirror App, scoped to petedio-vault with contents:read (PET-542).
     lab_agent_github_key_file: /etc/lab-agent/github-app.pem
+    # The lab MCP (PET-667). The route pdlab.dev/mcp/lab sends here through cloudflared on
+    # LXC 112, the only source the allowlist and lab-agent admit.
+    lab_agent_mcp_port: 3017
+    lab_agent_mcp_peer: 192.168.50.112
+    lab_agent_access_team_domain: petedillo-labs.cloudflareaccess.com
+    lab_agent_access_emails: [pedelgadillo@gmail.com]
+    # The Access app's audience tag: `terraform output -raw lab_mcp_access_aud` in
+    # environments/homelab, after the route is applied. Not a secret. Empty keeps the MCP off.
+    lab_agent_access_aud: ""
     lab_agent_repos:
       vault: https://github.com/PeteDio-Labs/petedio-vault.git
       iac: https://github.com/PeteDio-Labs/petedio-iac.git
@@ -154,6 +167,26 @@
     lab_agent_ready: "{{ (lab_agent_set_count | int) == (lab_agent_values | length) }}"
 
   pre_tasks:
+    # PET-492. pete-bot holds a DOWN that starts inside the backup window and alerts only if
+    # its UP misses a deadline. The window comes from the stop-mode jobs, so a change to the
+    # schedule moves it. pve02's snapshot job restarts nothing and is left out. The zone is the
+    # homelab's one timezone. Each window runs 30 minutes from the job's start.
+    - name: Read the backup jobs and the homelab timezone
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../roles/{{ item.role }}/defaults/main.yml"
+        name: "{{ item.name }}"
+      loop:
+        - {role: backup-store, name: pete_bot_backup_defaults}
+        - {role: timezone, name: pete_bot_timezone_defaults}
+      loop_control:
+        label: "{{ item.role }}"
+
+    - name: Derive pete-bot's maintenance windows from the stop-mode backup jobs
+      ansible.builtin.set_fact:
+        pete_bot_maintenance_windows: >-
+          {%- for job in pete_bot_backup_defaults.backup_store_jobs | selectattr('mode', 'equalto', 'stop') %}
+          {{ pete_bot_timezone_defaults.timezone_name }} {{ job.schedule }} 30{{ ', ' if not loop.last else '' }}{%- endfor %}
+
     - name: Assert the secrets were provided
       ansible.builtin.assert:
         that:
@@ -201,6 +234,14 @@
           kv/services/lab-agent-pve with playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
           and kv/services/lab-agent with scripts/seed-lab-agent.sh, then deploy again.
           kv/services/claude-workspace-mirror comes from scripts/seed-workspace-mirror-vault.sh.
+
+    - name: Assert the lab MCP's audience tag is empty or well formed
+      ansible.builtin.assert:
+        that:
+          - lab_agent_access_aud | length == 0 or lab_agent_access_aud is match('\\A[0-9a-f]{64}\\Z')
+        fail_msg: >-
+          lab_agent_access_aud must be empty (MCP off) or the 64-hex audience tag from
+          `terraform output -raw lab_mcp_access_aud`.
 
     - name: Look for the lab-agent binary on the controller
       ansible.builtin.stat:
@@ -500,6 +541,55 @@
           loop_control:
             label: "{{ item.key }}"
           changed_when: false
+
+        - name: Install the lab MCP's allowlist
+          ansible.builtin.template:
+            src: "{{ item.src }}"
+            dest: "{{ item.dest }}"
+            owner: root
+            group: root
+            mode: "0644"
+          loop:
+            - { src: lab-mcp-allowlist.nft.j2, dest: "{{ lab_agent_conf_dir }}/lab-mcp-allowlist.nft" }
+            - { src: lab-mcp-allowlist.service.j2, dest: /etc/systemd/system/lab-mcp-allowlist.service }
+          register: lab_mcp_allowlist_files
+
+        # restarted, not started, when the table changed: a oneshot with RemainAfterExit stays
+        # "active" and would not reload a changed file on `started`.
+        - name: Load the lab MCP's allowlist
+          ansible.builtin.systemd_service:
+            name: lab-mcp-allowlist
+            enabled: true
+            state: "{{ 'restarted' if lab_mcp_allowlist_files is changed else 'started' }}"
+            daemon_reload: true
+
+        # ⚠ NEVER REMOVE AN INSTALLED PLANE TOKEN (PET-672). A deploy path that does not read
+        # kv/services/lab-agent-plane renders the env file without LAB_PLANE_TOKEN, and lab-agent
+        # restarts with no plane_item under a green health check. Fail instead, and name the fix.
+        - name: Find lab-agent's installed environment file
+          ansible.builtin.stat:
+            path: "{{ lab_agent_env_file }}"
+          register: lab_agent_env_stat
+
+        - name: Look for an installed Plane token
+          ansible.builtin.command: grep -q '^LAB_PLANE_TOKEN=.' {{ lab_agent_env_file | quote }}
+          register: lab_agent_plane_installed
+          changed_when: false
+          failed_when: lab_agent_plane_installed.rc > 1
+          check_mode: false
+          no_log: true
+          when: lab_agent_env_stat.stat.exists
+
+        - name: Refuse a deploy that would drop the installed Plane token
+          ansible.builtin.assert:
+            that:
+              - (lab_agent_plane_token | default('') | length > 0) or (lab_agent_plane_installed.rc | default(1)) != 0
+            fail_msg: >-
+              lab-agent's env file holds LAB_PLANE_TOKEN, but this deploy passed no
+              lab_agent_plane_token, so the render would remove it and lab-agent would lose
+              plane_item. Deploy with scripts/deploy-pete-bot.sh, which reads
+              kv/services/lab-agent-plane. A deploy-on-merge run needs pete-bot's deploy.yml
+              to read that path too.
 
         # Read by systemd, as root, before it drops to the service account. So 0600 root.
         - name: Install lab-agent's environment file
