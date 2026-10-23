@@ -645,6 +645,35 @@ whether that review can come from this App is a question this change does not re
 code. Flagging it rather than guessing: read the PR body for this branch's own note on it
 before relying on the App for anything past opening a PR.
 
+## Claude with break-glass Vault: `claude-vault` (PET-763)
+
+`claude-vault` gives a Claude Code session Vault admin for one hour. It runs the
+`vault-breakglass` login, then starts `claude --remote-control` under it, so the session inherits
+`VAULT_TOKEN` and you drive it from the Claude app. `host_vars/claude-247.yml` turns it on with
+`claude_operator_claude_vault_enable`.
+
+| | |
+|---|---|
+| Who | the operator account (`pedro`) only. The Remote Control units run as `claude` and `claude-ops` and never see the token |
+| Login | the `vault-breakglass` one: password, then the TOTP code with no prompt. One hour, bound to 247's /32 |
+| Where the token lives | the environment of the processes under `vault-breakglass`. Never on disk, never in the tmux server's environment |
+| When it ends | `vault-breakglass` stops the session when the token's TTL ends, and revokes the token on any exit |
+| Permission mode | `default`: every tool call asks, and the prompt reaches the phone |
+| Survives a dropped SSH | yes. tmux holds it; detach with `Ctrl-b d`, and `claude-vault` again reattaches |
+
+To set it up once, after the role lands, sign in as the operator:
+
+```bash
+claude auth login      # choose the claude.ai option; Remote Control refuses an API key
+```
+
+To use it, SSH in as `pedro` and run `claude-vault`. Enter the password, then the TOTP code.
+On the first run, Claude Code asks you to trust `~/vault-admin`. The session then shows in the
+Claude app as `vault-admin-HHMM`. To work in another directory, pass it: `claude-vault ~/iac`.
+
+The account's claude.ai login is a credential it did not hold before PET-763. It adds no
+reach, because the phone key that opens `pedro` also opens `claude-ops`, which holds one already.
+
 ## Verify
 
 A unit that is `active` is not a server that registered: one waiting at the consent prompt is

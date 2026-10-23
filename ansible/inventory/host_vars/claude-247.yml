@@ -108,8 +108,9 @@ claude_operator_ssh_enable: true
 # ⚠ A SOFTWARE KEY, BY PEDRO'S CHOICE (2026-10-21). He uses Termius's free tier, which makes
 # ssh-ed25519 keys in the app, not in the Secure Enclave, so malware on the phone could copy
 # the private key. He declined a paid app and a web terminal. What bounds the key: the from=
-# option admits only pete-pi-1's tailnet SNAT address, the account holds no Claude session and
-# no standing Vault admin, and every login DMs him. To harden it later, replace this key with
+# option admits only pete-pi-1's tailnet SNAT address, the account holds no standing Vault
+# admin, and every login DMs him. Since PET-763 the account also holds a claude.ai login for
+# claude-vault, which adds no reach: the same key opens claude-ops, which holds one already. To harden it later, replace this key with
 # a Secure Enclave or security key and drop ssh-ed25519 from the list below.
 claude_operator_ssh_key_types:
   - ecdsa-sha2-nistp256
@@ -119,3 +120,7 @@ claude_operator_ssh_key_types:
 claude_operator_ssh_keys:
   # Termius on Pedro's iPhone. SHA256:sCBBOscav/geXhURQcUBXHU2xa0hkwJG5D4Pmi4kc+k
   - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGXAJpChcCXn4s27WEGYfdPfVUNqpDjHtN4soJNJYY3N pedro-iphone-termius
+
+# PET-763: claude-vault, a Remote Control session started inside the break-glass Vault login.
+# tasks/claude-vault.yml and templates/claude-vault.j2 carry the design.
+claude_operator_claude_vault_enable: true

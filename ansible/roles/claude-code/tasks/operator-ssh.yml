@@ -17,8 +17,9 @@
 # TWO ACCOUNTS, ONE KEY.
 #   claude_ops_user  — the identity Pedro's Claude sessions run as. A phone login here is how
 #                      he drives a session or a tmux pane from the phone.
-#   claude_operator_user (pedro) — runs no Claude session and holds no standing credential.
-#                      It is where the break-glass Vault login happens (PET-714), because a
+#   claude_operator_user (pedro) — holds no standing Vault credential. It runs a Claude
+#                      session only through claude-vault (PET-763), inside the break-glass
+#                      login. It is where that login happens (PET-714), because a
 #                      token in pedro's shell environment is unreadable to claude-ops: another
 #                      UID cannot read /proc/<pid>/environ, and neither user has sudo.
 #
