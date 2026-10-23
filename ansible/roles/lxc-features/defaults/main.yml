@@ -126,6 +126,13 @@ lxc_features_declared:
   # sandboxed, so systemd builds mount namespaces: nesting. Nothing here runs Docker, so
   # no keyctl. The GPU device nodes are roles/lxc-gpu's, not a feature flag.
   "246": { nesting: "1" }                # ollama-246 — Ollama (both GPUs) + petedio-search
+  # forgejo-249 on pve03 (PET-756), Debian 13, systemd 257. forgejo.service sets
+  # PrivateTmp=true and ProtectSystem=full, so systemd builds a mount namespace for it,
+  # and that needs nesting. Nothing here runs Docker (roles/forgejo-mirror installs one Go
+  # binary), so no keyctl. Undeclared until 2026-10-23, when the play failed on pve03.
+  # forgejo.tf sets no features, so expect a restart pending: `pct reboot 249` stops the
+  # mirror for under a minute, so take that window with Pedro.
+  "249": { nesting: "1" }                # forgejo-249 — read-only Forgejo mirror
   # Declared but on neither node as of 2026-09-09. Kept so they are configured on
   # the way back rather than remembered: 106's rootfs will not `pct restore`
   # (lxc.idmap), and 244 is absent from both nodes' `pct list`.
