@@ -96,8 +96,8 @@ secret_id_file="${SECRETS_DIR}/terraform-local.secret_id"
 if [ ! -r "$role_id_file" ] || [ ! -r "$secret_id_file" ]; then
   f1 "AppRole creds not found at ${role_id_file} / ${secret_id_file} — provision them (see runbook) then re-run"
 else
-  role_id="$(cat "$role_id_file")"
-  secret_id="$(cat "$secret_id_file")"
+  # The Vault CLI reads each id from its file (`key=@file`), so the secret_id never
+  # appears in argv, `ps` or /proc/<pid>/cmdline (PET-696).
   # Log in via AppRole in a SUBSHELL so the scoped token never leaks into this script's
   # env or the operator's shell. Capture only the consumer-read result.
   #
@@ -106,7 +106,7 @@ else
   # your own token, so the read would pass with it and report a working AppRole.
   if consumer_url="$(
         approle_token="$(vault write -field=token auth/approle/login \
-            role_id="$role_id" secret_id="$secret_id" 2>/dev/null)" || exit 1
+            role_id=@"$role_id_file" secret_id=@"$secret_id_file" 2>/dev/null)" || exit 1
         [ -n "$approle_token" ] || exit 1
         VAULT_TOKEN="$approle_token" vault kv get -field=DATABASE_URL kv/poker/db 2>/dev/null
       )" && [ -n "$consumer_url" ]; then
@@ -124,7 +124,7 @@ else
   else
     f1 "terraform-local AppRole could not read kv/poker/db DATABASE_URL (login failed or policy gap)"
   fi
-  unset role_id secret_id consumer_url
+  unset consumer_url
 fi
 
 echo
