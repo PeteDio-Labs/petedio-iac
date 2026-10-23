@@ -1,0 +1,30 @@
+# breakglass.yml (PET-714): the one-hour Vault admin shell for the operator account. Included
+# from tasks/main.yml behind claude_operator_ssh_enable and claude_operator_breakglass_enable.
+# environments/homelab/vault-config/breakglass.tf carries the design; this file only installs
+# the wrapper and the CA it trusts. No credential passes through this role: the password and
+# the TOTP secret are Pedro's, set once by scripts/seed-breakglass-247.sh.
+---
+- name: Create the shared Vault CA directory
+  ansible.builtin.file:
+    path: "{{ claude_operator_vault_ca_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the Vault CA for the operator
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../../environments/homelab/vault-ca.crt"
+    dest: "{{ claude_operator_vault_ca_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+# Root-owned, so no session can rewrite what Pedro runs to unlock.
+- name: Install vault-breakglass
+  ansible.builtin.template:
+    src: vault-breakglass.j2
+    dest: /usr/local/bin/vault-breakglass
+    owner: root
+    group: root
+    mode: "0755"
