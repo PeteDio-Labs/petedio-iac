@@ -15,11 +15,11 @@ module "ingress" {
   tunnel_cname = data.cloudflare_zero_trust_tunnel_cloudflared.main.cname
 
   routes = {
-    "co-latro.pdlab.dev" = {
-      service = "http://192.168.50.230:80"          # VM-230 nginx (PET-58)
+    "seer.pdlab.dev" = {
+      service = "http://192.168.50.33:5055"          # Overseerr
     }
-    "admin.pdlab.dev" = {                            # the admin UI (PET-87)
-      service             = "http://192.168.50.241:8080" # or the nginx origin fronting MinIO + /fn
+    "auth.pdlab.dev" = {                             # Authentik
+      service             = "http://192.168.50.119:9000"
       access              = true
       allowed_idps        = [var.authentik_idp_id]   # from PET-38
       access_email_domain = "pdlab.dev"
