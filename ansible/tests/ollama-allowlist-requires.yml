@@ -110,12 +110,14 @@
               RemainAfterExit=yes
               ExecStart=/bin/false
 
+        # The verdict is the units' state, not the start call's result: on the GitHub runner
+        # systemd_service reported ok here while the guarded unit stayed inactive. Case 3
+        # proves the same unit does start, so "not active" means the guard held.
         - name: Case 2, start the guarded unit
           ansible.builtin.systemd_service:
             name: "{{ test_guarded }}"
             state: started
             daemon_reload: true
-          register: test_case2
           failed_when: false
 
         # noqa reason: the assert needs each unit's raw is-active word, failed included.
@@ -129,7 +131,6 @@
         - name: Case 2, the guarded unit did not start
           ansible.builtin.assert:
             that:
-              - test_case2 is failed
               - test_case2_state.stdout_lines[0] == 'failed'
               - test_case2_state.stdout_lines[1] != 'active'
             fail_msg: "The guarded unit started after its loader failed: {{ test_case2_state.stdout_lines }}"
