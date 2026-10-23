@@ -328,6 +328,16 @@
     - claude_operator_breakglass_enable | bool
     - claude_iac_tools_enable | bool
 
+# --- Claude with break-glass Vault (PET-763) -------------------------------------------------
+# claude-vault: the break-glass login, then a Remote Control session that holds the token.
+- name: Install claude-vault for the operator account
+  ansible.builtin.include_tasks: claude-vault.yml
+  when:
+    - claude_operator_ssh_enable | bool
+    - claude_operator_breakglass_enable | bool
+    - claude_iac_tools_enable | bool
+    - claude_operator_claude_vault_enable | bool
+
 # --- Claude Code settings ------------------------------------------------------------------
 # SEEDED, NOT OWNED (`force: false`). Claude Code writes this file itself — /config toggles
 # and one-time prompts land here — so an Ansible-owned copy would silently revert choices

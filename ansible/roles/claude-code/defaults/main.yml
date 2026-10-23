@@ -694,3 +694,19 @@ claude_operator_breakglass_enable: true
 claude_operator_vault_addr: https://192.168.50.223:8200
 claude_operator_vault_ca_path: /usr/local/share/petedio/vault-ca.crt
 claude_operator_vault_username: pedro
+
+# --- claude-vault: Claude with break-glass Vault admin (PET-763) ----------------------------
+# tasks/claude-vault.yml installs /usr/local/bin/claude-vault and the operator's own Claude Code.
+# DEFAULT FALSE, like every delivery in this role: host_vars/claude-247.yml turns it on.
+claude_operator_claude_vault_enable: false
+claude_operator_npm_prefix: "/home/{{ claude_operator_user }}/.npm-global"
+claude_operator_claude_vault_dir: "/home/{{ claude_operator_user }}/vault-admin"
+# `default` asks before any tool call that changes something or runs a command outside Claude
+# Code's read-only set, and the prompt reaches the phone. File reads, searches and read-only
+# shell commands run without asking. A session holding Vault admin does not run in auto or
+# bypassPermissions; the settings file below disables bypassPermissions outright.
+claude_operator_claude_vault_permission_mode: default
+# Root-owned settings claude-vault passes with --settings. With --setting-sources user it keeps
+# a repository's .claude/settings*.json allow rules out of the session, and with
+# --strict-mcp-config it loads no MCP server, so no connector feeds a session that holds the token.
+claude_operator_claude_vault_settings_path: /usr/local/share/petedio/claude-vault-settings.json

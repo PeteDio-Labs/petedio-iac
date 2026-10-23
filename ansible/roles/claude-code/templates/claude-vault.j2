@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# claude-vault (PET-763): a Claude Code Remote Control session that holds the one-hour
+# break-glass Vault token, for {{ claude_operator_user }} on this host.
+#
+#   claude-vault [DIR]     log in with the password and a TOTP code, then start the session
+#                          in DIR (default {{ claude_operator_claude_vault_dir }})
+#   Ctrl-b d               detach; the session keeps running and you drive it from the app
+#   claude-vault           while one runs, reattaches to it and ignores DIR
+#
+# The login is vault-breakglass's, unchanged: userpass and TOTP, a token bound to this host's
+# /32 that Vault ends after one hour. The token lives only in the environment of the processes
+# under vault-breakglass, which run as {{ claude_operator_user }}. It is never written to disk,
+# and claude and claude-ops, other UIDs with no sudo, cannot read it. vault-breakglass stops
+# the session when the token's TTL ends and revokes the token when the session exits.
+#
+# tmux holds the session, so a dropped SSH connection does not end it. The token stays out of
+# the tmux server's environment: it is created after tmux starts, inside the pane's process.
+set -euo pipefail
+
+[ "$(id -un)" = "{{ claude_operator_user }}" ] || {
+  echo "claude-vault: run this as {{ claude_operator_user }}, not $(id -un)." >&2
+  exit 2
+}
+
+tmux_session=claude-vault
+claude_bin="{{ claude_operator_npm_prefix }}/bin/claude"
+
+# The wrapper's own launch passes --in-pane, so the pane skips this block and keeps the DIR the
+# block chose. Any other run, inside tmux or not, chooses DIR here.
+if [ "${1:-}" != --in-pane ]; then
+  if tmux has-session -t "$tmux_session" 2>/dev/null; then
+    [ "$#" -eq 0 ] || echo "claude-vault: a session is already open, so $1 is ignored." >&2
+    echo "claude-vault: reattaching. Detach with Ctrl-b d." >&2
+    if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t "$tmux_session"; fi
+    exec tmux attach-session -t "$tmux_session"
+  fi
+  dir="${1:-{{ claude_operator_claude_vault_dir }}}"
+  [ -d "$dir" ] || { echo "claude-vault: $dir is not a directory." >&2; exit 2; }
+  # -c starts the pane in DIR, so no path passes through tmux's command parsing. From inside
+  # another tmux session, start it detached and switch to it, because tmux refuses to nest.
+  if [ -n "${TMUX:-}" ]; then
+    tmux new-session -d -s "$tmux_session" -c "$dir" /usr/local/bin/claude-vault --in-pane
+    exec tmux switch-client -t "$tmux_session"
+  fi
+  exec tmux new-session -s "$tmux_session" -c "$dir" /usr/local/bin/claude-vault --in-pane
+fi
+
+[ -x "$claude_bin" ] || {
+  echo "claude-vault: $claude_bin is missing; re-run the claude-code role." >&2
+  exit 2
+}
+
+# Remote Control needs a full claude.ai login, not an API key or a setup-token. Check it
+# before the TOTP code is spent.
+# `claude auth status` prints JSON whose authMethod is claude.ai for that login. Output this
+# script cannot parse is reported as unreadable, not as a missing login.
+auth_json="$("$claude_bin" auth status 2>/dev/null || true)"
+auth_method="$(printf '%s' "$auth_json" | jq -r '.authMethod // "none"' 2>/dev/null || echo unreadable)"
+[ "$auth_method" = "claude.ai" ] || {
+  if [ "$auth_method" = unreadable ]; then
+    echo "claude-vault: could not parse '$claude_bin auth status'; run it and check its output." >&2
+  else
+    echo "claude-vault: Claude Code has no claude.ai login for $(id -un) (found: $auth_method)." >&2
+    echo "claude-vault: run $claude_bin auth login and choose the claude.ai option." >&2
+  fi
+  read -r -t 300 -p "Press Enter to close." _ || true
+  exit 1
+}
+
+rc=0
+# --setting-sources user: a repository in DIR cannot pre-approve a command through its
+# .claude/settings*.json. --strict-mcp-config with no --mcp-config loads no MCP server.
+/usr/local/bin/vault-breakglass "$claude_bin" \
+  --remote-control "vault-admin-$(date +%H%M)" \
+  --permission-mode {{ claude_operator_claude_vault_permission_mode }} \
+  --setting-sources user \
+  --settings {{ claude_operator_claude_vault_settings_path }} \
+  --strict-mcp-config || rc=$?
+
+echo "claude-vault: the session ended (exit $rc). The token is revoked unless a REVOKE FAILED line shows above." >&2
+read -r -t 300 -p "Press Enter to close." _ || true
+exit "$rc"

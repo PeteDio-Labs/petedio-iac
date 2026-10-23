@@ -1,0 +1,123 @@
+# claude-vault.yml (PET-763): a Claude Code Remote Control session for the operator account,
+# started inside the break-glass Vault login. Included from tasks/main.yml behind
+# claude_operator_claude_vault_enable and the break-glass conditions, so it lands only where
+# vault-breakglass does. templates/claude-vault.j2 carries the design.
+#
+# WHAT THIS ADDS TO THE OPERATOR ACCOUNT. Its own Claude Code install and, once Pedro signs in,
+# a claude.ai login in /home/{{ claude_operator_user }}/.claude. That login is a credential the
+# account did not hold before PET-763. It adds no reach: the phone key that opens this account
+# also opens claude-ops, which already holds a claude.ai login. It adds no Vault access either:
+# Vault admin still needs the password and a TOTP code at every unlock.
+#
+# NO CREDENTIAL PASSES THROUGH THIS ROLE. The claude.ai login is an operator step
+# (`claude auth login`, as the operator), and the Vault token exists only at run time.
+---
+# The operator account runs a Claude session and owns its home, so a link it plants at a path
+# root writes is the PET-410 attack. Check every path root writes below before any write. The
+# npm prefix and the working directory count too: a link there would hand the file module's
+# chown the link's target.
+- name: Check the paths root writes in the operator's home are not symlinks
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - "/home/{{ claude_operator_user }}/.npmrc"
+    - "/home/{{ claude_operator_user }}/.bashrc"
+    - "{{ claude_operator_npm_prefix }}"
+    - "{{ claude_operator_npm_prefix }}/bin"
+    - "{{ claude_operator_claude_vault_dir }}"
+  register: claude_operator_paths
+
+- name: Refuse to write through a symlink in the operator's home
+  ansible.builtin.assert:
+    that:
+      - not (item.stat.islnk | default(false))
+    fail_msg: >-
+      {{ item.item }} is a symlink to
+      {{ item.stat.lnk_target | default('unknown') }}. The tasks below run as root and set
+      owner/group/mode, so writing through it would hand that target to
+      {{ claude_operator_user }} (PET-410). Remove the link and re-run.
+  loop: "{{ claude_operator_paths.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+# Separate from claude_npm_prefix and claude_ops_npm_prefix, under the operator's 0700 home, so
+# neither session user can plant the binary claude-vault runs.
+- name: Create the operator's npm prefix
+  ansible.builtin.file:
+    path: "{{ claude_operator_npm_prefix }}/bin"
+    state: directory
+    follow: false
+    owner: "{{ claude_operator_user }}"
+    group: "{{ claude_operator_user }}"
+    mode: "0755"
+
+- name: Point the operator's npm at its own prefix
+  ansible.builtin.copy:
+    dest: "/home/{{ claude_operator_user }}/.npmrc"
+    owner: "{{ claude_operator_user }}"
+    group: "{{ claude_operator_user }}"
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/claude-code).
+      prefix={{ claude_operator_npm_prefix }}
+
+# For the one-time `claude auth login`. claude-vault itself calls the binary by its full path.
+- name: Put the operator's npm bin first on its PATH
+  ansible.builtin.blockinfile:
+    path: "/home/{{ claude_operator_user }}/.bashrc"
+    owner: "{{ claude_operator_user }}"
+    group: "{{ claude_operator_user }}"
+    mode: "0644"
+    create: true
+    marker: "# {mark} ANSIBLE MANAGED BLOCK (claude-code)"
+    block: |
+      export PATH="{{ claude_operator_npm_prefix }}/bin:$PATH"
+
+# Installed only when absent, for the reason tasks/main.yml gives: the auto-updater owns the
+# version. runuser, not become_user, for the reason given there too.
+- name: Check whether the operator's Claude Code is already installed
+  ansible.builtin.stat:
+    path: "{{ claude_operator_npm_prefix }}/bin/claude"
+  register: claude_operator_binary
+
+- name: Install Claude Code for the operator (npm global, as the operator)
+  ansible.builtin.command:
+    cmd: runuser -u {{ claude_operator_user }} -- npm install -g {{ claude_npm_package }}
+  environment:
+    HOME: "/home/{{ claude_operator_user }}"
+    NPM_CONFIG_PREFIX: "{{ claude_operator_npm_prefix }}"
+  when: not claude_operator_binary.stat.exists
+  changed_when: true
+
+# A directory of its own, because Claude Code never saves workspace trust for a home directory
+# and would ask on every run.
+- name: Create the claude-vault working directory
+  ansible.builtin.file:
+    path: "{{ claude_operator_claude_vault_dir }}"
+    state: directory
+    follow: false
+    owner: "{{ claude_operator_user }}"
+    group: "{{ claude_operator_user }}"
+    mode: "0700"
+
+# Root-owned, so the session cannot loosen its own settings. defaults/main.yml says what each
+# flag claude-vault passes with it keeps out.
+- name: Install the claude-vault session settings
+  ansible.builtin.copy:
+    dest: "{{ claude_operator_claude_vault_settings_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {{ {'disableClaudeAiConnectors': true,
+          'permissions': {'disableBypassPermissionsMode': 'disable'}} | to_nice_json }}
+
+# Root-owned, like vault-breakglass, so no session can rewrite what Pedro runs to unlock.
+- name: Install claude-vault
+  ansible.builtin.template:
+    src: claude-vault.j2
+    dest: /usr/local/bin/claude-vault
+    owner: root
+    group: root
+    mode: "0755"
