@@ -36,4 +36,4 @@ then re-run the play with the new token.
 ## Used by
 
 `ansible/playbooks/configure-palworld-tunnel.yml` — the connector for `palworld.pdlab.dev`
-on `palworld-mc`.
+on `palworld-234`.
