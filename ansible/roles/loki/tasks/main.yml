@@ -1,0 +1,76 @@
+---
+# See defaults/main.yml for why this exists.
+
+- name: Install the apt prerequisites
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, gnupg]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Fetch Grafana's signing key
+  ansible.builtin.get_url:
+    url: "{{ loki_apt_key_url }}"
+    dest: /etc/apt/keyrings/grafana.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add Grafana's apt repository
+  ansible.builtin.deb822_repository:
+    name: grafana
+    types: [deb]
+    uris: https://apt.grafana.com
+    suites: [stable]
+    components: [main]
+    signed_by: /etc/apt/keyrings/grafana.asc
+    state: present
+
+- name: Install Loki
+  ansible.builtin.apt:
+    name: loki
+    state: present
+    update_cache: true
+
+# Loki refuses a config it cannot parse, so a bad file never reaches the live path.
+- name: Land the Loki config
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: /etc/loki/config.yml
+    owner: root
+    group: loki
+    mode: "0640"
+    validate: /usr/bin/loki -config.file=%s -verify-config
+  notify: Restart loki
+
+- name: Apply a pending restart now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start Loki
+  ansible.builtin.systemd:
+    name: loki
+    enabled: true
+    state: started
+
+- name: Wait until Loki is ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ loki_port }}/ready"
+    return_content: true
+  register: loki_ready
+  until: loki_ready.status == 200 and 'ready' in loki_ready.content
+  retries: 30
+  delay: 5
+
+# A ready store is not proof that a shipper reached it. Count the streams it holds and say so.
+# Zero streams after a first run is expected, so the play reports the count and does not fail on it.
+- name: Read back the label names Loki holds
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ loki_port }}/loki/api/v1/labels"
+    return_content: true
+  register: loki_labels
+
+- name: Say what was examined
+  ansible.builtin.debug:
+    msg: >-
+      loki answers ready on {{ loki_port }} and holds {{ loki_labels.json.data | default([]) | length }}
+      label names. Zero means no shipper has pushed yet: run playbooks/configure-log-shipping.yml.

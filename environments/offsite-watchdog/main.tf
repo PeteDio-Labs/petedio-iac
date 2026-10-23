@@ -6,10 +6,11 @@
 # is in README.md). Nothing here runs from CI: apply it by hand from 247.
 
 locals {
-  name       = "petedio-watchdog"
-  param_hook = "/petedio-watchdog/discord_webhook"
-  param_beat = "/petedio-watchdog/heartbeat_secret"
-  tags       = { project = "petedio-watchdog" }
+  name          = "petedio-watchdog"
+  param_token   = "/petedio-watchdog/discord_bot_token"
+  param_channel = "/petedio-watchdog/discord_dm_channel_id"
+  param_beat    = "/petedio-watchdog/heartbeat_secret"
+  tags          = { project = "petedio-watchdog" }
 }
 
 # The watchdog's secrets live in Vault. The aws provider authenticates from this read, and the
@@ -33,10 +34,17 @@ provider "aws" {
   }
 }
 
-resource "aws_ssm_parameter" "discord_webhook" {
-  name             = local.param_hook
+resource "aws_ssm_parameter" "discord_bot_token" {
+  name             = local.param_token
   type             = "SecureString"
-  value_wo         = ephemeral.vault_kv_secret_v2.watchdog.data["discord_webhook_url"]
+  value_wo         = ephemeral.vault_kv_secret_v2.watchdog.data["discord_bot_token"]
+  value_wo_version = 1 # bump to push a rotated value from Vault
+}
+
+resource "aws_ssm_parameter" "discord_dm_channel_id" {
+  name             = local.param_channel
+  type             = "SecureString"
+  value_wo         = ephemeral.vault_kv_secret_v2.watchdog.data["discord_dm_channel_id"]
   value_wo_version = 1 # bump to push a rotated value from Vault
 }
 
@@ -89,7 +97,7 @@ data "aws_iam_policy_document" "fn" {
   }
   statement {
     actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.discord_webhook.arn, aws_ssm_parameter.heartbeat_secret.arn]
+    resources = [aws_ssm_parameter.discord_bot_token.arn, aws_ssm_parameter.discord_dm_channel_id.arn, aws_ssm_parameter.heartbeat_secret.arn]
   }
   statement {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
@@ -121,13 +129,14 @@ resource "aws_lambda_function" "fn" {
 
   environment {
     variables = {
-      TABLE             = aws_dynamodb_table.state.name
-      PARAM_DISCORD     = local.param_hook
-      PARAM_HEARTBEAT   = local.param_beat
-      HEARTBEAT_MAX_AGE = tostring(var.heartbeat_max_age_seconds)
-      CHECKS            = jsonencode(var.public_checks)
-      DAILY_HOUR_UTC    = "12"
-      FAIL_THRESHOLD    = "2"
+      TABLE                 = aws_dynamodb_table.state.name
+      PARAM_DISCORD_TOKEN   = local.param_token
+      PARAM_DISCORD_CHANNEL = local.param_channel
+      PARAM_HEARTBEAT       = local.param_beat
+      HEARTBEAT_MAX_AGE     = tostring(var.heartbeat_max_age_seconds)
+      CHECKS                = jsonencode(var.public_checks)
+      DAILY_HOUR_UTC        = "12"
+      FAIL_THRESHOLD        = "2"
     }
   }
 

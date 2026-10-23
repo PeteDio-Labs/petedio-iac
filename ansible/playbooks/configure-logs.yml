@@ -1,0 +1,16 @@
+---
+# configure-logs.yml — the central log store: Loki on LAN metrics-240, beside Prometheus and
+# Grafana. (PET-709)
+#
+# Run it after configure-metrics.yml, which lays the Grafana apt repository and the datasource file
+# that points at Loki.
+#
+#   ansible-playbook -i inventory/metrics.yml playbooks/configure-logs.yml
+#
+# Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
+
+- name: Configure the log store
+  hosts: metrics
+  become: true
+  roles:
+    - loki

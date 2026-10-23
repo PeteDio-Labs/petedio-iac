@@ -1,0 +1,16 @@
+---
+# loki (PET-709): the central log store, on the metrics host next to Prometheus and Grafana.
+#
+# WHY LOKI AND NOT VICTORIALOGS. PET-709 proposed VictoriaLogs. Loki ships as a package in Grafana's
+# apt repository, which roles/grafana already trusts on this host, and Grafana reads it natively.
+# VictoriaLogs ships as a GitHub release binary, and the cloud and lab fetch paths for those are
+# unreliable. The shipper is Grafana Alloy from the same repository (roles/alloy-journal).
+#
+# The push port listens on the LAN, like Prometheus's scrape targets and Grafana. Loki here takes
+# no authentication, so any LAN host can write to it. That is the same trust boundary as the rest of
+# the lab network; read it as an open item if the LAN stops being trusted.
+
+loki_apt_key_url: https://apt.grafana.com/gpg.key
+loki_listen_address: "0.0.0.0"
+loki_port: 3100
+loki_retention: 336h

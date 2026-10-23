@@ -3,8 +3,9 @@
 #
 # WHY. Every alert goes Uptime Kuma (the Pi) -> pete-bot (237) -> Discord. When 237 is down,
 # Kuma's webhook fails and nobody hears. When the Pi or Kuma is down, nothing watches either.
-# This timer probes from a different host and posts to a Discord channel webhook directly, so it
-# works when pete-bot does not.
+# This timer probes from a different host and posts to the Lab-Agent DM through Discord's bot API
+# directly, so it works when pete-bot does not. (It reuses the Lab-Agent app's bot token. A
+# Discord webhook cannot post into a DM, so a webhook does not fit.)
 #
 # ⚠ It shares fate with pve03: 247, 237 and 223 all run there. A pve03 failure silences this
 # probe too. pete-pi-2 is separate hardware and the better home once a session can log in to it
@@ -33,9 +34,11 @@ lab_watchdog_targets:
     ok: "200"
     insecure: true
 
-# Absent by default. The deploy script passes it from kv/services/lab-watchdog,
-# field discord_webhook_url. A run without it leaves the file on the host as it is.
-lab_watchdog_discord_webhook_url: ""
+# Absent by default. The deploy script passes them from kv/services/lab-watchdog, fields
+# discord_bot_token and discord_dm_channel_id. A run without both leaves the file on the host
+# as it is.
+lab_watchdog_discord_bot_token: ""
+lab_watchdog_discord_dm_channel_id: ""
 
 # The off-site heartbeat (PET-722). Both absent by default; the deploy script passes them from
 # kv/services/aws-watchdog (heartbeat_url, heartbeat_secret). A run without both leaves the

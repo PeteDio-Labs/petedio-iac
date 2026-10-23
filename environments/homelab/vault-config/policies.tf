@@ -268,17 +268,14 @@ resource "vault_policy" "media_ci" {
 
 
 # palworld-panel-cd: the petedio-palworld-panel repo's CD role — deploy.yml runs the native
-# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the ansible
-# SSH key (to reach 234) and the panel's own service secret (REST admin password + restricted
-# start-hook key). NOT the broader ci-read/ansible scope. (PET-266)
+# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the panel's
+# own service secret (REST admin password, restricted start-hook key and its own deploy SSH
+# key, authorized on 234 alone). NOT kv/iac/lxc-ssh and NOT the broader ci-read/ansible
+# scope. (PET-266, PET-724)
 resource "vault_policy" "palworld_panel_cd" {
   name = "palworld-panel-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/palworld-panel" {
       capabilities = ["read"]
     }
@@ -315,16 +312,61 @@ resource "vault_policy" "pete_bot_cd" {
   name = "pete-bot-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/pete-bot" {
       capabilities = ["read"]
     }
 
     path "kv/metadata/services/pete-bot" {
       capabilities = ["list"]
+    }
+
+    # lab-agent shares 237 and this play (PET-670): its ask bearer, its Vault token and its
+    # read-only Proxmox token.
+    path "kv/data/services/lab-agent" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/lab-agent-pve" {
+      capabilities = ["read"]
+    }
+
+    # The Plane token for lab-agent's plane_item tool (PET-672). Optional: an absent path
+    # leaves the tool off.
+    path "kv/data/services/lab-agent-plane" {
+      capabilities = ["read"]
+    }
+
+    # The read-only petedio-workspace-mirror App, for lab-agent's petedio-vault fetches.
+    # Deploy keys are disabled org-wide; petedio-search reads the vault the same way (PET-542).
+    path "kv/data/services/claude-workspace-mirror" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
+# lab-agent-presence: what lab-agent's vault_presence tool may read (PET-667, PET-670).
+# KV v2 METADATA under services/, and nothing under kv/data/. It can show that a secret
+# exists, its versions and when each was written. It cannot read a value or a field name.
+#
+# ⚠ NO ROLE MINTS THIS. scripts/seed-lab-agent.sh creates one periodic, orphan token with
+# this policy alone, and lab-agent renews it twice a day. A token that lapses fails
+# lab-agent's `secrets` health check; the seed's --rotate-vault-token replaces it.
+resource "vault_policy" "lab_agent_presence" {
+  name = "lab-agent-presence"
+
+  policy = <<-EOT
+    path "kv/metadata/services/" {
+      capabilities = ["list"]
+    }
+
+    path "kv/metadata/services/*" {
+      capabilities = ["read", "list"]
+    }
+
+    # The seed mints the token with -no-default-policy, so renewal is granted here. The
+    # default policy's other grants (cubbyhole, lookup, wrapping) are not needed.
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
     }
   EOT
 }
@@ -374,10 +416,6 @@ resource "vault_policy" "media_dash_cd" {
   name = "media-dash-cd"
 
   policy = <<-EOT
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/media/dashboard" {
       capabilities = ["read"]
     }

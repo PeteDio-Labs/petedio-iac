@@ -13,10 +13,10 @@
 # WHY TWO REPOSITORIES NOW (PET-542). petedio-search needs read access to petedio-vault, and
 # the org refuses its deploy key too. Pedro chose to widen this App over creating a third.
 # Every consumer scopes its token down to one repository in the token request: the broker on
-# 247 to petedio-workspace, petedio-search to petedio-vault.
+# 247 to petedio-workspace, petedio-search and lab-agent on 237 (PET-670) to petedio-vault.
 #
 # WHY FIVE (2026-09-30). The live installation also held petedio-iac, petedio-media-iac and
-# claude-skills when PET-542 read it, and Pedro chose to keep all five. Two are public, and
+# skills (named claude-skills until PET-736) when PET-542 read it, and Pedro chose to keep all five. Two are public, and
 # no consumer mints a token for the other three, but the key could. Narrow the list here and
 # on GitHub together.
 #
@@ -33,8 +33,8 @@
 # timer has been using it.
 #
 # WHAT THIS DOES NOT DO. It does not create the App, generate the key, or install it — those
-# are browser steps. It deploys nothing: scripts/deploy-claude-247.sh and
-# scripts/deploy-search.sh read this path.
+# are browser steps. It deploys nothing: scripts/deploy-claude-247.sh,
+# scripts/deploy-search.sh and scripts/deploy-pete-bot.sh read this path.
 #
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. Never prompts.
 #
@@ -57,7 +57,7 @@ VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 VAULT_PATH="kv/services/claude-workspace-mirror"
 ORG="PeteDio-Labs"
 # The installation must reach exactly these, in `sort` order, and REPO_COUNT of them.
-REPOS="$ORG/claude-skills, $ORG/petedio-iac, $ORG/petedio-media-iac, $ORG/petedio-vault, $ORG/petedio-workspace"
+REPOS="$ORG/petedio-iac, $ORG/petedio-media-iac, $ORG/petedio-vault, $ORG/petedio-workspace, $ORG/skills"
 REPO_COUNT=5
 APP_SLUG="petedio-workspace-mirror"
 

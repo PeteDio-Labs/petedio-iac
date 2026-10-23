@@ -30,7 +30,7 @@
 # ⚠ FOUR APPS, AND THEY MUST STAY FOUR. The mirror's is read-only on petedio-workspace, the
 # vault's pushes to petedio-vault, the code-push App pushes to three code repositories and
 # opens PRs there, and claude-ops's (PET-531) holds contents, pull_requests and workflows
-# write across PeteDio-Labs for Pedro's Remote Control sessions only — never Bobbert. Mixing
+# write across PeteDio-Labs for Pedro's Remote Control sessions only — never Muse. Mixing
 # any two of the four is outright dangerous: the vault's or code-push's or claude-ops's App in
 # the mirror's path hands a half-hourly ROOT timer a write credential, and claude-ops's App in
 # a `claude` path hands every session its workflows-write scope. The checks below refuse
@@ -257,7 +257,7 @@ step "Resolving the claude-ops identity (PET-531)"
 # runnable against a host whose user is already provisioned and whose Vault path has not been
 # written yet. Three fields or none; some of them is a failed seed, not a state.
 #
-# ⚠ THIS APP IS FOR PEDRO'S REMOTE CONTROL SESSIONS ONLY, NEVER BOBBERT. It carries contents,
+# ⚠ THIS APP IS FOR PEDRO'S REMOTE CONTROL SESSIONS ONLY, NEVER MUSE. It carries contents,
 # pull_requests AND workflows write across PeteDio-Labs — wider than any of the other three
 # Apps — because a Remote Control session run by Pedro may need to touch a workflow file. The
 # key lands 0400 claude-ops, in claude-ops's own home, unreadable by the `claude` session user.

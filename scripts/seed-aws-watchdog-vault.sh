@@ -3,11 +3,12 @@
 # (PET-722):
 #
 #   aws_access_key_id, aws_secret_access_key   the petedio-terraform-watchdog IAM user
-#   discord_webhook_url                        a Discord channel webhook for the AWS path
+#   discord_bot_token, discord_dm_channel_id   written by scripts/seed-watchdog-discord.sh (PET-728)
 #   heartbeat_secret                           generated here, 48 hex characters
 #   heartbeat_url                              the Lambda function URL (second run, --heartbeat-url)
 #
 # THE ORDER:
+#   0. scripts/seed-watchdog-discord.sh              (the Discord fields)
 #   1. this script, with no argument                 (before the first terraform apply)
 #   2. terraform apply in environments/offsite-watchdog (see its README)
 #   3. this script with --heartbeat-url              (pastes the URL the apply printed)
@@ -29,7 +30,7 @@ MODE=keys
 case "${1:-}" in
   "") ;;
   --heartbeat-url) MODE=url ;;
-  -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
   *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
 esac
 
@@ -74,16 +75,13 @@ if [ "$MODE" = url ]; then
   esac
   printf '%s' "$EXISTING" | jq --arg u "$URL" '. + {heartbeat_url: $u}' > "$TMP/data.json"
 else
-  step "AWS keys and Discord webhook"
+  step "AWS keys"
+  have discord_bot_token && have discord_dm_channel_id \
+    || die "$PATH_KV has no Discord fields yet. Run scripts/seed-watchdog-discord.sh first."
   read -rsp "  AWS access key ID for petedio-terraform-watchdog (hidden): " KID; echo
   read -rsp "  AWS secret access key (hidden): " KSECRET; echo
-  read -rsp "  Discord webhook URL for the AWS path (hidden): " HOOK; echo
   case "$KID" in AKIA*|ASIA*) ;; *) die "that is not an AWS access key ID (AKIA...)." ;; esac
   [ "${#KSECRET}" -ge 30 ] || die "that secret key is too short."
-  case "$HOOK" in
-    https://discord.com/api/webhooks/*/*|https://discordapp.com/api/webhooks/*/*) ;;
-    *) die "that is not a Discord webhook URL." ;;
-  esac
   if have heartbeat_secret; then
     echo "  heartbeat_secret: kept"
     BEAT="$(printf '%s' "$EXISTING" | jq -r '.heartbeat_secret')"
@@ -93,15 +91,15 @@ else
   fi
   # The stored record holds the old secrets, so it reaches jq as a file, never as an argument.
   printf '%s' "$EXISTING" > "$TMP/old.json"
-  K="$KID" S="$KSECRET" W="$HOOK" B="$BEAT" jq -n --slurpfile old "$TMP/old.json" \
+  K="$KID" S="$KSECRET" B="$BEAT" jq -n --slurpfile old "$TMP/old.json" \
     '$old[0] + {aws_access_key_id: env.K, aws_secret_access_key: env.S,
-                discord_webhook_url: env.W, heartbeat_secret: env.B}' > "$TMP/data.json"
-  unset KID KSECRET HOOK BEAT
+                heartbeat_secret: env.B}' > "$TMP/data.json"
+  unset KID KSECRET BEAT
 fi
 
 step "Writing $PATH_KV"
 vault kv put "$PATH_KV" @"$TMP/data.json" >/dev/null
-for f in aws_access_key_id aws_secret_access_key discord_webhook_url heartbeat_secret; do
+for f in aws_access_key_id aws_secret_access_key discord_bot_token discord_dm_channel_id heartbeat_secret; do
   GOT="$(vault kv get -field="$f" "$PATH_KV" 2>/dev/null || true)"
   [ -n "$GOT" ] && echo "  $f: stored (${#GOT} characters)" || echo "  $f: not stored yet"
 done

@@ -19,7 +19,7 @@ bucket (see [usaa-statement-backup.md](usaa-statement-backup.md)).
 | `savings.pdlab.dev` | Cloudflare Access with the Authentik IdP, allow-list Pedro and Sonia |
 | `savings-feed.pdlab.dev` | no Access, two paths, `/api/v1/totals` and `/api/v1/month`, gated by the app's bearer check |
 
-Batsy, Sonia's agent, and Bobberto, Pedro's, post totals to `savings-feed.pdlab.dev` from
+Batsy, Sonia's agent, and Muse, Pedro's, post totals to `savings-feed.pdlab.dev` from
 outside the lab and read the month view there. The bearers are `kv/services/usaa` fields
 `batsy_bearer_token` and `bobberto_bearer_token`. Every other path on that hostname
 gets the tunnel's catch-all 404, and the app also refuses non-feed paths on that Host.
@@ -129,13 +129,13 @@ The month view (`/month`, `GET /api/v1/month`) reads the Finance calendar and th
 the agents push. Each of its three inputs is optional, and `deploy-usaa.sh` names any that is
 missing. To turn it on, Pedro runs these on the Mac, in this order:
 
-1. **Bobberto's token.** Run `./scripts/seed-usaa-batsy-token.sh --agent bobberto`.
+1. **Muse's token.** Run `./scripts/seed-usaa-batsy-token.sh --agent bobberto`.
 2. **The calendar address.** In Google Calendar, open Settings, the Finance calendar,
    "Integrate calendar", and copy "Secret address in iCal format". Run
    `./scripts/seed-usaa-calendar-url.sh` and paste it at the hidden prompt.
 3. **Deploy.** Run `./scripts/deploy-usaa.sh`. It reads both fields and pete-bot's
    `notify_bearer_token` from `kv/services/pete-bot`, so alerts reach Pedro's DM.
-4. **Give each agent its token.** Pedro places Bobberto's token in Bobberto, and Batsy's in
+4. **Give each agent its token.** Pedro places Muse's token in Muse, and Batsy's in
    Batsy, reading each with `vault kv get -field=<agent>_bearer_token kv/services/usaa` in
    his own terminal. No session reads or relays either value.
 5. **Tell each agent the contract.** Once a day, post each account's balance to
