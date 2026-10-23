@@ -137,7 +137,9 @@ ctip() {
   if [ "$3" != none ]; then echo "$3"; else live_ip "$2" "$1"; fi
 }
 
-# login <ip> <keyfile>: prints ok, denied or unreachable.
+# login <ip> <keyfile>: prints ok, denied, refused or unreachable. "refused" is a closed port 22:
+# no sshd listens, so the old key cannot log in there (cloud-flare-main 112). A timeout stays
+# unreachable, because a flaky network proves nothing about the key.
 login() {
   local err rc=0
   [ -n "$1" ] || { echo unreachable; return; }
@@ -145,6 +147,7 @@ login() {
     -i "$2" "root@$1" true 2>&1 >/dev/null)" || rc=$?
   if [ "$rc" -eq 0 ]; then echo ok
   elif grep -q 'Permission denied' <<<"$err"; then echo denied
+  elif grep -q 'Connection refused' <<<"$err"; then echo refused
   else echo unreachable
   fi
 }
@@ -231,7 +234,7 @@ while read -u 3 -r node vmid ip status; do
       [ -n "$a" ] || { FAULTS+=("$vmid:no-address"); continue; }
       r="$(login "$a" "$TMP/old_key")"
       case "$r" in
-        denied) ;;
+        denied|refused) ;;
         ok) FAULTS+=("$vmid:old-key-trusted-outside-$AUTH") ;;
         *) FAULTS+=("$vmid:old-key-probe-$r") ;;
       esac
