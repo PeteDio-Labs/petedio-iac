@@ -82,7 +82,9 @@ while IFS=$'\t' read -r owner name default empty_flag; do
     code="$(f_api POST "/orgs/$ORG/repos" "$(jq -n --arg n "$name" --arg d "$default" '{name:$n, private:true, default_branch:$d}')")"
     [ "$code" = 201 ] || { failed=$((failed + 1)); failed_names+=("$name"); echo "FAIL create $name: $code" >&2; continue; }
   fi
-  GIT_CONFIG_VALUE_0="Authorization: token $FTOKEN"; export GIT_CONFIG_VALUE_0
+  # Git over HTTP wants Basic auth; Forgejo takes an access token as the password. The REST calls
+  # above use the `token` scheme, which the API accepts.
+  GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'mirror-sync:%s' "$FTOKEN" | base64 -w0)"; export GIT_CONFIG_VALUE_0
   if git -C "$dir" push --prune --force -q "$FORGEJO_URL/$ORG/$name.git" \
        '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' 2>"$STATE_DIR/err.log"; then
     f_api PATCH "/repos/$ORG/$name" "$(jq -n --arg d "$default" '{default_branch:$d}')" >/dev/null
