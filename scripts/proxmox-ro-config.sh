@@ -19,6 +19,9 @@
 #   $PROXMOX_RO_TOKEN                          full 'user@realm!tokenid=secret'
 #   else Vault kv/services/agent-loop          field proxmox_ro_token
 #
+# CA: $PROXMOX_CA_FILE, default environments/homelab/proxmox-ca.crt. The script pins it with
+# --cacert and fails closed when it is missing (PET-541; scripts/export-proxmox-ca.sh writes it).
+#
 # Endpoint: $PROXMOX_RO_ENDPOINT (e.g. https://192.168.50.10:8006), else node->IP below.
 set -euo pipefail
 
@@ -35,6 +38,10 @@ esac
 
 for t in curl python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CA_FILE="${PROXMOX_CA_FILE:-$SCRIPT_DIR/../environments/homelab/proxmox-ca.crt}"
+[ -s "$CA_FILE" ] || die "Proxmox CA not found at $CA_FILE. Run scripts/export-proxmox-ca.sh, or set PROXMOX_CA_FILE."
+
 # --- endpoint (pve02 = .11, pve03 = .10; pve01 died 2026-09-03 — see docs/GOTCHAS.md) ---
 declare -A NODE_IP=([pve02]=192.168.50.11 [pve03]=192.168.50.10)
 if [ -n "${PROXMOX_RO_ENDPOINT:-}" ]; then
@@ -49,7 +56,6 @@ fi
 TOKEN="${PROXMOX_RO_TOKEN:-}"
 if [ -z "$TOKEN" ]; then
   command -v vault >/dev/null || die "PROXMOX_RO_TOKEN unset and vault not in PATH."
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
   export VAULT_CACERT="${VAULT_CACERT:-$SCRIPT_DIR/../environments/homelab/vault-ca.crt}"
   TOKEN="$(vault kv get -field=proxmox_ro_token kv/services/agent-loop 2>/dev/null)" ||
@@ -57,9 +63,9 @@ if [ -z "$TOKEN" ]; then
 fi
 [ -n "$TOKEN" ] || die "empty Proxmox RO token."
 
-# --- read-only GET (insecure: self-signed homelab cert, matches provider insecure=true) ---
+# --- read-only GET, pinned to the Proxmox cluster CA ---
 url="${ENDPOINT}/api2/json/nodes/${NODE}/${KIND}/${VMID}/config"
-resp="$(curl -fsSk -H "Authorization: PVEAPIToken=${TOKEN}" "$url")" ||
+resp="$(curl -fsS --cacert "$CA_FILE" -H "Authorization: PVEAPIToken=${TOKEN}" "$url")" ||
   die "GET ${url} failed (token valid? PVEAuditor ACL granted? node reachable?)."
 
 # Pretty-print the .data config map (python3 — jq isn't on the loop host).
