@@ -118,6 +118,10 @@ lxc_features_declared:
   # Docker, so the container gets no keyctl. Converge this before configure-netboot.yml.
   # Temporary: delete it with netboot.tf once pve01 joins the cluster.
   "239": { nesting: "1" }                # netboot-239 — PXE server for the pve01 install
+  # metrics-240 on pve02 (PET-708): Prometheus, Grafana and Loki from apt on Debian 13,
+  # systemd 257, so their units' mount namespaces need nesting. Nothing here runs Docker,
+  # so no keyctl. Undeclared until 2026-10-23, when the role refused to run without it.
+  "240": { nesting: "1" }                # metrics-240 — Prometheus, Grafana, Loki
   # ollama-246 on pve01 (PET-528). Debian 13, systemd 257, and petedio-search's units are
   # sandboxed, so systemd builds mount namespaces: nesting. Nothing here runs Docker, so
   # no keyctl. The GPU device nodes are roles/lxc-gpu's, not a feature flag.

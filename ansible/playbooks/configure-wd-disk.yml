@@ -20,3 +20,30 @@
   become: true
   roles:
     - wd-disk
+
+# The disk's two old directory stores. On pve02 the disk carried `pve02-backups` at
+# /mnt/backups and `pve02-shared` at /mnt/shared (PET-127). The disk left pve02, and both
+# stores kept pointing at empty directories on pve02's root disk with no `is_mountpoint`,
+# so a backup or a disk aimed at either one would fill that root disk (PET-529's shape).
+# `is_mountpoint` makes Proxmox mark a store inactive while nothing is mounted there.
+# storage.cfg is cluster-wide, so pve01 sets it for pve02's stores.
+- name: Keep pve02's old WD stores off pve02's root disk
+  hosts: pve01
+  become: true
+  vars:
+    wd_disk_old_stores: [pve02-backups, pve02-shared]
+  tasks:
+    - name: Read each old store
+      ansible.builtin.command: pvesh get /storage/{{ item }} --output-format json
+      loop: "{{ wd_disk_old_stores }}"
+      register: wd_disk_store
+      changed_when: false
+      check_mode: false
+
+    - name: Mark each one as needing a mount
+      when: (item.stdout | from_json).is_mountpoint | default('') not in ['yes', '1', 1, true]
+      ansible.builtin.command: pvesh set /storage/{{ item.item }} --is_mountpoint yes
+      loop: "{{ wd_disk_store.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      changed_when: true

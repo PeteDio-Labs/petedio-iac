@@ -101,6 +101,9 @@ the two-lane layout that `host_vars/ollama-246.yml` already describes.
    **No-Subscription** repository. Then, in pve01's shell, run
    `apt update && apt full-upgrade -y && reboot`.
    Gate: `pveversion` on pve01 matches pve03's major and minor version.
+
+   On 2026-10-23 the upgrade took pve01 past the cluster, to 9.2.21 on kernel
+   7.0.14-25. Pedro upgraded pve02 and then pve03 to match, one reboot at a time.
 2. **Clear the R620's leftovers (Mac session).** A node that joins under a name the
    cluster already knows inherits whatever `/etc/pve/nodes/<name>` holds, guest
    configs included. On pve03, read:
@@ -117,30 +120,36 @@ the two-lane layout that `host_vars/ollama-246.yml` already describes.
    `/etc/pve/nodes/pve01` exists, archive it to `/root` on pve03 with `tar`, then
    delete it, only on Pedro's word in the Mac chat. If `known_hosts` names pve01,
    remove those lines with `ssh-keygen -f /etc/pve/priv/known_hosts -R pve01`.
-3. On pve03's shell, remove the QDevice: `pvecm qdevice remove`. For the next few
-   minutes the cluster has two votes and needs both.
-4. On pve01's shell, run `pvecm add 192.168.50.10`. Enter pve03's root password and
-   accept the fingerprint.
+3. On pve02's shell, remove the QDevice: `pvecm qdevice remove`. For the next few
+   minutes the cluster has two votes and needs both. Gate: `pvecm status` shows
+   `Expected votes: 2` and no `Qdevice` line.
+
+   On 2026-10-23 a 0-vote `Qdevice` line stayed in corosync's runtime state after the
+   removal, although `corosync.conf` had no device section. Restarting corosync on one
+   node, waiting for `Quorate: Yes`, then on the other, cleared it.
+4. On pve01's console, run `pvecm add 192.168.50.11` and type pve02's root password.
+   Run it at a terminal: over `ssh` without a TTY, `pvecm` reads the next typed line
+   as the password and fails with `401 authentication failure`.
 5. Gate: `pvecm status` on any node shows `Nodes: 3`, `Expected votes: 3` and
    `Quorate: Yes`. The UI shows pve01 online.
 
 ## D. Bring the backup store and the GPU node back (Mac session)
 
-Run from the PR branch until it merges, from `ansible/`:
+Run from the PR branch until it merges, from `ansible/`. The backup store comes first,
+because the nightly vzdump jobs run at 02:30 (pve02) and 02:45 (pve03) Eastern, and while
+the store is disabled, every job fails. It doesn't need the driver.
 
-1. `ansible-playbook playbooks/configure-pve01.yml -e nvidia_driver_allow_reboot=true`.
-   It ends with "CT 246 does not exist yet". That message is expected at this point.
-   Gate: the `nvidia-smi` line lists both UUIDs at `580.178.04`, and `dkms status`
-   covers the running kernel.
-2. `ansible-playbook playbooks/configure-backup-store.yml`, then
+1. `ansible-playbook playbooks/configure-backup-store.yml`, then
    `ansible-playbook playbooks/configure-wd-disk.yml`.
-3. On pve03, run `pvesm set ollama-backups --disable 0`. Remount on pete-pi-1:
-   `sudo mount /mnt/ollama-backups`.
-4. Gate: `pvesm status --storage ollama-backups` shows `active` on pve02 and pve03,
-   and `ls /mnt/ollama-backups/dump | wc -l` matches the survey's count.
-
-Do this part before 02:45 Eastern. That is when the nightly vzdump runs, and while the
-store is disabled, every job fails.
+2. On pve02, run `pvesm set ollama-backups --disable 0`. On pete-pi-1, restart the
+   automount: `sudo systemctl restart 'mnt-ollama\x2dbackups.automount'`.
+3. Gate: `pvesm status --storage ollama-backups` shows `active` on pve02 and pve03,
+   and `ls /mnt/ollama-backups/dump | wc -l` matches the survey's count (804).
+4. `ansible-playbook playbooks/configure-pve01.yml -e nvidia_driver_allow_reboot=true`.
+   It sets the time zone and the `.lab` domain, downloads the template with `pveam`,
+   and installs the driver. It ends with "CT 246 does not exist yet". That message is
+   expected at this point. Gate: the `nvidia-smi` line lists both UUIDs at
+   `580.178.04`, and `dkms status` covers the running kernel.
 
 ## E. Bring up Ollama in CT 246
 

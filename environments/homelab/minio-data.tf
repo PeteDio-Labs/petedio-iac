@@ -20,7 +20,8 @@
 # converges .221; it takes a bucket list, and .221's default is unchanged).
 #
 # VMID 245 = next free after tailscale (244); VMID = last IP octet (192.168.50.245). This
-# claims 245, so the still-unbuilt notes-svc takes 246.
+# claims 245, so the still-unbuilt notes-svc takes 246. ⚠ 246 went to ollama-246 on
+# 2026-10-23 (PET-528, ollama.tf), so notes-svc takes the next free number if it is built.
 #
 # Debian 13 (module default template) — must exist on pve01's `local` storage or
 # apply-on-merge fails at create (it is the greenfield default, so normally present):

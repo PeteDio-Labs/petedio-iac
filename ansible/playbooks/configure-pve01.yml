@@ -11,13 +11,17 @@
 # WHAT IT DOES, in order. Each step fails the run rather than skipping silently.
 #   1. Asserts pve01 is a quorate member of the cluster. A node that never joined would
 #      otherwise take a template and a driver and look finished.
-#   2. Swaps the ISO's enterprise repositories for no-subscription, as roles/pve-node does
-#      on pve03, so apt works without a subscription key.
-#   3. Puts the LXC template Terraform pins onto pve01's own `local` store. Templates are
-#      per node, and a create against a missing one fails after the merge (usaa.tf).
-#   4. Installs the pinned NVIDIA driver with DKMS (roles/nvidia-driver, host mode) and
+#   2. Sets the clock and the name: America/New_York, NTP in sync, and the cluster's
+#      `.lab` domain in /etc/hosts.
+#   3. Swaps the ISO's enterprise repositories for no-subscription, as roles/pve-node does
+#      on pve03, so apt works without a subscription key. A hand-made no-subscription
+#      source wins, so apt never sees the repository twice.
+#   4. Downloads the LXC template Terraform pins onto pve01's own `local` store with
+#      pveam. Templates are per node, and a create against a missing one fails after the
+#      merge (usaa.tf).
+#   5. Installs the pinned NVIDIA driver with DKMS (roles/nvidia-driver, host mode) and
 #      asserts both cards answer with the UUIDs the Ollama lanes pin.
-#   5. When CT 246 exists, passes the device nodes into it (roles/lxc-gpu). Before the
+#   6. When CT 246 exists, passes the device nodes into it (roles/lxc-gpu). Before the
 #      Terraform PR applies, it reports that 246 is missing and stops there.
 #
 # The backup store and the WD disk have their own plays: configure-backup-store.yml and
@@ -29,7 +33,11 @@
 
   vars:
     pve01_template: debian-13-standard_13.6-1_amd64.tar.zst
-    pve01_template_source_node: 192.168.50.10   # pve03 carries it (usaa.tf)
+    # pve02 answers as pve02.lab (roles/claude-code/README.md). The installer wrote
+    # pve01.lan on 2026-10-23, so the play sets the cluster's domain.
+    pve01_domain: lab
+    pve01_address: 192.168.50.12
+    pve01_nosub_file: /etc/apt/sources.list.d/pve-no-subscription.sources
 
   pre_tasks:
     - name: Read the cluster membership
@@ -51,6 +59,40 @@
           {{ pve01_pvecm.stdout_lines | default([]) | select('search', 'Quorate|Nodes|Expected') | list }}
 
   tasks:
+    - name: Set the node's timezone
+      ansible.builtin.include_role:
+        name: timezone
+      vars:
+        timezone_include_guests: false
+
+    # The installer's clock was nine hours off local time on 2026-10-23. Corosync and the
+    # cluster's certificates both expect synced clocks, so a node without NTP stops here.
+    - name: Read the NTP state
+      ansible.builtin.command: timedatectl show -p NTPSynchronized --value
+      register: pve01_ntp
+      changed_when: false
+      check_mode: false
+
+    - name: Assert the clock is synced
+      ansible.builtin.assert:
+        that: pve01_ntp.stdout | trim == 'yes'
+        fail_msg: >-
+          timedatectl reports NTPSynchronized={{ pve01_ntp.stdout | trim }}. Check
+          `chronyc tracking` on pve01 before the node takes guests.
+
+    - name: Give the node the cluster's domain
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^{{ pve01_address | regex_escape }}\s'
+        line: "{{ pve01_address }} {{ inventory_hostname }}.{{ pve01_domain }} {{ inventory_hostname }}"
+      register: pve01_hosts
+
+    # The node certificate names the FQDN, so regenerate it once the name changes.
+    - name: Regenerate the node certificate for the new name
+      when: pve01_hosts is changed
+      ansible.builtin.command: pvecm updatecerts --force
+      changed_when: true
+
     - name: Disable the enterprise repositories
       ansible.builtin.lineinfile:
         path: "{{ item }}"
@@ -63,9 +105,31 @@
         - /etc/apt/sources.list.d/ceph.sources
       failed_when: false
 
+    # Pedro added /etc/apt/sources.list.d/proxmox.sources by hand on 2026-10-23, before
+    # the first run. A second copy of the same repository makes every apt run warn, so
+    # the play writes its own file only when no other source names it.
+    - name: Find no-subscription sources the play does not manage
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        grep -lE '^[[:space:]]*(Components:.*|deb .*)pve-no-subscription'
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+        2>/dev/null | grep -vxF {{ pve01_nosub_file }} || true
+      args:
+        executable: /bin/bash
+      register: pve01_nosub_other
+      changed_when: false
+      check_mode: false
+
+    - name: Drop the play's copy when another source already carries the repository
+      when: pve01_nosub_other.stdout_lines | length > 0
+      ansible.builtin.file:
+        path: "{{ pve01_nosub_file }}"
+        state: absent
+
     - name: Add the no-subscription repository
+      when: pve01_nosub_other.stdout_lines | length == 0
       ansible.builtin.copy:
-        dest: /etc/apt/sources.list.d/pve-no-subscription.sources
+        dest: "{{ pve01_nosub_file }}"
         mode: "0644"
         content: |
           # Managed by ansible playbook configure-pve01.yml (PET-528).
@@ -85,15 +149,19 @@
         path: "/var/lib/vz/template/cache/{{ pve01_template }}"
       register: pve01_template_stat
 
-    # pveam's index carries only the newest build of each template, so a pinned older
-    # name may no longer download. Cluster members trust each other's root key, so the
-    # copy from pve03 always works once pve01 has joined.
-    - name: Copy the template from pve03
+    # pveam, not a copy from pve03. The first run's `scp root@pve03` failed with "Host key
+    # verification failed" on 2026-10-23, and a copy would tie this play to root SSH between
+    # nodes. pveam needs no trust beyond Proxmox's download server, and it checks the file
+    # against the checksum in Proxmox's signed index. claude.tf names the same command.
+    # If the index has dropped 13.6-1, the download fails here and says so.
+    - name: Refresh the template index
       when: not pve01_template_stat.stat.exists
-      ansible.builtin.command: >-
-        scp -o BatchMode=yes
-        root@{{ pve01_template_source_node }}:/var/lib/vz/template/cache/{{ pve01_template }}
-        /var/lib/vz/template/cache/{{ pve01_template }}
+      ansible.builtin.command: pveam update
+      changed_when: false
+
+    - name: Download the template
+      when: not pve01_template_stat.stat.exists
+      ansible.builtin.command: pveam download local {{ pve01_template }}
       changed_when: true
 
     - name: Install the NVIDIA driver on the node
