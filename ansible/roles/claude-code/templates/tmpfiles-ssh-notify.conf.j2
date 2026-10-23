@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+d {{ claude_operator_ssh_notify_dir }} 0755 root root -
+{% for u in claude_operator_notify_users %}
+d {{ claude_operator_ssh_notify_dir }}/{{ u }} 0700 {{ u }} {{ u }} -
+{% endfor %}
