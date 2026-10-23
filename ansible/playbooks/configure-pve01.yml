@@ -72,6 +72,11 @@
       register: pve01_ntp
       changed_when: false
       check_mode: false
+      # chrony can take a minute to sync after a boot, so wait before failing.
+      until: pve01_ntp.stdout | trim == 'yes'
+      retries: 12
+      delay: 10
+      failed_when: false
 
     - name: Assert the clock is synced
       ansible.builtin.assert:
@@ -92,6 +97,12 @@
       when: pve01_hosts is changed
       ansible.builtin.command: pvecm updatecerts --force
       changed_when: true
+
+    - name: Serve the regenerated certificate
+      when: pve01_hosts is changed
+      ansible.builtin.systemd:
+        name: pveproxy
+        state: restarted
 
     - name: Disable the enterprise repositories
       ansible.builtin.lineinfile:
@@ -143,6 +154,22 @@
       ansible.builtin.apt:
         update_cache: true
       changed_when: false
+
+    # The dedup above trusts any file that names the repository, even a disabled one, so
+    # read what apt resolves rather than what the files say.
+    - name: Read the repositories apt resolves
+      ansible.builtin.command: apt-cache policy
+      register: pve01_apt_policy
+      changed_when: false
+      check_mode: false
+
+    - name: Assert apt resolves pve-no-subscription
+      ansible.builtin.assert:
+        that: pve01_apt_policy.stdout is search('pve-no-subscription')
+        fail_msg: >-
+          apt resolves no pve-no-subscription repository. Another source file names it,
+          so the play removed its own copy: {{ pve01_nosub_other.stdout_lines }}. Check
+          that file's Enabled line.
 
     - name: Check for the LXC template
       ansible.builtin.stat:

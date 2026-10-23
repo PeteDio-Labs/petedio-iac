@@ -12,8 +12,9 @@
 #
 # Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
 
+# pve_gpu holds pve01, which has its own inventory file (PET-528).
 - name: Cap the journal on the Proxmox nodes and their guests
-  hosts: proxmox:pve_new
+  hosts: proxmox:pve_new:pve_gpu
   become: true
   serial: 1
   roles:

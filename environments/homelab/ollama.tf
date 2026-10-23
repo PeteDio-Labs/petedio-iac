@@ -24,7 +24,7 @@
 # ⚠ MERGE ONLY AFTER pve01 HAS JOINED THE CLUSTER. Apply-on-merge creates CT 246 on
 # pve01, and a target_node that does not resolve fails at refresh, on the runner, after
 # the merge. The template must also be on pve01's own `local` store first:
-# configure-pve01.yml copies it from pve03.
+# configure-pve01.yml downloads it with pveam.
 
 moved {
   from = module.ollama_host

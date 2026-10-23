@@ -24,8 +24,9 @@
 #
 # After either, run iac/scripts/lab-verify.sh.
 
+# pve_gpu holds pve01, which has its own inventory file (PET-528).
 - name: Turn the datacenter firewall on, with every host firewall off
-  hosts: proxmox:pve_new
+  hosts: proxmox:pve_new:pve_gpu
   become: true
 
   roles:

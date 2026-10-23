@@ -25,7 +25,10 @@ ok()   { PASS=$((PASS+1)); [ $QUIET -eq 1 ] || printf "  \033[32m✓\033[0m %-42
 bad()  { FAIL=$((FAIL+1)); printf "  \033[31m✗\033[0m %-42s %s\n" "$1" "${2:-}"; }
 skip() { SKIP=$((SKIP+1)); [ $QUIET -eq 1 ] || printf "  \033[33m-\033[0m %-42s %s\n" "$1" "${2:-}"; }
 sec()  { [ $QUIET -eq 1 ] || printf "\n\033[1m%s\033[0m\n" "$1"; }
-on()   { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$1" "$2" 2>/dev/null; }
+# pve01 is reached by address, so no ssh config entry supplies its key. Name it here.
+# The ${o[@]+...} form keeps bash 3.2, the Mac's, from failing on an empty array under -u.
+on()   { local o=(); [ "$1" = "$PVE01" ] && o=(-i "$HOME/.ssh/id_ed25519_ansible");
+         ssh -n -o ConnectTimeout=8 -o BatchMode=yes ${o[@]+"${o[@]}"} "$1" "$2" 2>/dev/null; }
 
 # Find whichever node actually holds a guest, and exec inside it there.
 #

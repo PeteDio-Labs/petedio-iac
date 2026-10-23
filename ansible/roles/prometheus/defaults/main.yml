@@ -20,6 +20,7 @@ prometheus_scrape_interval: 30s
 prometheus_node_targets:
   - { host: pve02, address: 192.168.50.11 }
   - { host: pve03, address: 192.168.50.10 }
+  - { host: pve01, address: 192.168.50.12 }   # the GPU node since PET-528; ollama-246 joins once it exists
   - { host: pete-pi, address: 192.168.50.4 }
   - { host: qbittorrent-vpn, address: 192.168.50.21 }
   - { host: seerr, address: 192.168.50.33 }
