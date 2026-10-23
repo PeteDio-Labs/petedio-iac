@@ -114,6 +114,7 @@ The real values originate from **two** places:
 | `kv/iac/minio`            | `access_key`, `secret_key`                           | `homelab-infra` → `minio-terraform-state.vault.yml` (TF S3 state + S3-compat) |
 | `kv/iac/lxc-ssh`          | `public_key`, `private_key`                          | `homelab-infra` → the SSH keypair TF installs into LXCs                  |
 | `kv/poker/db`             | `DATABASE_URL`, `admin_password`, `poker_password`   | **Password manager** — set at the manual Postgres standup (LXC 231)     |
+| `kv/admin/postgres`       | `admin_password`                                     | Same value as `kv/poker/db` `admin_password` (PET-691). `vault-seed.sh` writes both; on a Vault that already has `kv/poker/db`, run `scripts/seed-postgres-admin-vault.sh` |
 | `kv/services/authentik`   | `secret_key`, `bootstrap_token`                      | `homelab-infra` → authentik creds vault file                            |
 | `kv/services/cloudflare`  | `tunnel_token`                                       | `homelab-infra` → cloudflare tunnel vault file                          |
 | `kv/services/registry`    | `password` (+ optional `username`, default `admin`)  | zot htpasswd user (password manager)                                    |

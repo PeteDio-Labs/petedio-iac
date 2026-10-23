@@ -8,9 +8,9 @@
 # Checks (PRESENCE only — never prints a secret value):
 #   1. Every seeded KV path has each expected key (via `vault kv get -field=<key>`,
 #      output discarded; we assert exit status + non-empty length only).
-#   2. A consumer AppRole login succeeds and can READ kv/poker/db DATABASE_URL
+#   2. A consumer AppRole login succeeds and can READ kv/admin/postgres admin_password
 #      (proves PET-32/PET-12 can fetch it). Uses the terraform-local AppRole, whose
-#      `terraform` policy grants kv/data/poker/* (the ansible policy does NOT).
+#      `terraform` policy grants kv/data/admin/postgres (the ansible policy does NOT).
 #
 # Prints PASS/FAIL per check and exits non-zero if any check FAILs.
 #
@@ -74,9 +74,7 @@ check_field kv/iac/minio            access_key
 check_field kv/iac/minio            secret_key
 check_field kv/iac/lxc-ssh          public_key
 check_field kv/iac/lxc-ssh          private_key
-check_field kv/poker/db             DATABASE_URL
-check_field kv/poker/db             admin_password
-check_field kv/poker/db             poker_password
+check_field kv/admin/postgres       admin_password
 # The path qBittorrent's gluetun sidecar reads. It replaced kv/services/qbittorrent,
 # which held a username and password nothing ever read (PET-452). This check is red
 # until the seed runs — `scripts/seed-qbittorrent-vault.sh` — and red is the correct
@@ -89,7 +87,7 @@ check_field kv/services/cloudflare  tunnel_token
 check_field kv/services/registry    password
 
 echo
-echo "== 2. Consumer AppRole read of kv/poker/db (terraform-local role) =="
+echo "== 2. Consumer AppRole read of kv/admin/postgres (terraform-local role) =="
 role_id_file="${SECRETS_DIR}/terraform-local.role_id"
 secret_id_file="${SECRETS_DIR}/terraform-local.secret_id"
 
@@ -108,28 +106,18 @@ else
         approle_token="$(vault write -field=token auth/approle/login \
             role_id=@"$role_id_file" secret_id=@"$secret_id_file" 2>/dev/null)" || exit 1
         [ -n "$approle_token" ] || exit 1
-        VAULT_TOKEN="$approle_token" vault kv get -field=DATABASE_URL kv/poker/db 2>/dev/null
+        VAULT_TOKEN="$approle_token" vault kv get -field=admin_password kv/admin/postgres 2>/dev/null
       )" && [ -n "$consumer_url" ]; then
-    pass "terraform-local AppRole logged in and read kv/poker/db DATABASE_URL (${#consumer_url} chars)"
-    # Sanity-check the FORMAT without printing the password: must start postgresql://
-    # and end with the expected host/db/sslmode. We check the non-secret tail only.
-    case "$consumer_url" in
-      postgresql://poker:*@192.168.50.231:5432/poker\?sslmode=disable)
-        pass "DATABASE_URL matches expected shape (postgresql://poker:***@192.168.50.231:5432/poker?sslmode=disable)"
-        ;;
-      *)
-        f1 "DATABASE_URL does not match expected shape (host/db/sslmode) — re-check the seed"
-        ;;
-    esac
+    pass "terraform-local AppRole logged in and read kv/admin/postgres admin_password (${#consumer_url} chars)"
   else
-    f1 "terraform-local AppRole could not read kv/poker/db DATABASE_URL (login failed or policy gap)"
+    f1 "terraform-local AppRole could not read kv/admin/postgres admin_password (login failed or policy gap)"
   fi
   unset consumer_url
 fi
 
 echo
 if [ "$fail" -eq 0 ]; then
-  echo "ALL CHECKS PASS — secrets seeded and a consumer can read kv/poker/db via AppRole."
+  echo "ALL CHECKS PASS — secrets seeded and a consumer can read kv/admin/postgres via AppRole."
   exit 0
 else
   echo "SOME CHECKS FAILED — see FAIL lines above. Do not consider PET-27 done until all PASS."

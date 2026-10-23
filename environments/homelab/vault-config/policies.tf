@@ -71,6 +71,13 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
+    # The postgresql provider's server-wide admin credential (PET-691). One named path
+    # under kv/admin, never the prefix (PET-702). The kv/poker/* grants below stay until
+    # the follow-up that retires them, which runs after the provider reads this path.
+    path "kv/data/admin/postgres" {
+      capabilities = ["read"]
+    }
+
     path "kv/data/poker/*" {
       capabilities = ["read"]
     }
@@ -95,6 +102,13 @@ resource "vault_policy" "terraform" {
 
   policy = <<-EOT
     path "kv/data/iac/*" {
+      capabilities = ["read"]
+    }
+
+    # The postgresql provider's server-wide admin credential (PET-691). One named path
+    # under kv/admin, never the prefix (PET-702). The kv/poker/* grants below stay until
+    # the follow-up that retires them, which runs after the provider reads this path.
+    path "kv/data/admin/postgres" {
       capabilities = ["read"]
     }
 
@@ -285,7 +299,7 @@ resource "vault_policy" "palworld_panel_cd" {
 # media-dash-cd: the petedio-media-control repo's CD role (PET-355) — deploy.yml compiles
 # the mtrace binary and installs it plus its systemd unit on media-dash-237 on merge (the
 # runner SSHes in). Least-privilege: ONLY the ansible SSH key (to reach 237) and the app's
-# own service secret. Mirrors water-fast-cd. Apply BEFORE the CD workflow lands or the
+# own service secret. Mirrors pete-bot-cd. Apply BEFORE the CD workflow lands or the
 # first run 403s.
 #
 # ⚠ IT IS DELIBERATELY NOT GIVEN THE *arr API KEYS, and that is the whole security story
@@ -711,10 +725,6 @@ resource "vault_policy" "claude_ops" {
       capabilities = ["read"]
     }
 
-    path "kv/data/services/resume-builder" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/search" {
       capabilities = ["read"]
     }
@@ -728,10 +738,6 @@ resource "vault_policy" "claude_ops" {
     }
 
     path "kv/data/services/vault-snapshots" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/water-fast" {
       capabilities = ["read"]
     }
   EOT
