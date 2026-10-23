@@ -1,0 +1,8 @@
+---
+# Constants the role's templates and tasks share. Not tunables: change one and both sides of
+# it must move together, so it is not in defaults/.
+
+# PET-713: the parent of the per-user directories that hold the SSH login notice's dedupe
+# locks (tasks/operator-ssh.yml makes it, templates/sshrc.j2 reads it). Under /run so it is
+# tmpfs and clears at boot.
+claude_operator_ssh_notify_dir: /run/petedio-ssh-notify
