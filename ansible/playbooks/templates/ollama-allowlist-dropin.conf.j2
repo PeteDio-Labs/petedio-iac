@@ -1,0 +1,9 @@
+# {{ ollama_allow_unit | default('ollama-allowlist.service') }} guards this service's ports (PET-528).
+# MANAGED BY ANSIBLE — edits here are overwritten.
+#
+# Requires= stops this unit from starting when the allowlist failed to load, and After=
+# makes it wait for the load to finish. Each needs the other: Requires= alone starts both
+# at once, and After= alone starts this unit after a failed load.
+[Unit]
+Requires={{ ollama_allow_unit | default('ollama-allowlist.service') }}
+After={{ ollama_allow_unit | default('ollama-allowlist.service') }}

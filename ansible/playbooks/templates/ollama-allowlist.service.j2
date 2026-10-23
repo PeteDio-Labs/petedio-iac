@@ -1,19 +1,27 @@
 # ollama-246's LAN allowlist loader (PET-528). MANAGED BY ANSIBLE — edits here are
 # overwritten.
 #
-# Its own unit rather than nftables.service, for the reason the .nft file gives. It runs
-# before every service it guards, so no port is open to all sources, even for one boot.
+# Its own unit rather than nftables.service, for the reason the .nft file gives. Each
+# service it guards carries a drop-in with Requires= and After= on this unit
+# (ollama-allowlist-dropin.conf.j2), so a guarded service starts only once the table has
+# loaded. Before= here only orders them: on its own it lets a service start after this
+# unit FAILED, with every port open (Codex P1 on 26f7ee1).
 #
 # ⚠ NO ExecStop, DELIBERATELY, as on mtrace-allowlist.service: stopping this unit must
 # never open the ports.
+#
+# ⚠ CHANGE THE RULES WITH `reload`, NOT `restart`. Requires= propagates a restart of this
+# unit to every guarded service, which would drop both Ollama lanes and search to swap a
+# ruleset. ExecReload loads the same file, which deletes and recreates the table.
 [Unit]
 Description=ollama-246 LAN allowlist (nftables)
-Before=ollama.service ollama-1660s.service petedio-search.service
+Before={{ ollama_allow_guarded_units | join(' ') }}
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/nft -f /etc/ollama-allowlist/allowlist.nft
+ExecStart=/usr/sbin/nft -f {{ ollama_allow_ruleset | default('/etc/ollama-allowlist/allowlist.nft') }}
+ExecReload=/usr/sbin/nft -f {{ ollama_allow_ruleset | default('/etc/ollama-allowlist/allowlist.nft') }}
 
 [Install]
 WantedBy=multi-user.target

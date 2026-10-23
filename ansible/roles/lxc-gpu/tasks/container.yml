@@ -15,8 +15,11 @@
   changed_when: false
   check_mode: false
 
-# Compare the path only. Proxmox stores the entry as "devN: <path>,mode=0666" and may
-# reorder the options, so a whole-line match would rewrite a correct entry every run.
+# Compare the path and the mode, each on its own. Proxmox stores the entry as
+# "devN: <path>,mode=0666" and may reorder the options, so a whole-line match would rewrite
+# a correct entry every run. The path always comes first, so the mode is matched as one
+# comma-separated option anywhere after it. A path-only match let "mode=0600" stand, and
+# the ollama user then couldn't open the card (Codex P2 on 26f7ee1).
 # `pct config` shows pending values, so this step only writes what nobody has set yet.
 - name: Set each device entry ({{ lxc_gpu_ct.vmid }})
   ansible.builtin.command: >-
@@ -27,6 +30,7 @@
   when: >-
     (lxc_gpu_conf.stdout_lines
       | select('match', '^dev' ~ idx ~ ': ' ~ (item | regex_escape) ~ '(,|$)')
+      | select('search', ',mode=' ~ (lxc_gpu_device_mode | regex_escape) ~ '(,|$)')
       | list | length) == 0
   changed_when: true
 
@@ -49,6 +53,7 @@
   when: >-
     (lxc_gpu_current.stdout_lines
       | select('match', '^dev' ~ idx ~ ': ' ~ (item | regex_escape) ~ '(,|$)')
+      | select('search', ',mode=' ~ (lxc_gpu_device_mode | regex_escape) ~ '(,|$)')
       | list | length) == 0
 
 - name: Restart the container to apply its devices ({{ lxc_gpu_ct.vmid }})
