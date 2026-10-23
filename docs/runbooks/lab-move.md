@@ -31,10 +31,6 @@ The unseal watcher on pete-pi-1 unseals it (PET-373); the Mac launchd agent is t
 minutes, provided the Mac is on the LAN or the tailnet. Until that happens, `.223`
 answers `503` and anything reading a secret fails.
 
-**Registry 106 does not fail loudly.** Its blob store is an NFS bind mount from
-`pve02`. If the mount is missing when the container starts, zot serves an empty
-catalog and reports itself healthy. Verify it with `/v2/_catalog`, never `/v2/`.
-
 **Every NFS export hangs off a USB drive.** `pve02`'s `/mnt/{nexus-data,backups,shared}`
 are all LVs on one PV — `/dev/sda`, a WD Blue `WD10EZEX` in a JMicron JMS567 **USB 3.0
 enclosure**. Those mounts now carry `nofail,x-systemd.device-timeout=30`,
@@ -77,11 +73,10 @@ security find-generic-password -a vault-223 -s vault-root-token -w
 
 ### Re-authenticate the Mac on the tailnet
 
-The MacBook's tailnet node key expires **2026-08-29**. The subnet router
-`tailscale-244` is good until 2026-12-23, so the LAN stays advertised — but a lapsed
+The MacBook's tailnet node key expires **2026-08-29**. A lapsed
 key on the Mac costs you remote reach exactly when the gear is in a truck. Re-auth
-before you pack, and disable key expiry on `tailscale-244` in the Tailscale admin
-console while you are there. Infrastructure nodes should not carry an expiry.
+before you pack. `pete-pi-1` advertises `192.168.50.0/24` as the subnet router, so check
+its node key in the Tailscale admin console while you are there.
 
 ### Freeze CI
 
@@ -281,8 +276,9 @@ from node boot to the last media container. Nothing to run by hand.
 so they come last. Both need checks of their own — see
 [The three hosts no Terraform owns](#the-three-hosts-no-terraform-owns).
 
-**6. Unseal Vault** if the launchd agent has not already. It fires within five
-minutes of the Mac reaching `.223`; check before doing it manually:
+**6. Unseal Vault** if the watcher has not already. The unseal watcher on pete-pi-1
+unseals within about five minutes (PET-373), and the Mac launchd agent is the fallback;
+check before doing it manually:
 
 ```bash
 curl -s --cacert environments/homelab/vault-ca.crt \
@@ -301,18 +297,6 @@ them from the repo root — two use `environments/homelab/vault-ca.crt` as a rel
 ```bash
 ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 \
   'pvecm status | grep -E "Quorate|Total votes"; pct list | grep -c running'
-```
-
-**The NFS mounts came back**, and the registry can actually reach its blob store.
-`_catalog` touches the storage layer; `/v2/` answers from memory and stays green
-through an NFS outage:
-
-```bash
-ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 'df -h /mnt/pete/nexus-data | tail -1'
-```
-
-```bash
-curl -sk https://192.168.50.111/v2/_catalog
 ```
 
 **Vault is unsealed.** `/v1/sys/health` returns 200 unsealed, 503 sealed:
@@ -340,7 +324,7 @@ cd environments/homelab && terraform init && terraform plan
 subnet router with `ip_forward=0` looks healthy from every other angle:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.244 'sysctl net.ipv4.ip_forward'
+ssh -i ~/.ssh/id_ed25519_pete_pi_2 pedro@192.168.50.4 'sysctl net.ipv4.ip_forward'
 ```
 
 **Both ollama GPUs came back, and both lanes answer.** Kuma watches `:11434` only, so a
@@ -591,9 +575,8 @@ NATs outbound. Verified 2026-08-28:
 
 Two consequences.
 
-**Pete-Pi is your way in when the tailnet is down.** `tailscale-244` is a guest on pve01, so
-it dies with that host, and a Mac on `.86` then has no route into `.50`. Pete-Pi is
-dual-homed and reachable from `.86`, which makes it the jump host:
+**Pete-Pi is your way in when the tailnet is down.** A Mac on `.86` has no route into
+`.50`. Pete-Pi is dual-homed and reachable from `.86`, which makes it the jump host:
 
 ```bash
 ssh -A -i ~/.ssh/id_ed25519_pete_pi_2 pedro@192.168.86.46
@@ -646,19 +629,14 @@ of hanging — the cost is that a missing mount is silent. Fix it once `pve02` i
 
 ```bash
 ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 \
-  'mount -a && pct exec 106 -- docker restart zot'
+  'mount -a'
 ```
-
-**Restart zot itself, not the LXC.** `pct restart 106` is not enough: verified on
-2026-08-29, the LXC came back while the zot Docker container kept running with the empty
-view it started with (`docker ps` showed it still up from before the mount). The bind mount
-was correct and the catalog was still `{"repositories":[]}`. Restarting the container is
-what makes zot re-read the storage layer.
 
 ### Vault stays sealed
 
-The launchd agent needs the Mac to reach `.223`. If it has not fired within five
-minutes, check the agent and then unseal by hand with the key you escrowed.
+The unseal watcher on pete-pi-1 unseals Vault (PET-373). If it has not fired within five
+minutes, check the watcher, then the Mac launchd agent (the fallback), and then unseal
+by hand with the key you escrowed.
 
 ```bash
 launchctl list | grep vault-unseal
@@ -688,7 +666,7 @@ established at container start:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 \
-  'mount -a && pct exec 106 -- docker restart zot'
+  'mount -a'
 ```
 
 **What `nofail` bought, and what it cost.** Before it, a missing drive meant no `pve02`
@@ -700,12 +678,13 @@ it, because its `/v2/_catalog` probe touches the storage layer.
 
 ### A disk did not survive the trip
 
-A cold start after transport is when a marginal drive fails. `pve01` carries 2.6 T of
-media on `sdb` behind the PERC. Check the controller's view before assuming a
-filesystem problem, and do not let the array rebuild onto a second questionable disk.
+A cold start after transport is when a marginal drive fails. pve01 and its 2.6 T of
+media were lost with the PERC on 2026-09-03 (see the rack-loss incident note). On the
+nodes that remain, read the disks' state before assuming a filesystem problem, and do
+not let an array rebuild onto a second questionable disk.
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 'lsblk; vgs; pvs'
+ssh -i ~/.ssh/id_ed25519_proxmox_pedro root@192.168.50.10 'lsblk; zpool status'
 ```
 
 ---
@@ -754,79 +733,17 @@ shutdown may take. Guests sharing an order start by ascending VMID.
 None of this belongs in moving week. Do it once the lab is up, verified, and you have time
 to debug a surprise. Ordered by value against effort.
 
-### 1. A qdevice on ollama-host
+### 1. flaresolverr on a static address
 
-The highest-value change available, and it is one command. `corosync-qnetd` is an
-arbitrator daemon, not a cluster member: it hosts no guests and holds no storage.
+flaresolverr is the only guest on DHCP, holding `.150`. If that lease ever moves, your
+indexers quietly return fewer results with no alert. Give it a static address.
 
-```bash
-pvecm qdevice setup 192.168.50.12
-```
-
-That makes three votes across two nodes, so quorum becomes 2 and **either node can die
-while the survivor keeps running**. It deletes the failure mode this runbook opens with,
-and it retires the `pvecm expected 1` recovery step.
-
-It also beats the two alternatives. `two_node: 1` + `wait_for_all: 0` works by disabling
-the safety check rather than by arbitrating, and it needs a live `config_version` bump.
-Removing `pve02` from the cluster makes `pve01` permanently quorate but does nothing if
-`pve01` is the node that dies.
-
-**Not Pete-Pi.** It is deliberately outside the cluster so it can keep recording while a
-node is the thing being broken. Making it the arbitrator couples the instrument to what it
-measures. `ollama-host` has no such conflict.
-
-### 2. flaresolverr to pve01, with a static address
-
-Prowlarr is its only consumer and Prowlarr is on `pve01`, so every Cloudflare challenge
-currently crosses nodes for no reason. It is stateless with no bind mounts.
-
-It is also **the only guest on DHCP**, holding `.150` today. If that lease ever moves,
-your indexers quietly return fewer results with no alert. Give it static `.102` on the way
-over and both problems close in one migration.
-
-### 3. runner-233's rootfs onto the NVMe
+### 2. runner-233's rootfs onto the NVMe
 
 Its rootfs is a raw file on `pve02-shared`, which is `/mnt/shared` on the USB-attached
 drive. Move it to `local-lvm`, which is NVMe-backed.
 
-### 4. Storage: give each drive one job
-
-The two MinIOs hold **629 MB between them** — 104 MB on `minio-221` and 525 MB on
-`minio-data-245`, both sitting at single-digit percentages of their rootfs. Object storage
-needs no dedicated drive here. Note also that MinIO advises against network filesystems as
-a backend, so an NFS-backed MinIO would be the wrong shape regardless of capacity.
-
-Meanwhile `/mnt/media` is at **84% with 501 GB free and `media-vg` at `VFree: 0`** — the
-one genuine storage constraint in the estate, and unfixable from existing space.
-
-| Drive | Job |
-|---|---|
-| `ollama-host` ~800 G unallocated (SMR) | **Backups.** Off-machine, sequential writes — SMR is well suited |
-| `pve02` WD 931 G (7200 CMR, internal) | zot blobs, plus **media overflow** |
-| `pve01` `sdb3-storage` SSD | Guest rootfs, both MinIOs included |
-
-Extend `ollama-host`'s root LV first — it is 76% full on a 100 G volume with ~800 G
-unallocated beside it in the same VG. That box needs a password for `sudo`, unlike Pete-Pi.
-
-Once backups move to `ollama-host`, the WD frees its 300 G `backups` LV and most of
-`shared`, leaving roughly 700 GB. You cannot extend `media-vg` across a network, but Plex
-and the \*arrs all support multiple root folders — export the free space and add it as a
-second library path.
-
-### 5. The registry onto pve02
-
-`106` is the only guest whose storage lives on the other node: it binds
-`/mnt/pete/nexus-data`, which is NFS from `pve02`. Running it there makes the blob store
-local, deletes the estate's nastiest cross-node edge, and removes one of `pve01`'s two
-boot-critical NFS mounts. Put its rootfs on `local-lvm`, not `pve02-shared`.
-
-**It conflicts with PET-300.** That cross-node dependency is the deliberate subject of the
-fault-injection study — Uptime Kuma watches zot and the NFS export as separate monitors
-precisely because cause and symptom sit on different hosts. Moving `106` deletes the
-experiment. Decide which you want rather than drifting into it.
-
-### 6. Renumber the media block
+### 3. Renumber the media block
 
 `VMID == last IP octet` holds for the 2xx guests. It breaks for the nine
 legacy ones: `100→.14`, `101→.33`, `102→dhcp`, `104→.15`, `105→.16`, `106→.111`,
@@ -840,14 +757,14 @@ Budget it as an application migration rather than a network change. The media st
 references itself by raw IP inside app databases — Sonarr's download client points at
 `192.168.50.21` — and Uptime Kuma's fourteen monitors are deliberately raw IPs too.
 
-### 7. AC Power Recovery, on both nodes
+### 4. AC Power Recovery, on both nodes
 
 Neither node came back on its own after the 2026-08-25 power cut. Set **AC Power
 Recovery** to *Last State* — R620 under System Setup &rarr; System Security, OptiPlex under
 Power Management. Do it through iDRAC's virtual console on pve01 rather than hunting a VGA
 monitor.
 
-### 8. A UPS
+### 5. A UPS
 
 No node has one; `nut` and `apcupsd` are both inactive. The Palworld laptop is the only
 machine in the estate with a battery.
@@ -870,16 +787,9 @@ is the USB drive. The root of trust belongs beside its consumers.
 `pve01`'s array. Moving them means moving 2.6 TB onto a node with 931 GB, 4 threads and
 15 GiB. Plex additionally needs `.86`, and `pve02` has one NIC and no PCIe slot for another.
 
-**Plex to pve02 for Quick Sync.** `pve01` cannot hardware transcode — its only graphics
-device is a Matrox G200eR2 BMC chip — and `pve02` has an unused HD 530. But the logs show
-**zero** transcoder launches and no transcode cache artifacts: your clients direct-play
-everything, including 4K Dolby Vision. The benefit today is zero, against a new cross-node
-NFS export and a USB NIC. If that ever changes, put a low-profile card in `pve01` instead —
-it is a PowerEdge R620 with three free PCIe 3 slots.
-
 **ollama-host as pve03.** It runs Ubuntu 24.04, so Proxmox means a full rebuild. Its 16 GiB
 is already the binding constraint on its real job, and its ST1000LM035 is a 5400 RPM SMR
-laptop drive — poor storage for guest rootfs. Take the qdevice instead and leave the RAM
+laptop drive — poor storage for guest rootfs. Leave the RAM
 and both GPUs pointed at Ollama.
 
 **A dedicated drive for MinIO.** They use 629 MB.
