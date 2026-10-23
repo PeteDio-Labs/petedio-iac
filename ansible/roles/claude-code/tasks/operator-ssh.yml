@@ -98,18 +98,16 @@
 # notice's dedupe locks (templates/sshrc.j2) are creatable only by the user they belong to.
 # /run is tmpfs, so the tmpfiles.d entry remakes the directories at boot. The sshrc fails
 # open to sending the notice when the directory is missing or not owned by the user.
+#
+# A template, not `copy` with `content:`. ansible_managed is defined for the template module
+# only, so a `{{ ansible_managed }}` inside copy content fails the play as undefined.
 - name: Declare the login-notice lock directories
-  ansible.builtin.copy:
+  ansible.builtin.template:
+    src: tmpfiles-ssh-notify.conf.j2
     dest: /etc/tmpfiles.d/petedio-ssh-notify.conf
     owner: root
     group: root
     mode: "0644"
-    content: |
-      # {{ ansible_managed }}
-      d {{ claude_operator_ssh_notify_dir }} 0755 root root -
-      {% for u in claude_operator_notify_users %}
-      d {{ claude_operator_ssh_notify_dir }}/{{ u }} 0700 {{ u }} {{ u }} -
-      {% endfor %}
 
 # Every play, not only after a change to the file: the directories live on tmpfs, and a play
 # that follows a reboot finds the file unchanged and the directories gone. The command is
