@@ -326,12 +326,22 @@ claude_authorized_keys:
 # running server, so it keeps the old mode until you do.
 claude_permission_mode: auto
 
-# PET-727: write /etc/claude-code/managed-settings.json with disableClaudeAiConnectors, so no
-# session on the host loads the claude.ai connectors (Gmail, Drive, Calendar, AWS, Indeed).
-# After the play, `claude mcp list` as `claude` and as `claude-ops` lists Plane (declared in
-# the session's own MCP config) and no claude.ai connector. Restart a running Remote Control
-# unit to pick it up.
-claude_disable_claudeai_connectors: true
+# PET-727: write /etc/claude-code/managed-settings.json for every session on the host. Plane
+# reaches 247 only as the claude.ai Plane connector (no session declares it itself), so
+# `disableClaudeAiConnectors: true` would remove Plane too. Leave this false. Set it true only
+# on a host whose sessions declare every MCP server themselves.
+claude_disable_claudeai_connectors: false
+
+# `deniedMcpServers` entries for the claude.ai connectors to deny, by display name, so Plane
+# stays and the rest do not load. The match is exact, and claude.ai can rename a connector. After
+# the play, `claude mcp list` as `claude` and as `claude-ops` lists Plane and none of these.
+# Restart a running Remote Control unit to pick it up. An empty list writes no denylist.
+claude_denied_claudeai_connectors:
+  - serverName: claude.ai Gmail
+  - serverName: claude.ai Google Drive
+  - serverName: claude.ai Google Calendar
+  - serverName: claude.ai AWS MCP
+  - serverName: claude.ai Indeed
 
 # One `claude remote-control` server per project directory. Each entry renders its own
 # systemd unit, so `systemctl status claude-remote-iac` names the project it serves and a
