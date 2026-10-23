@@ -139,9 +139,12 @@ Run from the PR branch until it merges, from `ansible/`. The backup store comes 
 because the nightly vzdump jobs run at 02:30 (pve02) and 02:45 (pve03) Eastern, and while
 the store is disabled, every job fails. It doesn't need the driver.
 
-1. `ansible-playbook playbooks/configure-backup-store.yml`, then
-   `ansible-playbook playbooks/configure-wd-disk.yml`.
-2. On pve02, run `pvesm set ollama-backups --disable 0`. On pete-pi-1, restart the
+1. On pve02, check that `findmnt /mnt/ollama-backups` shows the NFS mount from `.12`,
+   then run `pvesm set ollama-backups --disable 0`. Re-enable it before the play: the
+   role proves the mounted store reads `active`, and a disabled store never does.
+   `is_mountpoint` keeps any node without the mount from writing to its root disk.
+2. `ansible-playbook playbooks/configure-backup-store.yml`, then
+   `ansible-playbook playbooks/configure-wd-disk.yml`. On pete-pi-1, restart the
    automount: `sudo systemctl restart 'mnt-ollama\x2dbackups.automount'`.
 3. Gate: `pvesm status --storage ollama-backups` shows `active` on pve02 and pve03,
    and `ls /mnt/ollama-backups/dump | wc -l` matches the survey's count (804).
