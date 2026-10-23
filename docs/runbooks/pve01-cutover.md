@@ -160,9 +160,16 @@ the store is disabled, every job fails. It doesn't need the driver.
    - `ansible-playbook playbooks/configure-pve01.yml -e lxc_gpu_allow_restart=true`
    - `ansible-playbook playbooks/configure-ollama-246.yml`
    - `./scripts/deploy-search.sh`. It targets the `ollama` group, which holds only ollama-246.
-3. Repoint the consumers: `./scripts/deploy-uptime-kuma.sh`, then
+3. Bring pve01 into the node baseline. Each play reaches pve01 through `pve_gpu`:
+   - `ansible-playbook playbooks/configure-pve-firewall.yml --check --diff`, then without
+     `--check`. It writes pve01's `host.fw` with `enable: 0`, which every node needs
+     before the datacenter firewall filters anything.
+   - `ansible-playbook playbooks/configure-journald.yml`
+   - `ansible-playbook playbooks/configure-node-exporter.yml`, then the Prometheus play,
+     which scrapes pve01 at `.12`.
+4. Repoint the consumers: `./scripts/deploy-uptime-kuma.sh`, then
    `ansible-playbook playbooks/configure-pete-bot.yml`.
-4. Gate: run the `PET-762` probe against `.246:11434`. Warm generation is at least
+5. Gate: run the `PET-762` probe against `.246:11434`. Warm generation is at least
    60 tok/s, and `/api/ps` shows `size_vram` equal to `size` on both lanes.
    `scripts/lab-verify.sh` passes, including "models fully on GPU" and
    "cluster members".
