@@ -40,11 +40,16 @@ case "$phase" in
 INI={{ backup_store_palworld_ini }}
 PW=$(sed -nE 's/.*AdminPassword="([^"]*)".*/\1/p' "$INI")
 API=http://127.0.0.1:8212/v1/api
-curl -s -m 10 -o /dev/null -w 'announce %{http_code}\n' -u "admin:$PW" \
+# Hand the credential to curl through a 0600 config file, never as an argument, so it
+# stays out of `ps` and /proc/<pid>/cmdline (PET-552).
+CFG=$(mktemp)
+trap 'rm -f "$CFG"' EXIT
+printf 'user = "admin:%s"\n' "$(printf '%s' "$PW" | sed 's/[\\"]/\\&/g')" >"$CFG"
+curl -s -m 10 -o /dev/null -w 'announce %{http_code}\n' -K "$CFG" \
   -H 'Content-Type: application/json' -d "{\"message\":\"$MSG\"}" "$API/announce"
 sleep "$WAIT"
 # /save refuses a bodiless POST without Content-Length (HTTP 411).
-curl -s -m 60 -o /dev/null -w 'save %{http_code}\n' -u "admin:$PW" \
+curl -s -m 60 -o /dev/null -w 'save %{http_code}\n' -K "$CFG" \
   -X POST -H 'Content-Length: 0' "$API/save"
 SH
     ;;
