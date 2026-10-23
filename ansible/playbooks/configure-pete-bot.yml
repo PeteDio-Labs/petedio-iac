@@ -131,6 +131,7 @@
     # /health fails when the model is missing.
     lab_agent_provider: gateway
     lab_agent_ollama_url: http://192.168.50.12:11434
+    lab_agent_search_url: http://192.168.50.12:8526
     lab_agent_ollama_model: qwen3:8b
     lab_agent_user: lab-agent
     lab_agent_dir: /opt/lab-agent
@@ -598,6 +599,26 @@
               plane_item. Deploy with scripts/deploy-pete-bot.sh, which reads
               kv/services/lab-agent-plane. A deploy-on-merge run needs pete-bot's deploy.yml
               to read that path too.
+
+        # Same rule for the search token (PET-745): never render it away.
+        - name: Look for an installed search token
+          ansible.builtin.command: grep -q '^LAB_SEARCH_TOKEN=.' {{ lab_agent_env_file | quote }}
+          register: lab_agent_search_installed
+          changed_when: false
+          failed_when: lab_agent_search_installed.rc > 1
+          check_mode: false
+          no_log: true
+          when: lab_agent_env_stat.stat.exists
+
+        - name: Refuse a deploy that would drop the installed search token
+          ansible.builtin.assert:
+            that:
+              - (lab_agent_search_token | default('') | length > 0) or (lab_agent_search_installed.rc | default(1)) != 0
+            fail_msg: >-
+              lab-agent's env file holds LAB_SEARCH_TOKEN, but this deploy passed no
+              lab_agent_search_token, so the render would remove it and lab-agent would lose
+              search_lab. Deploy with scripts/deploy-pete-bot.sh, which reads
+              kv/services/lab-agent-search.
 
         # Read by systemd, as root, before it drops to the service account. So 0600 root.
         - name: Install lab-agent's environment file
