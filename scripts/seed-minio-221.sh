@@ -68,12 +68,21 @@ fi
 [ -n "$MROOT_U" ] && [ -n "$MROOT_P" ] \
   || die "no MinIO root credential. Export MINIO_ROOT_USER and MINIO_ROOT_PASSWORD, or write them to $MINIO_CREDS_FILE."
 MCCFG="$(mktemp -d)"; trap 'rm -rf "$MCCFG"' EXIT
-mc --config-dir "$MCCFG" alias set adm "$MINIO_ENDPOINT" "$MROOT_U" "$MROOT_P" >/dev/null 2>&1 \
+# MC_HOST_<alias> carries the credential in the environment, so it never reaches argv.
+export MC_HOST_adm="${MINIO_ENDPOINT%%://*}://${MROOT_U}:${MROOT_P}@${MINIO_ENDPOINT#*://}"
+mc --config-dir "$MCCFG" ls adm >/dev/null 2>&1 \
   || die "$MINIO_ENDPOINT rejected the root credential, or it is unreachable (is the tailnet up?)."
 echo "  the root credential authenticates (user length ${#MROOT_U})"
 
 # vget PATH FIELD prints the field, or nothing when the path or field is absent.
-vget(){ vault kv get -field="$2" "$1" 2>/dev/null || true; }
+vget(){
+  local out
+  if out="$(vault kv get -field="$2" "$1" 2>&1)"; then printf '%s' "$out"; return 0; fi
+  case "$out" in
+    "No value found at "*|*"no field named"*|*"Field \""*"not present"*) return 0 ;;
+    *) die "Vault failed the read of $1: $(printf '%s' "$out" | tr -s '\n\t' '  ' | cut -c1-200)" ;;
+  esac
+}
 
 step "$ROOT_PATH"
 CUR_U="$(vget "$ROOT_PATH" root_user)"; CUR_P="$(vget "$ROOT_PATH" root_password)"
@@ -103,8 +112,8 @@ fi
 step "$SNAP_PATH"
 OLD_AK="$(vget "$SNAP_PATH" access_key)"; OLD_SK="$(vget "$SNAP_PATH" secret_key)"
 if [ "$REFRESH" = "0" ] && [ -n "$OLD_AK" ] && [ -n "$OLD_SK" ] \
-   && mc --config-dir "$MCCFG" alias set old "$MINIO_ENDPOINT" "$OLD_AK" "$OLD_SK" >/dev/null 2>&1 \
-   && mc --config-dir "$MCCFG" ls "old/$BUCKET" >/dev/null 2>&1; then
+   && MC_HOST_old="${MINIO_ENDPOINT%%://*}://${OLD_AK}:${OLD_SK}@${MINIO_ENDPOINT#*://}" \
+        mc --config-dir "$MCCFG" ls "old/$BUCKET" >/dev/null 2>&1; then
   unset OLD_SK
   echo "  holds a credential that still reaches $BUCKET. Leaving it alone."
 else
@@ -124,7 +133,8 @@ JSON
   NEW_SK="$(printf '%s' "$SVC_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("secretKey") or "")')"
   unset SVC_JSON
   [ -n "$NEW_AK" ] && [ -n "$NEW_SK" ] || die "could not mint or parse the service account."
-  mc --config-dir "$MCCFG" alias set chk "$MINIO_ENDPOINT" "$NEW_AK" "$NEW_SK" >/dev/null 2>&1 \
+  export MC_HOST_chk="${MINIO_ENDPOINT%%://*}://${NEW_AK}:${NEW_SK}@${MINIO_ENDPOINT#*://}"
+  mc --config-dir "$MCCFG" ls chk >/dev/null 2>&1 \
     || die "the new service account did not authenticate."
   mc --config-dir "$MCCFG" ls "chk/$BUCKET/" >/dev/null 2>&1 \
     || die "the new service account cannot list $BUCKET."
