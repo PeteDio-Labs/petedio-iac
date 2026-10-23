@@ -19,7 +19,7 @@ mesh_vxlan_id: 86
 
 # The node cabled to the mesh, and the bridge that cable belongs to. This end
 # bridges the tunnel INTO the existing mesh bridge.
-mesh_vxlan_anchor_host: pve01
+mesh_vxlan_anchor_host: pve01-r620  # the dead R620; pve01 is another machine since PET-528
 mesh_vxlan_anchor_bridge: vmbr0
 
 # The node with no mesh cable, and the new bridge created to hold the tunnel.

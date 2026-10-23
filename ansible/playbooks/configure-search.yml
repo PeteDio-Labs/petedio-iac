@@ -1,5 +1,5 @@
 ---
-# configure-search.yml — deploy petedio-search on ollama-host as two systemd units (PET-526).
+# configure-search.yml — deploy petedio-search on ollama-246 as two systemd units (PET-526; moved off bare metal in PET-528).
 #
 # petedio-search (repo PeteDio-Labs/petedio-search, private) is the shared, meaning-based
 # search over the vault, Plane (PET, MSG and DAY items and comments) and the lab digest.
@@ -33,7 +33,7 @@
 #                            scripts/seed-workspace-mirror-vault.sh
 # Run via:  ./scripts/deploy-search.sh
 
-- name: Deploy petedio-search on ollama-host
+- name: Deploy petedio-search on the inference host (ollama-246)
   hosts: ollama
   become: true
 
@@ -46,7 +46,7 @@
     search_port: 8526
     # The LAN address, not 0.0.0.0: the service answers on one interface only. ufw
     # admits search_allow_subnet, and every call except /healthz needs a caller's token.
-    search_bind: "192.168.50.12"
+    search_bind: "{{ ansible_host }}"
     search_allow_subnet: "192.168.50.0/24"
     search_ollama_url: "http://127.0.0.1:11435"
     search_embed_model: "{{ ollama_embed_model | default('qwen3-embedding:0.6b') }}"
@@ -107,7 +107,7 @@
           -e search_binary_src=<path>.
       when: not search_binary_stat.stat.exists
 
-    # ⚠ ollama-host is x86-64, and `bun build --compile` targets the machine it runs on.
+    # ⚠ ollama-246 is x86-64, and `bun build --compile` targets the machine it runs on.
     # A Mac build installs cleanly and then fails every start with "Exec format error"
     # (PET-521). Bytes 0-3 are the ELF magic; bytes 18-19 are e_machine, 0x3e for x86-64.
     - name: Read the binary's ELF header
@@ -216,7 +216,9 @@
 
     # ufw is active on this host with a default-deny inbound policy, so this rule is what
     # opens the port. Its peers on 11434 and 11435 come from roles/ollama-service.
+    # ollama-246 is an LXC with no ufw (PET-528): set search_manage_ufw false there.
     - name: Allow the search API from the homelab LAN (UFW)
+      when: search_manage_ufw | default(true) | bool
       community.general.ufw:
         rule: allow
         port: "{{ search_port | string }}"

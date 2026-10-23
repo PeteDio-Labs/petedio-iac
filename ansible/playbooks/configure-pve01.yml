@@ -1,0 +1,229 @@
+---
+# configure-pve01.yml — make the former ollama-host a working GPU node. (PET-528)
+#
+# Run it after Pedro has installed Proxmox VE 9 on the 128 GB drive and joined pve01 to
+# the cluster. docs/runbooks/pve01-cutover.md is the whole sequence; this is its node
+# step. No workflow applies it on merge. Run from ansible/:
+#
+#   ansible-playbook playbooks/configure-pve01.yml --check
+#   ansible-playbook playbooks/configure-pve01.yml -e nvidia_driver_allow_reboot=true
+#
+# WHAT IT DOES, in order. Each step fails the run rather than skipping silently.
+#   1. Asserts pve01 is a quorate member of the cluster. A node that never joined would
+#      otherwise take a template and a driver and look finished.
+#   2. Sets the clock and the name: America/New_York, NTP in sync, and the cluster's
+#      `.lab` domain in /etc/hosts.
+#   3. Swaps the ISO's enterprise repositories for no-subscription, as roles/pve-node does
+#      on pve03, so apt works without a subscription key. A hand-made no-subscription
+#      source wins, so apt never sees the repository twice.
+#   4. Downloads the LXC template Terraform pins onto pve01's own `local` store with
+#      pveam. Templates are per node, and a create against a missing one fails after the
+#      merge (usaa.tf).
+#   5. Installs the pinned NVIDIA driver with DKMS (roles/nvidia-driver, host mode) and
+#      asserts both cards answer with the UUIDs the Ollama lanes pin.
+#   6. When CT 246 exists, passes the device nodes into it (roles/lxc-gpu). Before the
+#      Terraform PR applies, it reports that 246 is missing and stops there.
+#
+# The backup store and the WD disk have their own plays: configure-backup-store.yml and
+# configure-wd-disk.yml, both retargeted to pve01.
+
+- name: Configure pve01
+  hosts: pve01
+  become: true
+
+  vars:
+    pve01_template: debian-13-standard_13.6-1_amd64.tar.zst
+    # pve02 answers as pve02.lab (roles/claude-code/README.md). The installer wrote
+    # pve01.lan on 2026-10-23, so the play sets the cluster's domain.
+    pve01_domain: lab
+    pve01_address: 192.168.50.12
+    pve01_nosub_file: /etc/apt/sources.list.d/pve-no-subscription.sources
+
+  handlers:
+    - name: Regenerate the node certificate
+      ansible.builtin.command: pvecm updatecerts --force
+      changed_when: true
+
+    - name: Restart pveproxy
+      ansible.builtin.systemd:
+        name: pveproxy
+        state: restarted
+
+  pre_tasks:
+    - name: Read the cluster membership
+      ansible.builtin.command: pvecm status
+      register: pve01_pvecm
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Assert pve01 joined a quorate cluster of three nodes
+      ansible.builtin.assert:
+        that:
+          - pve01_pvecm.rc == 0
+          - pve01_pvecm.stdout is search('Quorate:\s+Yes')
+          - pve01_pvecm.stdout is search('Nodes:\s+3')
+        fail_msg: >-
+          pve01 is not a quorate member of a three-node cluster. Finish the join first
+          (docs/runbooks/pve01-cutover.md, step C). pvecm status said:
+          {{ pve01_pvecm.stdout_lines | default([]) | select('search', 'Quorate|Nodes|Expected') | list }}
+
+  tasks:
+    - name: Set the node's timezone
+      ansible.builtin.include_role:
+        name: timezone
+      vars:
+        timezone_include_guests: false
+
+    # The installer's clock was nine hours off local time on 2026-10-23. Corosync and the
+    # cluster's certificates both expect synced clocks, so a node without NTP stops here.
+    - name: Read the NTP state
+      ansible.builtin.command: timedatectl show -p NTPSynchronized --value
+      register: pve01_ntp
+      changed_when: false
+      check_mode: false
+      # chrony can take a minute to sync after a boot, so wait before failing.
+      until: pve01_ntp.stdout | trim == 'yes'
+      retries: 12
+      delay: 10
+      failed_when: false
+
+    - name: Assert the clock is synced
+      ansible.builtin.assert:
+        that: pve01_ntp.stdout | trim == 'yes'
+        fail_msg: >-
+          timedatectl reports NTPSynchronized={{ pve01_ntp.stdout | trim }}. Check
+          `chronyc tracking` on pve01 before the node takes guests.
+
+    - name: Give the node the cluster's domain
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^{{ pve01_address | regex_escape }}\s'
+        line: "{{ pve01_address }} {{ inventory_hostname }}.{{ pve01_domain }} {{ inventory_hostname }}"
+      # The node certificate names the FQDN, so regenerate it once the name changes.
+      notify:
+        - Regenerate the node certificate
+        - Restart pveproxy
+
+    - name: Regenerate the certificate before the play goes on
+      ansible.builtin.meta: flush_handlers
+
+    - name: Disable the enterprise repositories
+      ansible.builtin.lineinfile:
+        path: "{{ item }}"
+        regexp: "^Enabled:"
+        line: "Enabled: false"
+        insertafter: EOF
+        create: false
+      loop:
+        - /etc/apt/sources.list.d/pve-enterprise.sources
+        - /etc/apt/sources.list.d/ceph.sources
+      failed_when: false
+
+    # Pedro added /etc/apt/sources.list.d/proxmox.sources by hand on 2026-10-23, before
+    # the first run. A second copy of the same repository makes every apt run warn, so
+    # the play writes its own file only when no other source names it.
+    - name: Find no-subscription sources the play does not manage
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        grep -lE '^[[:space:]]*(Components:.*|deb .*)pve-no-subscription'
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+        2>/dev/null | grep -vxF {{ pve01_nosub_file }} || true
+      args:
+        executable: /bin/bash
+      register: pve01_nosub_other
+      changed_when: false
+      check_mode: false
+
+    - name: Drop the play's copy when another source already carries the repository
+      when: pve01_nosub_other.stdout_lines | length > 0
+      ansible.builtin.file:
+        path: "{{ pve01_nosub_file }}"
+        state: absent
+
+    - name: Add the no-subscription repository
+      when: pve01_nosub_other.stdout_lines | length == 0
+      ansible.builtin.copy:
+        dest: "{{ pve01_nosub_file }}"
+        mode: "0644"
+        content: |
+          # Managed by ansible playbook configure-pve01.yml (PET-528).
+          Types: deb
+          URIs: http://download.proxmox.com/debian/pve
+          Suites: {{ ansible_facts['distribution_release'] }}
+          Components: pve-no-subscription
+          Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+
+    - name: Refresh apt
+      ansible.builtin.apt:
+        update_cache: true
+      changed_when: false
+
+    # The dedup above trusts any file that names the repository, even a disabled one, so
+    # read what apt resolves rather than what the files say.
+    - name: Read the repositories apt resolves
+      ansible.builtin.command: apt-cache policy
+      register: pve01_apt_policy
+      changed_when: false
+      check_mode: false
+
+    - name: Assert apt resolves pve-no-subscription
+      ansible.builtin.assert:
+        that: pve01_apt_policy.stdout is search('pve-no-subscription')
+        fail_msg: >-
+          apt resolves no pve-no-subscription repository. Another source file names it,
+          so the play removed its own copy: {{ pve01_nosub_other.stdout_lines }}. Check
+          that file's Enabled line.
+
+    - name: Check for the LXC template
+      ansible.builtin.stat:
+        path: "/var/lib/vz/template/cache/{{ pve01_template }}"
+      register: pve01_template_stat
+
+    # pveam, not a copy from pve03. The first run's `scp root@pve03` failed with "Host key
+    # verification failed" on 2026-10-23, and a copy would tie this play to root SSH between
+    # nodes. pveam needs no trust beyond Proxmox's download server, and it checks the file
+    # against the checksum in Proxmox's signed index. claude.tf names the same command.
+    # If the index has dropped 13.6-1, the download fails here and says so.
+    - name: Refresh the template index
+      when: not pve01_template_stat.stat.exists
+      ansible.builtin.command: pveam update
+      changed_when: false
+
+    - name: Download the template
+      when: not pve01_template_stat.stat.exists
+      ansible.builtin.command: pveam download local {{ pve01_template }}
+      changed_when: true
+
+    - name: Install the NVIDIA driver on the node
+      ansible.builtin.include_role:
+        name: nvidia-driver
+      vars:
+        nvidia_driver_mode: host
+        nvidia_driver_expected_uuids:
+          - "{{ hostvars['ollama-246']['ollama_coder_gpu'] }}"
+          - "{{ hostvars['ollama-246']['ollama_gemma_gpu'] }}"
+
+    - name: Check whether CT 246 exists yet
+      ansible.builtin.command: pct status 246
+      register: pve01_ct246
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Pass both GPUs into CT 246
+      when: pve01_ct246.rc == 0
+      ansible.builtin.include_role:
+        name: lxc-gpu
+      vars:
+        lxc_gpu_containers:
+          - vmid: 246
+            devices: "{{ lxc_gpu_nvidia_devices }}"
+
+    - name: Report a missing CT 246
+      when: pve01_ct246.rc != 0
+      ansible.builtin.fail:
+        msg: >-
+          The node is ready, but CT 246 does not exist yet, so no GPU was passed through.
+          Merge the Terraform PR that declares ollama-246, let apply-on-merge create it,
+          then run this play again.

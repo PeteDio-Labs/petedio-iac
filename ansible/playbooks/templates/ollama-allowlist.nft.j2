@@ -1,0 +1,21 @@
+#!/usr/sbin/nft -f
+# ollama-246's LAN allowlist (PET-528). MANAGED BY ANSIBLE — edits here are overwritten.
+#
+# It replaces the ufw rules the bare-metal ollama-host carried: every port below accepted
+# only from the homelab LAN. A Debian LXC has no ufw, so this container keeps the same
+# boundary with nftables, the way media-dash-237 guards mtrace (mtrace-allowlist.nft.j2).
+#
+# ⚠ ITS OWN TABLE, ON PURPOSE. Everything lives in `table inet ollama_allow`. This file
+# never touches /etc/nftables.conf or nftables.service, whose default ruleset flushes
+# everything. `delete table` at the top makes a reload replace this table only.
+table inet ollama_allow
+delete table inet ollama_allow
+
+table inet ollama_allow {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    tcp dport { {{ ollama_allow_ports | join(', ') }} } iif "lo" accept
+    tcp dport { {{ ollama_allow_ports | join(', ') }} } ip saddr {{ ollama_allow_subnet }} accept
+    tcp dport { {{ ollama_allow_ports | join(', ') }} } reject with tcp reset
+  }
+}

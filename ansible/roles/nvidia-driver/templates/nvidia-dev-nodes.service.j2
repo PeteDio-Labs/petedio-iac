@@ -1,0 +1,18 @@
+# Managed by ansible role nvidia-driver (PET-528).
+# Create every NVIDIA device node before the guests start, so an LXC that passes
+# /dev/nvidia-uvm through never fails to start for a node that does not exist yet.
+[Unit]
+Description=Create the NVIDIA device nodes for GPU containers
+After=systemd-modules-load.service
+Before=pve-guests.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# nvidia-smi run as root creates /dev/nvidiactl and one /dev/nvidiaN per card.
+# nvidia-modprobe -u creates /dev/nvidia-uvm and /dev/nvidia-uvm-tools.
+ExecStart=/usr/bin/nvidia-smi -pm 1
+ExecStart=/usr/bin/nvidia-modprobe -u -c 0
+
+[Install]
+WantedBy=multi-user.target

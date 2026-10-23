@@ -1,0 +1,28 @@
+# lxc-gpu — pass a node's NVIDIA device nodes into declared containers. PET-528.
+#
+# WHY ANSIBLE AND NOT TERRAFORM. Proxmox accepts `devN:` entries only from root@pam,
+# the same check that keeps `features` out of Terraform's reach. The proxmox-lxc
+# module lists device_passthrough in ignore_changes for that reason, and this role
+# runs `pct set` over SSH as root.
+#
+# Device nodes, not PCI addresses: PCI passthrough is for VMs. A container shares the
+# host's kernel module and needs only the nodes. Both cards go to one container, and
+# each Ollama lane picks its card by UUID with CUDA_VISIBLE_DEVICES, so the order of
+# /dev/nvidia0 and /dev/nvidia1 does not matter.
+---
+# Each entry: vmid, and the device nodes in the order they become dev0, dev1, ...
+lxc_gpu_containers: []
+
+# The devices every NVIDIA compute container needs. mode 0666 matches the host's own
+# nodes, so the `ollama` user inside an unprivileged container can open them.
+lxc_gpu_nvidia_devices:
+  - /dev/nvidia0
+  - /dev/nvidia1
+  - /dev/nvidiactl
+  - /dev/nvidia-uvm
+  - /dev/nvidia-uvm-tools
+lxc_gpu_device_mode: "0666"
+
+# A running container picks up new devN entries only on restart. The role reboots it
+# only when this is true, and otherwise fails so the pending change is not missed.
+lxc_gpu_allow_restart: false

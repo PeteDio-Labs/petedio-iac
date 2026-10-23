@@ -13,6 +13,10 @@ set -uo pipefail
 
 PVE02=pve02
 PVE03=pve03
+# The former ollama-host, a node since PET-528; root, like pve02. Reached by address, not
+# by alias: an ssh config written before 2026-09-03 may still map `pve01` to .10, which is
+# pve03 now, and every check here would then read pve03 twice.
+PVE01=root@192.168.50.12
 PI=pi1
 QUIET=0; [ "${1:-}" = "--quiet" ] && QUIET=1
 PASS=0; FAIL=0; SKIP=0
@@ -21,7 +25,10 @@ ok()   { PASS=$((PASS+1)); [ $QUIET -eq 1 ] || printf "  \033[32m✓\033[0m %-42
 bad()  { FAIL=$((FAIL+1)); printf "  \033[31m✗\033[0m %-42s %s\n" "$1" "${2:-}"; }
 skip() { SKIP=$((SKIP+1)); [ $QUIET -eq 1 ] || printf "  \033[33m-\033[0m %-42s %s\n" "$1" "${2:-}"; }
 sec()  { [ $QUIET -eq 1 ] || printf "\n\033[1m%s\033[0m\n" "$1"; }
-on()   { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$1" "$2" 2>/dev/null; }
+# pve01 is reached by address, so no ssh config entry supplies its key. Name it here.
+# The ${o[@]+...} form keeps bash 3.2, the Mac's, from failing on an empty array under -u.
+on()   { local o=(); [ "$1" = "$PVE01" ] && o=(-i "$HOME/.ssh/id_ed25519_ansible");
+         ssh -n -o ConnectTimeout=8 -o BatchMode=yes ${o[@]+"${o[@]}"} "$1" "$2" 2>/dev/null; }
 
 # Find whichever node actually holds a guest, and exec inside it there.
 #
@@ -36,6 +43,7 @@ on()   { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$1" "$2" 2>/dev/null; }
 node_for() {
   on $PVE02 "pct config $1 >/dev/null 2>&1" && { echo "$PVE02"; return; }
   on $PVE03 "sudo /usr/sbin/pct config $1 >/dev/null 2>&1" && { echo "$PVE03"; return; }
+  on $PVE01 "pct config $1 >/dev/null 2>&1" && { echo "$PVE01"; return; }
   echo ""
 }
 pct_on() {  # node, vmid, command
@@ -44,16 +52,30 @@ pct_on() {  # node, vmid, command
 }
 
 sec "Nodes and quorum"
-for n in $PVE02 $PVE03; do
+for n in $PVE02 $PVE03 $PVE01; do
   h=$(on $n 'hostname')
   [ -n "$h" ] && ok "$n reachable" "$h" || bad "$n reachable" "no ssh"
 done
 Q=$(on $PVE02 'pvecm status 2>/dev/null | awk "/Quorate:/{print \$2}"')
 [ "$Q" = "Yes" ] && ok "cluster quorate" || bad "cluster quorate" "got '$Q'"
-# A QDevice that is registered but not voting gives none of the protection it
-# was added for, and the vote count alone does not reveal that.
-V=$(on $PVE02 'pvecm status 2>/dev/null | grep -c "A,V,"')
-[ "${V:-0}" -ge 2 ] && ok "qdevice voting" "$V nodes see it" || bad "qdevice voting" "nodes report A,NV — qnetd cannot read its certs?"
+# Three nodes and no QDevice since PET-528. The QDevice was removed to let pve01 join,
+# and not re-added: Proxmox advises against one with an odd node count, and three
+# votes keep quorum through the loss of any one node. A node that has left still
+# leaves the cluster quorate at 2 of 3, so count the members, not only quorum.
+N=$(on $PVE02 'pvecm status 2>/dev/null | awk "/^Nodes:/{print \$2}"')
+[ "${N:-0}" = "3" ] && ok "cluster members" "3 nodes" || bad "cluster members" "pvecm reports '${N:-nothing}' nodes, expected 3 (pve02, pve03, pve01)"
+# ⚠ A NODE WITH NO host.fw DROPS ITS OWN TRAFFIC once the datacenter firewall is on: the
+# host firewall defaults to ON with an input policy of DROP. roles/pve-firewall checks every
+# node, but only while its play runs, and pve01 joined after it last ran. On 2026-10-23 that
+# cut NFS and ping to .12 and left the backup store dark (PET-528). So read every node
+# directory the cluster holds, and name how many were read.
+FW=$(on $PVE02 'grep -qsE "^enable:[[:space:]]*1" /etc/pve/firewall/cluster.fw && echo on || echo off; for d in /etc/pve/nodes/*/; do n=$(basename "$d"); grep -qsE "^enable:[[:space:]]*0" "$d/host.fw" && echo "ok $n" || echo "missing $n"; done')
+FWREAD=$(printf '%s\n' "$FW" | grep -cE '^(ok|missing) ' || true)
+FWMISS=$(printf '%s\n' "$FW" | awk '/^missing /{printf "%s ", $2}')
+if [ "${FWREAD:-0}" -lt 3 ]; then bad "every node has host.fw" "read ${FWREAD:-0} node directories, expected 3"
+elif [ -n "$FWMISS" ] && [ "$(printf '%s\n' "$FW" | head -1)" = "on" ]; then bad "every node has host.fw" "datacenter firewall on, no 'enable: 0' on: $FWMISS"
+elif [ -n "$FWMISS" ]; then ok "every node has host.fw" "datacenter firewall off; missing on $FWMISS (run configure-pve-firewall.yml before turning it on)"
+else ok "every node has host.fw" "$FWREAD nodes read, all enable: 0"; fi
 W=$(on $PVE02 'touch /etc/pve/.verify 2>/dev/null && rm -f /etc/pve/.verify && echo yes')
 [ "$W" = "yes" ] && ok "/etc/pve writable" || bad "/etc/pve writable" "lost quorum?"
 
@@ -108,8 +130,10 @@ sec "Placement matches intent"
 # 110 qbittorrent + 236 plex sit beside the disks; 233 is the pve02 CI runner, one per
 # host by design (PET-335); 239 is netboot, on pve02 by Pedro's decision (PET-720);
 # 240 is metrics-240, on pve02 per the PET-712 survey and iac#491 (PET-740).
+# 246 is ollama-246 on pve01, the only node with GPUs for it (PET-528).
 # Everything else belongs on pve03.
 INTENT_PVE02="110 236 233 239 240"
+INTENT_PVE01="246"
 PLACEMENT=$(on $PVE02 'pvesh get /cluster/resources --type vm --output-format json' 2>/dev/null)
 if [ -z "$PLACEMENT" ]; then
   bad "placement readable" "could not read /cluster/resources"
@@ -120,16 +144,17 @@ else
   # body is expanded, and the python arrives mangled. It still RUNS -- it printed
   # `101('"'"''"'"')` where the guest name belonged -- so the check reports garbage
   # rather than failing. Found writing this check (PET-334).
-  _placement_eval=$(PLACEMENT="$PLACEMENT" WANT02="$INTENT_PVE02" python3 <<'PYEOF'
+  _placement_eval=$(PLACEMENT="$PLACEMENT" WANT02="$INTENT_PVE02" WANT01="$INTENT_PVE01" python3 <<'PYEOF'
 import json, os
 want02 = set(os.environ["WANT02"].split())
+want01 = set(os.environ["WANT01"].split())
 rows = json.loads(os.environ["PLACEMENT"])
 wrong = []
 for r in rows:
     vmid = str(r.get("vmid") or "")
     if not vmid: continue
     node = r.get("node") or ""
-    expect = "pve02" if vmid in want02 else "pve03"
+    expect = "pve02" if vmid in want02 else "pve01" if vmid in want01 else "pve03"
     if node != expect:
         wrong.append(f"{vmid}({r.get('name','')}) on {node}, want {expect}")
 print("WRONG=%s" % json.dumps(";".join(wrong)))
@@ -138,7 +163,7 @@ PYEOF
 )
   eval "$_placement_eval"
   if [ -z "$WRONG" ]; then
-    ok "every guest on its intended node" "$NGUESTS guests; 110+236+233 on pve02"
+    ok "every guest on its intended node" "$NGUESTS guests; $INTENT_PVE02 on pve02, $INTENT_PVE01 on pve01"
   else
     IFS=';' read -ra W <<< "$WRONG"
     for w in "${W[@]}"; do bad "misplaced guest" "$w"; done
@@ -330,7 +355,9 @@ sec "Monitoring tells the truth"
 UP=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select count(*) from monitor where active=1"')
 [ "${UP:-0}" -ge 15 ] && ok "monitors active" "$UP" || bad "monitors active" "only ${UP:-0}"
 # A monitor named for a host that no longer exists is worse than no monitor.
-STALE=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select count(*) from monitor where active=1 and (name like \"%pve01%\" or url like \"%86.140%\" or url like \"%50.111%\")"')
+# The name pve01 came back on 2026-10-23 for the node at .12 (PET-528). A pve01 monitor
+# aimed at .12 is the new node; one aimed anywhere else is the dead R620's.
+STALE=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select count(*) from monitor where active=1 and ((name like \"%pve01%\" and ifnull(hostname,0) != \"192.168.50.12\" and ifnull(url,0) not like \"%//192.168.50.12:%\") or url like \"%86.140%\" or url like \"%50.111%\")"')
 [ "${STALE:-0}" -eq 0 ] && ok "no monitors for dead hosts" || bad "stale monitors" "$STALE point at hosts that are gone"
 # ⚠ A TIMER'S STATE SAYS IT FIRED, NOT THAT IT WORKED. kuma-backup.timer reported success
 # four times a day for nineteen days while the script wrote nothing: its guard refused the
@@ -490,7 +517,7 @@ else
 import json, re, subprocess, sys, urllib.request
 
 try:
-    hv = json.loads(subprocess.run(["ansible-inventory", "--host", "ollama-host"],
+    hv = json.loads(subprocess.run(["ansible-inventory", "--host", "ollama-246"],
                                    capture_output=True, text=True, timeout=60).stdout)
 except Exception as e:
     print(f"BAD\tollama declared set readable\t{type(e).__name__}")
@@ -567,6 +594,17 @@ for p in sorted(ports):
     extra = sorted(m["name"] for m in d.get("models", []) if (m["name"], p) not in want)
     print(f"BAD\tollama :{p} holds only declared models\tundeclared {', '.join(extra)}; run playbooks/ollama-models.yml"
           if extra else f"OK\tollama :{p} holds only declared models\t{len(d.get('models', []))} loaded")
+    # ⚠ A LOADED MODEL IS NOT A MODEL ON THE GPU (PET-762). For two weeks both lanes served
+    # from the CPU at 7 tok/s, because the driver's userspace and kernel module had drifted
+    # apart, and every check above stayed green: the API answered and the right models were
+    # loaded. /api/ps reports size_vram beside size, so compare them for every model loaded.
+    loaded = d.get("models", [])
+    if not loaded:
+        print(f"SKIP\tollama :{p} models fully on GPU\tnothing loaded, so no placement to read")
+    for m in loaded:
+        size, vram = m.get("size") or 0, m.get("size_vram") or 0
+        print(f"OK\tollama :{p} {m['name']} on GPU\t{vram} of {size} bytes in VRAM" if size and vram >= size
+              else f"BAD\tollama :{p} {m['name']} on GPU\tonly {vram} of {size} bytes in VRAM; check nvidia-smi on ollama-246 and pve01")
 PY
 )
   # ⚠ THREE VERDICTS, NOT TWO. This used to be `OK -> ok, everything else -> bad`, which

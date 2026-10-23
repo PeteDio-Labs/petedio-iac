@@ -45,8 +45,9 @@ locals {
   # once already: authentik-119 and runner-233 were left out after their PRs merged (this file
   # still carried the "will be added when their PRs merge" TODO), and tailscale-244 /
   # minio-data-245 followed that precedent. When you add a proxmox-lxc module,
-  # add it here in the same PR. ollama-host is NOT here on purpose — it is bare metal
-  # (modules/baremetal-host), not a container, so it has no VMID to put in a pool.
+  # add it here in the same PR. pve01 is NOT here on purpose — it is a node declared
+  # through modules/baremetal-host, not a container, so it has no VMID to put in a pool.
+  # Its container, ollama-246, is.
   pool_lxc_members = var.manage_resource_pool ? {
     # registry and tailscale are no longer declared — see their .tf files.
     vault      = module.vault.vm_id
@@ -62,6 +63,7 @@ locals {
     usaa       = module.usaa.vm_id
     netboot    = module.netboot.vm_id
     metrics    = module.metrics.vm_id
+    ollama     = module.ollama.vm_id
   } : {}
 
   # LXCs that exist on the cluster but have NO Terraform module here, so there is

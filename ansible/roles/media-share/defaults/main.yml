@@ -25,7 +25,7 @@
 # mounts (`mp0: /mnt/media,mp=/mnt/media`) then resolve on either node, which is
 # what makes the container node-independent.
 
-media_share_server_host: pve01
+media_share_server_host: pve01-r620  # the dead R620; pve01 is another machine since PET-528
 media_share_server_ip: 192.168.50.10
 media_share_client_ip: 192.168.50.11
 

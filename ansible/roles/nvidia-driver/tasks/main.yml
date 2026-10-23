@@ -1,0 +1,187 @@
+---
+- name: Assert the driver pin is complete
+  ansible.builtin.assert:
+    that:
+      - nvidia_driver_mode in ['host', 'container']
+      - nvidia_driver_version is match('\A[0-9]+\.[0-9]+(\.[0-9]+)?\Z')
+      - nvidia_driver_sha256 is match('\A[0-9a-f]{64}\Z')
+    fail_msg: >-
+      nvidia_driver_sha256 must be the 64-hex SHA-256 of
+      NVIDIA-Linux-x86_64-{{ nvidia_driver_version }}.run, and nvidia_driver_mode must be
+      host or container. Pin the checksum from the downloaded file (see defaults/main.yml),
+      or pass -e nvidia_driver_sha256=<value> for the first run and commit it after.
+    quiet: true
+
+- name: Read the installed driver version
+  ansible.builtin.command: nvidia-smi --query-gpu=driver_version --format=csv,noheader
+  register: nvidia_driver_before
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Decide whether the installer must run
+  ansible.builtin.set_fact:
+    nvidia_driver_needed: >-
+      {{ nvidia_driver_before.rc != 0
+         or (nvidia_driver_before.stdout_lines | first | default('') | trim) != nvidia_driver_version }}
+
+- name: Prepare the node
+  when: nvidia_driver_mode == 'host'
+  block:
+    # proxmox-default-headers follows the default kernel, so DKMS has headers for every
+    # kernel an upgrade installs, not only the running one.
+    - name: Install the build dependencies
+      ansible.builtin.apt:
+        name:
+          - "proxmox-headers-{{ ansible_facts['kernel'] }}"
+          - proxmox-default-headers
+          - build-essential
+          - dkms
+          - pkg-config
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Blacklist nouveau
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/blacklist-nouveau.conf
+        content: |
+          # Managed by ansible role nvidia-driver (PET-528).
+          blacklist nouveau
+          options nouveau modeset=0
+        mode: "0644"
+      register: nvidia_nouveau_blacklist
+
+    - name: Rebuild the initramfs without nouveau  # noqa: no-handler
+      ansible.builtin.command: update-initramfs -u -k all
+      changed_when: true
+      when: nvidia_nouveau_blacklist is changed
+
+    - name: Check whether nouveau holds the cards
+      ansible.builtin.shell: set -o pipefail; lsmod | awk '$1 == "nouveau"' | wc -l
+      args:
+        executable: /bin/bash
+      register: nvidia_nouveau_loaded
+      changed_when: false
+      check_mode: false
+
+    # Structured status from the API, not `pct list` and `qm list` text: the two print
+    # their status in different columns, and a parse that misses one would count a
+    # running VM as zero. A failed read fails the play rather than counting as none.
+    - name: Read the node's guests before a reboot
+      when: (nvidia_nouveau_loaded.stdout | int) > 0
+      ansible.builtin.command: pvesh get /nodes/{{ ansible_facts['hostname'] }}/{{ item }} --output-format json
+      loop: [lxc, qemu]
+      register: nvidia_guests
+      changed_when: false
+      check_mode: false
+
+    - name: Refuse a reboot that was not allowed
+      when: (nvidia_nouveau_loaded.stdout | int) > 0
+      vars:
+        nvidia_running: >-
+          {{ nvidia_guests.results | map(attribute='stdout') | map('from_json') | flatten
+             | selectattr('status', 'equalto', 'running') | map(attribute='vmid') | list }}
+      ansible.builtin.assert:
+        that:
+          - nvidia_driver_allow_reboot | bool
+          - nvidia_running | length == 0
+        fail_msg: >-
+          nouveau is loaded, so the node must reboot before the NVIDIA module can load.
+          The role reboots only with -e nvidia_driver_allow_reboot=true and no running
+          guests. Running now: {{ nvidia_running | join(', ') or 'none' }}.
+
+    # noqa reason: ORDERING. The installer below needs nouveau gone in this same run.
+    - name: Reboot to drop nouveau  # noqa: no-handler
+      when:
+        - (nvidia_nouveau_loaded.stdout | int) > 0
+        - not ansible_check_mode
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+        msg: "Rebooting to unload nouveau before the NVIDIA install (PET-528)"
+
+- name: Download the pinned installer
+  when: nvidia_driver_needed | bool
+  ansible.builtin.get_url:
+    url: "{{ nvidia_driver_url }}"
+    dest: "{{ nvidia_driver_run_path }}"
+    checksum: "sha256:{{ nvidia_driver_sha256 }}"
+    mode: "0700"
+
+# The installer is not idempotent, so it runs only when nvidia-smi reports another
+# version or none. Its own log is /var/log/nvidia-installer.log.
+- name: Run the installer
+  when:
+    - nvidia_driver_needed | bool
+    - not ansible_check_mode
+  ansible.builtin.command: >-
+    sh {{ nvidia_driver_run_path }}
+    {{ nvidia_driver_host_flags if nvidia_driver_mode == 'host' else nvidia_driver_container_flags }}
+  changed_when: true
+
+- name: Create the device nodes at boot, before any guest starts
+  when: nvidia_driver_mode == 'host'
+  block:
+    # /dev/nvidia-uvm appears only when something first uses CUDA, and an LXC whose
+    # config passes a missing device node fails to start. This unit makes every node
+    # exist before pve-guests.service starts the containers.
+    - name: Install the device-node unit
+      ansible.builtin.template:
+        src: nvidia-dev-nodes.service.j2
+        dest: /etc/systemd/system/nvidia-dev-nodes.service
+        mode: "0644"
+
+    - name: Load the modules at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/nvidia.conf
+        content: |
+          # Managed by ansible role nvidia-driver (PET-528).
+          nvidia
+          nvidia_uvm
+        mode: "0644"
+
+    - name: Enable and start the device-node unit
+      when: not ansible_check_mode
+      ansible.builtin.systemd_service:
+        name: nvidia-dev-nodes.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Read the cards back
+  when: not ansible_check_mode
+  ansible.builtin.command: nvidia-smi --query-gpu=driver_version,name,uuid --format=csv,noheader
+  register: nvidia_driver_after
+  changed_when: false
+
+- name: Assert the pinned version drives every expected card
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - nvidia_driver_after.stdout_lines | length > 0
+      - nvidia_driver_after.stdout_lines | map('split', ',') | map('first') | map('trim') | unique == [nvidia_driver_version]
+      - nvidia_driver_expected_uuids | difference(nvidia_driver_after.stdout_lines | map('split', ',') | map('last') | map('trim') | list) | length == 0
+    fail_msg: >-
+      nvidia-smi on {{ inventory_hostname }} reports {{ nvidia_driver_after.stdout_lines }}.
+      Expected driver {{ nvidia_driver_version }} on every card and the UUIDs
+      {{ nvidia_driver_expected_uuids }}.
+    success_msg: "{{ inventory_hostname }}: {{ nvidia_driver_after.stdout_lines | join(' | ') }}"
+
+- name: Assert DKMS built the module for the running kernel
+  when:
+    - nvidia_driver_mode == 'host'
+    - not ansible_check_mode
+  block:
+    - name: Read dkms status
+      ansible.builtin.command: dkms status
+      register: nvidia_dkms
+      changed_when: false
+
+    - name: Check the running kernel is covered
+      ansible.builtin.assert:
+        that:
+          - nvidia_dkms.stdout is search('nvidia/' ~ nvidia_driver_version ~ ', ' ~ ansible_facts['kernel'] ~ '.*installed')
+        fail_msg: >-
+          dkms status does not show nvidia/{{ nvidia_driver_version }} installed for
+          {{ ansible_facts['kernel'] }}: {{ nvidia_dkms.stdout_lines }}. The next kernel
+          upgrade would boot with no GPU driver.

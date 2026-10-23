@@ -21,11 +21,10 @@
   roles:
     - timezone
 
-- name: And on the bare-metal hosts
-  hosts: ollama-host
+# pve01 has its own inventory file (PET-528), so `proxmox` misses it. Its guests are
+# covered here too, as on the other nodes.
+- name: And on pve01
+  hosts: pve01
   become: true
-  vars:
-    ansible_user: ansible
-    timezone_include_guests: false
   roles:
     - timezone

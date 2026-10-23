@@ -1,0 +1,19 @@
+# ollama-246's LAN allowlist loader (PET-528). MANAGED BY ANSIBLE — edits here are
+# overwritten.
+#
+# Its own unit rather than nftables.service, for the reason the .nft file gives. It runs
+# before every service it guards, so no port is open to all sources, even for one boot.
+#
+# ⚠ NO ExecStop, DELIBERATELY, as on mtrace-allowlist.service: stopping this unit must
+# never open the ports.
+[Unit]
+Description=ollama-246 LAN allowlist (nftables)
+Before=ollama.service ollama-1660s.service petedio-search.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/ollama-allowlist/allowlist.nft
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,7 @@
 ---
 # configure-netboot.yml — the network-boot server that installs Proxmox VE on ollama-host
-# (.12) to make it pve04 (PET-528). LXC 239 on pve02, declared in
-# environments/homelab/netboot.tf. Temporary: delete this with the LXC once pve04 joins.
+# (.12) to make it pve01 (PET-528). LXC 239 on pve02, declared in
+# environments/homelab/netboot.tf. Temporary: delete this with the LXC once pve01 joins.
 #
 # WHAT IT BUILDS. dnsmasq answers PXE requests in proxy-DHCP mode, so the router's DHCP
 # stays untouched, and only for netboot_allowed_macs. It chains the client into iPXE

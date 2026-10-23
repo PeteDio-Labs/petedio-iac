@@ -1,5 +1,8 @@
 ---
-# configure-wd-disk.yml — mount the recovered pve02 WD disk on ollama-host. (PET-527)
+# configure-wd-disk.yml — mount the recovered pve02 WD disk on pve01. (PET-527)
+#
+# The disk moved with the box: ollama-host became the Proxmox node pve01 on 2026-10-23
+# (PET-528). It was unplugged while the installer ran, so its LVs are as they were.
 #
 #   ansible-playbook playbooks/configure-wd-disk.yml
 #
@@ -10,13 +13,37 @@
 #
 # No workflow applies this on merge. Run it from the Mac after the PR merges.
 #
-# The connection user is set on the play, as configure-backup-store.yml does:
-# `ansible` has passwordless sudo on this host, and `pedro`'s password is unknown.
+# Root on the node, from inventory/pve01.yml.
 
 - name: Mount the recovered WD disk
-  hosts: ollama-host
+  hosts: pve01
   become: true
-  vars:
-    ansible_user: ansible
   roles:
     - wd-disk
+
+# The disk's two old directory stores. On pve02 the disk carried `pve02-backups` at
+# /mnt/backups and `pve02-shared` at /mnt/shared (PET-127). The disk left pve02, and both
+# stores kept pointing at empty directories on pve02's root disk with no `is_mountpoint`,
+# so a backup or a disk aimed at either one would fill that root disk (PET-529's shape).
+# `is_mountpoint` makes Proxmox mark a store inactive while nothing is mounted there.
+# storage.cfg is cluster-wide, so pve01 sets it for pve02's stores.
+- name: Keep pve02's old WD stores off pve02's root disk
+  hosts: pve01
+  become: true
+  vars:
+    wd_disk_old_stores: [pve02-backups, pve02-shared]
+  tasks:
+    - name: Read each old store
+      ansible.builtin.command: pvesh get /storage/{{ item }} --output-format json
+      loop: "{{ wd_disk_old_stores }}"
+      register: wd_disk_store
+      changed_when: false
+      check_mode: false
+
+    - name: Mark each one as needing a mount
+      when: (item.stdout | from_json).is_mountpoint | default('') not in ['yes', '1', 1, true]
+      ansible.builtin.command: pvesh set /storage/{{ item.item }} --is_mountpoint yes
+      loop: "{{ wd_disk_store.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      changed_when: true

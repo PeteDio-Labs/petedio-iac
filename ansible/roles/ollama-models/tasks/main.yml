@@ -121,7 +121,7 @@
     that: ollama_undeclared_loaded | length == 0
     fail_msg: >-
       Still loaded but not declared resident: {{ ollama_undeclared_loaded | join(', ') }}.
-      Check nvidia-smi for an orphaned llama-server (see host_vars/ollama-host.yml).
+      Check nvidia-smi for an orphaned llama-server (see host_vars/ollama-246.yml).
     success_msg: "Each instance holds only its declared resident models."
   vars:
     ollama_undeclared_loaded: >-
