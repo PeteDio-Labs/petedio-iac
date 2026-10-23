@@ -39,6 +39,16 @@
     pve01_address: 192.168.50.12
     pve01_nosub_file: /etc/apt/sources.list.d/pve-no-subscription.sources
 
+  handlers:
+    - name: Regenerate the node certificate
+      ansible.builtin.command: pvecm updatecerts --force
+      changed_when: true
+
+    - name: Restart pveproxy
+      ansible.builtin.systemd:
+        name: pveproxy
+        state: restarted
+
   pre_tasks:
     - name: Read the cluster membership
       ansible.builtin.command: pvecm status
@@ -90,19 +100,13 @@
         path: /etc/hosts
         regexp: '^{{ pve01_address | regex_escape }}\s'
         line: "{{ pve01_address }} {{ inventory_hostname }}.{{ pve01_domain }} {{ inventory_hostname }}"
-      register: pve01_hosts
+      # The node certificate names the FQDN, so regenerate it once the name changes.
+      notify:
+        - Regenerate the node certificate
+        - Restart pveproxy
 
-    # The node certificate names the FQDN, so regenerate it once the name changes.
-    - name: Regenerate the node certificate for the new name
-      when: pve01_hosts is changed
-      ansible.builtin.command: pvecm updatecerts --force
-      changed_when: true
-
-    - name: Serve the regenerated certificate
-      when: pve01_hosts is changed
-      ansible.builtin.systemd:
-        name: pveproxy
-        state: restarted
+    - name: Regenerate the certificate before the play goes on
+      ansible.builtin.meta: flush_handlers
 
     - name: Disable the enterprise repositories
       ansible.builtin.lineinfile:
