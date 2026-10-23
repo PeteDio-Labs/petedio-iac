@@ -26,7 +26,7 @@ locals {
   # paths, policies and consumers in the same change as moving state — so the map absorbs
   # the inconsistency instead. NEW databases should omit both fields and take the defaults
   # below (kv/db/<name>, field `password`), which is the convention to converge on; the
-  # three legacy entries can be migrated later as their own, separately-reviewable change.
+  # legacy secrets can be migrated later as their own, separately-reviewable change.
   postgres_databases = {
     waterfast = {
       vault_path     = "services/water-fast"
@@ -36,7 +36,7 @@ locals {
     # plane — the tracker that replaces Linear (plane.tf, LXC 235). FIRST database to
     # take the defaults: no vault_path, no password_field, so it resolves to
     # kv/db/plane field `password`. That is the convention every new database should
-    # follow; the three above only carry overrides because they predate it.
+    # follow; the legacy secrets only carry overrides because they predate it.
     #
     # Plane is Django and runs its own migrations against this database as the owner
     # role. That is sufficient: every extension it plausibly needs (pg_trgm, btree_gin,

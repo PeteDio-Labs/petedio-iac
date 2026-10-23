@@ -106,8 +106,9 @@ done
 # and then reconciled into state — see docs/runbooks/pve03-platform-move.md.
 sec "Placement matches intent"
 # 110 qbittorrent + 236 plex sit beside the disks; 233 is the pve02 CI runner, one per
-# host by design (PET-335). Everything else belongs on pve03.
-INTENT_PVE02="110 236 233"
+# host by design (PET-335); 239 is netboot, on pve02 by Pedro's decision (PET-720).
+# Everything else belongs on pve03.
+INTENT_PVE02="110 236 233 239"
 PLACEMENT=$(on $PVE02 'pvesh get /cluster/resources --type vm --output-format json' 2>/dev/null)
 if [ -z "$PLACEMENT" ]; then
   bad "placement readable" "could not read /cluster/resources"
