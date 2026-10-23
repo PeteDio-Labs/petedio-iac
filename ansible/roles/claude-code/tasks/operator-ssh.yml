@@ -94,6 +94,29 @@
     validate: /usr/sbin/sshd -t -f %s -h /etc/ssh/ssh_host_ed25519_key
   notify: Reload sshd
 
+# One 0700 directory per monitored user under a root-owned parent in /run, so the login
+# notice's dedupe locks (templates/sshrc.j2) are creatable only by the user they belong to.
+# /run is tmpfs, so the tmpfiles.d entry remakes the directories at boot. The sshrc fails
+# open to sending the notice when the directory is missing or not owned by the user.
+- name: Declare the login-notice lock directories
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/petedio-ssh-notify.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # {{ ansible_managed }}
+      d {{ claude_operator_ssh_notify_dir }} 0755 root root -
+      {% for u in claude_operator_notify_users %}
+      d {{ claude_operator_ssh_notify_dir }}/{{ u }} 0700 {{ u }} {{ u }} -
+      {% endfor %}
+  register: ssh_notify_tmpfiles
+
+- name: Create the login-notice lock directories now
+  ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/petedio-ssh-notify.conf
+  changed_when: true
+  when: ssh_notify_tmpfiles is changed
+
 # sshd runs /etc/ssh/sshrc as the user at every login. It DMs Pedro for a login to the two
 # accounts the phone key opens, so a login he did not make shows up on his phone. The drop-in
 # above sets PermitUserRC no, because a ~/.ssh/rc would otherwise run instead of this file.
