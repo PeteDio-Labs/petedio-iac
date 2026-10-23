@@ -26,9 +26,9 @@ ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
 # Ubuntu driver packages here. roles/nvidia-driver installs the userspace instead.
 ollama_manage_host: false
 
-# A Debian LXC carries no ufw. The LAN reaches both lanes and the search API directly,
-# as it did through ufw's 192.168.50.0/24 rules on the old host. A Proxmox firewall rule
-# on the container is a follow-up.
+# A Debian LXC carries no ufw. configure-ollama-246.yml keeps the old boundary with an
+# nftables allowlist instead: both lanes and the search API accept 192.168.50.0/24 and
+# loopback only, loaded before any of them starts and asserted after.
 ollama_firewall_enabled: false
 search_manage_ufw: false
 

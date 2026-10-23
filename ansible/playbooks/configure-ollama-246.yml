@@ -13,6 +13,17 @@
 - name: Prepare the container
   hosts: ollama
   become: true
+  vars:
+    # Every port the old host's ufw opened to the LAN alone: both Ollama lanes and
+    # petedio-search. The allowlist loads before any of them starts.
+    ollama_allow_ports: "{{ [ollama_port | default(11434)] + (ollama_extra_instances | map(attribute='port') | list) + [8526] }}"
+    ollama_allow_subnet: 192.168.50.0/24
+  handlers:
+    - name: Reload the allowlist
+      ansible.builtin.systemd_service:
+        name: ollama-allowlist
+        state: restarted
+        daemon_reload: true
   tasks:
     # The Debian template carries neither. The Ollama installer needs curl, and both it
     # and the NVIDIA installer probe the cards through lspci.
@@ -23,9 +34,57 @@
           - ca-certificates
           - pciutils
           - zstd
+          - nftables
         state: present
         update_cache: true
         cache_valid_time: 3600
+
+    # ollama-246 replaces ufw with this table (host_vars sets ollama_firewall_enabled and
+    # search_manage_ufw false). Load and prove it before any service binds a port.
+    - name: Create the allowlist directory
+      ansible.builtin.file:
+        path: /etc/ollama-allowlist
+        state: directory
+        mode: "0755"
+
+    - name: Install the LAN allowlist ruleset
+      ansible.builtin.template:
+        src: ollama-allowlist.nft.j2
+        dest: /etc/ollama-allowlist/allowlist.nft
+        mode: "0644"
+        validate: nft -c -f %s
+      notify: Reload the allowlist
+
+    - name: Install the allowlist unit
+      ansible.builtin.template:
+        src: ollama-allowlist.service.j2
+        dest: /etc/systemd/system/ollama-allowlist.service
+        mode: "0644"
+      notify: Reload the allowlist
+
+    - name: Enable and start the allowlist
+      ansible.builtin.systemd_service:
+        name: ollama-allowlist
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Flush handlers so the allowlist is live before any service binds
+      ansible.builtin.meta: flush_handlers
+
+    - name: Read the live allowlist
+      ansible.builtin.command: nft list table inet ollama_allow
+      register: ollama_allow_live
+      changed_when: false
+      check_mode: false
+
+    - name: Assert the allowlist guards every port
+      ansible.builtin.assert:
+        that:
+          - ollama_allow_live.stdout is search('ip saddr ' ~ (ollama_allow_subnet | regex_escape) ~ ' accept')
+          - ollama_allow_live.stdout is search('reject with tcp reset')
+          - ollama_allow_ports | map('string') | reject('in', ollama_allow_live.stdout) | list | length == 0
+        fail_msg: "The ollama_allow table is missing a rule: {{ ollama_allow_live.stdout_lines }}"
 
     - name: Install the NVIDIA userspace that matches pve04's module
       ansible.builtin.include_role:

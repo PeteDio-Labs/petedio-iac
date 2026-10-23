@@ -112,8 +112,10 @@ sec "Placement matches intent"
 # 110 qbittorrent + 236 plex sit beside the disks; 233 is the pve02 CI runner, one per
 # host by design (PET-335); 239 is netboot, on pve02 by Pedro's decision (PET-720);
 # 240 is metrics-240, on pve02 per the PET-712 survey and iac#491 (PET-740).
+# 246 is ollama-246 on pve04, the only node with GPUs for it (PET-528).
 # Everything else belongs on pve03.
 INTENT_PVE02="110 236 233 239 240"
+INTENT_PVE04="246"
 PLACEMENT=$(on $PVE02 'pvesh get /cluster/resources --type vm --output-format json' 2>/dev/null)
 if [ -z "$PLACEMENT" ]; then
   bad "placement readable" "could not read /cluster/resources"
@@ -124,16 +126,17 @@ else
   # body is expanded, and the python arrives mangled. It still RUNS -- it printed
   # `101('"'"''"'"')` where the guest name belonged -- so the check reports garbage
   # rather than failing. Found writing this check (PET-334).
-  _placement_eval=$(PLACEMENT="$PLACEMENT" WANT02="$INTENT_PVE02" python3 <<'PYEOF'
+  _placement_eval=$(PLACEMENT="$PLACEMENT" WANT02="$INTENT_PVE02" WANT04="$INTENT_PVE04" python3 <<'PYEOF'
 import json, os
 want02 = set(os.environ["WANT02"].split())
+want04 = set(os.environ["WANT04"].split())
 rows = json.loads(os.environ["PLACEMENT"])
 wrong = []
 for r in rows:
     vmid = str(r.get("vmid") or "")
     if not vmid: continue
     node = r.get("node") or ""
-    expect = "pve02" if vmid in want02 else "pve03"
+    expect = "pve02" if vmid in want02 else "pve04" if vmid in want04 else "pve03"
     if node != expect:
         wrong.append(f"{vmid}({r.get('name','')}) on {node}, want {expect}")
 print("WRONG=%s" % json.dumps(";".join(wrong)))
@@ -142,7 +145,7 @@ PYEOF
 )
   eval "$_placement_eval"
   if [ -z "$WRONG" ]; then
-    ok "every guest on its intended node" "$NGUESTS guests; 110+236+233 on pve02"
+    ok "every guest on its intended node" "$NGUESTS guests; $INTENT_PVE02 on pve02, $INTENT_PVE04 on pve04"
   else
     IFS=';' read -ra W <<< "$WRONG"
     for w in "${W[@]}"; do bad "misplaced guest" "$w"; done

@@ -65,25 +65,31 @@
       changed_when: false
       check_mode: false
 
-    - name: Count running guests before a reboot
+    # Structured status from the API, not `pct list` and `qm list` text: the two print
+    # their status in different columns, and a parse that misses one would count a
+    # running VM as zero. A failed read fails the play rather than counting as none.
+    - name: Read the node's guests before a reboot
       when: (nvidia_nouveau_loaded.stdout | int) > 0
-      ansible.builtin.shell: set -o pipefail; (pct list; qm list) 2>/dev/null | awk '$2 == "running"' | wc -l
-      args:
-        executable: /bin/bash
-      register: nvidia_running_guests
+      ansible.builtin.command: pvesh get /nodes/{{ ansible_facts['hostname'] }}/{{ item }} --output-format json
+      loop: [lxc, qemu]
+      register: nvidia_guests
       changed_when: false
       check_mode: false
 
     - name: Refuse a reboot that was not allowed
       when: (nvidia_nouveau_loaded.stdout | int) > 0
+      vars:
+        nvidia_running: >-
+          {{ nvidia_guests.results | map(attribute='stdout') | map('from_json') | flatten
+             | selectattr('status', 'equalto', 'running') | map(attribute='vmid') | list }}
       ansible.builtin.assert:
         that:
           - nvidia_driver_allow_reboot | bool
-          - (nvidia_running_guests.stdout | int) == 0
+          - nvidia_running | length == 0
         fail_msg: >-
           nouveau is loaded, so the node must reboot before the NVIDIA module can load.
           The role reboots only with -e nvidia_driver_allow_reboot=true and no running
-          guests ({{ nvidia_running_guests.stdout | trim }} running now).
+          guests. Running now: {{ nvidia_running | join(', ') or 'none' }}.
 
     # noqa reason: ORDERING. The installer below needs nouveau gone in this same run.
     - name: Reboot to drop nouveau  # noqa: no-handler

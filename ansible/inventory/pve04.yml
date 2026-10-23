@@ -7,10 +7,10 @@
 # onto a 128 GB drive on 2026-10-23 and joined to the cluster (PET-528). It keeps the
 # address .12, so the node block stays .10/.11/.12.
 #
-# ⚠ ITS OWN GROUP, NOT pve_new. Several plays target pve_new with pve03's role in
+# ⚠ ITS OWN GROUP, pve_gpu, NOT pve_new. Several plays target pve_new with pve03's role in
 # mind: configure-pve-node.yml rebuilds the bridge from pve_node_* vars, and
 # configure-media-split.yml mounts the media NFS shares. pve04 needs neither. A play
-# that should reach every node names `pve04` beside `proxmox:pve_new`, as
+# that should reach every node names `pve_gpu` beside `proxmox:pve_new`, as
 # configure-lxc-features.yml does.
 #
 # THE TWO 1 TB DISKS SURVIVED THE INSTALL. They were unplugged while the installer
@@ -24,7 +24,7 @@
 ---
 all:
   children:
-    pve04:
+    pve_gpu:
       hosts:
         pve04:
           ansible_host: 192.168.50.12
