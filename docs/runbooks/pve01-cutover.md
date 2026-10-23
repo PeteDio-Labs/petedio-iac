@@ -1,20 +1,25 @@
-# pve04 cutover: ollama-host becomes a Proxmox node
+# pve01 cutover: ollama-host becomes a Proxmox node
 
 This runbook turns the bare-metal ollama-host (`192.168.50.12`) into the Proxmox node
-`pve04`, joins it to the cluster, and moves Ollama and petedio-search into the GPU
+`pve01`, joins it to the cluster, and moves Ollama and petedio-search into the GPU
 container `ollama-246` (`192.168.50.246`). The work item is `PET-528`. It ran on
 2026-10-23 with Pedro at the console.
+
+**The name pve01 is reused.** The first pve01, a Dell R620 at `.10`, died on 2026-09-03
+and left the cluster. Pedro gave its name to this node on 2026-10-23. The plan used
+`pve04` until then, and the installer may have run with that name, so step B6 renames
+the node before it joins. Step C2 clears what the R620 left in the cluster filesystem.
 
 ## What changes and what stays
 
 | | Before | After |
 |---|---|---|
 | OS | Ubuntu 24.04 on sda | Proxmox VE 9 on a new 128 GB drive |
-| Ollama `:11434` and `:11435`, search `:8526` | `.12`, native | `.246`, in CT 246 on pve04 |
+| Ollama `:11434` and `:11435`, search `:8526` | `.12`, native | `.246`, in CT 246 on pve01 |
 | NVIDIA driver | Ubuntu packages, upgraded by unattended-upgrades | one pinned `.run`, on the node (DKMS) and in the container (userspace) |
-| `ollama-backups` NFS store | sda `ubuntu-vg/backup-lv` at `/srv/backups`, served from `.12` | the same LV and address, served by pve04 |
-| Recovered WD disk (sdb) | `/mnt/wd-backups`, `/mnt/wd-general` | the same mounts, on pve04 |
-| Cluster | pve02 + pve03 + QDevice on pete-pi-1 | pve02 + pve03 + pve04, no QDevice |
+| `ollama-backups` NFS store | sda `ubuntu-vg/backup-lv` at `/srv/backups`, served from `.12` | the same LV and address, served by pve01 |
+| Recovered WD disk (sdb) | `/mnt/wd-backups`, `/mnt/wd-general` | the same mounts, on pve01 |
+| Cluster | pve02 + pve03 + QDevice on pete-pi-1 | pve02 + pve03 + pve01, no QDevice |
 
 Both 1 TB disks are unplugged during the install, so the installer can't see them, and
 nothing on them changes. The Ubuntu root on sda stays bootable as the rollback until
@@ -72,31 +77,58 @@ the two-lane layout that `host_vars/ollama-246.yml` already describes.
    - Country, time zone `America/New_York`, US keyboard.
    - A new root password, kept in the password manager only.
    - Management interface: the onboard NIC, MAC `2c:f0:5d:a2:7f:4f`.
-   - Hostname `pve04.<pve03's domain>`, IP `192.168.50.12/24`, gateway `192.168.50.1`,
+   - Hostname `pve01.<pve03's domain>`, IP `192.168.50.12/24`, gateway `192.168.50.1`,
      and pve03's DNS server.
 4. When the installer finishes, power off, plug both 1 TB drives back in, and set the
    firmware to boot the 128 GB drive first.
 5. Boot. Gate: `https://192.168.50.12:8006` shows the login page.
+6. If the console prompt reads `pve04 login:`, rename the node. It runs no guest yet,
+   so nothing else holds the name:
+
+   ```sh
+   hostnamectl set-hostname pve01
+   sed -i 's/\bpve04\b/pve01/g' /etc/hosts
+   reboot
+   ```
+
+   After the reboot, run `pvecm updatecerts --force`. Gate: `hostname -f` prints
+   `pve01.<domain>`, and `/etc/hosts` maps `192.168.50.12` to it.
 
 ## C. Join the cluster (Pedro)
 
-1. Upgrade pve04 to the cluster's version. In pve04's web UI, open **pve04 >
+1. Upgrade pve01 to the cluster's version. In pve01's web UI, open **pve01 >
    Updates > Repositories**. Disable the two enterprise repositories, then add the
-   **No-Subscription** repository. Then, in pve04's shell, run
+   **No-Subscription** repository. Then, in pve01's shell, run
    `apt update && apt full-upgrade -y && reboot`.
-   Gate: `pveversion` on pve04 matches pve03's major and minor version.
-2. On pve03's shell, remove the QDevice: `pvecm qdevice remove`. For the next few
+   Gate: `pveversion` on pve01 matches pve03's major and minor version.
+2. **Clear the R620's leftovers (Mac session).** A node that joins under a name the
+   cluster already knows inherits whatever `/etc/pve/nodes/<name>` holds, guest
+   configs included. On pve03, read:
+
+   ```sh
+   pvecm nodes
+   grep -n pve01 /etc/pve/corosync.conf
+   ls -la /etc/pve/nodes/
+   find /etc/pve/nodes/pve01 -maxdepth 2 2>/dev/null
+   grep -c pve01 /etc/pve/priv/known_hosts
+   ```
+
+   Gate: `pvecm nodes` and `corosync.conf` don't name pve01. If
+   `/etc/pve/nodes/pve01` exists, archive it to `/root` on pve03 with `tar`, then
+   delete it, only on Pedro's word in the Mac chat. If `known_hosts` names pve01,
+   remove those lines with `ssh-keygen -f /etc/pve/priv/known_hosts -R pve01`.
+3. On pve03's shell, remove the QDevice: `pvecm qdevice remove`. For the next few
    minutes the cluster has two votes and needs both.
-3. On pve04's shell, run `pvecm add 192.168.50.10`. Enter pve03's root password and
+4. On pve01's shell, run `pvecm add 192.168.50.10`. Enter pve03's root password and
    accept the fingerprint.
-4. Gate: `pvecm status` on any node shows `Nodes: 3`, `Expected votes: 3` and
-   `Quorate: Yes`. The UI shows pve04 online.
+5. Gate: `pvecm status` on any node shows `Nodes: 3`, `Expected votes: 3` and
+   `Quorate: Yes`. The UI shows pve01 online.
 
 ## D. Bring the backup store and the GPU node back (Mac session)
 
 Run from the PR branch until it merges, from `ansible/`:
 
-1. `ansible-playbook playbooks/configure-pve04.yml -e nvidia_driver_allow_reboot=true`.
+1. `ansible-playbook playbooks/configure-pve01.yml -e nvidia_driver_allow_reboot=true`.
    It ends with "CT 246 does not exist yet". That message is expected at this point.
    Gate: the `nvidia-smi` line lists both UUIDs at `580.178.04`, and `dkms status`
    covers the running kernel.
@@ -112,11 +144,11 @@ store is disabled, every job fails.
 
 ## E. Bring up Ollama in CT 246
 
-1. Merge the PR. Apply-on-merge creates CT 246 on pve04. Gate: the apply log shows
-   `module.ollama` created, `module.pve04_host` updated in place, and nothing destroyed.
+1. Merge the PR. Apply-on-merge creates CT 246 on pve01. Gate: the apply log shows
+   `module.ollama` created, `module.pve01_host` updated in place, and nothing destroyed.
 2. From `main`, run:
-   - `ansible-playbook playbooks/configure-lxc-features.yml`, then `pct reboot 246` on pve04.
-   - `ansible-playbook playbooks/configure-pve04.yml -e lxc_gpu_allow_restart=true`
+   - `ansible-playbook playbooks/configure-lxc-features.yml`, then `pct reboot 246` on pve01.
+   - `ansible-playbook playbooks/configure-pve01.yml -e lxc_gpu_allow_restart=true`
    - `ansible-playbook playbooks/configure-ollama-246.yml`
    - `./scripts/deploy-search.sh`. It targets the `ollama` group, which holds only ollama-246.
 3. Repoint the consumers: `./scripts/deploy-uptime-kuma.sh`, then
@@ -130,7 +162,7 @@ store is disabled, every job fails.
 
 Before part E passes, you can boot Ubuntu again. Power off, unplug the 128 GB drive,
 and boot sda. ollama-host comes back at `.12` with Ollama, search and the export as
-they were. Then run `pvecm delnode pve04` on pve03 and re-add the QDevice
+they were. Then run `pvecm delnode pve01` on pve03 and re-add the QDevice
 (`roles/cluster-qdevice`, through `playbooks/configure-pete-pi.yml`).
 
 ## After it passes
@@ -138,8 +170,8 @@ they were. Then run `pvecm delnode pve04` on pve03 and re-add the QDevice
 - Delete netboot CT 239 and its code (`netboot.tf` says so). The destroy needs the repo
   variable `ALLOW_DESTROY=true`.
 - Reclaim the Ubuntu root LV on sda once nobody needs the rollback.
-- Give pve04's own guests a backup job. The `ollama-backups` storage is a `dir` at
-  `/mnt/ollama-backups`, and pve04 serves the store from `/srv/backups`, so pve04
+- Give pve01's own guests a backup job. The `ollama-backups` storage is a `dir` at
+  `/mnt/ollama-backups`, and pve01 serves the store from `/srv/backups`, so pve01
   needs a bind mount before the storage turns active there.
-- Update the vault notes: `012-ollama-host`, a new `pve04` and `246-ollama` note,
+- Update the vault notes: `012-ollama-host`, a new `pve01` and `246-ollama` note,
   `hosts-inventory`, and `node-roles`.

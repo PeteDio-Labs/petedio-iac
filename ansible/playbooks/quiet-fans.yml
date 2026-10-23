@@ -1,5 +1,5 @@
 ---
-# ⛔ HISTORICAL — pve01 is gone (2026-09-03). `hosts: pve01` matches nothing in the inventory,
+# ⛔ HISTORICAL — the R620 pve01 is gone (2026-09-03). `hosts: pve01-r620` matches nothing in the inventory,
 # so this play exits 0 having done nothing (PET-354's shape). Kept for the fan-curve
 # measurements, for the next R620.
 #
@@ -25,8 +25,10 @@
 # Targets pve01 only. pve02 is a different chassis in a different room, and none
 # of the numbers above were measured there.
 
+# ⚠ `pve01-r620`, not `pve01`: the name pve01 belongs to a different machine since
+# PET-528 (inventory/pve01.yml), which has no IPMI and none of these numbers.
 - name: Quiet the chassis fans, with a thermal watchdog
-  hosts: pve01
+  hosts: pve01-r620
   become: true
   roles:
     - ipmi-fan-control

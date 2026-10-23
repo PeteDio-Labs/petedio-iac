@@ -1,4 +1,4 @@
-# pve04 — a SEPARATE inventory file, for the reason pve03.yml gives: hosts.yml is
+# pve01 — a SEPARATE inventory file, for the reason pve03.yml gives: hosts.yml is
 # watched by apply-on-merge workflows, and a node under construction is no reason to
 # redeploy anything (PET-302).
 #
@@ -7,9 +7,14 @@
 # onto a 128 GB drive on 2026-10-23 and joined to the cluster (PET-528). It keeps the
 # address .12, so the node block stays .10/.11/.12.
 #
+# ⚠ THE NAME IS REUSED. The first pve01, a Dell R620 at .10, died on 2026-09-03
+# (vault/Incidents/2026-09-03-rack-loss.md). Pedro gave its name to this node on
+# 2026-10-23. Its plays target `pve01-r620` so they can't reach this machine, and the
+# old notes and comments that say "pve01" mean the R620 unless they cite PET-528.
+#
 # ⚠ ITS OWN GROUP, pve_gpu, NOT pve_new. Several plays target pve_new with pve03's role in
 # mind: configure-pve-node.yml rebuilds the bridge from pve_node_* vars, and
-# configure-media-split.yml mounts the media NFS shares. pve04 needs neither. A play
+# configure-media-split.yml mounts the media NFS shares. pve01 needs neither. A play
 # that should reach every node names `pve_gpu` beside `proxmox:pve_new`, as
 # configure-lxc-features.yml does.
 #
@@ -20,13 +25,13 @@
 #   sdb  network-storage  the recovered pve02 WD disk (configure-wd-disk.yml)
 #
 # Root over the cluster's shared authorized_keys: joining copies the cluster's
-# /etc/pve/priv/authorized_keys onto the node, so the key that opens pve03 opens pve04.
+# /etc/pve/priv/authorized_keys onto the node, so the key that opens pve03 opens pve01.
 ---
 all:
   children:
     pve_gpu:
       hosts:
-        pve04:
+        pve01:
           ansible_host: 192.168.50.12
           ansible_user: root
           ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible

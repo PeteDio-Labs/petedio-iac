@@ -1,7 +1,7 @@
 ---
-# configure-wd-disk.yml — mount the recovered pve02 WD disk on pve04. (PET-527)
+# configure-wd-disk.yml — mount the recovered pve02 WD disk on pve01. (PET-527)
 #
-# The disk moved with the box: ollama-host became the Proxmox node pve04 on 2026-10-23
+# The disk moved with the box: ollama-host became the Proxmox node pve01 on 2026-10-23
 # (PET-528). It was unplugged while the installer ran, so its LVs are as they were.
 #
 #   ansible-playbook playbooks/configure-wd-disk.yml
@@ -13,10 +13,10 @@
 #
 # No workflow applies this on merge. Run it from the Mac after the PR merges.
 #
-# Root on the node, from inventory/pve04.yml.
+# Root on the node, from inventory/pve01.yml.
 
 - name: Mount the recovered WD disk
-  hosts: pve04
+  hosts: pve01
   become: true
   roles:
     - wd-disk

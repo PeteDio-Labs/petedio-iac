@@ -1,5 +1,5 @@
 # netboot (LXC 239): the network-boot server that installs Proxmox VE on ollama-host
-# (.12) to make it pve04 (PET-528).
+# (.12) to make it pve01 (PET-528).
 #
 # WHY 239 / .239, AND WHY pve02
 #
@@ -26,7 +26,7 @@
 #   template     13.1-2         pve02 carries 13.1-2 and not 13.6-1 (`pveam list local`,
 #                               2026-09-28). Templates live on each node's own `local`.
 #
-# ⚠ TEMPORARY. Once pve04 has joined the cluster (PET-528 step 6), delete this file along
+# ⚠ TEMPORARY. Once pve01 has joined the cluster (PET-528 step 6), delete this file along
 # with inventory/netboot.yml, roles/netboot and playbooks/configure-netboot.yml.
 
 module "netboot" {
@@ -46,7 +46,7 @@ module "netboot" {
   target_node      = "pve02"
   template_file_id = "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst"
   ssh_public_key   = var.ssh_public_key
-  description      = "Network-boot server for the pve04 install (PET-528). Managed by Terraform; services by configure-netboot.yml. Temporary."
+  description      = "Network-boot server for the pve01 install (PET-528). Managed by Terraform; services by configure-netboot.yml. Temporary."
 }
 
 output "netboot_id" {

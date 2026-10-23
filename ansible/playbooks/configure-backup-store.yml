@@ -2,12 +2,12 @@
 # configure-backup-store.yml — give the cluster a backup target that neither
 # Proxmox node owns, on ollama-host. (PET-288)
 #
-# ⚠ ollama-host IS pve04 SINCE 2026-10-23 (PET-528). The box was reinstalled as a
+# ⚠ ollama-host IS pve01 SINCE 2026-10-23 (PET-528). The box was reinstalled as a
 # Proxmox node on a new 128 GB drive, with sda unplugged, so the store's LV
-# (ubuntu-vg/backup-lv) and every archive on it came through untouched. pve04 mounts
+# (ubuntu-vg/backup-lv) and every archive on it came through untouched. pve01 mounts
 # that LV in place and serves the same export from the same address, .12. The store
 # is now on a cluster member, which weakens the "neither node owns it" property
-# below: a fault on pve04 now takes a node and the backups together.
+# below: a fault on pve01 now takes a node and the backups together.
 #
 # WHY. Surveyed 2026-08-31: no scheduled backups existed anywhere, and exactly
 # ONE archive existed in the whole cluster. The "295 GB reserved" target was an
@@ -19,7 +19,7 @@
 #
 #   ansible-playbook playbooks/configure-backup-store.yml
 #
-# NO -K NEEDED. The server play runs as root on pve04 (inventory/pve04.yml).
+# NO -K NEEDED. The server play runs as root on pve01 (inventory/pve01.yml).
 #
 # ORDER MATTERS, hence serial and the server first: a node cannot mount an export
 # that does not exist yet.
@@ -33,7 +33,7 @@
 # single disk. Vault's data in particular wants a second destination.
 
 - name: Build the backup store
-  hosts: pve04
+  hosts: pve01
   become: true
   roles:
     - backup-store

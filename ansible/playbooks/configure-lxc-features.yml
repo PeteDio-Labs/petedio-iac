@@ -51,7 +51,7 @@
   connection: local
   become: false
   vars:
-    lxc_features_expected_nodes: [pve02, pve03, pve04]
+    lxc_features_expected_nodes: [pve02, pve03, pve01]
   tasks:
     - name: Every expected node is in the pattern
       ansible.builtin.assert:

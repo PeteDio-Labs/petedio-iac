@@ -1,5 +1,5 @@
 ---
-# netboot — the network-boot server for the pve04 install (PET-528). Temporary.
+# netboot — the network-boot server for the pve01 install (PET-528). Temporary.
 #
 # Split out of hosts.yml like media-dash.yml, so an edit here touches this host only.
 # LXC 239 on pve02, declared in environments/homelab/netboot.tf.

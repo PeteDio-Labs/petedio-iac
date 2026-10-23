@@ -1,9 +1,9 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), LXC 246 on pve04 since PET-528.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), LXC 246 on pve01 since PET-528.
 ---
-# ollama-246 — the Ollama LXC on pve04 (PET-528). Until 2026-10-23 these models ran on
+# ollama-246 — the Ollama LXC on pve01 (PET-528). Until 2026-10-23 these models ran on
 # bare metal: ollama-host, Ubuntu Server 24.04 on an MSI X570-A PRO, at .12. That box is
-# now the Proxmox node pve04 (inventory/pve04.yml), and this container holds both of its
+# now the Proxmox node pve01 (inventory/pve01.yml), and this container holds both of its
 # GPUs as device nodes (roles/lxc-gpu). The two lanes, the pins and the models below did
 # not change in the move; only the address did, from .12 to .246.
 # GPUs: GTX 1660 SUPER (6GB) + RTX 3060 Ti (8GB).

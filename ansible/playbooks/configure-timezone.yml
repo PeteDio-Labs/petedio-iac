@@ -21,10 +21,10 @@
   roles:
     - timezone
 
-# pve04 has its own inventory file (PET-528), so `proxmox` misses it. Its guests are
+# pve01 has its own inventory file (PET-528), so `proxmox` misses it. Its guests are
 # covered here too, as on the other nodes.
-- name: And on pve04
-  hosts: pve04
+- name: And on pve01
+  hosts: pve01
   become: true
   roles:
     - timezone

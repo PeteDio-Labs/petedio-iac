@@ -1,19 +1,19 @@
 ---
-# configure-pve04.yml — make the former ollama-host a working GPU node. (PET-528)
+# configure-pve01.yml — make the former ollama-host a working GPU node. (PET-528)
 #
-# Run it after Pedro has installed Proxmox VE 9 on the 128 GB drive and joined pve04 to
-# the cluster. docs/runbooks/pve04-cutover.md is the whole sequence; this is its node
+# Run it after Pedro has installed Proxmox VE 9 on the 128 GB drive and joined pve01 to
+# the cluster. docs/runbooks/pve01-cutover.md is the whole sequence; this is its node
 # step. No workflow applies it on merge. Run from ansible/:
 #
-#   ansible-playbook playbooks/configure-pve04.yml --check
-#   ansible-playbook playbooks/configure-pve04.yml -e nvidia_driver_allow_reboot=true
+#   ansible-playbook playbooks/configure-pve01.yml --check
+#   ansible-playbook playbooks/configure-pve01.yml -e nvidia_driver_allow_reboot=true
 #
 # WHAT IT DOES, in order. Each step fails the run rather than skipping silently.
-#   1. Asserts pve04 is a quorate member of the cluster. A node that never joined would
+#   1. Asserts pve01 is a quorate member of the cluster. A node that never joined would
 #      otherwise take a template and a driver and look finished.
 #   2. Swaps the ISO's enterprise repositories for no-subscription, as roles/pve-node does
 #      on pve03, so apt works without a subscription key.
-#   3. Puts the LXC template Terraform pins onto pve04's own `local` store. Templates are
+#   3. Puts the LXC template Terraform pins onto pve01's own `local` store. Templates are
 #      per node, and a create against a missing one fails after the merge (usaa.tf).
 #   4. Installs the pinned NVIDIA driver with DKMS (roles/nvidia-driver, host mode) and
 #      asserts both cards answer with the UUIDs the Ollama lanes pin.
@@ -21,34 +21,34 @@
 #      Terraform PR applies, it reports that 246 is missing and stops there.
 #
 # The backup store and the WD disk have their own plays: configure-backup-store.yml and
-# configure-wd-disk.yml, both retargeted to pve04.
+# configure-wd-disk.yml, both retargeted to pve01.
 
-- name: Configure pve04
-  hosts: pve04
+- name: Configure pve01
+  hosts: pve01
   become: true
 
   vars:
-    pve04_template: debian-13-standard_13.6-1_amd64.tar.zst
-    pve04_template_source_node: 192.168.50.10   # pve03 carries it (usaa.tf)
+    pve01_template: debian-13-standard_13.6-1_amd64.tar.zst
+    pve01_template_source_node: 192.168.50.10   # pve03 carries it (usaa.tf)
 
   pre_tasks:
     - name: Read the cluster membership
       ansible.builtin.command: pvecm status
-      register: pve04_pvecm
+      register: pve01_pvecm
       changed_when: false
       failed_when: false
       check_mode: false
 
-    - name: Assert pve04 joined a quorate cluster of three nodes
+    - name: Assert pve01 joined a quorate cluster of three nodes
       ansible.builtin.assert:
         that:
-          - pve04_pvecm.rc == 0
-          - pve04_pvecm.stdout is search('Quorate:\s+Yes')
-          - pve04_pvecm.stdout is search('Nodes:\s+3')
+          - pve01_pvecm.rc == 0
+          - pve01_pvecm.stdout is search('Quorate:\s+Yes')
+          - pve01_pvecm.stdout is search('Nodes:\s+3')
         fail_msg: >-
-          pve04 is not a quorate member of a three-node cluster. Finish the join first
-          (docs/runbooks/pve04-cutover.md, step C). pvecm status said:
-          {{ pve04_pvecm.stdout_lines | default([]) | select('search', 'Quorate|Nodes|Expected') | list }}
+          pve01 is not a quorate member of a three-node cluster. Finish the join first
+          (docs/runbooks/pve01-cutover.md, step C). pvecm status said:
+          {{ pve01_pvecm.stdout_lines | default([]) | select('search', 'Quorate|Nodes|Expected') | list }}
 
   tasks:
     - name: Disable the enterprise repositories
@@ -68,7 +68,7 @@
         dest: /etc/apt/sources.list.d/pve-no-subscription.sources
         mode: "0644"
         content: |
-          # Managed by ansible playbook configure-pve04.yml (PET-528).
+          # Managed by ansible playbook configure-pve01.yml (PET-528).
           Types: deb
           URIs: http://download.proxmox.com/debian/pve
           Suites: {{ ansible_facts['distribution_release'] }}
@@ -82,18 +82,18 @@
 
     - name: Check for the LXC template
       ansible.builtin.stat:
-        path: "/var/lib/vz/template/cache/{{ pve04_template }}"
-      register: pve04_template_stat
+        path: "/var/lib/vz/template/cache/{{ pve01_template }}"
+      register: pve01_template_stat
 
     # pveam's index carries only the newest build of each template, so a pinned older
     # name may no longer download. Cluster members trust each other's root key, so the
-    # copy from pve03 always works once pve04 has joined.
+    # copy from pve03 always works once pve01 has joined.
     - name: Copy the template from pve03
-      when: not pve04_template_stat.stat.exists
+      when: not pve01_template_stat.stat.exists
       ansible.builtin.command: >-
         scp -o BatchMode=yes
-        root@{{ pve04_template_source_node }}:/var/lib/vz/template/cache/{{ pve04_template }}
-        /var/lib/vz/template/cache/{{ pve04_template }}
+        root@{{ pve01_template_source_node }}:/var/lib/vz/template/cache/{{ pve01_template }}
+        /var/lib/vz/template/cache/{{ pve01_template }}
       changed_when: true
 
     - name: Install the NVIDIA driver on the node
@@ -107,13 +107,13 @@
 
     - name: Check whether CT 246 exists yet
       ansible.builtin.command: pct status 246
-      register: pve04_ct246
+      register: pve01_ct246
       changed_when: false
       failed_when: false
       check_mode: false
 
     - name: Pass both GPUs into CT 246
-      when: pve04_ct246.rc == 0
+      when: pve01_ct246.rc == 0
       ansible.builtin.include_role:
         name: lxc-gpu
       vars:
@@ -122,7 +122,7 @@
             devices: "{{ lxc_gpu_nvidia_devices }}"
 
     - name: Report a missing CT 246
-      when: pve04_ct246.rc != 0
+      when: pve01_ct246.rc != 0
       ansible.builtin.fail:
         msg: >-
           The node is ready, but CT 246 does not exist yet, so no GPU was passed through.

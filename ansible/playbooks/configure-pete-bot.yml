@@ -125,7 +125,7 @@
     #   lab_agent_plane_token, from kv/services/lab-agent-plane. Without it lab-agent runs
     #   with no plane_item tool.
     # Which backend answers /lab (PET-742, PET-743): `gateway` (the Anthropic gateway above) or
-    # `ollama` (qwen3 on the 3060 Ti lane of ollama-246, the Ollama LXC on pve04 since PET-528). The $20 Claude plan carries no API
+    # `ollama` (qwen3 on the 3060 Ti lane of ollama-246, the Ollama LXC on pve01 since PET-528). The $20 Claude plan carries no API
     # credit, so the move to `ollama` is the plan. Flip it only after the model is pulled
     # (`ollama pull qwen3:8b` on :11434) and `scripts/lab-verify.sh` passes: lab-agent's
     # /health fails when the model is missing.

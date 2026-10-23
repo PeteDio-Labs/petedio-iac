@@ -13,7 +13,10 @@ set -uo pipefail
 
 PVE02=pve02
 PVE03=pve03
-PVE04=pve04   # the former ollama-host, a node since PET-528; root, like pve02
+# The former ollama-host, a node since PET-528; root, like pve02. Reached by address, not
+# by alias: an ssh config written before 2026-09-03 may still map `pve01` to .10, which is
+# pve03 now, and every check here would then read pve03 twice.
+PVE01=root@192.168.50.12
 PI=pi1
 QUIET=0; [ "${1:-}" = "--quiet" ] && QUIET=1
 PASS=0; FAIL=0; SKIP=0
@@ -37,7 +40,7 @@ on()   { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$1" "$2" 2>/dev/null; }
 node_for() {
   on $PVE02 "pct config $1 >/dev/null 2>&1" && { echo "$PVE02"; return; }
   on $PVE03 "sudo /usr/sbin/pct config $1 >/dev/null 2>&1" && { echo "$PVE03"; return; }
-  on $PVE04 "pct config $1 >/dev/null 2>&1" && { echo "$PVE04"; return; }
+  on $PVE01 "pct config $1 >/dev/null 2>&1" && { echo "$PVE01"; return; }
   echo ""
 }
 pct_on() {  # node, vmid, command
@@ -46,18 +49,18 @@ pct_on() {  # node, vmid, command
 }
 
 sec "Nodes and quorum"
-for n in $PVE02 $PVE03 $PVE04; do
+for n in $PVE02 $PVE03 $PVE01; do
   h=$(on $n 'hostname')
   [ -n "$h" ] && ok "$n reachable" "$h" || bad "$n reachable" "no ssh"
 done
 Q=$(on $PVE02 'pvecm status 2>/dev/null | awk "/Quorate:/{print \$2}"')
 [ "$Q" = "Yes" ] && ok "cluster quorate" || bad "cluster quorate" "got '$Q'"
-# Three nodes and no QDevice since PET-528. The QDevice was removed to let pve04 join,
+# Three nodes and no QDevice since PET-528. The QDevice was removed to let pve01 join,
 # and not re-added: Proxmox advises against one with an odd node count, and three
 # votes keep quorum through the loss of any one node. A node that has left still
 # leaves the cluster quorate at 2 of 3, so count the members, not only quorum.
 N=$(on $PVE02 'pvecm status 2>/dev/null | awk "/^Nodes:/{print \$2}"')
-[ "${N:-0}" = "3" ] && ok "cluster members" "3 nodes" || bad "cluster members" "pvecm reports '${N:-nothing}' nodes, expected 3 (pve02, pve03, pve04)"
+[ "${N:-0}" = "3" ] && ok "cluster members" "3 nodes" || bad "cluster members" "pvecm reports '${N:-nothing}' nodes, expected 3 (pve02, pve03, pve01)"
 W=$(on $PVE02 'touch /etc/pve/.verify 2>/dev/null && rm -f /etc/pve/.verify && echo yes')
 [ "$W" = "yes" ] && ok "/etc/pve writable" || bad "/etc/pve writable" "lost quorum?"
 
@@ -112,10 +115,10 @@ sec "Placement matches intent"
 # 110 qbittorrent + 236 plex sit beside the disks; 233 is the pve02 CI runner, one per
 # host by design (PET-335); 239 is netboot, on pve02 by Pedro's decision (PET-720);
 # 240 is metrics-240, on pve02 per the PET-712 survey and iac#491 (PET-740).
-# 246 is ollama-246 on pve04, the only node with GPUs for it (PET-528).
+# 246 is ollama-246 on pve01, the only node with GPUs for it (PET-528).
 # Everything else belongs on pve03.
 INTENT_PVE02="110 236 233 239 240"
-INTENT_PVE04="246"
+INTENT_PVE01="246"
 PLACEMENT=$(on $PVE02 'pvesh get /cluster/resources --type vm --output-format json' 2>/dev/null)
 if [ -z "$PLACEMENT" ]; then
   bad "placement readable" "could not read /cluster/resources"
@@ -126,17 +129,17 @@ else
   # body is expanded, and the python arrives mangled. It still RUNS -- it printed
   # `101('"'"''"'"')` where the guest name belonged -- so the check reports garbage
   # rather than failing. Found writing this check (PET-334).
-  _placement_eval=$(PLACEMENT="$PLACEMENT" WANT02="$INTENT_PVE02" WANT04="$INTENT_PVE04" python3 <<'PYEOF'
+  _placement_eval=$(PLACEMENT="$PLACEMENT" WANT02="$INTENT_PVE02" WANT01="$INTENT_PVE01" python3 <<'PYEOF'
 import json, os
 want02 = set(os.environ["WANT02"].split())
-want04 = set(os.environ["WANT04"].split())
+want01 = set(os.environ["WANT01"].split())
 rows = json.loads(os.environ["PLACEMENT"])
 wrong = []
 for r in rows:
     vmid = str(r.get("vmid") or "")
     if not vmid: continue
     node = r.get("node") or ""
-    expect = "pve02" if vmid in want02 else "pve04" if vmid in want04 else "pve03"
+    expect = "pve02" if vmid in want02 else "pve01" if vmid in want01 else "pve03"
     if node != expect:
         wrong.append(f"{vmid}({r.get('name','')}) on {node}, want {expect}")
 print("WRONG=%s" % json.dumps(";".join(wrong)))
@@ -145,7 +148,7 @@ PYEOF
 )
   eval "$_placement_eval"
   if [ -z "$WRONG" ]; then
-    ok "every guest on its intended node" "$NGUESTS guests; $INTENT_PVE02 on pve02, $INTENT_PVE04 on pve04"
+    ok "every guest on its intended node" "$NGUESTS guests; $INTENT_PVE02 on pve02, $INTENT_PVE01 on pve01"
   else
     IFS=';' read -ra W <<< "$WRONG"
     for w in "${W[@]}"; do bad "misplaced guest" "$w"; done
@@ -337,7 +340,9 @@ sec "Monitoring tells the truth"
 UP=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select count(*) from monitor where active=1"')
 [ "${UP:-0}" -ge 15 ] && ok "monitors active" "$UP" || bad "monitors active" "only ${UP:-0}"
 # A monitor named for a host that no longer exists is worse than no monitor.
-STALE=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select count(*) from monitor where active=1 and (name like \"%pve01%\" or url like \"%86.140%\" or url like \"%50.111%\")"')
+# The name pve01 came back on 2026-10-23 for the node at .12 (PET-528). A pve01 monitor
+# aimed at .12 is the new node; one aimed anywhere else is the dead R620's.
+STALE=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select count(*) from monitor where active=1 and ((name like \"%pve01%\" and ifnull(hostname,0) != \"192.168.50.12\" and ifnull(url,0) not like \"%//192.168.50.12:%\") or url like \"%86.140%\" or url like \"%50.111%\")"')
 [ "${STALE:-0}" -eq 0 ] && ok "no monitors for dead hosts" || bad "stale monitors" "$STALE point at hosts that are gone"
 # ⚠ A TIMER'S STATE SAYS IT FIRED, NOT THAT IT WORKED. kuma-backup.timer reported success
 # four times a day for nineteen days while the script wrote nothing: its guard refused the
@@ -584,7 +589,7 @@ for p in sorted(ports):
     for m in loaded:
         size, vram = m.get("size") or 0, m.get("size_vram") or 0
         print(f"OK\tollama :{p} {m['name']} on GPU\t{vram} of {size} bytes in VRAM" if size and vram >= size
-              else f"BAD\tollama :{p} {m['name']} on GPU\tonly {vram} of {size} bytes in VRAM; check nvidia-smi on ollama-246 and pve04")
+              else f"BAD\tollama :{p} {m['name']} on GPU\tonly {vram} of {size} bytes in VRAM; check nvidia-smi on ollama-246 and pve01")
 PY
 )
   # ⚠ THREE VERDICTS, NOT TWO. This used to be `OK -> ok, everything else -> bad`, which

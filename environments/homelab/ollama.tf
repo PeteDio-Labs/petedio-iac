@@ -1,10 +1,10 @@
-# pve04 (.12) and ollama-246 (.246) — the GPU node and its Ollama container. PET-528.
+# pve01 (.12) and ollama-246 (.246) — the GPU node and its Ollama container. PET-528.
 #
 # Until 2026-10-23 this file declared ollama-host: bare-metal Ubuntu with two GPUs,
 # running Ollama natively, through modules/baremetal-host. Pedro reinstalled that box as
-# the Proxmox node pve04 on a new 128 GB drive and joined it to the cluster. The two
+# the Proxmox node pve01 on a new 128 GB drive and joined it to the cluster. The two
 # 1 TB disks were unplugged during the install, so the backup store and the recovered
-# WD data came through untouched (docs/runbooks/pve04-cutover.md).
+# WD data came through untouched (docs/runbooks/pve01-cutover.md).
 #
 # THE NODE. Terraform cannot create a physical machine, so the node stays a
 # terraform_data declaration of its identity and address, as before. The `moved` block
@@ -14,30 +14,30 @@
 # THE CONTAINER. Ollama's two pinned lanes and petedio-search run in CT 246, which
 # holds both GPUs as device nodes. Terraform creates it; Ansible owns what Proxmox lets
 # only root@pam set:
-#   - the devN GPU entries     roles/lxc-gpu, from playbooks/configure-pve04.yml
+#   - the devN GPU entries     roles/lxc-gpu, from playbooks/configure-pve01.yml
 #   - nesting                   roles/lxc-features ("246" in its defaults)
 #   - the driver userspace,     playbooks/configure-ollama-246.yml
 #     Ollama and the models
 # device_passthrough and features are both in the module's ignore_changes for that
 # reason, so the plan stays clean whether Ansible has run or not.
 #
-# ⚠ MERGE ONLY AFTER pve04 HAS JOINED THE CLUSTER. Apply-on-merge creates CT 246 on
-# pve04, and a target_node that does not resolve fails at refresh, on the runner, after
-# the merge. The template must also be on pve04's own `local` store first:
-# configure-pve04.yml copies it from pve03.
+# ⚠ MERGE ONLY AFTER pve01 HAS JOINED THE CLUSTER. Apply-on-merge creates CT 246 on
+# pve01, and a target_node that does not resolve fails at refresh, on the runner, after
+# the merge. The template must also be on pve01's own `local` store first:
+# configure-pve01.yml copies it from pve03.
 
 moved {
   from = module.ollama_host
-  to   = module.pve04_host
+  to   = module.pve01_host
 }
 
-module "pve04_host" {
+module "pve01_host" {
   source = "../../modules/baremetal-host"
 
-  hostname     = "pve04"
+  hostname     = "pve01"
   ipv4_address = "192.168.50.12"
   mac_address  = "2c:f0:5d:a2:7f:4f"
-  description  = "Proxmox node pve04 (ex ollama-host): Ryzen 5 5600X, 16 GB, RTX 3060 Ti + GTX 1660 SUPER. Holds CT 246 and the ollama-backups store. OS config by ../../ansible (configure-pve04.yml)."
+  description  = "Proxmox node pve01 (ex ollama-host): Ryzen 5 5600X, 16 GB, RTX 3060 Ti + GTX 1660 SUPER. Holds CT 246 and the ollama-backups store. OS config by ../../ansible (configure-pve01.yml)."
 }
 
 module "ollama" {
@@ -59,10 +59,10 @@ module "ollama" {
   # for the models host_vars may declare later, and petedio-search's index.
   disk_size = 80
 
-  # pve04 was installed from the Proxmox ISO, so it has the LVM thin pool pve03 lacks.
+  # pve01 was installed from the Proxmox ISO, so it has the LVM thin pool pve03 lacks.
   # Changing target_node or datastore_id later REPLACES the container on the bpg provider.
   datastore_id     = "local-lvm"
-  target_node      = "pve04"
+  target_node      = "pve01"
   template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
   ssh_public_key   = var.ssh_public_key
 
@@ -70,12 +70,12 @@ module "ollama" {
   # manages run state, so false would stop a hand-started container on the next apply.
   start_on_boot = true
 
-  description = "Ollama (RTX 3060 Ti :11434, GTX 1660 SUPER :11435) and petedio-search :8526 (PET-528). Managed by Terraform; GPUs by configure-pve04.yml, services by configure-ollama-246.yml."
+  description = "Ollama (RTX 3060 Ti :11434, GTX 1660 SUPER :11435) and petedio-search :8526 (PET-528). Managed by Terraform; GPUs by configure-pve01.yml, services by configure-ollama-246.yml."
 }
 
-output "pve04_ip" {
-  description = "Address of the Proxmox node pve04, which serves the ollama-backups NFS store."
-  value       = module.pve04_host.ipv4_address
+output "pve01_ip" {
+  description = "Address of the Proxmox node pve01, which serves the ollama-backups NFS store."
+  value       = module.pve01_host.ipv4_address
 }
 
 output "ollama_id" {

@@ -1,12 +1,12 @@
 ---
-# configure-ollama-246.yml — bring Ollama up inside CT 246 on pve04. (PET-528)
+# configure-ollama-246.yml — bring Ollama up inside CT 246 on pve01. (PET-528)
 #
-# Run it after configure-pve04.yml has passed both GPUs into the container. Run from
+# Run it after configure-pve01.yml has passed both GPUs into the container. Run from
 # ansible/:
 #
 #   ansible-playbook playbooks/configure-ollama-246.yml
 #
-# It installs the NVIDIA userspace of the version pve04's module runs, then the two
+# It installs the NVIDIA userspace of the version pve01's module runs, then the two
 # Ollama lanes and their models. petedio-search follows with scripts/deploy-search.sh,
 # which reads its secrets from Vault on the Mac.
 
@@ -86,7 +86,7 @@
           - ollama_allow_ports | map('string') | reject('in', ollama_allow_live.stdout) | list | length == 0
         fail_msg: "The ollama_allow table is missing a rule: {{ ollama_allow_live.stdout_lines }}"
 
-    - name: Install the NVIDIA userspace that matches pve04's module
+    - name: Install the NVIDIA userspace that matches pve01's module
       ansible.builtin.include_role:
         name: nvidia-driver
       vars:

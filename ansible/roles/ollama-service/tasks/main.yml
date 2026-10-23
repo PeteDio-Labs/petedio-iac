@@ -25,7 +25,7 @@
 
 # ── Bare-metal host only ──────────────────────────────────────────────────────
 # WoL, no-sleep and the Ubuntu NVIDIA packages belong to a machine, not a container.
-# ollama-246 (PET-528) is an LXC on pve04: the node owns the kernel module, and
+# ollama-246 (PET-528) is an LXC on pve01: the node owns the kernel module, and
 # roles/nvidia-driver installs the matching userspace inside the container. Set
 # ollama_manage_host false there. The nvidia-smi check below still runs, so a
 # container that lost its device nodes fails here instead of serving from the CPU.

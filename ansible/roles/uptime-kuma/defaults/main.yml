@@ -229,7 +229,7 @@ uptime_kuma_monitors:
     url: "http://192.168.50.150:8191/"
 
   # -- inference host ----------------------------------------------------------
-  # ollama-246, the LXC on pve04 that holds both GPUs since PET-528. Until 2026-10-23 this
+  # ollama-246, the LXC on pve01 that holds both GPUs since PET-528. Until 2026-10-23 this
   # probed the bare-metal ollama-host at .12, which is now the node itself.
   - name: ollama
     type: http
