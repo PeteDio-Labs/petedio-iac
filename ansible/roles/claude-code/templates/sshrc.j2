@@ -8,6 +8,16 @@ case "$(id -un)" in
 {% endfor %}
   *) exit 0 ;;
 esac
+# sshd runs this file once per session channel, and an SSH app opens several channels on one
+# connection (shell, SFTP, status probes). SSH_CONNECTION is the same for every channel of a
+# connection, so the first channel takes an atomic mkdir lock in the sticky /dev/shm and the
+# others exit. The lock is the user's own, so it can only silence later channels of a
+# connection that already sent its notice.
+key="$(printf '%s' "$SSH_CONNECTION" | sha256sum | cut -c1-16)"
+lock="/dev/shm/petedio-ssh-notify.$(id -u).$key"
+find /dev/shm -maxdepth 1 -name "petedio-ssh-notify.$(id -u).*" -user "$(id -u)" -mmin +10 \
+    -exec rmdir {} + >/dev/null 2>&1
+mkdir "$lock" 2>/dev/null || exit 0
 src="${SSH_CONNECTION%% *}"
 ( timeout 10 /usr/local/bin/notify-pedro "SSH login: $(id -un)@$(hostname) from ${src:-unknown}" \
     >/dev/null 2>&1 & )
