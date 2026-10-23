@@ -64,6 +64,18 @@ Q=$(on $PVE02 'pvecm status 2>/dev/null | awk "/Quorate:/{print \$2}"')
 # leaves the cluster quorate at 2 of 3, so count the members, not only quorum.
 N=$(on $PVE02 'pvecm status 2>/dev/null | awk "/^Nodes:/{print \$2}"')
 [ "${N:-0}" = "3" ] && ok "cluster members" "3 nodes" || bad "cluster members" "pvecm reports '${N:-nothing}' nodes, expected 3 (pve02, pve03, pve01)"
+# ⚠ A NODE WITH NO host.fw DROPS ITS OWN TRAFFIC once the datacenter firewall is on: the
+# host firewall defaults to ON with an input policy of DROP. roles/pve-firewall checks every
+# node, but only while its play runs, and pve01 joined after it last ran. On 2026-10-23 that
+# cut NFS and ping to .12 and left the backup store dark (PET-528). So read every node
+# directory the cluster holds, and name how many were read.
+FW=$(on $PVE02 'grep -qsE "^enable:[[:space:]]*1" /etc/pve/firewall/cluster.fw && echo on || echo off; for d in /etc/pve/nodes/*/; do n=$(basename "$d"); grep -qsE "^enable:[[:space:]]*0" "$d/host.fw" && echo "ok $n" || echo "missing $n"; done')
+FWREAD=$(printf '%s\n' "$FW" | grep -cE '^(ok|missing) ' || true)
+FWMISS=$(printf '%s\n' "$FW" | awk '/^missing /{printf "%s ", $2}')
+if [ "${FWREAD:-0}" -lt 3 ]; then bad "every node has host.fw" "read ${FWREAD:-0} node directories, expected 3"
+elif [ -n "$FWMISS" ] && [ "$(printf '%s\n' "$FW" | head -1)" = "on" ]; then bad "every node has host.fw" "datacenter firewall on, no 'enable: 0' on: $FWMISS"
+elif [ -n "$FWMISS" ]; then ok "every node has host.fw" "datacenter firewall off; missing on $FWMISS (run configure-pve-firewall.yml before turning it on)"
+else ok "every node has host.fw" "$FWREAD nodes read, all enable: 0"; fi
 W=$(on $PVE02 'touch /etc/pve/.verify 2>/dev/null && rm -f /etc/pve/.verify && echo yes')
 [ "$W" = "yes" ] && ok "/etc/pve writable" || bad "/etc/pve writable" "lost quorum?"
 
