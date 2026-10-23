@@ -1,6 +1,6 @@
 ---
 # configure-water-fast.yml — deploy the water-fast tracker natively on waterfast-243 as a
-# Bun systemd service. Mirrors configure-resume-builder.yml / configure-palworld-panel.yml.
+# Bun systemd service. Mirrors configure-palworld-panel.yml.
 #
 # WHY NATIVE (not Docker): same reasoning as the other two — no nesting/keyctl needed, one
 # Bun process serving a static bundle plus JSON routes. The app listens on :8080 and the
