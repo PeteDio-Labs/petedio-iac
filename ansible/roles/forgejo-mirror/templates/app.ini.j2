@@ -1,0 +1,51 @@
+; Managed by Ansible (roles/forgejo-mirror). Secrets sit in files under {{ forgejo_conf_dir }}.
+APP_NAME = PeteDio git mirror
+RUN_USER = {{ forgejo_user }}
+RUN_MODE = prod
+WORK_PATH = {{ forgejo_home }}
+
+[server]
+PROTOCOL = http
+HTTP_ADDR = 0.0.0.0
+HTTP_PORT = {{ forgejo_port }}
+DOMAIN = {{ forgejo_lan_ip }}
+ROOT_URL = http://{{ forgejo_lan_ip }}:{{ forgejo_port }}/
+DISABLE_SSH = true
+START_SSH_SERVER = false
+LFS_START_SERVER = false
+OFFLINE_MODE = true
+
+[database]
+DB_TYPE = sqlite3
+PATH = {{ forgejo_home }}/data/forgejo.db
+
+[repository]
+ROOT = {{ forgejo_home }}/data/repositories
+DEFAULT_PRIVATE = private
+DISABLE_STARS = true
+
+[security]
+INSTALL_LOCK = true
+SECRET_KEY_URI = file:{{ forgejo_conf_dir }}/secret_key
+INTERNAL_TOKEN_URI = file:{{ forgejo_conf_dir }}/internal_token
+
+[oauth2]
+JWT_SECRET_URI = file:{{ forgejo_conf_dir }}/jwt_secret
+
+[service]
+DISABLE_REGISTRATION = true
+REQUIRE_SIGNIN_VIEW = true
+ENABLE_NOTIFY_MAIL = false
+
+[session]
+PROVIDER = file
+
+[log]
+MODE = console
+LEVEL = info
+
+[actions]
+ENABLED = false
+
+[mirror]
+ENABLED = false

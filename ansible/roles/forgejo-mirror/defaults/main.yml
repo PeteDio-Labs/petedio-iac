@@ -1,0 +1,21 @@
+---
+# Forgejo 15.0 is the LTS (released 2026-04-16, supported to 2027-07-15). The task fetches the
+# release's own .sha256 file and checks the binary against it. Bump the version here to upgrade.
+forgejo_version: "15.0.0"
+forgejo_url: "https://codeberg.org/forgejo/forgejo/releases/download/v{{ forgejo_version }}/forgejo-{{ forgejo_version }}-linux-amd64"
+
+forgejo_user: forgejo
+forgejo_home: /var/lib/forgejo
+forgejo_conf_dir: /etc/forgejo
+forgejo_bin: /usr/local/bin/forgejo
+forgejo_port: 3000
+forgejo_lan_ip: 192.168.50.249
+
+# The GitHub org the sync reads, and the same-named org Forgejo holds.
+forgejo_mirror_org: PeteDio-Labs
+forgejo_mirror_api_user: mirror-sync
+
+forgejo_mirror_user: fmirror
+forgejo_mirror_conf_dir: /etc/forgejo-mirror
+forgejo_mirror_state_dir: /var/lib/forgejo-mirror
+forgejo_mirror_interval: "*:0/30"
