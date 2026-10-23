@@ -335,9 +335,18 @@ jobs:
       # the PR and on merge) with the fix, instead of a green plan-on-PR that 403s deep in apply
       # (the PET-159 poison pill). Read-only `/access/permissions` introspection; no writes. Only
       # runs when the pool gate is on, so it never blocks unrelated PRs while the pool is off.
+      #
+      # The script pins the Proxmox CA and refuses to send the token without it (PET-541). The CA
+      # file is committed by a follow-up PR after scripts/export-proxmox-ca.sh runs, and the
+      # github-actions Vault role cannot read it. Until the file exists, the step below does not
+      # run and the next step says so, so the skipped gate is visible in the log and not silent.
       - name: Proxmox preflight permissions (pool)
-        if: env.TF_VAR_manage_resource_pool == 'true'
+        if: env.TF_VAR_manage_resource_pool == 'true' && hashFiles('environments/homelab/proxmox-ca.crt') != ''
         run: ../../scripts/proxmox-preflight-perms.sh --require Pool.Allocate --require Pool.Audit --path /pool/homelab
+
+      - name: Proxmox preflight skipped (no CA file)
+        if: env.TF_VAR_manage_resource_pool == 'true' && hashFiles('environments/homelab/proxmox-ca.crt') == ''
+        run: echo "::warning title=Proxmox preflight skipped::environments/homelab/proxmox-ca.crt is missing, so the Pool.Allocate/Pool.Audit check examined nothing. Run scripts/export-proxmox-ca.sh and commit the file (PET-541)."
 
       - name: Init
         run: terraform init -input=false
