@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync {{ forgejo_mirror_org }} from GitHub into Forgejo
+After=forgejo.service
+Wants=forgejo.service
+
+[Service]
+Type=oneshot
+User={{ forgejo_mirror_user }}
+Group={{ forgejo_mirror_user }}
+EnvironmentFile={{ forgejo_mirror_conf_dir }}/sync.env
+ExecStart=/usr/local/bin/forgejo-mirror-sync
+TimeoutStartSec=20min
