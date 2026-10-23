@@ -1,0 +1,32 @@
+# pve04 — a SEPARATE inventory file, for the reason pve03.yml gives: hosts.yml is
+# watched by apply-on-merge workflows, and a node under construction is no reason to
+# redeploy anything (PET-302).
+#
+# WHAT THIS MACHINE IS. The former ollama-host: Ryzen 5 5600X, 16 GB, an RTX 3060 Ti
+# and a GTX 1660 SUPER, on an MSI X570-A PRO. Reinstalled from the Proxmox VE 9 ISO
+# onto a 128 GB drive on 2026-10-23 and joined to the cluster (PET-528). It keeps the
+# address .12, so the node block stays .10/.11/.12.
+#
+# ⚠ ITS OWN GROUP, NOT pve_new. Several plays target pve_new with pve03's role in
+# mind: configure-pve-node.yml rebuilds the bridge from pve_node_* vars, and
+# configure-media-split.yml mounts the media NFS shares. pve04 needs neither. A play
+# that should reach every node names `pve04` beside `proxmox:pve_new`, as
+# configure-lxc-features.yml does.
+#
+# THE TWO 1 TB DISKS SURVIVED THE INSTALL. They were unplugged while the installer
+# ran, so nothing on them changed:
+#   sda  ubuntu-vg        backup-lv at /srv/backups (the `ollama-backups` store),
+#                         and the old Ubuntu root, kept as a rollback
+#   sdb  network-storage  the recovered pve02 WD disk (configure-wd-disk.yml)
+#
+# Root over the cluster's shared authorized_keys: joining copies the cluster's
+# /etc/pve/priv/authorized_keys onto the node, so the key that opens pve03 opens pve04.
+---
+all:
+  children:
+    pve04:
+      hosts:
+        pve04:
+          ansible_host: 192.168.50.12
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible

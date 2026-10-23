@@ -1,123 +1,58 @@
-<!-- Ported from homelab-infra for the greenfield petedio-iac. Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12. -->
-# Ansible — host-level config for every guest, and ollama-host
+<!-- Ported from homelab-infra for the greenfield petedio-iac. Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), LXC 246 on pve04 since PET-528. -->
+# Ansible — host-level config for every guest, and the GPU inference host
 
-`ansible/` holds the inventory, playbooks and roles for the whole lab — 30 roles and 40
-playbooks, one per concern. The runbook for a given host is the header comment of its
-`playbooks/configure-<name>.yml`; `docs/GOTCHAS.md` holds the traps. This file keeps its
-original job of describing the one bare-metal host, ollama-host, below.
+`ansible/` holds the inventory, playbooks and roles for the whole lab, one playbook per
+concern. The runbook for a given host is the header comment of its
+`playbooks/configure-<name>.yml`; `docs/GOTCHAS.md` holds the traps. This file also
+describes the GPU inference host, ollama-246, below.
 
-## ollama-host
+## ollama-246
 
-An Ubuntu Server 24.04 box (MSI X570-A PRO) running **native Ollama** (not Docker) on
-**two GPUs — GTX 1660 SUPER + RTX 3060 Ti** — as **two pinned services**: `ollama` on
-`:11434` pinned to the 3060 Ti, and `ollama-1660s` on `:11435` pinned to the 1660 SUPER
-(`roles/ollama-service/defaults`). Brought under IaC the bare-metal way — Terraform
-declares the host; Ansible does the OS/service config. It also holds `/srv/backups`, the
-`ollama-backups` store the cluster's vzdump jobs write to, which is why the 2026-09-03 rack
-loss was survivable.
+An LXC on the Proxmox node **pve04** (`.12`), at **`192.168.50.246`**, running **native
+Ollama** on **two GPUs — GTX 1660 SUPER + RTX 3060 Ti** — as **two pinned services**:
+`ollama` on `:11434` pinned to the 3060 Ti, and `ollama-1660s` on `:11435` pinned to the
+1660 SUPER (`roles/ollama-service/defaults`). petedio-search runs beside them on `:8526`.
 
-- **NIC:** `eth0`, MAC `2c:f0:5d:a2:7f:4f`, Wake-on-LAN (magic packet) enabled.
-- **GPUs:** each instance is pinned with `CUDA_VISIBLE_DEVICES` to one card's stable UUID (`host_vars/ollama-host.yml`).
-- **Connection:** `ansible_user: ansible`, key `~/.ssh/id_ed25519_pedro`, `become: true`. **No secrets** (no vault/SOPS).
-- **Control node:** Mac-local on the LAN. `ansible.cfg` uses **no ProxyJump** by default; pve03 (`.10`, unprivileged user + `sudo`) is an optional recovery jump only.
+Until 2026-10-23 this was bare metal: ollama-host, Ubuntu Server 24.04 at `.12`. `PET-528`
+reinstalled that box as pve04 and moved the services into this container. The cutover is
+`docs/runbooks/pve04-cutover.md`.
+
+- **GPUs:** pve04 loads the NVIDIA kernel module; the container gets the device nodes
+  (`roles/lxc-gpu`) and the matching userspace (`roles/nvidia-driver`, `container` mode).
+  Both sides install one pinned `.run` version, so no package upgrade can split them
+  (`PET-762`). Each instance is pinned with `CUDA_VISIBLE_DEVICES` to one card's stable
+  UUID (`host_vars/ollama-246.yml`).
+- **Connection:** `root` over `~/.ssh/id_ed25519_ansible`, the key Terraform installs.
+  **No secrets** for the Ollama plays. petedio-search's secrets come from Vault through
+  `scripts/deploy-search.sh`.
 
 ## Layout
 
 ```
-ansible.cfg
-inventory/hosts.yml                 # ollama group -> ollama-host @ .12
-inventory/host_vars/ollama-host.yml # NIC/WoL/IP/DNS, base models, GPU env
-roles/ollama-service/              # NVIDIA 550, Ollama install, systemd drop-in, UFW, WoL, no-sleep
-roles/ollama-models/               # pulls base models and keeps the resident ones loaded
+inventory/pve04.yml                  # the node
+inventory/hosts.yml                  # ollama group -> ollama-246 @ .246
+inventory/host_vars/ollama-246.yml   # base models, GPU pins, lane env
+roles/nvidia-driver/                 # pinned .run driver: host (DKMS) or container (userspace)
+roles/lxc-gpu/                       # devN passthrough of the NVIDIA nodes
+roles/ollama-service/                # Ollama install, systemd drop-in, pinned extra lanes
+roles/ollama-models/                 # pulls base models and keeps the resident ones loaded
+playbooks/configure-pve04.yml        # node: repos, driver, template, GPU passthrough
+playbooks/configure-ollama-246.yml   # container: driver userspace, then the two plays below
 playbooks/ollama-service.yml
 playbooks/ollama-models.yml
-playbooks/set-ollama-static-ip.yml      # renumber w/ auto-revert safety
-playbooks/wake-ollama-host.yml
-playbooks/provision-new-ollama-host.yml # fresh-box bootstrap (keys/hostname/IP)
+playbooks/wake-ollama-host.yml       # WoL for pve04 (same MAC and address)
 ```
 
 ## Running the plays (bootstrap order)
 
-Run from this `ansible/` directory.
+Run from this `ansible/` directory, in the order `docs/runbooks/pve04-cutover.md` gives:
 
-1. **(Fresh box only) Provision** — keys, hostname, static IP at `.12` (reboots to apply).
-   Point the inventory at the box's current address:
-   ```sh
-   ansible-playbook playbooks/provision-new-ollama-host.yml -i '<current-ip>,' -e ansible_user=ansible
-   ```
-   An existing host that just needs the IP changed should use the renumber
-   runbook below instead (it is auto-revert safe).
+```sh
+ansible-playbook playbooks/configure-pve04.yml -e nvidia_driver_sha256=<sha> -e nvidia_driver_allow_reboot=true
+ansible-playbook playbooks/configure-ollama-246.yml -e nvidia_driver_sha256=<sha>
+```
 
-2. **Service** — NVIDIA driver 550 (reboots if newly installed), official Ollama
-   installer, `OLLAMA_HOST` systemd drop-in, UFW 11434 from `192.168.50.0/24`,
-   WoL `.link`, no-sleep/no-suspend hardening (asserts **both** GPUs are visible):
-   ```sh
-   ansible-playbook playbooks/ollama-service.yml
-   ```
-
-3. **Models** — pull base models (`gemma4:e4b`):
-   ```sh
-   ansible-playbook playbooks/ollama-models.yml
-   ```
-
-**Wake the host** when it is powered off (WoL magic packet):
+**Wake the node** when it is powered off (WoL magic packet):
 ```sh
 ansible-playbook playbooks/wake-ollama-host.yml --tags wait
-```
-
-## Renumber runbook: `.59` -> `.12`
-
-> **Manual, gated step — NOT apply-on-merge.** A bad netplan apply can lock the
-> box off the network. `set-ollama-static-ip.yml` installs an **auto-revert
-> safety**: it backs up the live netplan and arms a detached background timer
-> that restores + re-applies the old config after `netplan_revert_seconds`
-> (default **180**) **unless cancelled**. The second play reconnects on `.12`
-> and cancels the revert automatically; if it never reconnects, the box heals
-> itself back to the previous network.
-
-**Pre-checks**
-- Host reachable now (at `.59`, or a temporary DHCP address).
-- You have a fallback path if SSH drops: **WoL** (`wake-ollama-host.yml`), a
-  one-off **pve01 jump** (`-e "ansible_ssh_common_args='-o ProxyJump=pve01'"`),
-  or **physical console**.
-- Decide the revert window (`-e netplan_revert_seconds=300` for more breathing room).
-
-**Apply (auto-revert safe)**
-
-The inventory now points ollama-host at `.12`, but during the cutover the box is
-still at `.59` — so reach it at its CURRENT address via `current_ollama_host`:
-```sh
-# the .59 -> .12 cutover (box is currently at .59):
-ansible-playbook playbooks/set-ollama-static-ip.yml -e current_ollama_host=192.168.50.59
-# ...or from any other current/temporary address (e.g. a DHCP lease):
-ansible-playbook playbooks/set-ollama-static-ip.yml -e current_ollama_host=192.168.50.X
-# once the host is already on .12 (idempotent re-runs), the bare command works:
-ansible-playbook playbooks/set-ollama-static-ip.yml
-```
-The play backs up the current netplan, arms the revert sentinel
-(`/run/ollama-netplan-revert.pending`), launches the detached guard, writes the
-`.12` config, and applies (SSH will drop). It then reconnects on `.12`,
-confirms the address, and **cancels the revert**.
-
-**If you get locked out**
-- Do nothing for `netplan_revert_seconds` — the guard restores the old netplan
-  and re-applies, bringing `.59` (or the prior address) back. Then investigate.
-- To recover sooner, reach the box via **WoL**, the **pve01 jump**, or the
-  **physical console** and inspect `/var/log/ollama-netplan-revert.log`.
-
-**Manually cancelling the revert** (if you confirmed `.12` out of band):
-```sh
-sudo rm -f /run/ollama-netplan-revert.pending   # disarm
-sudo pkill -f ollama-netplan-revert.sh          # stop the timer now
-```
-
-**Update the router DHCP reservation**
-- Change the reservation for MAC **`2c:f0:5d:a2:7f:4f`** to **`192.168.50.12`**
-  so the lease and the static config agree.
-
-**Post-checks**
-```sh
-curl http://192.168.50.12:11434/api/version          # Ollama answering on .12
-curl http://192.168.50.12:11434/api/tags             # models intact (gemma4:e4b present)
-ssh ansible@192.168.50.12 nvidia-smi                  # both GPUs healthy (1660 SUPER + 3060 Ti)
 ```

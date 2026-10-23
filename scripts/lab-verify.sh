@@ -13,6 +13,7 @@ set -uo pipefail
 
 PVE02=pve02
 PVE03=pve03
+PVE04=pve04   # the former ollama-host, a node since PET-528; root, like pve02
 PI=pi1
 QUIET=0; [ "${1:-}" = "--quiet" ] && QUIET=1
 PASS=0; FAIL=0; SKIP=0
@@ -36,6 +37,7 @@ on()   { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$1" "$2" 2>/dev/null; }
 node_for() {
   on $PVE02 "pct config $1 >/dev/null 2>&1" && { echo "$PVE02"; return; }
   on $PVE03 "sudo /usr/sbin/pct config $1 >/dev/null 2>&1" && { echo "$PVE03"; return; }
+  on $PVE04 "pct config $1 >/dev/null 2>&1" && { echo "$PVE04"; return; }
   echo ""
 }
 pct_on() {  # node, vmid, command
@@ -44,16 +46,18 @@ pct_on() {  # node, vmid, command
 }
 
 sec "Nodes and quorum"
-for n in $PVE02 $PVE03; do
+for n in $PVE02 $PVE03 $PVE04; do
   h=$(on $n 'hostname')
   [ -n "$h" ] && ok "$n reachable" "$h" || bad "$n reachable" "no ssh"
 done
 Q=$(on $PVE02 'pvecm status 2>/dev/null | awk "/Quorate:/{print \$2}"')
 [ "$Q" = "Yes" ] && ok "cluster quorate" || bad "cluster quorate" "got '$Q'"
-# A QDevice that is registered but not voting gives none of the protection it
-# was added for, and the vote count alone does not reveal that.
-V=$(on $PVE02 'pvecm status 2>/dev/null | grep -c "A,V,"')
-[ "${V:-0}" -ge 2 ] && ok "qdevice voting" "$V nodes see it" || bad "qdevice voting" "nodes report A,NV — qnetd cannot read its certs?"
+# Three nodes and no QDevice since PET-528. The QDevice was removed to let pve04 join,
+# and not re-added: Proxmox advises against one with an odd node count, and three
+# votes keep quorum through the loss of any one node. A node that has left still
+# leaves the cluster quorate at 2 of 3, so count the members, not only quorum.
+N=$(on $PVE02 'pvecm status 2>/dev/null | awk "/^Nodes:/{print \$2}"')
+[ "${N:-0}" = "3" ] && ok "cluster members" "3 nodes" || bad "cluster members" "pvecm reports '${N:-nothing}' nodes, expected 3 (pve02, pve03, pve04)"
 W=$(on $PVE02 'touch /etc/pve/.verify 2>/dev/null && rm -f /etc/pve/.verify && echo yes')
 [ "$W" = "yes" ] && ok "/etc/pve writable" || bad "/etc/pve writable" "lost quorum?"
 
@@ -490,7 +494,7 @@ else
 import json, re, subprocess, sys, urllib.request
 
 try:
-    hv = json.loads(subprocess.run(["ansible-inventory", "--host", "ollama-host"],
+    hv = json.loads(subprocess.run(["ansible-inventory", "--host", "ollama-246"],
                                    capture_output=True, text=True, timeout=60).stdout)
 except Exception as e:
     print(f"BAD\tollama declared set readable\t{type(e).__name__}")
@@ -567,6 +571,17 @@ for p in sorted(ports):
     extra = sorted(m["name"] for m in d.get("models", []) if (m["name"], p) not in want)
     print(f"BAD\tollama :{p} holds only declared models\tundeclared {', '.join(extra)}; run playbooks/ollama-models.yml"
           if extra else f"OK\tollama :{p} holds only declared models\t{len(d.get('models', []))} loaded")
+    # ⚠ A LOADED MODEL IS NOT A MODEL ON THE GPU (PET-762). For two weeks both lanes served
+    # from the CPU at 7 tok/s, because the driver's userspace and kernel module had drifted
+    # apart, and every check above stayed green: the API answered and the right models were
+    # loaded. /api/ps reports size_vram beside size, so compare them for every model loaded.
+    loaded = d.get("models", [])
+    if not loaded:
+        print(f"SKIP\tollama :{p} models fully on GPU\tnothing loaded, so no placement to read")
+    for m in loaded:
+        size, vram = m.get("size") or 0, m.get("size_vram") or 0
+        print(f"OK\tollama :{p} {m['name']} on GPU\t{vram} of {size} bytes in VRAM" if size and vram >= size
+              else f"BAD\tollama :{p} {m['name']} on GPU\tonly {vram} of {size} bytes in VRAM; check nvidia-smi on ollama-246 and pve04")
 PY
 )
   # ⚠ THREE VERDICTS, NOT TWO. This used to be `OK -> ok, everything else -> bad`, which

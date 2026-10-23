@@ -1,7 +1,11 @@
 # Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
+# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), LXC 246 on pve04 since PET-528.
 ---
-# ollama-host — Ubuntu Server 24.04, MSI X570-A PRO, native Ollama (not Docker).
+# ollama-246 — the Ollama LXC on pve04 (PET-528). Until 2026-10-23 these models ran on
+# bare metal: ollama-host, Ubuntu Server 24.04 on an MSI X570-A PRO, at .12. That box is
+# now the Proxmox node pve04 (inventory/pve04.yml), and this container holds both of its
+# GPUs as device nodes (roles/lxc-gpu). The two lanes, the pins and the models below did
+# not change in the move; only the address did, from .12 to .246.
 # GPUs: GTX 1660 SUPER (6GB) + RTX 3060 Ti (8GB).
 # TWO PINNED INSTANCES, ONE GPU EACH (kept from the fleet-era PET-132 layout and the resume
 # builder's P1 retune). :11434 on the RTX 3060 Ti is the QUALITY lane; :11435 on the GTX
@@ -13,20 +17,20 @@
 # models were deleted from this box on 2026-09-04, so lab-verify.sh reported them as
 # declared-and-missing for a week.
 # Declare what runs; when the resume builder comes back, its lanes come back with it.
-# NIC: eth0, MAC 2c:f0:5d:a2:7f:4f — WoL enabled (magic packet).
-wol_interface: eth0
-wol_mac: "2c:f0:5d:a2:7f:4f"
-ollama_network_interface: eth0
-ollama_static_ip: "192.168.50.12"   # renumbered from 192.168.50.59
-ollama_prefix: "24"
-ollama_gateway: "192.168.50.1"
-ollama_dns:
-  - "1.1.1.1"
-  - "8.8.8.8"
 
-# Connection (no secrets required for the ollama plays).
-ansible_user: ansible
-ansible_ssh_private_key_file: ~/.ssh/id_ed25519_pedro
+# Connection: root over the ansible-automation key Terraform installs, as on every LXC.
+ansible_user: root
+ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
+
+# The node owns the hardware, so the ollama-service role skips WoL, no-sleep and the
+# Ubuntu driver packages here. roles/nvidia-driver installs the userspace instead.
+ollama_manage_host: false
+
+# A Debian LXC carries no ufw. The LAN reaches both lanes and the search API directly,
+# as it did through ufw's 192.168.50.0/24 rules on the old host. A Proxmox firewall rule
+# on the container is a follow-up.
+ollama_firewall_enabled: false
+search_manage_ufw: false
 
 # ── Resume builder inference layout (Resume Builder P1) ───────────────────────
 # Quality lane served on :11434 pinned to the RTX 3060 Ti (8G); fast lane + embeddings

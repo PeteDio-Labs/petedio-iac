@@ -10,7 +10,7 @@ collections:
   # importing at all. 2.2.2 uses ansible.module_utils.common.text.converters instead.
   # Do NOT answer this with deprecation_warnings=False in ansible.cfg: that hides the
   # warnings about our own code too, and this one is a countdown, not noise.
-  - name: ansible.posix        # authorized_key (provision-new-ollama-host, claude-code)
+  - name: ansible.posix        # authorized_key (claude-code)
     version: ">=2.2.2"
   - name: community.postgresql # configure-postgres.yml (postgres-rds, PET-19)
   - name: community.docker     # configure-poker-api.yml (docker_image pull, PET-44)

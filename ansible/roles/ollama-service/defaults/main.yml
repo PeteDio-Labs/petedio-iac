@@ -8,9 +8,13 @@
 # 3060 Ti; no resident model since PET-525) plus extra pinned
 # instances (see ollama_extra_instances; the embedding model on the 1660S at :11435).
 # This deliberately supersedes the older "one service across both GPUs" design. The
-# pins/env and the models live in host_vars/ollama-host.yml.
+# pins/env and the models live in host_vars/ollama-246.yml.
 ---
 ollama_service_name: ollama
+
+# True on a bare-metal host: WoL, no-sleep and the Ubuntu NVIDIA 550 packages. False in
+# an LXC, where the node owns the hardware (PET-528).
+ollama_manage_host: true
 ollama_install_script_url: https://ollama.com/install.sh
 ollama_update_enabled: true
 

@@ -19,92 +19,101 @@
       - "(ollama_extra_instances | map(attribute='env') | flatten | join(' ')) is not search('REPLACE_WITH')"
     fail_msg: >-
       A CUDA_VISIBLE_DEVICES pin still contains the REPLACE_WITH placeholder. Fill the real
-      GPU UUIDs in host_vars/ollama-host.yml from `nvidia-smi -L` before applying (see the
+      GPU UUIDs in host_vars/ollama-246.yml from `nvidia-smi -L` before applying (see the
       PET-132 PR / Manual steps), or the coder will not be pinned to the 3060 Ti.
     quiet: true
 
-- name: Ensure ethtool is installed (needed for WoL persistence)
-  ansible.builtin.apt:
-    name: ethtool
-    state: present
-    update_cache: false
+# ── Bare-metal host only ──────────────────────────────────────────────────────
+# WoL, no-sleep and the Ubuntu NVIDIA packages belong to a machine, not a container.
+# ollama-246 (PET-528) is an LXC on pve04: the node owns the kernel module, and
+# roles/nvidia-driver installs the matching userspace inside the container. Set
+# ollama_manage_host false there. The nvidia-smi check below still runs, so a
+# container that lost its device nodes fails here instead of serving from the CPU.
+- name: Configure the bare-metal host
+  when: ollama_manage_host | bool
+  block:
+    - name: Ensure ethtool is installed (needed for WoL persistence)
+      ansible.builtin.apt:
+        name: ethtool
+        state: present
+        update_cache: false
 
-- name: Persist Wake-on-LAN via systemd-networkd override
-  ansible.builtin.copy:
-    dest: /etc/systemd/network/10-wol-{{ wol_interface | default('eth0') }}.link
-    content: |
-      [Match]
-      MACAddress={{ wol_mac | default('2c:f0:5d:a2:7f:4f') }}
+    - name: Persist Wake-on-LAN via systemd-networkd override
+      ansible.builtin.copy:
+        dest: /etc/systemd/network/10-wol-{{ wol_interface | default('eth0') }}.link
+        content: |
+          [Match]
+          MACAddress={{ wol_mac | default('2c:f0:5d:a2:7f:4f') }}
 
-      [Link]
-      WakeOnLan=magic
-    mode: '0644'
-  when: wol_mac is defined
-  notify: Restart systemd-networkd
+          [Link]
+          WakeOnLan=magic
+        mode: '0644'
+      when: wol_mac is defined
+      notify: Restart systemd-networkd
 
-# Belt-and-suspenders: prevent sleep/suspend regardless of desktop environment
-- name: Create systemd-logind drop-in directory
-  ansible.builtin.file:
-    path: /etc/systemd/logind.conf.d
-    state: directory
-    mode: '0755'
+    # Belt-and-suspenders: prevent sleep/suspend regardless of desktop environment
+    - name: Create systemd-logind drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/logind.conf.d
+        state: directory
+        mode: '0755'
 
-- name: Disable sleep/suspend via systemd-logind
-  ansible.builtin.copy:
-    dest: /etc/systemd/logind.conf.d/no-sleep.conf
-    content: |
-      [Login]
-      HandleSuspendKey=ignore
-      HandleLidSwitch=ignore
-      HandleLidSwitchExternalPower=ignore
-      IdleAction=ignore
-      SuspendState=
-      HibernateState=
-    mode: '0644'
-  notify: Restart systemd-logind
+    - name: Disable sleep/suspend via systemd-logind
+      ansible.builtin.copy:
+        dest: /etc/systemd/logind.conf.d/no-sleep.conf
+        content: |
+          [Login]
+          HandleSuspendKey=ignore
+          HandleLidSwitch=ignore
+          HandleLidSwitchExternalPower=ignore
+          IdleAction=ignore
+          SuspendState=
+          HibernateState=
+        mode: '0644'
+      notify: Restart systemd-logind
 
-- name: Mask sleep-related systemd targets
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    masked: true
-    daemon_reload: false
-  loop:
-    - sleep.target
-    - suspend.target
-    - hibernate.target
-    - hybrid-sleep.target
+    - name: Mask sleep-related systemd targets
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        masked: true
+        daemon_reload: false
+      loop:
+        - sleep.target
+        - suspend.target
+        - hibernate.target
+        - hybrid-sleep.target
 
-# ── NVIDIA drivers ───────────────────────────────────────────────────────────
-- name: Install NVIDIA driver prerequisites
-  ansible.builtin.apt:
-    name:
-      - ubuntu-drivers-common
-      - pkg-config
-    state: present
-    update_cache: true
+    # ── NVIDIA drivers ───────────────────────────────────────────────────────────
+    - name: Install NVIDIA driver prerequisites
+      ansible.builtin.apt:
+        name:
+          - ubuntu-drivers-common
+          - pkg-config
+        state: present
+        update_cache: true
 
-- name: Check if nvidia-smi is present
-  ansible.builtin.stat:
-    path: /usr/bin/nvidia-smi
-  register: nvidia_smi_stat
+    - name: Check if nvidia-smi is present
+      ansible.builtin.stat:
+        path: /usr/bin/nvidia-smi
+      register: nvidia_smi_stat
 
-- name: Install NVIDIA driver 550 (supports RTX 3060 Ti)
-  ansible.builtin.apt:
-    name:
-      - nvidia-driver-550
-      - nvidia-utils-550
-    state: present
-  register: nvidia_installed
-  when: not nvidia_smi_stat.stat.exists
+    - name: Install NVIDIA driver 550 (supports RTX 3060 Ti)
+      ansible.builtin.apt:
+        name:
+          - nvidia-driver-550
+          - nvidia-utils-550
+        state: present
+      register: nvidia_installed
+      when: not nvidia_smi_stat.stat.exists
 
-# noqa reason: ORDERING. The nvidia-smi query and the two-GPU assert directly below run in
-# this same play. A handler would defer the reboot past them, leaving the driver installed
-# with its kernel module unloaded — so the verification would fail on a correct install.
-- name: Reboot to load NVIDIA driver  # noqa: no-handler
-  ansible.builtin.reboot:
-    reboot_timeout: 600
-    msg: "Rebooting to load NVIDIA driver"
-  when: nvidia_installed is changed
+    # noqa reason: ORDERING. The nvidia-smi query and the two-GPU assert directly below run in
+    # this same play. A handler would defer the reboot past them, leaving the driver installed
+    # with its kernel module unloaded — so the verification would fail on a correct install.
+    - name: Reboot to load NVIDIA driver  # noqa: no-handler
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+        msg: "Rebooting to load NVIDIA driver"
+      when: nvidia_installed is changed
 
 - name: Verify nvidia-smi sees the GPU
   ansible.builtin.command: nvidia-smi --query-gpu=index,name,uuid --format=csv,noheader

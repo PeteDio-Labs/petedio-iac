@@ -1,0 +1,41 @@
+# nvidia-driver — install one pinned NVIDIA driver from NVIDIA's .run installer, on a
+# Proxmox node (the kernel module) or in an LXC (the userspace only). PET-528.
+#
+# WHY THE .run AND NOT A PACKAGE. A container that uses the host's GPU must carry
+# userspace libraries of EXACTLY the host module's version. On ollama-host the
+# packages drifted apart: unattended-upgrades moved the libraries to 580.178.04 on
+# 2026-10-10 while 580.173.02 stayed loaded, NVML refused with "Driver/library version
+# mismatch", and both Ollama lanes ran on the CPU for two weeks (PET-762). One .run
+# file, pinned here and installed on both sides, is a version no package manager
+# upgrades. A Proxmox kernel upgrade still rebuilds the module, through DKMS.
+#
+# To move to another driver, change nvidia_driver_version and nvidia_driver_sha256
+# together, then run the host play and the container play in the same window.
+---
+# `host` builds the kernel module with DKMS. `container` installs the userspace only.
+nvidia_driver_mode: host
+
+# 580.178.04 ran both cards on ollama-host under Ubuntu (PET-762 read-back).
+nvidia_driver_version: "580.178.04"
+
+# ⚠ REQUIRED, and there is no default on purpose. Pin it from the file you downloaded:
+#   curl -fsSLO <nvidia_driver_url> && shasum -a 256 NVIDIA-Linux-x86_64-<version>.run
+# Record the value on the PET item in the same step, then commit it here.
+nvidia_driver_sha256: ""
+
+nvidia_driver_url: >-
+  https://download.nvidia.com/XFree86/Linux-x86_64/{{ nvidia_driver_version }}/NVIDIA-Linux-x86_64-{{ nvidia_driver_version }}.run
+nvidia_driver_run_path: "/root/NVIDIA-Linux-x86_64-{{ nvidia_driver_version }}.run"
+
+# The installer picks the open kernel module for Turing and later, which covers both
+# cards: the GTX 1660 SUPER is TU116 and the RTX 3060 Ti is GA104.
+nvidia_driver_host_flags: "--silent --dkms --no-questions --ui=none --no-x-check --disable-nouveau"
+nvidia_driver_container_flags: "--silent --no-kernel-modules --no-questions --ui=none --no-x-check"
+
+# A host with nouveau loaded must reboot before the installer can load its module. The
+# role refuses to reboot a node unless this is true and no guest is running on it.
+nvidia_driver_allow_reboot: false
+
+# Every UUID listed must appear in `nvidia-smi -L`, or the role fails. Ollama pins each
+# lane by UUID, so a card that is missing or renumbered must stop the run here.
+nvidia_driver_expected_uuids: []

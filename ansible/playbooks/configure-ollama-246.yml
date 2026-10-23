@@ -1,0 +1,43 @@
+---
+# configure-ollama-246.yml — bring Ollama up inside CT 246 on pve04. (PET-528)
+#
+# Run it after configure-pve04.yml has passed both GPUs into the container. Run from
+# ansible/:
+#
+#   ansible-playbook playbooks/configure-ollama-246.yml -e nvidia_driver_sha256=<sha>
+#
+# It installs the NVIDIA userspace of the version pve04's module runs, then the two
+# Ollama lanes and their models. petedio-search follows with scripts/deploy-search.sh,
+# which reads its secrets from Vault on the Mac.
+
+- name: Prepare the container
+  hosts: ollama
+  become: true
+  tasks:
+    # The Debian template carries neither. The Ollama installer needs curl, and both it
+    # and the NVIDIA installer probe the cards through lspci.
+    - name: Install the base tools
+      ansible.builtin.apt:
+        name:
+          - curl
+          - ca-certificates
+          - pciutils
+          - zstd
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install the NVIDIA userspace that matches pve04's module
+      ansible.builtin.include_role:
+        name: nvidia-driver
+      vars:
+        nvidia_driver_mode: container
+        nvidia_driver_expected_uuids:
+          - "{{ ollama_coder_gpu }}"
+          - "{{ ollama_gemma_gpu }}"
+
+- name: Install Ollama and its pinned lanes
+  ansible.builtin.import_playbook: ollama-service.yml
+
+- name: Pull and warm the declared models
+  ansible.builtin.import_playbook: ollama-models.yml

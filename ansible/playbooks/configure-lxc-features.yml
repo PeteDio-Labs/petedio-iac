@@ -51,23 +51,23 @@
   connection: local
   become: false
   vars:
-    lxc_features_expected_nodes: [pve02, pve03]
+    lxc_features_expected_nodes: [pve02, pve03, pve04]
   tasks:
     - name: Every expected node is in the pattern
       ansible.builtin.assert:
         that: lxc_features_expected_nodes | difference(_matched) | length == 0
         fail_msg: >-
-          The pattern `proxmox:pve_new` misses
+          The pattern `proxmox:pve_new:pve04` misses
           {{ lxc_features_expected_nodes | difference(_matched) | join(', ') }}.
           It matched {{ _matched | join(', ') or 'nothing' }}. A node was renamed
           or moved to another inventory file — fix the pattern in this playbook
           rather than letting the run report success having skipped a node.
         success_msg: "Will converge: {{ _matched | join(', ') }}"
       vars:
-        _matched: "{{ (groups.get('proxmox', []) + groups.get('pve_new', [])) | unique | sort }}"
+        _matched: "{{ (groups.get('proxmox', []) + groups.get('pve_new', []) + groups.get('pve04', [])) | unique | sort }}"
 
 - name: Converge LXC features on the Proxmox nodes
-  hosts: proxmox:pve_new
+  hosts: proxmox:pve_new:pve04
   become: true
   gather_facts: false
 

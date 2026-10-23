@@ -2,6 +2,13 @@
 # configure-backup-store.yml — give the cluster a backup target that neither
 # Proxmox node owns, on ollama-host. (PET-288)
 #
+# ⚠ ollama-host IS pve04 SINCE 2026-10-23 (PET-528). The box was reinstalled as a
+# Proxmox node on a new 128 GB drive, with sda unplugged, so the store's LV
+# (ubuntu-vg/backup-lv) and every archive on it came through untouched. pve04 mounts
+# that LV in place and serves the same export from the same address, .12. The store
+# is now on a cluster member, which weakens the "neither node owns it" property
+# below: a fault on pve04 now takes a node and the backups together.
+#
 # WHY. Surveyed 2026-08-31: no scheduled backups existed anywhere, and exactly
 # ONE archive existed in the whole cluster. The "295 GB reserved" target was an
 # NFS mount FROM pve02, so pve01 backed up to pve02 and pve02 would have backed
@@ -12,15 +19,7 @@
 #
 #   ansible-playbook playbooks/configure-backup-store.yml
 #
-# NO -K NEEDED. ollama-host carries a dedicated `ansible` account (uid 1001, in
-# the sudo group) that has passwordless sudo, reached with the same
-# id_ed25519_typeshit key as `pedro`. `pedro` itself has a password nobody
-# remembers, and it is never prompted for because sshd there is key-only
-# (PasswordAuthentication no) — so the password only ever mattered for sudo.
-#
-# The connection user is set on the play rather than in inventory/hosts.yml on
-# purpose. That file is shared, and editing it is the documented way to change
-# what other stacks do on merge — see .agent/lessons.md on CI blast radius.
+# NO -K NEEDED. The server play runs as root on pve04 (inventory/pve04.yml).
 #
 # ORDER MATTERS, hence serial and the server first: a node cannot mount an export
 # that does not exist yet.
@@ -34,10 +33,8 @@
 # single disk. Vault's data in particular wants a second destination.
 
 - name: Build the backup store
-  hosts: ollama-host
+  hosts: pve04
   become: true
-  vars:
-    ansible_user: ansible
   roles:
     - backup-store
 

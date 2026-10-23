@@ -229,9 +229,11 @@ uptime_kuma_monitors:
     url: "http://192.168.50.150:8191/"
 
   # -- inference host ----------------------------------------------------------
+  # ollama-246, the LXC on pve04 that holds both GPUs since PET-528. Until 2026-10-23 this
+  # probed the bare-metal ollama-host at .12, which is now the node itself.
   - name: ollama
     type: http
-    url: "http://192.168.50.12:11434/api/version"
+    url: "http://192.168.50.246:11434/api/version"
 
   # -- the chat surface on 237 (PET-524) ---------------------------------------
   # /health is mtrace's unauthenticated liveness route. It says the process is up and
@@ -252,13 +254,13 @@ uptime_kuma_monitors:
     url: "http://192.168.50.238:8080/healthz"
     keyword: '"db":true'
     description: "Savings tracker on 238. DOWN means the app is off or its database does not connect."
-  # petedio-search binds 192.168.50.12 and admits 192.168.50.0/24, so the Pi reaches it.
+  # petedio-search binds 192.168.50.246 and the LAN reaches it, so the Pi does too.
   # /healthz proves only that the server is up; the embedding lane has its own check
   # in configure-search.yml.
   - name: search
     type: http
-    url: "http://192.168.50.12:8526/healthz"
-    description: "petedio-search on ollama-host. Liveness only."
+    url: "http://192.168.50.246:8526/healthz"
+    description: "petedio-search on ollama-246. Liveness only."
 
   # -- the one monitor that is ALLOWED to depend on the resolver ---------------
   # DNS is not self-hosted, so the router is a real single point of failure and

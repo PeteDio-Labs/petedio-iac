@@ -118,6 +118,10 @@ lxc_features_declared:
   # Docker, so the container gets no keyctl. Converge this before configure-netboot.yml.
   # Temporary: delete it with netboot.tf once pve04 joins the cluster.
   "239": { nesting: "1" }                # netboot-239 — PXE server for the pve04 install
+  # ollama-246 on pve04 (PET-528). Debian 13, systemd 257, and petedio-search's units are
+  # sandboxed, so systemd builds mount namespaces: nesting. Nothing here runs Docker, so
+  # no keyctl. The GPU device nodes are roles/lxc-gpu's, not a feature flag.
+  "246": { nesting: "1" }                # ollama-246 — Ollama (both GPUs) + petedio-search
   # Declared but on neither node as of 2026-09-09. Kept so they are configured on
   # the way back rather than remembered: 106's rootfs will not `pct restore`
   # (lxc.idmap), and 244 is absent from both nodes' `pct list`.

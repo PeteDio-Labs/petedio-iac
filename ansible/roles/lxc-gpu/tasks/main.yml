@@ -1,0 +1,22 @@
+---
+- name: Assert every device node exists on the node
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ lxc_gpu_containers | map(attribute='devices') | flatten | unique }}"
+  register: lxc_gpu_nodes
+
+- name: Fail on a missing device node
+  ansible.builtin.assert:
+    that: lxc_gpu_nodes.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      Missing on {{ inventory_hostname }}:
+      {{ lxc_gpu_nodes.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}.
+      Run the nvidia-driver role first; its nvidia-dev-nodes.service creates them.
+    quiet: true
+
+- name: Converge each container
+  ansible.builtin.include_tasks: container.yml
+  loop: "{{ lxc_gpu_containers }}"
+  loop_control:
+    loop_var: lxc_gpu_ct
+    label: "{{ lxc_gpu_ct.vmid }}"

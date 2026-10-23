@@ -11,7 +11,7 @@
 # Runs the service role FIRST (both pinned instances up) THEN the models role (pull +
 # load-resident), so the residency warm-up can reach :11435 as well as :11434.
 #
-# Operator-only. Fill the GPU UUIDs in host_vars/ollama-host.yml first (nvidia-smi -L) —
+# Operator-only. Fill the GPU UUIDs in host_vars/ollama-246.yml first (nvidia-smi -L) —
 # the service role asserts the placeholders are gone.
 #   ansible-playbook playbooks/ollama-worker-inference.yml
 #   ansible-playbook playbooks/ollama-worker-inference.yml --check   # dry run

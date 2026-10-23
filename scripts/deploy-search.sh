@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy-search.sh — build petedio-search and deploy it to ollama-host (PET-526).
+# deploy-search.sh — build petedio-search and deploy it to ollama-246, the Ollama LXC on pve04 (PET-526, PET-528).
 #
 # It compiles the binary here, for Linux x86-64, and the playbook copies it. Nothing
 # builds on the target.

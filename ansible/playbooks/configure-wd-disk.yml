@@ -1,5 +1,8 @@
 ---
-# configure-wd-disk.yml — mount the recovered pve02 WD disk on ollama-host. (PET-527)
+# configure-wd-disk.yml — mount the recovered pve02 WD disk on pve04. (PET-527)
+#
+# The disk moved with the box: ollama-host became the Proxmox node pve04 on 2026-10-23
+# (PET-528). It was unplugged while the installer ran, so its LVs are as they were.
 #
 #   ansible-playbook playbooks/configure-wd-disk.yml
 #
@@ -10,13 +13,10 @@
 #
 # No workflow applies this on merge. Run it from the Mac after the PR merges.
 #
-# The connection user is set on the play, as configure-backup-store.yml does:
-# `ansible` has passwordless sudo on this host, and `pedro`'s password is unknown.
+# Root on the node, from inventory/pve04.yml.
 
 - name: Mount the recovered WD disk
-  hosts: ollama-host
+  hosts: pve04
   become: true
-  vars:
-    ansible_user: ansible
   roles:
     - wd-disk

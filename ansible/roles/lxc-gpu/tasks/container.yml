@@ -1,0 +1,46 @@
+---
+- name: Read the container config ({{ lxc_gpu_ct.vmid }})
+  ansible.builtin.command: pct config {{ lxc_gpu_ct.vmid }}
+  register: lxc_gpu_conf
+  changed_when: false
+  check_mode: false
+
+- name: Read the container state ({{ lxc_gpu_ct.vmid }})
+  ansible.builtin.command: pct status {{ lxc_gpu_ct.vmid }}
+  register: lxc_gpu_status
+  changed_when: false
+  check_mode: false
+
+# Compare the path only. Proxmox stores the entry as "devN: <path>,mode=0666" and may
+# reorder the options, so a whole-line match would rewrite a correct entry every run.
+- name: Set each device entry ({{ lxc_gpu_ct.vmid }})
+  ansible.builtin.command: >-
+    pct set {{ lxc_gpu_ct.vmid }} --dev{{ idx }} {{ item }},mode={{ lxc_gpu_device_mode }}
+  loop: "{{ lxc_gpu_ct.devices }}"
+  loop_control:
+    index_var: idx
+  when: >-
+    (lxc_gpu_conf.stdout_lines
+      | select('match', '^dev' ~ idx ~ ': ' ~ (item | regex_escape) ~ '(,|$)')
+      | list | length) == 0
+  register: lxc_gpu_set
+  changed_when: true
+
+- name: Restart the container to apply new devices ({{ lxc_gpu_ct.vmid }})
+  when:
+    - lxc_gpu_set is changed
+    - "'running' in lxc_gpu_status.stdout"
+    - lxc_gpu_allow_restart | bool
+    - not ansible_check_mode
+  ansible.builtin.command: pct reboot {{ lxc_gpu_ct.vmid }}
+  changed_when: true
+
+- name: Refuse to leave a running container without its devices ({{ lxc_gpu_ct.vmid }})
+  when:
+    - lxc_gpu_set is changed
+    - "'running' in lxc_gpu_status.stdout"
+    - not (lxc_gpu_allow_restart | bool)
+  ansible.builtin.fail:
+    msg: >-
+      {{ lxc_gpu_ct.vmid }} is running and its new devN entries apply only on restart.
+      Re-run with -e lxc_gpu_allow_restart=true, or run `pct reboot {{ lxc_gpu_ct.vmid }}`.
