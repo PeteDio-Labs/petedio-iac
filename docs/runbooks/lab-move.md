@@ -27,7 +27,7 @@ read-only, and `pct start` refuses for every guest. The recovery command is in
 [Single node came up](#single-node-came-up) — copy it onto paper.
 
 **Vault always boots sealed.** `configure-vault.yml` deliberately does not unseal.
-The `dev.pdlab.vault-unseal` launchd agent on the Mac unseals it within about five
+The unseal watcher on pete-pi-1 unseals it (PET-373); the Mac launchd agent is the fallback within about five
 minutes, provided the Mac is on the LAN or the tailnet. Until that happens, `.223`
 answers `503` and anything reading a secret fails.
 
