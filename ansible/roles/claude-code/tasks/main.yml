@@ -370,6 +370,32 @@
       env:
         TZ: "{{ claude_timezone }}"
 
+# PET-727: keep the claude.ai account connectors (Gmail, Drive, Calendar, AWS, Indeed) out of
+# every session on this host. 247 runs in auto mode and reads Plane items and PRs that others
+# can write, so an injected instruction must not reach Pedro's mail or Drive. The setting is a
+# root-owned managed-settings file, not the seeded user settings.json: `claude` and
+# `claude-ops` own those and can rewrite them, and the seed task never overwrites a file.
+# A `true` in any settings source wins, so no project file can switch the connectors back on.
+# Servers a session declares itself (Plane in .mcp.json) are not claude.ai connectors and stay.
+- name: Create the managed Claude Code settings directory
+  ansible.builtin.file:
+    path: /etc/claude-code
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+    follow: false
+  when: claude_disable_claudeai_connectors | bool
+
+- name: Disable the claude.ai connectors for every session on this host
+  ansible.builtin.copy:
+    dest: /etc/claude-code/managed-settings.json
+    owner: root
+    group: root
+    mode: "0644"
+    content: "{{ {'disableClaudeAiConnectors': true} | to_nice_json }}\n"
+  when: claude_disable_claudeai_connectors | bool
+
 # claude-remote-ops.service belongs to claude-ops (tasks/claude-ops.yml), not to this list —
 # see the reconcile's comment below. Refuse the collision unconditionally, whether or not
 # claude_ops_enable is set, because host_vars can add a session named "ops" on a run that
