@@ -90,7 +90,7 @@ Merging `pete-bot#38` deploys on merge. To check the result from 237:
 
 ```bash
 systemctl is-active lab-agent
-curl -s http://127.0.0.1:3016/health
+wget -qO- http://127.0.0.1:3016/health
 ```
 
 A healthy answer lists every dependency as up. A dependency that is down fails the deploy by design.
@@ -102,7 +102,7 @@ The check runs at 11:15Z. The local API listens on `127.0.0.1:3016`. Port 3017 i
 To run the check now, send the ask bearer from the env file on 237. The `printf` builtin and the stdin header keep the bearer out of the process arguments and out of any log:
 
 ```bash
-sudo bash -c 'tok=$(sed -n "s/^LAB_ASK_TOKEN=//p" /etc/lab-agent/lab-agent.env)
+bash -c 'tok=$(sed -n "s/^LAB_ASK_TOKEN=//p" /etc/lab-agent/lab-agent.env)
   printf "authorization: Bearer %s\n" "$tok" |
   curl -s -X POST -H @- http://127.0.0.1:3016/v1/drift/run'
 ```

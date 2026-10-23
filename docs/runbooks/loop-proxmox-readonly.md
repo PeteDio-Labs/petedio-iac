@@ -40,8 +40,7 @@ vault kv patch kv/services/agent-loop \
 ```
 
 **The `agent-loop` AppRole/Vault Agent self-serve path described above was retired with the
-agent fleet (PET-265 P0, 2026-07-21)** — the loop host that ran it no longer exists as such
-(renamed `resume-242`, repurposed). Run the helper with the session env var instead:
+agent fleet (PET-265 P0, 2026-07-21)** — the loop host that ran it (LXC 242, later `resume-242`) was destroyed on 2026-08-24 (PET-307). Run the helper with the session env var instead:
 
 ```sh
 export PROXMOX_RO_TOKEN="$(vault kv get -field=proxmox_ro_token kv/services/agent-loop)"
@@ -65,7 +64,7 @@ It prints the guest's config JSON (the `pct config` equivalent: `cores`, `memory
 `rootfs`, `mp0…`, `net0`, `ostype`, `unprivileged`, `onboot`, …) — everything needed to map
 onto `modules/proxmox-lxc` and design a no-op import. The token is **never printed**.
 
-`<node>` maps `pve01`→`.10`, `pve02`→`.11`; override with `PROXMOX_RO_ENDPOINT`. TLS is
+`<node>` maps `pve02`→`.11`, `pve03`→`.10`; override with `PROXMOX_RO_ENDPOINT`. TLS is
 `insecure` (self-signed homelab cert, matching `provider "proxmox" { insecure = true }`).
 
 ## Guardrails (proposed amendment to **Agent Loop Operations**)

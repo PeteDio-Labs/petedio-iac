@@ -46,7 +46,7 @@ writes. A change pushed to one is overwritten on the next run.
 
 ## 247 steps
 
-1. Merge the PET-756 PR. Apply-on-merge creates LXC 249. Confirm `forgejo_id = 249` in the apply log.
+1. Confirm the apply log for the merged PET-756 PR ([petedio-iac#525](https://github.com/PeteDio-Labs/petedio-iac/pull/525)) shows `forgejo_id = 249`.
 2. In the same `vault-breakglass` shell, run `./scripts/deploy-forgejo-mirror.sh`. The shell holds
    the only token that can read `kv/iac/lxc-ssh`, which the script uses for SSH to 249 because
    247 holds no `id_ed25519_ansible`. The play fails unless the first sync examined the repos
