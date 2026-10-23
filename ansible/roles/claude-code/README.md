@@ -803,6 +803,11 @@ session can rewrite them. To make them hold, put them in root-owned
 `/etc/claude-code/managed-settings.json` instead. The same goes for `~/.bashrc` and
 `~/.ssh/authorized_keys`: as seeded, a session can persist its own access.
 
+The role writes `/etc/claude-code/managed-settings.json` with `disableClaudeAiConnectors: true`
+(PET-727, `claude_disable_claudeai_connectors`), so no session loads the claude.ai connectors.
+Servers a session declares itself, such as Plane, stay. Restart a running Remote Control unit
+after the play.
+
 Changing the mode is one variable, a play re-run, and `systemctl restart claude-remote-iac`.
 The handler never restarts a running server, so it keeps the old mode until you restart it,
 and the restart drops whoever is connected. For stricter prompting, set `default` (Manual)

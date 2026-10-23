@@ -326,6 +326,13 @@ claude_authorized_keys:
 # running server, so it keeps the old mode until you do.
 claude_permission_mode: auto
 
+# PET-727: write /etc/claude-code/managed-settings.json with disableClaudeAiConnectors, so no
+# session on the host loads the claude.ai connectors (Gmail, Drive, Calendar, AWS, Indeed).
+# After the play, `claude mcp list` as `claude` and as `claude-ops` lists Plane (declared in
+# the session's own MCP config) and no claude.ai connector. Restart a running Remote Control
+# unit to pick it up.
+claude_disable_claudeai_connectors: true
+
 # One `claude remote-control` server per project directory. Each entry renders its own
 # systemd unit, so `systemctl status claude-remote-iac` names the project it serves and a
 # crash in one does not take the others with it.
