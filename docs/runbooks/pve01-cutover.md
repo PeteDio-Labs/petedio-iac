@@ -165,7 +165,7 @@ the store is disabled, every job fails. It doesn't need the driver.
      `--check`. It writes pve01's `host.fw` with `enable: 0`, which every node needs
      before the datacenter firewall filters anything.
    - `ansible-playbook playbooks/configure-journald.yml`
-   - `ansible-playbook playbooks/configure-node-exporter.yml`, then the Prometheus play,
+   - `ansible-playbook playbooks/configure-node-exporter.yml`, then `configure-metrics.yml`,
      which scrapes pve01 at `.12`.
 4. Repoint the consumers: `./scripts/deploy-uptime-kuma.sh`, then
    `ansible-playbook playbooks/configure-pete-bot.yml`.
