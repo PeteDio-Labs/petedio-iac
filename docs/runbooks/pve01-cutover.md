@@ -147,7 +147,10 @@ the store is disabled, every job fails. It doesn't need the driver.
    `ansible-playbook playbooks/configure-wd-disk.yml`. On pete-pi-1, restart the
    automount: `sudo systemctl restart 'mnt-ollama\x2dbackups.automount'`.
 3. Gate: `pvesm status --storage ollama-backups` shows `active` on pve02 and pve03,
-   and `ls /mnt/ollama-backups/dump | wc -l` matches the survey's count (804).
+   and `ls /mnt/ollama-backups/dump | wc -l` on pve02 and pve03 matches the survey's
+   count (804). Count on a node, not on pete-pi-1: the Pi mounts only its own export,
+   `/srv/backups/pete-pi`, which holds `uptime-kuma` and no `dump`. On the Pi, check
+   that `findmnt /mnt/ollama-backups` shows that NFS mount.
 4. `ansible-playbook playbooks/configure-pve01.yml -e nvidia_driver_allow_reboot=true`.
    It sets the time zone and the `.lab` domain, downloads the template with `pveam`,
    and installs the driver. It ends with "CT 246 does not exist yet". That message is
