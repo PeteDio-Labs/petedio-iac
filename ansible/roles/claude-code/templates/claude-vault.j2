@@ -26,16 +26,24 @@ set -euo pipefail
 tmux_session=claude-vault
 claude_bin="{{ claude_operator_npm_prefix }}/bin/claude"
 
-if [ -z "${TMUX:-}" ]; then
+# The wrapper's own launch passes --in-pane, so the pane skips this block and keeps the DIR the
+# block chose. Any other run, inside tmux or not, chooses DIR here.
+if [ "${1:-}" != --in-pane ]; then
   if tmux has-session -t "$tmux_session" 2>/dev/null; then
     [ "$#" -eq 0 ] || echo "claude-vault: a session is already open, so $1 is ignored." >&2
     echo "claude-vault: reattaching. Detach with Ctrl-b d." >&2
+    if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t "$tmux_session"; fi
     exec tmux attach-session -t "$tmux_session"
   fi
   dir="${1:-{{ claude_operator_claude_vault_dir }}}"
   [ -d "$dir" ] || { echo "claude-vault: $dir is not a directory." >&2; exit 2; }
-  # -c starts the pane in DIR, so no path passes through tmux's command parsing.
-  exec tmux new-session -s "$tmux_session" -c "$dir" /usr/local/bin/claude-vault
+  # -c starts the pane in DIR, so no path passes through tmux's command parsing. From inside
+  # another tmux session, start it detached and switch to it, because tmux refuses to nest.
+  if [ -n "${TMUX:-}" ]; then
+    tmux new-session -d -s "$tmux_session" -c "$dir" /usr/local/bin/claude-vault --in-pane
+    exec tmux switch-client -t "$tmux_session"
+  fi
+  exec tmux new-session -s "$tmux_session" -c "$dir" /usr/local/bin/claude-vault --in-pane
 fi
 
 [ -x "$claude_bin" ] || {
