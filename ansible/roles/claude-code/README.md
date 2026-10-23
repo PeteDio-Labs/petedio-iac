@@ -559,9 +559,8 @@ Proxmox nodes — without widening `claude`, the general session user. **Muse ne
 `claude-ops`.** Nothing in this role sets a bot identity to it, and `tasks/claude-ops.yml`
 asserts that `claude-ops` and `claude` stay apart.
 
-**Built on branch, not yet deployed as of 2026-09-29.** `claude_ops_enable` defaults to
-`false`; claude-M1 flips it once the App, the Vault role and a deploy have all landed, on
-Pedro's word (the order is at the end of this section).
+**Deployed on claude-247.** `claude_ops_enable` defaults to `false` in the role, and
+`ansible/inventory/host_vars/claude-247.yml` sets it to `true` (since 2026-09-30).
 
 | | |
 |---|---|
