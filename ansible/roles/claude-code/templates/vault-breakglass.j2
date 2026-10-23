@@ -68,10 +68,11 @@ if [ "$#" -gt 0 ]; then
   }
   echo "vault-breakglass: running $(basename "$1") with Vault admin for $((ttl / 60)) minutes." >&2
   # --foreground keeps the command on the terminal, which an interactive program needs. Its
-  # child processes are not timed out, but the token they hold dies with its TTL anyway.
+  # child processes are not timed out, but Vault rejects the token they hold once its TTL ends.
   rc=0
   VAULT_TOKEN="$token" timeout --foreground --kill-after=30 "$ttl" "$@" || rc=$?
-  [ "$rc" -eq 124 ] && echo "vault-breakglass: the token's hour ended, so $(basename "$1") was stopped." >&2
+  # 124 is the TERM at the TTL; 137 is the KILL that follows when the command ignores it.
+  [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] && echo "vault-breakglass: the token's hour ended, so $(basename "$1") was stopped." >&2
   exit "$rc"
 fi
 

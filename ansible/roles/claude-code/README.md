@@ -657,8 +657,8 @@ before relying on the App for anything past opening a PR.
 | Who | the operator account (`pedro`) only. The Remote Control units run as `claude` and `claude-ops` and never see the token |
 | Login | the `vault-breakglass` one: password, then the TOTP code with no prompt. One hour, bound to 247's /32 |
 | Where the token lives | the environment of the processes under `vault-breakglass`. Never on disk, never in the tmux server's environment |
-| When it ends | `vault-breakglass` stops the session when the token's TTL ends, and revokes the token on any exit |
-| Permission mode | `default`: every tool call asks, and the prompt reaches the phone |
+| When it ends | `vault-breakglass` stops Claude Code when the token's TTL ends and revokes the token on any exit. Child processes Claude Code started keep running, but Vault rejects their token |
+| Permission mode | `default`: every tool call asks, and the prompt reaches the phone. This is the control on the session: a prompt-injected session holds a live admin token for up to an hour, so read each request before you approve it |
 | Survives a dropped SSH | yes. tmux holds it; detach with `Ctrl-b d`, and `claude-vault` again reattaches |
 
 To set it up once, after the role lands, sign in as the operator:
@@ -671,8 +671,10 @@ To use it, SSH in as `pedro` and run `claude-vault`. Enter the password, then th
 On the first run, Claude Code asks you to trust `~/vault-admin`. The session then shows in the
 Claude app as `vault-admin-HHMM`. To work in another directory, pass it: `claude-vault ~/iac`.
 
-The account's claude.ai login is a credential it did not hold before PET-763. It adds no
-reach, because the phone key that opens `pedro` also opens `claude-ops`, which holds one already.
+The account's claude.ai login is a credential it did not hold before PET-763. The login adds
+no reach, because the phone key that opens `pedro` also opens `claude-ops`, which holds one
+already. The session does add one exposure: it holds Vault admin while it runs, so the
+permission prompts above are what stand between a hostile input and the token.
 
 ## Verify
 

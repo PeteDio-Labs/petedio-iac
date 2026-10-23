@@ -12,6 +12,35 @@
 # NO CREDENTIAL PASSES THROUGH THIS ROLE. The claude.ai login is an operator step
 # (`claude auth login`, as the operator), and the Vault token exists only at run time.
 ---
+# The operator account runs a Claude session and owns its home, so a link it plants at a path
+# root writes is the PET-410 attack. Check every path root writes below before any write. The
+# npm prefix and the working directory count too: a link there would hand the file module's
+# chown the link's target.
+- name: Check the paths root writes in the operator's home are not symlinks
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop:
+    - "/home/{{ claude_operator_user }}/.npmrc"
+    - "/home/{{ claude_operator_user }}/.bashrc"
+    - "{{ claude_operator_npm_prefix }}"
+    - "{{ claude_operator_npm_prefix }}/bin"
+    - "{{ claude_operator_claude_vault_dir }}"
+  register: claude_operator_paths
+
+- name: Refuse to write through a symlink in the operator's home
+  ansible.builtin.assert:
+    that:
+      - not (item.stat.islnk | default(false))
+    fail_msg: >-
+      {{ item.item }} is a symlink to
+      {{ item.stat.lnk_target | default('unknown') }}. The tasks below run as root and set
+      owner/group/mode, so writing through it would hand that target to
+      {{ claude_operator_user }} (PET-410). Remove the link and re-run.
+  loop: "{{ claude_operator_paths.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
 # Separate from claude_npm_prefix and claude_ops_npm_prefix, under the operator's 0700 home, so
 # neither session user can plant the binary claude-vault runs.
 - name: Create the operator's npm prefix
@@ -32,22 +61,6 @@
     content: |
       # Managed by Ansible (roles/claude-code).
       prefix={{ claude_operator_npm_prefix }}
-
-- name: Check the operator's .bashrc is a real file before root writes to it
-  ansible.builtin.stat:
-    path: "/home/{{ claude_operator_user }}/.bashrc"
-    follow: false
-  register: claude_operator_bashrc
-
-- name: Refuse to write through a symlinked operator .bashrc
-  ansible.builtin.assert:
-    that:
-      - not (claude_operator_bashrc.stat.islnk | default(false))
-    fail_msg: >-
-      /home/{{ claude_operator_user }}/.bashrc is a symlink to
-      {{ claude_operator_bashrc.stat.lnk_target | default('unknown') }}. The next task runs as
-      root and sets owner/group/mode, so writing through it would hand that target to
-      {{ claude_operator_user }} (PET-410). Remove the link and re-run.
 
 # For the one-time `claude auth login`. claude-vault itself calls the binary by its full path.
 - name: Put the operator's npm bin first on its PATH

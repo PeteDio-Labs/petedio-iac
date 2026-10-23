@@ -6,7 +6,7 @@
 #   claude-vault [DIR]     log in with the password and a TOTP code, then start the session
 #                          in DIR (default {{ claude_operator_claude_vault_dir }})
 #   Ctrl-b d               detach; the session keeps running and you drive it from the app
-#   claude-vault           while one runs, reattaches to it
+#   claude-vault           while one runs, reattaches to it and ignores DIR
 #
 # The login is vault-breakglass's, unchanged: userpass and TOTP, a token bound to this host's
 # /32 that Vault ends after one hour. The token lives only in the environment of the processes
@@ -28,26 +28,34 @@ claude_bin="{{ claude_operator_npm_prefix }}/bin/claude"
 
 if [ -z "${TMUX:-}" ]; then
   if tmux has-session -t "$tmux_session" 2>/dev/null; then
-    echo "claude-vault: a session is already open; reattaching. Detach with Ctrl-b d." >&2
+    [ "$#" -eq 0 ] || echo "claude-vault: a session is already open, so $1 is ignored." >&2
+    echo "claude-vault: reattaching. Detach with Ctrl-b d." >&2
     exec tmux attach-session -t "$tmux_session"
   fi
-  exec tmux new-session -s "$tmux_session" /usr/local/bin/claude-vault "$@"
+  dir="${1:-{{ claude_operator_claude_vault_dir }}}"
+  [ -d "$dir" ] || { echo "claude-vault: $dir is not a directory." >&2; exit 2; }
+  # -c starts the pane in DIR, so no path passes through tmux's command parsing.
+  exec tmux new-session -s "$tmux_session" -c "$dir" /usr/local/bin/claude-vault
 fi
 
-dir="${1:-{{ claude_operator_claude_vault_dir }}}"
-[ -d "$dir" ] || { echo "claude-vault: $dir is not a directory." >&2; exit 2; }
 [ -x "$claude_bin" ] || {
   echo "claude-vault: $claude_bin is missing; re-run the claude-code role." >&2
   exit 2
 }
-cd "$dir"
 
 # Remote Control needs a full claude.ai login, not an API key or a setup-token. Check it
 # before the TOTP code is spent.
-auth_method="$("$claude_bin" auth status 2>/dev/null | jq -r '.authMethod // "none"' || true)"
+# `claude auth status` prints JSON whose authMethod is claude.ai for that login. Output this
+# script cannot parse is reported as unreadable, not as a missing login.
+auth_json="$("$claude_bin" auth status 2>/dev/null || true)"
+auth_method="$(printf '%s' "$auth_json" | jq -r '.authMethod // "none"' 2>/dev/null || echo unreadable)"
 [ "$auth_method" = "claude.ai" ] || {
-  echo "claude-vault: Claude Code has no claude.ai login for $(id -un) (found: ${auth_method:-none})." >&2
-  echo "claude-vault: run $claude_bin auth login and choose the claude.ai option." >&2
+  if [ "$auth_method" = unreadable ]; then
+    echo "claude-vault: could not parse '$claude_bin auth status'; run it and check its output." >&2
+  else
+    echo "claude-vault: Claude Code has no claude.ai login for $(id -un) (found: $auth_method)." >&2
+    echo "claude-vault: run $claude_bin auth login and choose the claude.ai option." >&2
+  fi
   read -r -t 300 -p "Press Enter to close." _ || true
   exit 1
 }
