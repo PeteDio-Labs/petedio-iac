@@ -154,7 +154,7 @@ the store is disabled, every job fails. It doesn't need the driver.
    `pvesm set ollama-backups --disable 0`. Re-enable it before the client play: the
    role proves the mounted store reads `active`, and a disabled store never does.
    `is_mountpoint` keeps any node without the mount from writing to its root disk.
-4. `./scripts/deploy-backup-store.sh`, then
+4. `../scripts/deploy-backup-store.sh` (from `ansible/`), then
    `ansible-playbook playbooks/configure-wd-disk.yml`. The script runs
    `configure-backup-store.yml` with the nodes' Kuma push tokens from Vault, so it is
    Pedro's credential step (`PET-511`). The bare play installs `backup-health.timer`
