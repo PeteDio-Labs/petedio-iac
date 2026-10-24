@@ -154,8 +154,11 @@ the store is disabled, every job fails. It doesn't need the driver.
    `pvesm set ollama-backups --disable 0`. Re-enable it before the client play: the
    role proves the mounted store reads `active`, and a disabled store never does.
    `is_mountpoint` keeps any node without the mount from writing to its root disk.
-4. `ansible-playbook playbooks/configure-backup-store.yml`, then
-   `ansible-playbook playbooks/configure-wd-disk.yml`. On pete-pi-1, restart the
+4. `./scripts/deploy-backup-store.sh`, then
+   `ansible-playbook playbooks/configure-wd-disk.yml`. The script runs
+   `configure-backup-store.yml` with the nodes' Kuma push tokens from Vault, so it is
+   Pedro's credential step (`PET-511`). The bare play installs `backup-health.timer`
+   with no push URL, and each node's first 06:00 run then fails its push. On pete-pi-1, restart the
    automount: `sudo systemctl restart 'mnt-ollama\x2dbackups.automount'`.
 5. Gate: `pvesm status --storage ollama-backups` shows `active` on pve02 and pve03,
    and `ls /mnt/ollama-backups/dump | wc -l` on pve02 and pve03 matches the survey's
@@ -189,19 +192,31 @@ the store is disabled, every job fails. It doesn't need the driver.
    - `./scripts/deploy-search.sh`. It places the service's secrets, so Pedro runs it, or
      a Mac session runs it on his word in its own chat (`PET-511`). It targets the
      `ollama` group, which holds only ollama-246.
-3. Bring pve01 into the node baseline. Each play reaches pve01 through `pve_gpu`:
+3. Bring pve01 into the node baseline. Each play reaches pve01 through `pve_gpu`. The
+   journald and node-exporter plays also run on pve02, pve03 and pete-pi-1 and their
+   guests. To touch pve01 only, add `--limit pve01`.
    - `ansible-playbook playbooks/configure-pve-firewall.yml --check --diff`, then without
      `--check`. It writes pve01's `host.fw` with `enable: 0`, which every node needs
      before the datacenter firewall filters anything.
    - `ansible-playbook playbooks/configure-journald.yml`
    - `ansible-playbook playbooks/configure-node-exporter.yml`, then `configure-metrics.yml`,
-     which scrapes pve01 at `.12`.
+     which scrapes pve01 at `.12`. `configure-metrics.yml` needs CT 240 running with
+     `nesting=1`, so its restart, and any other the features play reports, comes first, in
+     a window Pedro picks. Gate: inside CT 240, `/api/v1/targets` on `127.0.0.1:9090`
+     shows `192.168.50.12` as `up`.
 4. Repoint the consumers: `./scripts/deploy-uptime-kuma.sh`, then
-   `ansible-playbook playbooks/configure-pete-bot.yml`.
-5. Gate: run the `PET-762` probe against `.246:11434`. Warm generation is at least
-   60 tok/s, and `/api/ps` shows `size_vram` equal to `size` on both lanes.
-   `scripts/lab-verify.sh` passes, including "models fully on GPU" and
-   "cluster members".
+   `./scripts/deploy-pete-bot.sh`. The bare `configure-pete-bot.yml` fails its secrets
+   assert, because only the script reads `kv/services/pete-bot` and passes the secrets
+   in. The script is Pedro's credential step.
+5. Gate, in this order:
+   - Run `scripts/lab-verify.sh` first. It passes, including "cluster members", "every
+     node has host.fw" and both "backup-health" checks. Run it before the probe: the
+     probe's `keep_alive` leaves `qwen3:8b` loaded, and `lab-verify.sh` reports a loaded
+     coder model as undeclared, because it is declared "pulled, not resident".
+   - Run the `PET-762` probe against `.246:11434` twice. Warm generation is at least
+     60 tok/s. While the probe's model is still loaded, `/api/ps` on `:11434` shows
+     `size_vram` equal to `size`. That reading is the only placement proof for `:11434`,
+     since `lab-verify.sh` skips a lane with nothing loaded.
 
 ## Rollback
 
