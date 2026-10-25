@@ -233,13 +233,14 @@
       ansible.builtin.assert:
         that:
           - (lab_agent_set_count | int) in [0, lab_agent_values | length]
-          - not (lab_agent_ready | bool) or (pete_bot_gateway_token_lab_map | default('') | length > 0)
+          # The gateway bearer is lab-agent's only when the gateway answers /lab (PET-742).
+          - not (lab_agent_ready | bool) or lab_agent_provider == 'ollama' or (pete_bot_gateway_token_lab_map | default('') | length > 0)
           - not (lab_agent_ready | bool) or (lab_agent_app_values | map('trim') | reject('equalto', '') | list | length == 3)
           - not (lab_agent_ready | bool) or lab_agent_ask_token not in
               [pete_bot_alert_bearer, pete_bot_notify_bearer, pete_bot_gateway_token_lab_map | default('')]
         fail_msg: >-
           lab-agent got {{ lab_agent_set_count }} of {{ lab_agent_values | length }} values, or it
-          has no gateway bearer or no mirror App, or its ask bearer repeats another route's. Seed
+          has no gateway bearer (with the gateway provider) or no mirror App, or its ask bearer repeats another route's. Seed
           kv/services/lab-agent-pve with playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
           and kv/services/lab-agent with scripts/seed-lab-agent.sh, then deploy again.
           kv/services/claude-workspace-mirror comes from scripts/seed-workspace-mirror-vault.sh.
