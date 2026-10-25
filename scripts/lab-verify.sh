@@ -378,15 +378,16 @@ else bad "kuma backup" "$(printf '%s\n' "$LASTBK" | tail -1)"; fi
 sec "Backups land off-node"
 for n in $PVE02 $PVE03; do
   if [ "$n" = "$PVE03" ]; then SUDO=sudo; else SUDO=; fi
-  # An empty InvocationID means the unit never ran. Skip the journal read then, because a
-  # match on an empty field value is not a match on nothing.
-  HV=$(on "$n" "I=\$(systemctl show -p InvocationID --value backup-health.service); [ -n \"\$I\" ] && $SUDO journalctl -o cat --no-pager _SYSTEMD_INVOCATION_ID=\$I 2>/dev/null")
-  HVLINE=$(printf '%s\n' "$HV" | grep -m1 -E '^(ok|FAIL) backup-health' || true)
+  # Read the journal by unit, and take the newest verdict of the last 36 hours. An earlier
+  # version read the run by InvocationID, which is empty once the oneshot has finished, so it
+  # reported "no run recorded" over a passing run (PET-528, Plane comment c9a8da28).
+  HV=$(on "$n" "$SUDO journalctl -q -u backup-health.service --since -36h -o cat --no-pager 2>/dev/null")
+  HVLINE=$(printf '%s\n' "$HV" | grep -E '^(ok|FAIL) backup-health' | tail -1 || true)
   case "$HVLINE" in
     "ok backup-health"*)   ok "backup-health $n" "last run passed" ;;
     "FAIL backup-health"*) bad "backup-health $n" "${HVLINE#FAIL backup-health: }" ;;
     *)
-      if [ -z "$HV" ]; then bad "backup-health $n" "no run recorded; is backup-health.timer installed?"
+      if [ -z "$HV" ]; then bad "backup-health $n" "no run in the last 36 h; is backup-health.timer installed?"
       else bad "backup-health $n" "no verdict line; last: $(printf '%s\n' "$HV" | tail -1)"; fi ;;
   esac
   FS=$(on "$n" "findmnt -no FSTYPE --mountpoint /mnt/ollama-backups")
