@@ -48,21 +48,69 @@
   changed_when: "'CREATED' in grafana_password.stdout"
   no_log: true
 
-# Grafana reads GF_* variables from this file, so the packaged grafana.ini stays untouched.
+# ⚠ LEAVE /etc/default/grafana-server TO THE PACKAGE. The unit reads it as its EnvironmentFile,
+# and its ExecStart expands CONF_FILE, DATA_DIR, LOG_DIR, PLUGINS_DIR and PROVISIONING_CFG_DIR
+# from it. An earlier version of this task replaced the file with GF_* lines only, so every path
+# fell back to /usr/share/grafana, which ProtectSystem=full makes read-only, and Grafana died
+# creating its SQLite file (PET-528, Plane comment c9a8da28). The GF_* settings go in a drop-in.
+- name: Check that the packaged defaults file still sets Grafana's paths
+  ansible.builtin.command: grep -q '^CONF_FILE=' /etc/default/grafana-server
+  register: grafana_defaults
+  changed_when: false
+  failed_when: grafana_defaults.rc not in [0, 1, 2]
+  check_mode: false
+
+# dpkg restores a deleted conffile only with --force-confmiss, so remove the replaced copy first.
+- name: Restore the packaged defaults file
+  when: grafana_defaults.rc != 0
+  notify: Restart grafana
+  block:
+    - name: Remove the replaced defaults file
+      ansible.builtin.file:
+        path: /etc/default/grafana-server
+        state: absent
+
+    # noqa reason: the apt module has no way to pass --force-confmiss to a reinstall.
+    - name: Reinstall Grafana so dpkg writes its defaults file back  # noqa: command-instead-of-module
+      ansible.builtin.command: >-
+        apt-get install --reinstall -y -o Dpkg::Options::=--force-confmiss -o Dpkg::Options::=--force-confold grafana
+      changed_when: true
+
+- name: Prove the defaults file sets Grafana's paths
+  ansible.builtin.command: grep -E '^(CONF_FILE|DATA_DIR|LOG_DIR|PLUGINS_DIR|PROVISIONING_CFG_DIR)=' /etc/default/grafana-server
+  register: grafana_defaults_paths
+  changed_when: false
+  check_mode: false
+  failed_when: grafana_defaults_paths.stdout_lines | length != 5
+
+- name: Create the unit's drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/grafana-server.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Grafana reads GF_* variables from its environment, so the packaged grafana.ini stays untouched.
+# The admin password uses Grafana's own $__file{} provider. The __FILE suffix belongs to the
+# Docker image's entrypoint, and the Debian unit starts the binary directly, so it set nothing.
+# systemd leaves `$` in Environment= alone, and Grafana expands the provider after env overrides.
 - name: Configure the listener and anonymous Viewer access
   ansible.builtin.copy:
     content: |
-      GF_SERVER_HTTP_ADDR={{ grafana_listen_address }}
-      GF_SERVER_HTTP_PORT={{ grafana_port }}
-      GF_SECURITY_ADMIN_PASSWORD__FILE={{ grafana_admin_password_file }}
-      GF_AUTH_ANONYMOUS_ENABLED=true
-      GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-      GF_ANALYTICS_REPORTING_ENABLED=false
-      GF_ANALYTICS_CHECK_FOR_UPDATES=false
-    dest: /etc/default/grafana-server
+      # Managed by Ansible: roles/grafana/tasks/main.yml.
+      [Service]
+      Environment=GF_SERVER_HTTP_ADDR={{ grafana_listen_address }}
+      Environment=GF_SERVER_HTTP_PORT={{ grafana_port }}
+      Environment=GF_SECURITY_ADMIN_PASSWORD=$__file{{ '{' }}{{ grafana_admin_password_file }}{{ '}' }}
+      Environment=GF_AUTH_ANONYMOUS_ENABLED=true
+      Environment=GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      Environment=GF_ANALYTICS_REPORTING_ENABLED=false
+      Environment=GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    dest: /etc/systemd/system/grafana-server.service.d/10-petedio.conf
     owner: root
-    group: grafana
-    mode: "0640"
+    group: root
+    mode: "0644"
   notify: Restart grafana
 
 - name: Provision the Prometheus datasource
@@ -119,18 +167,57 @@
   delay: 3
 
 # A running service is not a working dashboard. Ask Grafana for the provisioned datasource and the
-# dashboard by name, so the result says what was examined.
+# dashboard by name, so the result says what was examined. Read them as admin: the datasource API
+# is not one an anonymous Viewer can rely on.
+- name: Read the admin password
+  ansible.builtin.slurp:
+    src: "{{ grafana_admin_password_file }}"
+  register: grafana_admin_password
+  no_log: true
+
+# The password applies only when Grafana creates its database. A database created before this role
+# set it keeps its own admin password, so check it and reset it from the file when it differs.
+- name: Check the admin password
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/user"
+    url_username: admin
+    url_password: "{{ grafana_admin_password.content | b64decode | trim }}"
+    force_basic_auth: true
+    status_code: [200, 401]
+  register: grafana_admin_check
+  no_log: true
+
+# noqa reason: no module sets a Grafana user's password. The password goes on stdin, never argv.
+- name: Reset the admin password from the file  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    # runuser keeps any file the CLI writes in /var/lib/grafana owned by grafana.
+    cmd: >-
+      runuser -u grafana -- grafana cli --homepath /usr/share/grafana
+      --config /etc/grafana/grafana.ini admin reset-admin-password --password-from-stdin
+    stdin: "{{ grafana_admin_password.content | b64decode | trim }}"
+  when: grafana_admin_check.status == 401
+  changed_when: true
+  no_log: true
+
 - name: Read back the datasource
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ grafana_port }}/api/datasources/name/Prometheus"
+    url_username: admin
+    url_password: "{{ grafana_admin_password.content | b64decode | trim }}"
+    force_basic_auth: true
     return_content: true
   register: grafana_datasource
+  no_log: true
 
 - name: Read back the dashboard
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ grafana_port }}/api/dashboards/uid/lab-overview"
+    url_username: admin
+    url_password: "{{ grafana_admin_password.content | b64decode | trim }}"
+    force_basic_auth: true
     return_content: true
   register: grafana_dashboard
+  no_log: true
 
 - name: Check the provisioned objects exist
   ansible.builtin.assert:
