@@ -177,6 +177,8 @@
 
 # The password applies only when Grafana creates its database. A database created before this role
 # set it keeps its own admin password, so check it and reset it from the file when it differs.
+# The reinstall above takes this path too: the package's postinst restarts Grafana before the
+# drop-in exists, so Grafana creates its database with the default password (PET-528).
 - name: Check the admin password
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ grafana_port }}/api/user"
@@ -194,6 +196,9 @@
     cmd: >-
       runuser -u grafana -- grafana cli --homepath /usr/share/grafana
       --config /etc/grafana/grafana.ini admin reset-admin-password --password-from-stdin
+    # The CLI reads its working directory at startup. Ansible runs from /root (mode 0700), which
+    # the grafana user can't read, so without chdir the CLI panics with "stat .: permission denied".
+    chdir: /usr/share/grafana
     stdin: "{{ grafana_admin_password.content | b64decode | trim }}"
   when: grafana_admin_check.status == 401
   changed_when: true
