@@ -737,9 +737,12 @@
       until: "'logged in as' in pete_bot_journal.stdout"
       failed_when: "'logged in as' not in pete_bot_journal.stdout"
 
+    # Check mode skips the journal read above, so there is no login line to report. Without
+    # the guard, every `--check` run ends here with `no attribute 'stdout_lines'`.
     - name: Report what it logged in as
       ansible.builtin.debug:
         msg: "{{ pete_bot_journal.stdout_lines | select('search', 'logged in as') | list }}"
+      when: not ansible_check_mode
 
     # The desk starts after the Discord login, and /health says whether it came up. A
     # misconfigured desk leaves alerts working, so this fails the deploy, where someone
