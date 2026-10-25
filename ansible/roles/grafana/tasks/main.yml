@@ -92,6 +92,9 @@
     mode: "0755"
 
 # Grafana reads GF_* variables from its environment, so the packaged grafana.ini stays untouched.
+# The admin password uses Grafana's own $__file{} provider. The __FILE suffix belongs to the
+# Docker image's entrypoint, and the Debian unit starts the binary directly, so it set nothing.
+# systemd leaves `$` in Environment= alone, and Grafana expands the provider after env overrides.
 - name: Configure the listener and anonymous Viewer access
   ansible.builtin.copy:
     content: |
@@ -99,7 +102,7 @@
       [Service]
       Environment=GF_SERVER_HTTP_ADDR={{ grafana_listen_address }}
       Environment=GF_SERVER_HTTP_PORT={{ grafana_port }}
-      Environment=GF_SECURITY_ADMIN_PASSWORD__FILE={{ grafana_admin_password_file }}
+      Environment=GF_SECURITY_ADMIN_PASSWORD=$__file{{ '{' }}{{ grafana_admin_password_file }}{{ '}' }}
       Environment=GF_AUTH_ANONYMOUS_ENABLED=true
       Environment=GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       Environment=GF_ANALYTICS_REPORTING_ENABLED=false
@@ -170,6 +173,30 @@
   ansible.builtin.slurp:
     src: "{{ grafana_admin_password_file }}"
   register: grafana_admin_password
+  no_log: true
+
+# The password applies only when Grafana creates its database. A database created before this role
+# set it keeps its own admin password, so check it and reset it from the file when it differs.
+- name: Check the admin password
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ grafana_port }}/api/user"
+    url_username: admin
+    url_password: "{{ grafana_admin_password.content | b64decode | trim }}"
+    force_basic_auth: true
+    status_code: [200, 401]
+  register: grafana_admin_check
+  no_log: true
+
+# noqa reason: no module sets a Grafana user's password. The password goes on stdin, never argv.
+- name: Reset the admin password from the file  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    # runuser keeps any file the CLI writes in /var/lib/grafana owned by grafana.
+    cmd: >-
+      runuser -u grafana -- grafana cli --homepath /usr/share/grafana
+      --config /etc/grafana/grafana.ini admin reset-admin-password --password-from-stdin
+    stdin: "{{ grafana_admin_password.content | b64decode | trim }}"
+  when: grafana_admin_check.status == 401
+  changed_when: true
   no_log: true
 
 - name: Read back the datasource

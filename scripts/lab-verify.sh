@@ -378,18 +378,25 @@ else bad "kuma backup" "$(printf '%s\n' "$LASTBK" | tail -1)"; fi
 sec "Backups land off-node"
 for n in $PVE02 $PVE03; do
   if [ "$n" = "$PVE03" ]; then SUDO=sudo; else SUDO=; fi
-  # Read the journal by unit, and take the newest verdict of the last 36 hours. An earlier
+  # Read the journal by unit, then only the newest run: the lines from the last "Starting" on.
+  # A run that hangs and is killed prints no verdict, and an older pass must not stand in for
+  # it. The run passes only with an "ok" verdict and systemd's "Finished" line. An earlier
   # version read the run by InvocationID, which is empty once the oneshot has finished, so it
   # reported "no run recorded" over a passing run (PET-528, Plane comment c9a8da28).
-  HV=$(on "$n" "$SUDO journalctl -q -u backup-health.service --since -36h -o cat --no-pager 2>/dev/null")
-  HVLINE=$(printf '%s\n' "$HV" | grep -E '^(ok|FAIL) backup-health' | tail -1 || true)
-  case "$HVLINE" in
-    "ok backup-health"*)   ok "backup-health $n" "last run passed" ;;
-    "FAIL backup-health"*) bad "backup-health $n" "${HVLINE#FAIL backup-health: }" ;;
-    *)
-      if [ -z "$HV" ]; then bad "backup-health $n" "no run in the last 36 h; is backup-health.timer installed?"
-      else bad "backup-health $n" "no verdict line; last: $(printf '%s\n' "$HV" | tail -1)"; fi ;;
-  esac
+  HV=$(on "$n" "$SUDO journalctl -q -u backup-health.service --since -36h -o cat --no-pager 2>/dev/null" \
+    | awk '/^Starting backup-health\.service/ { run = "" } { run = run $0 "\n" } END { printf "%s", run }')
+  HVLINE=$(printf '%b' "$HV" | grep -E '^(ok|FAIL) backup-health' | tail -1 || true)
+  if [ -z "$HV" ]; then
+    bad "backup-health $n" "no run in the last 36 h; is backup-health.timer installed?"
+  else
+    case "$HVLINE" in
+      "FAIL backup-health"*) bad "backup-health $n" "${HVLINE#FAIL backup-health: }" ;;
+      "ok backup-health"*)
+        if printf '%b' "$HV" | grep -q '^Finished backup-health\.service'; then ok "backup-health $n" "last run passed"
+        else bad "backup-health $n" "newest run did not finish cleanly; last: $(printf '%b' "$HV" | grep -v '^$' | tail -1)"; fi ;;
+      *) bad "backup-health $n" "newest run printed no verdict; last: $(printf '%b' "$HV" | grep -v '^$' | tail -1)" ;;
+    esac
+  fi
   FS=$(on "$n" "findmnt -no FSTYPE --mountpoint /mnt/ollama-backups")
   case "$FS" in
     nfs*) ok "backup share mounted on $n" "$FS" ;;
