@@ -34,8 +34,7 @@ section heading. History sections for systems that are gone get no rule.
   `ignore_changes` too. Read the live config read-only first
   (`scripts/proxmox-ro-config.sh <node> <vmid>`) and expect only **cosmetic**
   `description`/`tags` diffs after import, plus state-side noise (`+ vm_id`, `+ timeout_*`
-  — provider attributes import doesn't populate, not API mutations). Full procedure:
-  `docs/runbooks/registry-import.md`.
+  — provider attributes import doesn't populate, not API mutations). The import runbook for CT106 was removed with the dead registry; git history holds it.
 
 - **More brownfield divergences, from the Authentik capture** (PET-123, LXC 119): not every
   captured LXC is a community-scripts box, but the same "match it exactly" rule applies to
@@ -182,7 +181,7 @@ section heading. History sections for systems that are gone get no rule.
   it is not. **Pete-Pi is the jump host** from `.86` into `.50`: `ssh -A -i
   ~/.ssh/id_ed25519_pete_pi_2 pedro@192.168.86.46`. It also advertises both subnets on the
   tailnet — `tailscale-244` died with pve01 and pete-pi-1 took its routes
-  (`environments/homelab/tailscale.tf`; verified `tailscale status` 2026-09-10).
+  (`tailscale.tf` was removed; verified `tailscale status` 2026-09-10).
 
 - **`startup` is not declared in TF, so an apply strips it — keep it in `ignore_changes`.**
   Boot order and up/down delays are set on the node with
@@ -237,7 +236,7 @@ section heading. History sections for systems that are gone get no rule.
   and 236 on `lock: snapshot-delete`, so their backups failed too. `roles/backup-store` asserts
   the mount is NFS, but only when the role runs, never at boot. With `is_mountpoint yes`,
   Proxmox reports the store inactive while the path isn't mounted, and the job fails instead.
-  The one-time cleanup was `scripts/pve02-rescue-stranded-backups.sh`. It reads the stranded
+  A one-time cleanup script, since removed, read the stranded
   files through a bind mount of `/`, because a mount over the directory hides them.
 
 - **pve02 is the homelab NFS file server — it is load-bearing, not idle.** Since the
