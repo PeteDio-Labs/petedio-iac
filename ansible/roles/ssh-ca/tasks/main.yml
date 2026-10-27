@@ -1,0 +1,161 @@
+---
+# See defaults/main.yml for why this exists.
+
+# An entry without `state` is present. product + combine gives every entry the default and
+# lets its own keys win.
+- name: Split the users into present and absent
+  ansible.builtin.set_fact:
+    ssh_ca_present: "{{ ssh_ca_all | selectattr('state', 'eq', 'present') | list }}"
+    ssh_ca_absent: "{{ ssh_ca_all | selectattr('state', 'eq', 'absent') | list }}"
+  vars:
+    ssh_ca_all: "{{ [{'state': 'present'}] | product(ssh_ca_users) | map('combine') | list }}"
+
+- name: Check every user's state is present or absent
+  ansible.builtin.assert:
+    that: (ssh_ca_present | length) + (ssh_ca_absent | length) == ssh_ca_users | length
+    fail_msg: "ssh_ca_users holds a state other than present or absent: {{ ssh_ca_users }}"
+
+- name: Read the CA public key from Vault
+  ansible.builtin.uri:
+    url: "{{ ssh_ca_vault_addr }}/v1/{{ ssh_ca_vault_mount }}/public_key"
+    ca_path: "{{ ssh_ca_vault_ca_cert }}"
+    return_content: true
+    status_code: 200
+  register: ssh_ca_public_key
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+# A sealed Vault answers 503 and fails the task above. An empty or HTML body must fail too, or
+# every host would trust nothing and the play would still read as a success.
+- name: Check the CA public key is one SSH key
+  ansible.builtin.assert:
+    that:
+      - ssh_ca_public_key.content | trim is match('^ssh-ed25519 [A-Za-z0-9+/=]+( [^ ]+)?$')
+    fail_msg: "Vault returned no usable CA key: {{ ssh_ca_public_key.content | truncate(120) }}"
+  run_once: true
+
+- name: Land the CA public key on the host
+  ansible.builtin.copy:
+    content: "{{ ssh_ca_public_key.content | trim }}\n"
+    dest: "{{ ssh_ca_trusted_keys_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Create the role users
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    shell: /bin/bash
+    create_home: true
+    password: "!"
+    system: false
+  loop: "{{ ssh_ca_present | selectattr('create') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create the principals directory
+  ansible.builtin.file:
+    path: "{{ ssh_ca_principals_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Land each present user's principals file
+  ansible.builtin.copy:
+    content: "{{ item.principals | join('\n') }}\n"
+    dest: "{{ ssh_ca_principals_dir }}/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ ssh_ca_present }}"
+  loop_control:
+    label: "{{ item.name }}: {{ item.principals | join(',') }}"
+
+# Revocation: an entry with `state: absent` loses its principals file, so no certificate logs
+# in as that user. A user the role created is removed with its home.
+- name: Remove each absent user's principals file
+  ansible.builtin.file:
+    path: "{{ ssh_ca_principals_dir }}/{{ item.name }}"
+    state: absent
+  loop: "{{ ssh_ca_absent }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Remove each absent user the role created
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    state: absent
+    remove: true
+  loop: "{{ ssh_ca_absent | selectattr('create') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# The drop-in goes live only with a config sshd accepts. A bad file left in place would stop the
+# next sshd start, including the one after the nightly `mode: stop` backup.
+- name: Land the sshd drop-in, and take it out again if sshd rejects the config
+  block:
+    - name: Land the sshd drop-in
+      ansible.builtin.copy:
+        content: |
+          # Managed by petedio-iac roles/ssh-ca (PET-771).
+          TrustedUserCAKeys {{ ssh_ca_trusted_keys_path }}
+          AuthorizedPrincipalsFile {{ ssh_ca_principals_dir }}/%u
+        dest: "{{ ssh_ca_dropin }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Test the sshd configuration
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+  rescue:
+    - name: Remove the rejected drop-in
+      ansible.builtin.file:
+        path: "{{ ssh_ca_dropin }}"
+        state: absent
+
+    - name: Prove sshd accepts the config without it
+      ansible.builtin.command: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: Fail the host
+      ansible.builtin.fail:
+        msg: "{{ inventory_hostname }}: sshd -t rejected {{ ssh_ca_dropin }}; removed it, so sshd runs as before."
+
+- name: Read the service states
+  ansible.builtin.service_facts:
+
+# Every run, not only on a change: a run that failed after writing the files would leave the
+# next run with nothing changed and a daemon that never loaded them. A reload keeps open
+# sessions. A socket-activated sshd reads the config per connection and needs none.
+- name: Reload a running sshd
+  ansible.builtin.systemd_service:
+    name: ssh.service
+    state: reloaded
+  when: (ansible_facts.services['ssh.service'] | default({})).state | default('') == 'running'
+  changed_when: false
+
+# The effective configuration, not the drop-in: this proves the drop-in is included and wins.
+- name: Read back the effective sshd configuration
+  ansible.builtin.shell: |
+    set -o pipefail
+    /usr/sbin/sshd -T | grep -E '^(trustedusercakeys|authorizedprincipalsfile) '
+  args: { executable: /bin/bash }
+  register: ssh_ca_effective
+  changed_when: false
+
+- name: Assert the CA and the principals file are the effective ones
+  ansible.builtin.assert:
+    that:
+      - ('trustedusercakeys ' ~ ssh_ca_trusted_keys_path) in ssh_ca_effective.stdout_lines
+      - ('authorizedprincipalsfile ' ~ ssh_ca_principals_dir ~ '/%u') in ssh_ca_effective.stdout_lines
+    fail_msg: "{{ inventory_hostname }}: sshd -T reports {{ ssh_ca_effective.stdout_lines }}"
+
+- name: Report what was examined
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: CA trusted; principals for
+      {{ ssh_ca_present | map(attribute='name') | join(', ') }};
+      removed {{ ssh_ca_absent | map(attribute='name') | join(', ') or 'none' }}.

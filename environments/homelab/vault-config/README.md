@@ -52,5 +52,7 @@ concurrent applies (see `docs/GOTCHAS.md`).
 - **Policies** (read/list only, least-privilege): `ci-read`, `terraform`,
   `ansible`.
 - **AppRole** auth + roles `ansible`, `terraform-local` for local machine logins.
+- **`ssh-client-signer`** — the SSH certificate authority and its signing roles
+  (`ssh.tf`, PET-771). Runbook: `docs/runbooks/ssh-ca.md`.
 - **JWT** auth (`jwt-github`) + role `github-actions` so GitHub Actions can swap
   its OIDC token for a short-lived `ci-read` token (no static secret in CI).

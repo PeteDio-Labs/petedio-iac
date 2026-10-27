@@ -1,0 +1,51 @@
+---
+# configure-ssh-ca.yml — make hosts trust the Vault SSH certificate authority. (PET-771)
+#
+#   ansible-playbook playbooks/configure-ssh-ca.yml -e ssh_ca_targets=metrics-240
+#
+# ssh_ca_targets is any inventory pattern. It has no default on purpose: the rollout goes one
+# canary first, then a group at a time (docs/runbooks/ssh-ca.md). The CA itself is in
+# environments/homelab/vault-config/ssh.tf, which must be applied before this runs.
+#
+# Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
+
+# ansible-playbook exits 0 when a play matches no host, which would read as a rollout that
+# happened. This play fails first instead. It runs on `all`, not localhost, so that --limit
+# cannot skip it: --limit skips an implicit localhost play, and then both plays match nothing.
+# assert and debug run on the controller, so this play opens no connection.
+- name: Check the targets name at least one host after --limit
+  hosts: all
+  gather_facts: false
+  become: false
+  tasks:
+    # run_once: the check reads only the inventory, so one controller-side pass covers every
+    # host. The play sets no `strategy: free`, the case the rule warns about.
+    - name: Resolve the targets  # noqa: run-once[task]
+      ansible.builtin.assert:
+        that:
+          - ssh_ca_targets is defined
+          - ssh_ca_resolved | length > 0
+        fail_msg: >-
+          Pass -e ssh_ca_targets=<pattern> naming at least one inventory host
+          that --limit ({{ ansible_limit | default('none') }}) does not exclude.
+      vars:
+        ssh_ca_resolved: >-
+          {{ query('inventory_hostnames', ssh_ca_targets | default('ssh_ca_no_targets')
+             ~ ((':&' ~ ansible_limit) if ansible_limit is defined else '')) }}
+      run_once: true
+
+    # run_once: one line for the whole run, not one per host. Same reason as above.
+    - name: Say which hosts the run covers  # noqa: run-once[task]
+      ansible.builtin.debug:
+        msg: >-
+          Targets: {{ query('inventory_hostnames', ssh_ca_targets
+             ~ ((':&' ~ ansible_limit) if ansible_limit is defined else '')) | join(', ') }}
+      run_once: true
+
+- name: Trust the Vault SSH CA
+  # The default names no host. The guard play above fails before this one would match nothing.
+  hosts: "{{ ssh_ca_targets | default('ssh_ca_no_targets') }}"
+  become: true
+  serial: 1
+  roles:
+    - ssh-ca

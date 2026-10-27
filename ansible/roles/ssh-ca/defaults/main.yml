@@ -1,0 +1,38 @@
+---
+# ssh-ca (PET-771): make a host trust the Vault SSH certificate authority.
+#
+# WHY. Every CD role shared one root key, kv/iac/lxc-ssh (audit H6). With this role a host
+# accepts a short-lived certificate that Vault signed for one role, and only for the local users
+# whose principals file names that role. environments/homelab/vault-config/ssh.tf holds the CA
+# and the signing roles.
+#
+# WHAT IT CHANGES. It adds TrustedUserCAKeys and AuthorizedPrincipalsFile in an sshd drop-in, one
+# principals file per user below, and the role users. It never edits authorized_keys, so every
+# key that logs in today still logs in. Retiring lxc-ssh is a later step of PET-771.
+
+# The CA public key comes from Vault itself, the source, on every run. It is public, so the read
+# needs no token. The play runs from the Mac or 247, which both reach 223.
+ssh_ca_vault_addr: https://192.168.50.223:8200
+ssh_ca_vault_mount: ssh-client-signer
+ssh_ca_vault_ca_cert: "{{ role_path }}/../../../environments/homelab/vault-ca.crt"
+
+ssh_ca_trusted_keys_path: /etc/ssh/trusted-user-ca-keys.pem
+ssh_ca_principals_dir: /etc/ssh/auth_principals
+
+# sshd keeps the first value it reads for a keyword, and Debian's sshd_config includes
+# sshd_config.d/*.conf at its top. A low number keeps this file ahead of other drop-ins. The
+# read-back below asserts the effective value, so a file that loses still fails the play.
+ssh_ca_dropin: /etc/ssh/sshd_config.d/10-ssh-ca.conf
+
+# Which principals may log in as which local user. A principal is a signing role's name in
+# ssh.tf. A user with no file here accepts no certificate, and keeps its authorized_keys.
+#
+# `inventory` runs commands for the PET-770 collector, so it needs a real shell, unlike a service
+# account. It gets no sudo: the minimal LXC template has none, and dpkg -l needs no root.
+ssh_ca_users:
+  - name: root
+    principals: [pedro]
+    create: false
+  - name: inventory
+    principals: [inventory-read]
+    create: true

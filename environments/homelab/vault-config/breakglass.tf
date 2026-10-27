@@ -84,6 +84,23 @@ resource "vault_policy" "breakglass_247" {
       capabilities = ["read", "list", "delete"]
     }
 
+    # SSH certificates (PET-771, ssh.tf). scripts/apply-vault-config.sh writes the CA and the
+    # signing roles; sys/mounts/* above covers only the mount. Pedro signs his own root
+    # certificate here, and signs any role's certificate to test a host. No other policy signs
+    # the `pedro` role.
+    path "ssh-client-signer/config/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "ssh-client-signer/roles/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    path "ssh-client-signer/roles" {
+      capabilities = ["list"]
+    }
+    path "ssh-client-signer/sign/*" {
+      capabilities = ["update"]
+    }
+
     # Never, even here: the prefix that documents the root token and the unseal material
     # (PET-702), and the operations that mint a root token or change the seal.
     path "kv/data/admin/*" {
