@@ -24,7 +24,9 @@ resource "vault_mount" "ssh_client_signer" {
   max_lease_ttl_seconds = 3600
 
   # Vault holds the only copy of the CA private key. Destroying the mount destroys the key, and
-  # every host would have to trust a new one.
+  # every host would have to trust a new one. To retire the CA on purpose, remove both
+  # lifecycle blocks in a reviewed PR first; scripts/apply-vault-config.sh --allow-destroy
+  # cannot override prevent_destroy.
   lifecycle {
     prevent_destroy = true
   }
@@ -87,9 +89,10 @@ resource "vault_ssh_secret_backend_role" "inventory_read" {
 # principal. Signed only from the break-glass token (breakglass.tf), so a root certificate
 # needs Pedro's password and TOTP, the way root SSH already does since PET-725.
 #
-# One hour, the break-glass token's own life, and no source-address: the phone reaches the LAN
-# through a tailnet subnet router, so its source address is not one fixed host. A lifted
-# certificate is root anywhere until it expires, and the short TTL is that limit.
+# One hour, the break-glass token's own life. source-address is the LAN and the tailnet's CGNAT
+# range, not one host: the phone arrives through the pete-pi-1 subnet router, which rewrites its
+# address to the router's LAN address, and the Mac or 247 arrive from the LAN. A lifted
+# certificate is then root only from inside the LAN or the tailnet, for at most an hour.
 resource "vault_ssh_secret_backend_role" "pedro" {
   backend  = vault_mount.ssh_client_signer.path
   name     = "pedro"
@@ -105,6 +108,12 @@ resource "vault_ssh_secret_backend_role" "pedro" {
   allowed_extensions = "permit-pty"
   default_extensions = {
     "permit-pty" = ""
+  }
+
+  # The same sentinel as inventory-read, for the same reason: no request can drop the default.
+  allowed_critical_options = "petedio-no-overrides"
+  default_critical_options = {
+    "source-address" = "192.168.50.0/24,100.64.0.0/10"
   }
 
   ttl     = "3600"

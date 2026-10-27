@@ -15,7 +15,7 @@ shared `kv/iac/lxc-ssh` root key one consumer at a time (audit H6).
 | Role (principal) | Logs in as | TTL | Who signs it | Limits |
 |---|---|---|---|---|
 | `inventory-read` | `inventory`, no sudo | 30 min | the `PET-770` collector on 237 | `source-address` 237, no pty, no forwarding |
-| `pedro` | `root` | 1 h | the break-glass token on 247 | pty only, no address bound |
+| `pedro` | `root` | 1 h | the break-glass token on 247 | pty only, `source-address` LAN and tailnet |
 
 To add a role, add a `vault_ssh_secret_backend_role` and its signing policy in `ssh.tf`, and a
 user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host).
@@ -27,20 +27,24 @@ user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host
 2. Check that Vault serves the key:
    `curl -s --cacert environments/homelab/vault-ca.crt https://192.168.50.223:8200/v1/ssh-client-signer/public_key`
    prints one `ssh-ed25519` line.
-3. To trust the CA on the canary, run
-   `ansible-playbook playbooks/configure-ssh-ca.yml -e ssh_ca_targets=metrics-240` from `ansible/`.
+3. To trust the CA on the canary, run this from `ansible/`:
+   `ansible-playbook playbooks/configure-ssh-ca.yml -e ssh_ca_targets=metrics-240 -e ansible_ssh_private_key_file=<file>`.
    A host does not trust the CA until this first run, so the first run logs in with the
-   `kv/iac/lxc-ssh` key. Since `PET-725` only the break-glass token reads it: write it to a
-   `0600` file in a `mktemp -d` directory, pass `-u root --private-key <file>`, and delete the
-   file after the run (Pedro's decision, 2026-10-27).
-   The last task names the host and the principals files it wrote. Use `ssh_ca_targets`, not
-   `--limit`; the first play fails when the two together name no host.
+   `kv/iac/lxc-ssh` key. Since `PET-725` only the break-glass token reads it. Write it to a
+   `0600` file in a `mktemp -d` directory, and delete the file after the run (Pedro's
+   decision, 2026-10-27). Pass the key with `-e`, not `--private-key`: the inventory sets
+   `ansible_ssh_private_key_file`, and an inventory variable outranks the command-line flag.
+   The last task names the host, the sshd unit and the principals files. The first play fails
+   when `ssh_ca_targets` and `--limit` together name no host.
 4. To prove the canary, sign a throwaway key for each role from the break-glass shell, then log in:
    - `inventory-read` as `inventory` from 237: logs in.
    - `inventory-read` as `inventory` from 247: `Permission denied`, because of `source-address`.
    - `inventory-read` as `root`: `Permission denied`.
    - `pedro` as `root`: logs in.
    - The old `lxc-ssh` key as `root`: still logs in. The role never edits `authorized_keys`.
+   - A signing request for `inventory-read` that carries
+     `critical_options={"source-address":"0.0.0.0/0"}`: Vault refuses it with
+     `critical options not on allowed list`.
 
 ## Later phases
 
@@ -57,7 +61,12 @@ user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host
 - Vault seals every night. A certificate cannot be signed while it is sealed, and
   `ssh-ca-sign.sh` exits non-zero then. A scheduled caller must report that, not skip.
 - Revocation is by TTL. To cut a role off before its certificates expire, set `state: absent`
-  on its `ssh_ca_users` entry, or remove the principal from the list, and re-run the play.
-- A `pedro` certificate is root from any address for its hour. The phone reaches the LAN through
-  a tailnet subnet router, so the role binds no `source-address`.
+  on its `ssh_ca_users` entry, delete the entry, or remove the principal from the list, and
+  re-run the play. The role removes every principals file for a user it does not list.
+- A `pedro` certificate is root from anywhere on the LAN or the tailnet for its hour. The phone
+  arrives through the pete-pi-1 subnet router, which rewrites its address to a LAN address.
+- `prevent_destroy` guards the mount and the CA. To retire the CA, remove both `lifecycle`
+  blocks in a reviewed PR first. `--allow-destroy` cannot override `prevent_destroy`.
+- `create: true` creates or removes only an account whose GECOS field is
+  `roles/ssh-ca (PET-771)`. It fails on an account that someone else made.
 - CT 112 runs no sshd and stays reached through `pct exec`.

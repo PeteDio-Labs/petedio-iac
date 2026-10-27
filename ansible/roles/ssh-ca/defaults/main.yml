@@ -8,7 +8,7 @@
 #
 # WHAT IT CHANGES. It adds TrustedUserCAKeys and AuthorizedPrincipalsFile in an sshd drop-in, one
 # principals file per user below, and the role users. It never edits authorized_keys, so every
-# key that logs in today still logs in. Retiring lxc-ssh is a later step of PET-771.
+# key that logs in before a run still logs in after it. Retiring lxc-ssh is a later step of PET-771.
 
 # The CA public key comes from Vault itself, the source, on every run. It is public, so the read
 # needs no token. The play runs from the Mac or 247, which both reach 223.
@@ -29,6 +29,11 @@ ssh_ca_dropin: /etc/ssh/sshd_config.d/10-ssh-ca.conf
 #
 # `inventory` runs commands for the PET-770 collector, so it needs a real shell, unlike a service
 # account. It gets no sudo: the minimal LXC template has none, and dpkg -l needs no root.
+#
+# To revoke, set `state: absent` on the entry, or delete the entry, and re-run the play. Every
+# principals file for a user not present here is removed. `state: absent` with `create: true`
+# also removes the account and its home. To drop one principal, remove it from the list. An
+# entry without `state` is present, and without `create` names an account the role does not own.
 ssh_ca_users:
   - name: root
     principals: [pedro]
@@ -36,3 +41,7 @@ ssh_ca_users:
   - name: inventory
     principals: [inventory-read]
     create: true
+
+# The GECOS field on every account the role creates. The role creates or removes only an account
+# that carries it, so `create: true` cannot take over an account someone else made.
+ssh_ca_account_marker: "roles/ssh-ca (PET-771)"
