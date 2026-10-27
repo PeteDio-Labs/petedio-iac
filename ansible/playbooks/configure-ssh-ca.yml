@@ -1,0 +1,36 @@
+---
+# configure-ssh-ca.yml — make hosts trust the Vault SSH certificate authority. (PET-771)
+#
+#   ansible-playbook playbooks/configure-ssh-ca.yml -e ssh_ca_targets=metrics-240
+#
+# ssh_ca_targets is any inventory pattern. It has no default on purpose: the rollout goes one
+# canary first, then a group at a time (docs/runbooks/ssh-ca.md). The CA itself is in
+# environments/homelab/vault-config/ssh.tf, which must be applied before this runs.
+#
+# Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
+
+# ansible-playbook exits 0 when a play matches no host, which would read as a rollout that
+# happened. This play fails first instead.
+- name: Check the target pattern names at least one host
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Resolve the targets
+      ansible.builtin.assert:
+        that:
+          - ssh_ca_targets is defined
+          - query('inventory_hostnames', ssh_ca_targets) | length > 0
+        fail_msg: "Pass -e ssh_ca_targets=<pattern> naming at least one inventory host."
+
+    - name: Say which hosts the run covers
+      ansible.builtin.debug:
+        msg: "Targets: {{ query('inventory_hostnames', ssh_ca_targets) | join(', ') }}"
+
+- name: Trust the Vault SSH CA
+  # The default names no host. The guard play above fails before this one would match nothing.
+  hosts: "{{ ssh_ca_targets | default('ssh_ca_no_targets') }}"
+  become: true
+  serial: 1
+  roles:
+    - ssh-ca
