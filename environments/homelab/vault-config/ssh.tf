@@ -89,10 +89,11 @@ resource "vault_ssh_secret_backend_role" "inventory_read" {
 # principal. Signed only from the break-glass token (breakglass.tf), so a root certificate
 # needs Pedro's password and TOTP, the way root SSH already does since PET-725.
 #
-# One hour, the break-glass token's own life. source-address is the LAN and the tailnet's CGNAT
-# range, not one host: the phone arrives through the pete-pi-1 subnet router, which rewrites its
-# address to the router's LAN address, and the Mac or 247 arrive from the LAN. A lifted
-# certificate is then root only from inside the LAN or the tailnet, for at most an hour.
+# One hour, the break-glass token's own life. source-address is the LAN, the .86 mesh and the
+# tailnet's CGNAT range, not one host: the phone arrives through the pete-pi-1 subnet router,
+# which rewrites its address to the router's LAN address, the Mac or 247 arrive from the LAN,
+# and plex-gpu 236 sees callers from the mesh. A lifted certificate is then root only from
+# inside those three networks, for at most an hour.
 resource "vault_ssh_secret_backend_role" "pedro" {
   backend  = vault_mount.ssh_client_signer.path
   name     = "pedro"
@@ -113,7 +114,7 @@ resource "vault_ssh_secret_backend_role" "pedro" {
   # The same sentinel as inventory-read, for the same reason: no request can drop the default.
   allowed_critical_options = "petedio-no-overrides"
   default_critical_options = {
-    "source-address" = "192.168.50.0/24,100.64.0.0/10"
+    "source-address" = "192.168.50.0/24,192.168.86.0/24,100.64.0.0/10"
   }
 
   ttl     = "3600"

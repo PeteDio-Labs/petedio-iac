@@ -30,12 +30,20 @@ rm -f "$CERT"
 BODY="$(jq -n --rawfile k "$PUB" '{public_key: $k}')"
 # The token goes to curl on stdin, not argv, so another user on the host cannot read it from
 # /proc/<pid>/cmdline. printf is a shell builtin and starts no process.
+# curl exits 22 for an HTTP error (Vault answered and refused) and with another code when it
+# never got an answer (DNS, connect, TLS, timeout). Say which, so a timeout is not read as a
+# refusal.
+RC=0
 RESP="$(printf 'X-Vault-Token: %s\n' "$VAULT_TOKEN" | curl -sS --fail-with-body --connect-timeout 5 --max-time 20 --cacert "$VAULT_CACERT" \
   -H @- -X POST -d "$BODY" \
-  "$VAULT_ADDR/v1/ssh-client-signer/sign/$ROLE")" || {
+  "$VAULT_ADDR/v1/ssh-client-signer/sign/$ROLE")" || RC=$?
+if [[ $RC -eq 22 ]]; then
   printf 'Vault refused to sign for role %s: %s\n' "$ROLE" "$RESP" >&2
   exit 1
-}
+elif [[ $RC -ne 0 ]]; then
+  printf 'could not reach Vault at %s (curl exit %d)\n' "$VAULT_ADDR" "$RC" >&2
+  exit 1
+fi
 
 SIGNED="$(jq -r '.data.signed_key // empty' <<<"$RESP")"
 [[ -n "$SIGNED" ]] || { printf 'Vault returned no certificate: %s\n' "$RESP" >&2; exit 1; }
