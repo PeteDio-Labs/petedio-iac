@@ -29,6 +29,10 @@ user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host
    prints one `ssh-ed25519` line.
 3. To trust the CA on the canary, run
    `ansible-playbook playbooks/configure-ssh-ca.yml -e ssh_ca_targets=metrics-240` from `ansible/`.
+   A host does not trust the CA until this first run, so the first run logs in with the
+   `kv/iac/lxc-ssh` key. Since `PET-725` only the break-glass token reads it: write it to a
+   `0600` file in a `mktemp -d` directory, pass `-u root --private-key <file>`, and delete the
+   file after the run (Pedro's decision, 2026-10-27).
    The last task names the host and the principals files it wrote. Use `ssh_ca_targets`, not
    `--limit`; the first play fails when the two together name no host.
 4. To prove the canary, sign a throwaway key for each role from the break-glass shell, then log in:
