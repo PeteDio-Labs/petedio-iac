@@ -29,17 +29,20 @@
           Pass -e ssh_ca_targets=<pattern> naming at least one inventory host
           that --limit ({{ ansible_limit | default('none') }}) does not exclude.
       vars:
+        # ansible_play_hosts_all is this play's host list, which is `all` after --limit. Each
+        # side is resolved on its own and the lists are intersected, so no pattern string is
+        # joined to another (a comma in --limit would split a joined pattern).
         ssh_ca_resolved: >-
-          {{ query('inventory_hostnames', ssh_ca_targets | default('ssh_ca_no_targets')
-             ~ ((':&' ~ ansible_limit) if ansible_limit is defined else '')) }}
+          {{ query('inventory_hostnames', ssh_ca_targets | default('ssh_ca_no_targets'))
+             | intersect(ansible_play_hosts_all) }}
       run_once: true
 
     # run_once: one line for the whole run, not one per host. Same reason as above.
     - name: Say which hosts the run covers  # noqa: run-once[task]
       ansible.builtin.debug:
         msg: >-
-          Targets: {{ query('inventory_hostnames', ssh_ca_targets
-             ~ ((':&' ~ ansible_limit) if ansible_limit is defined else '')) | join(', ') }}
+          Targets: {{ query('inventory_hostnames', ssh_ca_targets)
+             | intersect(ansible_play_hosts_all) | join(', ') }}
       run_once: true
 
 - name: Trust the Vault SSH CA

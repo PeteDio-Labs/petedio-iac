@@ -30,7 +30,7 @@ rm -f "$CERT"
 BODY="$(jq -n --rawfile k "$PUB" '{public_key: $k}')"
 # The token goes to curl on stdin, not argv, so another user on the host cannot read it from
 # /proc/<pid>/cmdline. printf is a shell builtin and starts no process.
-RESP="$(printf 'X-Vault-Token: %s\n' "$VAULT_TOKEN" | curl -sS --fail-with-body --cacert "$VAULT_CACERT" \
+RESP="$(printf 'X-Vault-Token: %s\n' "$VAULT_TOKEN" | curl -sS --fail-with-body --connect-timeout 5 --max-time 20 --cacert "$VAULT_CACERT" \
   -H @- -X POST -d "$BODY" \
   "$VAULT_ADDR/v1/ssh-client-signer/sign/$ROLE")" || {
   printf 'Vault refused to sign for role %s: %s\n' "$ROLE" "$RESP" >&2

@@ -1,14 +1,14 @@
 ---
 # See defaults/main.yml for why this exists.
 
-# An entry without `state` is present. product + combine gives every entry the default and
-# lets its own keys win.
+# An entry without `state` is present, and without `create` is an account the role does not own.
+# product + combine gives every entry the defaults and lets its own keys win.
 - name: Split the users into present and absent
   ansible.builtin.set_fact:
     ssh_ca_present: "{{ ssh_ca_all | selectattr('state', 'eq', 'present') | list }}"
     ssh_ca_absent: "{{ ssh_ca_all | selectattr('state', 'eq', 'absent') | list }}"
   vars:
-    ssh_ca_all: "{{ [{'state': 'present'}] | product(ssh_ca_users) | map('combine') | list }}"
+    ssh_ca_all: "{{ [{'state': 'present', 'create': false}] | product(ssh_ca_users) | map('combine') | list }}"
 
 - name: Check every user's state is present or absent
   ansible.builtin.assert:
@@ -43,9 +43,37 @@
     group: root
     mode: "0644"
 
+# The role owns an account it created, and marks it in the GECOS field. A `create: true` entry
+# that names an account someone else made, such as a real person's, fails the host instead of
+# rewriting that account's shell and password, or deleting its home on `state: absent`.
+- name: Read the accounts the role would create or remove
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ item.name }}"
+    fail_key: false
+  loop: "{{ ssh_ca_all_created }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: ssh_ca_accounts
+  vars:
+    ssh_ca_all_created: "{{ (ssh_ca_present + ssh_ca_absent) | selectattr('create') | list }}"
+
+- name: Refuse an account the role did not create
+  ansible.builtin.assert:
+    that: >-
+      item.ansible_facts.getent_passwd[item.item.name] is none
+      or item.ansible_facts.getent_passwd[item.item.name][3] == ssh_ca_account_marker
+    fail_msg: >-
+      {{ inventory_hostname }}: {{ item.item.name }} exists and was not made by roles/ssh-ca
+      (GECOS is not "{{ ssh_ca_account_marker }}"). Remove `create: true` from its entry.
+  loop: "{{ ssh_ca_accounts.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
 - name: Create the role users
   ansible.builtin.user:
     name: "{{ item.name }}"
+    comment: "{{ ssh_ca_account_marker }}"
     shell: /bin/bash
     create_home: true
     password: "!"
@@ -73,15 +101,24 @@
   loop_control:
     label: "{{ item.name }}: {{ item.principals | join(',') }}"
 
-# Revocation: an entry with `state: absent` loses its principals file, so no certificate logs
-# in as that user. A user the role created is removed with its home.
-- name: Remove each absent user's principals file
+# Revocation: any principals file for a user that is not present in ssh_ca_users goes, whether
+# its entry says `state: absent`, was deleted, or was dropped by a host_vars override. So the
+# list on this host is the whole truth, and no stale file keeps a certificate working.
+- name: List the principals files on the host
+  ansible.builtin.find:
+    paths: "{{ ssh_ca_principals_dir }}"
+    file_type: any
+    hidden: true
+  register: ssh_ca_principal_files
+
+- name: Remove every principals file for a user that is not present
   ansible.builtin.file:
-    path: "{{ ssh_ca_principals_dir }}/{{ item.name }}"
+    path: "{{ item }}"
     state: absent
-  loop: "{{ ssh_ca_absent }}"
-  loop_control:
-    label: "{{ item.name }}"
+  loop: "{{ ssh_ca_principal_files.files | map(attribute='path')
+            | reject('in', ssh_ca_present | map(attribute='name')
+                       | map('regex_replace', '^', ssh_ca_principals_dir ~ '/') | list)
+            | list }}"
 
 - name: Remove each absent user the role created
   ansible.builtin.user:
@@ -127,6 +164,27 @@
 - name: Read the service states
   ansible.builtin.service_facts:
 
+# Debian names the daemon ssh.service, socket-activated as ssh.socket. A host with neither runs
+# an sshd this role cannot reload, so the files would be written and never loaded. Fail it.
+# service_facts lists services, not sockets, so read the socket's state directly.
+- name: Read whether sshd is socket-activated  # noqa: command-instead-of-module
+  ansible.builtin.command: systemctl is-active ssh.socket
+  register: ssh_ca_socket
+  changed_when: false
+  failed_when: false
+
+- name: Find which sshd unit runs
+  ansible.builtin.set_fact:
+    ssh_ca_sshd_unit: >-
+      {{ 'ssh.service'
+         if (ansible_facts.services['ssh.service'] | default({})).state | default('') == 'running'
+         else ('ssh.socket' if ssh_ca_socket.stdout | trim == 'active' else '') }}
+
+- name: Fail a host with no sshd unit this role knows
+  ansible.builtin.assert:
+    that: ssh_ca_sshd_unit | length > 0
+    fail_msg: "{{ inventory_hostname }}: neither ssh.service nor ssh.socket is active, so sshd cannot load the CA."
+
 # Every run, not only on a change: a run that failed after writing the files would leave the
 # next run with nothing changed and a daemon that never loaded them. A reload keeps open
 # sessions. A socket-activated sshd reads the config per connection and needs none.
@@ -134,7 +192,7 @@
   ansible.builtin.systemd_service:
     name: ssh.service
     state: reloaded
-  when: (ansible_facts.services['ssh.service'] | default({})).state | default('') == 'running'
+  when: ssh_ca_sshd_unit == 'ssh.service'
   changed_when: false
 
 # The effective configuration, not the drop-in: this proves the drop-in is included and wins.
@@ -156,6 +214,7 @@
 - name: Report what was examined
   ansible.builtin.debug:
     msg: >-
-      {{ inventory_hostname }}: CA trusted; principals for
+      {{ inventory_hostname }}: CA trusted by {{ ssh_ca_sshd_unit }}; principals for
       {{ ssh_ca_present | map(attribute='name') | join(', ') }};
-      removed {{ ssh_ca_absent | map(attribute='name') | join(', ') or 'none' }}.
+      removed principals files {{ ssh_ca_principal_files.files | map(attribute='path')
+        | map('basename') | reject('in', ssh_ca_present | map(attribute='name') | list) | join(', ') or 'none' }}.
