@@ -35,6 +35,10 @@ resource "vault_ssh_secret_backend_ca" "client_signer" {
   generate_signing_key = true
   key_type             = "ssh-ed25519"
 
+  # The break-glass token applies this file, and its policy gains config/* and roles/* in the
+  # same apply. Vault reads a policy on every request, so the grant counts once it is written.
+  depends_on = [vault_policy.breakglass_247]
+
   lifecycle {
     prevent_destroy = true
   }
@@ -48,6 +52,8 @@ resource "vault_ssh_secret_backend_role" "inventory_read" {
   backend  = vault_mount.ssh_client_signer.path
   name     = "inventory-read"
   key_type = "ca"
+
+  depends_on = [vault_policy.breakglass_247]
 
   allow_user_certificates = true
   allowed_users           = "inventory-read"
@@ -88,6 +94,8 @@ resource "vault_ssh_secret_backend_role" "pedro" {
   backend  = vault_mount.ssh_client_signer.path
   name     = "pedro"
   key_type = "ca"
+
+  depends_on = [vault_policy.breakglass_247]
 
   allow_user_certificates = true
   allowed_users           = "pedro"
