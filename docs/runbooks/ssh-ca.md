@@ -15,7 +15,7 @@ shared `kv/iac/lxc-ssh` root key one consumer at a time (audit H6).
 | Role (principal) | Logs in as | TTL | Who signs it | Limits |
 |---|---|---|---|---|
 | `inventory-read` | `inventory`, no sudo | 30 min | the `PET-770` collector on 237 | `source-address` 237, no pty, no forwarding |
-| `pedro` | `root` | 1 h | the break-glass token on 247 | pty only, `source-address` LAN and tailnet |
+| `pedro` | `root` | 1 h | the break-glass token on 247 | pty only, `source-address` LAN, .86 mesh and tailnet |
 
 To add a role, add a `vault_ssh_secret_backend_role` and its signing policy in `ssh.tf`, and a
 user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host).
@@ -31,8 +31,8 @@ user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host
    `ansible-playbook playbooks/configure-ssh-ca.yml -e ssh_ca_targets=metrics-240 -e ansible_ssh_private_key_file=<file>`.
    A host does not trust the CA until this first run, so the first run logs in with the
    `kv/iac/lxc-ssh` key. Since `PET-725` only the break-glass token reads it. Write it to a
-   `0600` file in a `mktemp -d` directory, and delete the file after the run (Pedro's
-   decision, 2026-10-27). Pass the key with `-e`, not `--private-key`: the inventory sets
+   `0600` file in a `mktemp -d` directory, with `trap 'rm -rf "$T"' EXIT` set first, so a
+   failed play still deletes it (Pedro's decision, 2026-10-27). Pass the key with `-e`, not `--private-key`: the inventory sets
    `ansible_ssh_private_key_file`, and an inventory variable outranks the command-line flag.
    The last task names the host, the sshd unit and the principals files. The first play fails
    when `ssh_ca_targets` and `--limit` together name no host.
@@ -63,7 +63,7 @@ user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host
 - Revocation is by TTL. To cut a role off before its certificates expire, set `state: absent`
   on its `ssh_ca_users` entry, delete the entry, or remove the principal from the list, and
   re-run the play. The role removes every principals file for a user it does not list.
-- A `pedro` certificate is root from anywhere on the LAN or the tailnet for its hour. The phone
+- A `pedro` certificate is root from anywhere on the LAN, the .86 mesh or the tailnet for its hour. The phone
   arrives through the pete-pi-1 subnet router, which rewrites its address to a LAN address.
 - `prevent_destroy` guards the mount and the CA. To retire the CA, remove both `lifecycle`
   blocks in a reviewed PR first. `--allow-destroy` cannot override `prevent_destroy`.
