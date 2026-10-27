@@ -34,7 +34,7 @@ section heading. History sections for systems that are gone get no rule.
   `ignore_changes` too. Read the live config read-only first
   (`scripts/proxmox-ro-config.sh <node> <vmid>`) and expect only **cosmetic**
   `description`/`tags` diffs after import, plus state-side noise (`+ vm_id`, `+ timeout_*`
-  — provider attributes import doesn't populate, not API mutations). The import runbook for CT106 was removed with the dead registry; git history holds it.
+  — provider attributes import doesn't populate, not API mutations). The CT106 import runbook, `docs/runbooks/registry-import.md`, was removed with the dead registry (PET-778); read it with `git show 63d6909^:docs/runbooks/registry-import.md`.
 
 - **More brownfield divergences, from the Authentik capture** (PET-123, LXC 119): not every
   captured LXC is a community-scripts box, but the same "match it exactly" rule applies to
@@ -1013,7 +1013,7 @@ one for the syntax while the text lived only in `CLAUDE.md`.
 - **`ansible-lint .` run inside `ansible/` reports `Passed: 0 failure(s), 0 warning(s) in 0
   files processed of 1 encountered` and exits 0.** It is not linting the tree; it is linting
   nothing and saying so in a line nobody reads. Pass explicit targets — `ansible-lint roles/
-  playbooks/` processes 186 files here — and assert the processed count in CI.
+  playbooks/` processes the whole tree — and assert the processed count in CI.
 
 - **Zero is the wrong threshold for that assertion.** Once a `.ansible-lint` config exists in
   the directory, the same collapsed invocation reports `1 files processed`, still green. A

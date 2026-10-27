@@ -28,7 +28,6 @@
 #   POSTGRES_ADMIN_PASSWORD  POKER_PASSWORD
 #   AUTHENTIK_SECRET_KEY  AUTHENTIK_BOOTSTRAP_TOKEN
 #   CLOUDFLARE_TUNNEL_TOKEN
-#   REGISTRY_PASSWORD
 #
 set -euo pipefail
 
@@ -184,12 +183,6 @@ echo
 echo "kv/services/cloudflare:"
 load_value CLOUDFLARE_TUNNEL_TOKEN "Cloudflare tunnel_token (homelab-infra)"
 put_entry kv/services/cloudflare "tunnel_token=${REPLY_VALUE}"
-echo
-
-# --- kv/services/registry -----------------------------------------------------------
-echo "kv/services/registry:"
-load_value REGISTRY_PASSWORD "registry password (zot htpasswd user; password manager)"
-put_entry kv/services/registry "password=${REPLY_VALUE}"
 echo
 
 # scrub the last-used value holder
