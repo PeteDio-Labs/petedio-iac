@@ -1,8 +1,0 @@
----
-# A socket-activated sshd starts a fresh process per connection and reads the config then, so
-# only a running ssh.service needs the reload.
-- name: Reload sshd
-  ansible.builtin.systemd_service:
-    name: ssh.service
-    state: reloaded
-  when: ssh_ca_sshd_running | bool

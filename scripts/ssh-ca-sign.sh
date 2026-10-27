@@ -28,8 +28,10 @@ CERT="${PUB%.pub}-cert.pub"
 
 rm -f "$CERT"
 BODY="$(jq -n --rawfile k "$PUB" '{public_key: $k}')"
-RESP="$(curl -sS --fail-with-body --cacert "$VAULT_CACERT" \
-  -H "X-Vault-Token: $VAULT_TOKEN" -X POST -d "$BODY" \
+# The token goes to curl on stdin, not argv, so another user on the host cannot read it from
+# /proc/<pid>/cmdline. printf is a shell builtin and starts no process.
+RESP="$(printf 'X-Vault-Token: %s\n' "$VAULT_TOKEN" | curl -sS --fail-with-body --cacert "$VAULT_CACERT" \
+  -H @- -X POST -d "$BODY" \
   "$VAULT_ADDR/v1/ssh-client-signer/sign/$ROLE")" || {
   printf 'Vault refused to sign for role %s: %s\n' "$ROLE" "$RESP" >&2
   exit 1
@@ -40,5 +42,11 @@ SIGNED="$(jq -r '.data.signed_key // empty' <<<"$RESP")"
 umask 022
 printf '%s\n' "$SIGNED" > "$CERT"
 
-ssh-keygen -L -f "$CERT" | grep -E 'Principals|Valid:|Critical Options|^ +[a-z]' || true
+# A certificate ssh-keygen cannot parse is no certificate: remove it and fail.
+if ! INFO="$(ssh-keygen -L -f "$CERT" 2>&1)"; then
+  rm -f "$CERT"
+  printf 'Vault returned a certificate ssh-keygen cannot read: %s\n' "$INFO" >&2
+  exit 1
+fi
+printf '%s\n' "$INFO" | sed -n '/Valid:/,$p'
 printf 'wrote %s (role %s)\n' "$CERT" "$ROLE"

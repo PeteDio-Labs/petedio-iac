@@ -20,14 +20,24 @@ resource "vault_mount" "ssh_client_signer" {
   type        = "ssh"
   description = "SSH user certificate authority, one signing role per identity (PET-771)."
 
-  # Bounds every role's TTL below. No role here needs more than Pedro's 8 hours.
-  max_lease_ttl_seconds = 28800
+  # Bounds every role's TTL below. No role here needs more than Pedro's hour.
+  max_lease_ttl_seconds = 3600
+
+  # Vault holds the only copy of the CA private key. Destroying the mount destroys the key, and
+  # every host would have to trust a new one.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "vault_ssh_secret_backend_ca" "client_signer" {
   backend              = vault_mount.ssh_client_signer.path
   generate_signing_key = true
   key_type             = "ssh-ed25519"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # inventory-read: the PET-770 CVE collector on 237. It logs in as the non-root user
@@ -47,7 +57,13 @@ resource "vault_ssh_secret_backend_role" "inventory_read" {
   allowed_extensions = ""
   default_extensions = {}
 
-  allowed_critical_options = "source-address"
+  # ⚠ NOT EMPTY, AND NOT "source-address". Vault reads an empty list as "any option", and a
+  # request that names any critical option replaces the defaults below instead of adding to
+  # them (calculateCriticalOptions in builtin/logical/ssh/path_issue_sign.go). So a signer
+  # could drop the /32 either way. This list names one option that does not exist: a request
+  # for source-address is refused, and a request for this name gives a certificate that sshd
+  # refuses, because sshd rejects an unknown critical option.
+  allowed_critical_options = "petedio-no-overrides"
   default_critical_options = {
     "source-address" = "192.168.50.237/32"
   }
@@ -64,6 +80,10 @@ resource "vault_ssh_secret_backend_role" "inventory_read" {
 # pedro: Pedro's own key (Termius on the phone, or the Mac), root on every host that lists the
 # principal. Signed only from the break-glass token (breakglass.tf), so a root certificate
 # needs Pedro's password and TOTP, the way root SSH already does since PET-725.
+#
+# One hour, the break-glass token's own life, and no source-address: the phone reaches the LAN
+# through a tailnet subnet router, so its source address is not one fixed host. A lifted
+# certificate is root anywhere until it expires, and the short TTL is that limit.
 resource "vault_ssh_secret_backend_role" "pedro" {
   backend  = vault_mount.ssh_client_signer.path
   name     = "pedro"
@@ -79,8 +99,8 @@ resource "vault_ssh_secret_backend_role" "pedro" {
     "permit-pty" = ""
   }
 
-  ttl     = "28800"
-  max_ttl = "28800"
+  ttl     = "3600"
+  max_ttl = "3600"
 
   allowed_user_key_config {
     type    = "ed25519"

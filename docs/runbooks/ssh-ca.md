@@ -15,7 +15,7 @@ shared `kv/iac/lxc-ssh` root key one consumer at a time (audit H6).
 | Role (principal) | Logs in as | TTL | Who signs it | Limits |
 |---|---|---|---|---|
 | `inventory-read` | `inventory`, no sudo | 30 min | the `PET-770` collector on 237 | `source-address` 237, no pty, no forwarding |
-| `pedro` | `root` | 8 h | the break-glass token on 247 | pty only |
+| `pedro` | `root` | 1 h | the break-glass token on 247 | pty only, no address bound |
 
 To add a role, add a `vault_ssh_secret_backend_role` and its signing policy in `ssh.tf`, and a
 user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host).
@@ -29,7 +29,8 @@ user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host
    prints one `ssh-ed25519` line.
 3. To trust the CA on the canary, run
    `ansible-playbook playbooks/configure-ssh-ca.yml -e ssh_ca_targets=metrics-240` from `ansible/`.
-   The last task names the host and the principals files it wrote.
+   The last task names the host and the principals files it wrote. Use `ssh_ca_targets`, not
+   `--limit`; the first play fails when the two together name no host.
 4. To prove the canary, sign a throwaway key for each role from the break-glass shell, then log in:
    - `inventory-read` as `inventory` from 237: logs in.
    - `inventory-read` as `inventory` from 247: `Permission denied`, because of `source-address`.
@@ -51,6 +52,8 @@ user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host
 
 - Vault seals every night. A certificate cannot be signed while it is sealed, and
   `ssh-ca-sign.sh` exits non-zero then. A scheduled caller must report that, not skip.
-- Revocation is by TTL. To cut a role off before its certificates expire, remove its principal
-  from the hosts and re-run the play.
+- Revocation is by TTL. To cut a role off before its certificates expire, set `state: absent`
+  on its `ssh_ca_users` entry, or remove the principal from the list, and re-run the play.
+- A `pedro` certificate is root from any address for its hour. The phone reaches the LAN through
+  a tailnet subnet router, so the role binds no `source-address`.
 - CT 112 runs no sshd and stays reached through `pct exec`.
