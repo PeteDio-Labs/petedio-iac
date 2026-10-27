@@ -57,7 +57,6 @@ if [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
   export TF_VAR_cloudflare_account_id="$(vget cloudflare account_id)"
   export TF_VAR_cloudflare_zone_id="$(vget cloudflare zone_id)"
   export TF_VAR_cloudflare_tunnel_id="$(vget cloudflare tunnel_id)"
-  export TF_VAR_cloudflare_palworld_tunnel_id="$(vget cloudflare palworld_tunnel_id)"
   export VAULT_ADDR="https://192.168.50.223:8200"; export VAULT_TOKEN="$ROOT_TOKEN"
   # Match CI, or the pool resource shows a spurious destroy.
   export TF_VAR_manage_resource_pool=true
