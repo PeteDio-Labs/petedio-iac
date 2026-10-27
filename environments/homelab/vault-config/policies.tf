@@ -123,7 +123,6 @@ resource "vault_policy" "terraform" {
 #   deploy-palworld-panel.sh   kv/services/palworld-panel
 #   deploy-plane.sh            kv/db/plane, kv/services/plane, kv/services/plane-<member>
 #   deploy-resume-builder.sh   kv/services/resume-builder
-#   deploy-water-fast.sh       kv/services/water-fast
 # Those scripts run on 247. These stay on the Mac, by design:
 #   deploy-claude-247.sh  reads four App keys (claude-*); see the claude-ops exclusions.
 #   deploy-codex-248.sh   reads kv/services/codex-review-app, the Codex reviewer's App key.
