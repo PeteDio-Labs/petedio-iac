@@ -5,11 +5,6 @@
 # webhook and DMs the owner, editing the original message when the service recovers, and
 # /update starts the media-updates workflow. It holds no tools of its own.
 #
-# THE ANTHROPIC API GATEWAY (PET-617). POST /v1/llm/v1/messages forwards a caller's
-# request with the homelab's one Anthropic key, and refuses a caller past its monthly cap.
-# The key and each caller's bearer come from Vault; the caps and models are set below. With
-# no key the gateway is off and the rest of the bot runs as before.
-#
 # ⚠ IT NO LONGER TALKS TO MTRACE (PET-518). /ask, DM forwarding and the /status mtrace
 # line are gone, so this play passes no mtrace token or URL. Don't add one back: mtrace
 # gives each caller its own token, and Pete Bot isn't a caller.
@@ -19,10 +14,10 @@
 #
 # LAB-AGENT (PET-669, PET-670). A second binary from the pete-bot repo, under its own user
 # and unit. It answers pete-bot's /lab with read-only lab tools on 127.0.0.1:3016, and calls
-# the gateway above as the lab-map caller. It holds lab-map's bearer, its own ask bearer, a
+# Ollama on ollama-246 (PET-742). It holds its own ask bearer, a
 # metadata-only Vault token, a read-only Proxmox token and the read-only
 # petedio-workspace-mirror App's key, which mints petedio-vault read tokens. It holds no
-# Discord token, no desk key and no Anthropic key. It also holds pete-bot's notify
+# Discord token and no desk key. It also holds pete-bot's notify
 # bearer, which its nightly drift check (PET-671) DMs with. It is off until
 # kv/services/lab-agent and kv/services/lab-agent-pve are both seeded: run
 # scripts/seed-lab-agent.sh, whose header gives the order.
@@ -55,8 +50,6 @@
     #   pete_bot_owner_user_id, pete_bot_alert_bearer, pete_bot_notify_bearer (PET-584)
     # Optional (PET-395): pete_bot_github_updates_token, for /update. Empty leaves
     # /update answering that it is not configured.
-    # Optional (PET-617), set together or not at all: pete_bot_anthropic_api_key and
-    # pete_bot_gateway_token_lab_map. scripts/seed-llm-gateway.sh writes both.
     #
     # The merge desk (PET-645). Optional: pete_bot_desk_app_id,
     # pete_bot_desk_installation_id and pete_bot_desk_app_pem, from kv/services/pete-bot
@@ -97,22 +90,6 @@
       {{ (pete_bot_desk_ready | bool)
          and (pete_bot_plane_api_key | default('') | length > 0) }}
 
-    # Each gateway caller: its bearer, its monthly cap in whole dollars, and the models it
-    # may ask for. A model outside pete-bot's price table puts the gateway in the
-    # misconfigured state, which the check below fails.
-    #
-    # The one caller is the lab-map agent. Pedro gave it the API budget on 2026-10-15, in
-    # place of pm-agent (PET-617). Its cap is plan v3's two lab-map lines: $30 for questions
-    # through pete-bot and $10 for the nightly drift batch.
-    pete_bot_llm_callers:
-      lab-map:
-        token: "{{ pete_bot_gateway_token_lab_map | default('') }}"
-        monthlyCapUsd: 40
-        models: [claude-haiku-4-5]
-    # The spend ledger the caps read. It must survive a restart, so it lives in the unit's
-    # StateDirectory beside the alert state.
-    pete_bot_llm_ledger_path: /var/lib/pete-bot/llm-ledger.sqlite
-
     # ── lab-agent (PET-670) ──
     # Optional, all together or not at all, from scripts/deploy-pete-bot.sh or deploy.yml:
     #   lab_agent_binary_src, and from kv/services/lab-agent: lab_agent_ask_token,
@@ -120,16 +97,12 @@
     #   lab_agent_pve_token_secret, lab_agent_pve_endpoint, lab_agent_pve_ca_pem; from
     #   kv/services/claude-workspace-mirror: lab_agent_github_app_id,
     #   lab_agent_github_installation_id, lab_agent_github_app_pem.
-    #   lab-map's bearer is pete_bot_gateway_token_lab_map above.
     # Optional on its own, and not one of the values lab_agent_ready counts (PET-672):
     #   lab_agent_plane_token, from kv/services/lab-agent-plane. Without it lab-agent runs
     #   with no plane_item tool.
-    # Which backend answers /lab (PET-742, PET-743): `gateway` (the Anthropic gateway above) or
-    # `ollama` (qwen3 on the 3060 Ti lane of ollama-246, the Ollama LXC on pve01 since PET-528). The $20 Claude plan carries no API
-    # credit, so the move to `ollama` is the plan. Flip it only after the model is pulled
-    # (`ollama pull qwen3:8b` on :11434) and `scripts/lab-verify.sh` passes: lab-agent's
-    # /health fails when the model is missing.
-    lab_agent_provider: ollama
+    # The backend answering /lab is qwen3 on the 3060 Ti lane of ollama-246, the Ollama LXC on pve01
+    # since PET-528 (PET-742, PET-743). The Anthropic gateway is retired (PET-744). lab-agent's
+    # /health fails when the model is missing: `ollama pull qwen3:8b` on :11434.
     lab_agent_ollama_url: http://192.168.50.246:11434
     lab_agent_search_url: http://192.168.50.246:8526
     lab_agent_ollama_model: qwen3:8b
@@ -213,34 +186,18 @@
       # no_log deliberately absent: assert never echoes a value, and censoring the result
       # would hide the fail_msg that names the script to run.
 
-    # ⚠ BOTH OR NEITHER. A key without a caller leaves the gateway misconfigured, and a
-    # caller without a key leaves it off while lab-map holds a bearer nothing accepts.
-    - name: Assert the gateway's key and bearer are set together
-      ansible.builtin.assert:
-        that:
-          - (pete_bot_anthropic_api_key | default('') | length > 0)
-            == (pete_bot_gateway_token_lab_map | default('') | length > 0)
-          - pete_bot_gateway_token_lab_map | default('') | length == 0
-            or pete_bot_gateway_token_lab_map not in
-               [pete_bot_alert_bearer, pete_bot_notify_bearer, pete_bot_github_updates_token | default('')]
-        fail_msg: >-
-          kv/services/pete-bot holds only one of anthropic_api_key and gateway_token_lab_map,
-          or the gateway bearer repeats another route's. Run scripts/seed-llm-gateway.sh.
-
     # ⚠ ALL OR NONE. Some lab-agent values without the rest is a seed that stopped halfway,
     # and a lab-agent started from it fails its health check on every deploy.
     - name: Assert lab-agent's values arrive together
       ansible.builtin.assert:
         that:
           - (lab_agent_set_count | int) in [0, lab_agent_values | length]
-          # The gateway bearer is lab-agent's only when the gateway answers /lab (PET-742).
-          - not (lab_agent_ready | bool) or lab_agent_provider == 'ollama' or (pete_bot_gateway_token_lab_map | default('') | length > 0)
           - not (lab_agent_ready | bool) or (lab_agent_app_values | map('trim') | reject('equalto', '') | list | length == 3)
           - not (lab_agent_ready | bool) or lab_agent_ask_token not in
-              [pete_bot_alert_bearer, pete_bot_notify_bearer, pete_bot_gateway_token_lab_map | default('')]
+              [pete_bot_alert_bearer, pete_bot_notify_bearer]
         fail_msg: >-
           lab-agent got {{ lab_agent_set_count }} of {{ lab_agent_values | length }} values, or it
-          has no gateway bearer (with the gateway provider) or no mirror App, or its ask bearer repeats another route's. Seed
+          has no mirror App, or its ask bearer repeats another route's. Seed
           kv/services/lab-agent-pve with playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
           and kv/services/lab-agent with scripts/seed-lab-agent.sh, then deploy again.
           kv/services/claude-workspace-mirror comes from scripts/seed-workspace-mirror-vault.sh.
@@ -687,24 +644,6 @@
       delay: 2
       until: pete_bot_health.status is defined and pete_bot_health.status == 200
 
-    # /health reports the gateway as off, misconfigured or on. With a key set, anything but
-    # on means a bad setting or a binary older than the gateway, and the deploy fails here.
-    - name: Prove the gateway is on when a key is set
-      ansible.builtin.assert:
-        that:
-          - pete_bot_health.json is defined
-          - pete_bot_health.json.llm | default('absent') == 'on'
-        fail_msg: >-
-          A key is set, but /health reports llm as
-          {{ (pete_bot_health.json | default({})).llm | default('absent') }}. Absent means the
-          binary predates the gateway. Misconfigured means a bad setting, and the journal
-          names it: journalctl -u pete-bot | grep -i gateway.
-      # Check mode skips the /health read, so its result has no json. Without the guard,
-      # every `--check` run with a seeded key fails here, as the desk's check did (PET-645).
-      when:
-        - not ansible_check_mode
-        - pete_bot_anthropic_api_key | default('') | length > 0
-
     # ⚠ /health only proves the process is up. This proves it reached DISCORD, which is
     # what a bad token, a revoked app or a network egress problem all break while /health
     # stays perfectly green.
@@ -782,7 +721,7 @@
         - (pete_bot_desk_health.json.desk.state | default('')) != 'running'
 
     # ⚠ EVERY DEPENDENCY, NOT ONLY THE PROCESS. lab-agent's /health answers 503 unless the
-    # gateway, Proxmox, the vault clone, Kuma and Vault all answer, and names each one down.
+    # model backend, Proxmox, the vault clone, Kuma and Vault all answer, and names each one down.
     # A lab-agent that runs but cannot read the lab fails the deploy here.
     - name: Read lab-agent's health
       ansible.builtin.uri:
