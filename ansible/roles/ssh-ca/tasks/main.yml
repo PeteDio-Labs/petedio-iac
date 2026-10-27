@@ -43,6 +43,38 @@
     group: root
     mode: "0644"
 
+# Revocation first, before any account check can stop the host: every principals file for a
+# user that is not present in ssh_ca_users goes, whether its entry says `state: absent`, was
+# deleted, or was dropped by a host_vars override. The list on this host is the whole truth.
+# Only regular, non-hidden files with a user-name shape count, and names compare by basename,
+# so a trailing slash in ssh_ca_principals_dir cannot turn a kept file into a removed one.
+- name: Create the principals directory
+  ansible.builtin.file:
+    path: "{{ ssh_ca_principals_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: List the principals files on the host
+  ansible.builtin.find:
+    paths: "{{ ssh_ca_principals_dir }}"
+    file_type: file
+    hidden: false
+    use_regex: true
+    patterns: ['^[a-z_][a-z0-9_-]*$']
+  register: ssh_ca_principal_files
+
+- name: Remove every principals file for a user that is not present
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ ssh_ca_principal_files.files
+            | rejectattr('path', 'search', '/(' ~ (ssh_ca_present | map(attribute='name') | map('regex_escape') | join('|')) ~ ')$')
+            | list }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
 # The role owns an account it created, and marks it in the GECOS field. A `create: true` entry
 # that names an account someone else made, such as a real person's, fails the host instead of
 # rewriting that account's shell and password, or deleting its home on `state: absent`.
@@ -58,7 +90,7 @@
   vars:
     ssh_ca_all_created: "{{ (ssh_ca_present + ssh_ca_absent) | selectattr('create') | list }}"
 
-- name: Refuse an account the role did not create
+- name: Refuse a present account the role did not create
   ansible.builtin.assert:
     that: >-
       item.ansible_facts.getent_passwd[item.item.name] is none
@@ -66,7 +98,7 @@
     fail_msg: >-
       {{ inventory_hostname }}: {{ item.item.name }} exists and was not made by roles/ssh-ca
       (GECOS is not "{{ ssh_ca_account_marker }}"). Remove `create: true` from its entry.
-  loop: "{{ ssh_ca_accounts.results }}"
+  loop: "{{ ssh_ca_accounts.results | selectattr('item.state', 'eq', 'present') | list }}"
   loop_control:
     label: "{{ item.item.name }}"
 
@@ -76,19 +108,13 @@
     comment: "{{ ssh_ca_account_marker }}"
     shell: /bin/bash
     create_home: true
-    password: "!"
+    # "*": no password works, and the account is not locked. sshd refuses a "!" (locked) account
+    # when UsePAM is no, which would refuse its certificates too.
+    password: "*"
     system: false
   loop: "{{ ssh_ca_present | selectattr('create') | list }}"
   loop_control:
     label: "{{ item.name }}"
-
-- name: Create the principals directory
-  ansible.builtin.file:
-    path: "{{ ssh_ca_principals_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
 
 - name: Land each present user's principals file
   ansible.builtin.copy:
@@ -101,33 +127,48 @@
   loop_control:
     label: "{{ item.name }}: {{ item.principals | join(',') }}"
 
-# Revocation: any principals file for a user that is not present in ssh_ca_users goes, whether
-# its entry says `state: absent`, was deleted, or was dropped by a host_vars override. So the
-# list on this host is the whole truth, and no stale file keeps a certificate working.
-- name: List the principals files on the host
-  ansible.builtin.find:
-    paths: "{{ ssh_ca_principals_dir }}"
-    file_type: any
-    hidden: true
-  register: ssh_ca_principal_files
-
-- name: Remove every principals file for a user that is not present
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop: "{{ ssh_ca_principal_files.files | map(attribute='path')
-            | reject('in', ssh_ca_present | map(attribute='name')
-                       | map('regex_replace', '^', ssh_ca_principals_dir ~ '/') | list)
-            | list }}"
-
+# The principals file is already gone, so the account accepts no certificate either way. Only an
+# account carrying the marker is removed; any other is left, and the next task says so.
 - name: Remove each absent user the role created
   ansible.builtin.user:
-    name: "{{ item.name }}"
+    name: "{{ item.item.name }}"
     state: absent
     remove: true
-  loop: "{{ ssh_ca_absent | selectattr('create') | list }}"
+  loop: "{{ ssh_ca_accounts.results | selectattr('item.state', 'eq', 'absent')
+            | selectattr('ansible_facts.getent_passwd', 'defined')
+            | list }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.ansible_facts.getent_passwd[item.item.name] is not none
+    - item.ansible_facts.getent_passwd[item.item.name][3] == ssh_ca_account_marker
+
+- name: Warn about an absent account the role did not create
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ item.item.name }} is absent in ssh_ca_users but was not made by
+      roles/ssh-ca, so the account stays. Its principals file is removed.
+  loop: "{{ ssh_ca_accounts.results | selectattr('item.state', 'eq', 'absent') | list }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.ansible_facts.getent_passwd[item.item.name] is not none
+    - item.ansible_facts.getent_passwd[item.item.name][3] != ssh_ca_account_marker
+
+- name: Read back each present user's principals file
+  ansible.builtin.stat:
+    path: "{{ ssh_ca_principals_dir }}/{{ item.name }}"
+  loop: "{{ ssh_ca_present }}"
   loop_control:
     label: "{{ item.name }}"
+  register: ssh_ca_present_files
+
+- name: Assert every present user still has its principals file
+  ansible.builtin.assert:
+    that: ssh_ca_present_files.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      {{ inventory_hostname }}: missing principals files for
+      {{ ssh_ca_present_files.results | rejectattr('stat.exists') | map(attribute='item.name') | join(', ') }}.
 
 # The drop-in goes live only with a config sshd accepts. A bad file left in place would stop the
 # next sshd start, including the one after the nightly `mode: stop` backup.
@@ -211,10 +252,15 @@
       - ('authorizedprincipalsfile ' ~ ssh_ca_principals_dir ~ '/%u') in ssh_ca_effective.stdout_lines
     fail_msg: "{{ inventory_hostname }}: sshd -T reports {{ ssh_ca_effective.stdout_lines }}"
 
+# This proves the files and the config sshd parses, not that the running daemon holds them: only
+# a certificate login proves that (docs/runbooks/ssh-ca.md, phase 1 step 4).
 - name: Report what was examined
   ansible.builtin.debug:
     msg: >-
-      {{ inventory_hostname }}: CA trusted by {{ ssh_ca_sshd_unit }}; principals for
-      {{ ssh_ca_present | map(attribute='name') | join(', ') }};
+      {{ inventory_hostname }}: CA files written and accepted by sshd -T;
+      {{ 'ssh.service reloaded' if ssh_ca_sshd_unit == 'ssh.service'
+         else 'ssh.socket reads the config at each connection' }};
+      principals for {{ ssh_ca_present | map(attribute='name') | join(', ') }};
       removed principals files {{ ssh_ca_principal_files.files | map(attribute='path')
         | map('basename') | reject('in', ssh_ca_present | map(attribute='name') | list) | join(', ') or 'none' }}.
+      Prove the daemon with a certificate login.
