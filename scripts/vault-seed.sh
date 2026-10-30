@@ -167,6 +167,13 @@ put_entry kv/poker/db \
   "DATABASE_URL=${database_url}" \
   "admin_password=${pg_admin}" \
   "poker_password=${poker_pw}"
+echo
+
+# --- kv/admin/postgres -----------------------------------------------------------
+# PET-691: Terraform and Ansible read the superuser password here, not from kv/poker/db.
+# On a Vault that already holds kv/poker/db, scripts/seed-postgres-admin-vault.sh copies it.
+echo "kv/admin/postgres:"
+put_entry kv/admin/postgres "admin_password=${pg_admin}"
 unset pg_admin poker_pw poker_pw_enc database_url
 echo
 
