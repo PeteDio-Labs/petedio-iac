@@ -141,29 +141,6 @@ resource "vault_jwt_auth_backend_role" "media_ci" {
 }
 
 
-# palworld-panel-cd role → palworld-panel-cd policy. APPLY-on-merge only: the panel repo's
-# deploy.yml runs configure-palworld-panel.yml against LXC 234 from the runner on push to main.
-# Bound to ONLY the panel repo's main-push sub (the deploy workflow is push-to-main; no PR job
-# mints a token). Gets ONLY the ansible SSH key (to reach 234) + the panel's own service secret
-# (REST admin password + the restricted start-hook key). Mirrors openfaas-ci. (PET-266)
-resource "vault_jwt_auth_backend_role" "palworld_panel_cd" {
-  backend           = vault_jwt_auth_backend.github.path
-  role_name         = "palworld-panel-cd"
-  role_type         = "jwt"
-  user_claim        = "actor"
-  bound_audiences   = [var.github_oidc_audience]
-  bound_claims_type = "string"
-  # workflow_ref and event_name pin deploy.yml on push, the only workflow in the panel repo
-  # that mints this role, so no other workflow on main can read the SSH key.
-  bound_claims = {
-    sub          = "repo:${var.palworld_panel_repo}:ref:refs/heads/main"
-    event_name   = "push"
-    workflow_ref = "${var.palworld_panel_repo}/.github/workflows/deploy.yml@refs/heads/main"
-  }
-  token_policies = [vault_policy.palworld_panel_cd.name]
-  token_ttl      = 900
-}
-
 # media-dash-cd → the petedio-media-control repo's deploy.yml (PET-355).
 #
 # ⚠ Bound on `repository` + `ref`, NOT on `sub`. petedio-media-control was created in
@@ -368,7 +345,7 @@ resource "vault_jwt_auth_backend_role" "openfaas_ci" {
   # ⚠ BOUND TO THE REUSABLE FILE AND THE EVENT (PET-675), for the reason on the
   # github-actions role above: a sub alone lets any workflow on main mint the lxc-ssh
   # key. ansible-stack.yml is a reusable workflow, so workflow_ref names its caller
-  # (ansible-palworld.yml) and job_workflow_ref names ansible-stack.yml itself. Pinning
+  # (ansible-claude-247.yml) and job_workflow_ref names ansible-stack.yml itself. Pinning
   # job_workflow_ref lets a new stack caller work with no change here, and event_name
   # still refuses a dispatch or a schedule.
   bound_claims = {

@@ -63,7 +63,7 @@
   ansible.builtin.debug:
     msg: >-
       cloudflared is installed but no connector was registered — cloudflared_tunnel_token was
-      not provided. Pass it from Vault (kv/services/palworld-panel, field tunnel_token) and
+      not provided. Pass the tunnel token from Vault and
       re-run, or the tunnel hostname will have no origin.
   when:
     - not cloudflared_unit.stat.exists

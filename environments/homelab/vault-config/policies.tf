@@ -120,7 +120,6 @@ resource "vault_policy" "terraform" {
 # Each path is one that an AppRole deploy script reads and that holds no GitHub App key:
 #   deploy-backup-store.sh     kv/services/backup-health
 #   deploy-minio-data.sh       kv/iac/minio-data-root
-#   deploy-palworld-panel.sh   kv/services/palworld-panel
 #   deploy-plane.sh            kv/db/plane, kv/services/plane, kv/services/plane-<member>
 #   deploy-resume-builder.sh   kv/services/resume-builder
 # Those scripts run on 247. These stay on the Mac, by design:
@@ -146,10 +145,6 @@ resource "vault_policy" "ansible_247" {
     }
 
     path "kv/data/services/backup-health" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/palworld-panel" {
       capabilities = ["read"]
     }
 
@@ -265,21 +260,6 @@ resource "vault_policy" "media_ci" {
   EOT
 }
 
-
-# palworld-panel-cd: the petedio-palworld-panel repo's CD role — deploy.yml runs the native
-# panel play against LXC 234 on merge (the runner SSHes in). Least-privilege: ONLY the panel's
-# own service secret (REST admin password, restricted start-hook key and its own deploy SSH
-# key, authorized on 234 alone). NOT kv/iac/lxc-ssh and NOT the broader ci-read/ansible
-# scope. (PET-266, PET-724)
-resource "vault_policy" "palworld_panel_cd" {
-  name = "palworld-panel-cd"
-
-  policy = <<-EOT
-    path "kv/data/services/palworld-panel" {
-      capabilities = ["read"]
-    }
-  EOT
-}
 
 # media-dash-cd: the petedio-media-control repo's CD role (PET-355) — deploy.yml compiles
 # the mtrace binary and installs it plus its systemd unit on media-dash-237 on merge (the
@@ -687,10 +667,6 @@ resource "vault_policy" "claude_ops" {
     }
 
     path "kv/data/services/minio-obsidian" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/palworld-panel" {
       capabilities = ["read"]
     }
 

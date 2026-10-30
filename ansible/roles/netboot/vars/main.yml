@@ -1,9 +1,0 @@
----
-# Derived paths. The ISO and its extracted kernel and initrd share one directory, named
-# after the ISO, under the HTTP root.
-netboot_iso_path: "pve/{{ netboot_iso_name | regex_replace('\\.iso$', '') }}"
-netboot_iso_dir: "{{ netboot_root }}/http/{{ netboot_iso_path }}"
-
-# The unit the install window opens and closes. tests/netboot-close-window.yml points it at a
-# unit that doesn't exist, so the suite never stops a real service on the machine it runs on.
-netboot_dnsmasq_service: dnsmasq

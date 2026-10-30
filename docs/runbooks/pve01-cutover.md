@@ -235,8 +235,7 @@ they were. Then restore the two-node cluster's third vote:
 
 ## After it passes
 
-- Delete netboot CT 239 and its code (`netboot.tf` says so). The destroy needs the repo
-  variable `ALLOW_DESTROY=true`.
+- Netboot CT 239 and its code are removed (`PET-779`).
 - Reclaim the Ubuntu root LV on sda once nobody needs the rollback.
 - Give pve01's own guests a backup job. The `ollama-backups` storage is a `dir` at
   `/mnt/ollama-backups`, and pve01 serves the store from `/srv/backups`, so pve01

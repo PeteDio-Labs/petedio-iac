@@ -7,7 +7,7 @@
 # environments/homelab/cloudflare-routes.tf), not in a local config file. So this role
 # installs the daemon and hands it the token — it never writes ingress config.
 #
-# Provided at runtime from Vault (kv/services/palworld-panel, field tunnel_token) — NO
+# Provided at runtime from Vault (the tunnel token of the connector you install) — NO
 # default, never committed. When undefined the role installs the package and stops, rather
 # than registering a connector with an empty token.
 # cloudflared_tunnel_token: "eyJhIjoi..."

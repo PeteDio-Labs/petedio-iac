@@ -61,7 +61,6 @@ locals {
     claude     = module.claude_code.vm_id
     codex      = module.codex.vm_id
     usaa       = module.usaa.vm_id
-    netboot    = module.netboot.vm_id
     metrics    = module.metrics.vm_id
     ollama     = module.ollama.vm_id
   } : {}
