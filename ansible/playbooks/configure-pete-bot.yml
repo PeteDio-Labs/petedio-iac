@@ -86,6 +86,9 @@
     # stay off, so a deploy before the seed changes nothing.
     pete_bot_reports_repos: "petedio-iac,petedio-workspace,petedio-vault,petedio-pm,pete-bot,\
       petedio-usaa,petedio-media-control,petedio-media-iac,petedio-palworld-panel,skills"
+    # Written by collect-cve-inventory.yml. The directory is root:pete-bot 0750, so the unit's
+    # Group= reads it, and ProtectSystem=strict leaves it readable.
+    pete_bot_cve_snapshot: /var/lib/cve-inventory/cve-inventory.json
     pete_bot_reports_ready: >-
       {{ (pete_bot_desk_ready | bool)
          and (pete_bot_plane_api_key | default('') | length > 0) }}
@@ -604,6 +607,14 @@
             enabled: true
             state: started
             daemon_reload: true
+
+    # The daily CVE check (PET-770) reads the file collect-cve-inventory.yml writes. Switching it on
+    # before that file exists would send a failure DM and retry three times a day, so the path
+    # stays empty, and the report off, until the first collector run has written the file.
+    - name: Look for the CVE inventory snapshot
+      ansible.builtin.stat:
+        path: "{{ pete_bot_cve_snapshot }}"
+      register: pete_bot_cve_snapshot_stat
 
     - name: Install the environment file
       ansible.builtin.template:
