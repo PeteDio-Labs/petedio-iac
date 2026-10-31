@@ -78,12 +78,14 @@ TIER2_PATTERNS = [
     ("scripts/vault-seed.sh", "changes how a credential is placed"),
     # The rules every Claude session follows, merging included. In a cloud thread no hook
     # loads, so these files are the merge guard; a change to them is a change to the gate.
-    # Skills stay tier 0: they don't decide what merges (PET-645).
+    # Skills stay tier 0: they don't decide what merges (PET-645). The one exception is
+    # `full-send`, which tells a thread when it may merge its own PR (PET-782).
     ("**/CLAUDE.md", "changes the rules Claude sessions follow"),
     ("**/AGENTS.md", "changes the rules agent sessions follow"),
     ("**/.claude/settings*.json", "changes Claude's permissions or hooks"),
     ("**/.claude/hooks/**", "changes Claude's hooks"),
     ("**/.claude/rules/**", "changes the rules Claude sessions follow"),
+    ("**/.claude/skills/full-send/**", "changes when a thread merges its own PR"),
     ("Claude/working-agreement.md", "changes how Claude sessions coordinate and merge"),
 ]
 

@@ -860,6 +860,6 @@ labelled `agent-ready`, ran `claude -p` against it, and opened a draft pull requ
 `tasks/loop-retired.yml` stops and removes what the loop installed: the `claude-loop` units,
 `/etc/claude-loop`, `/var/lib/claude-loop`, the tick and broker binaries, and the loop's clone
 under `~/loop`. The App is uninstalled and deleted at GitHub, which is what revokes its key.
-`scripts/retire-claude-loop-vault.sh` deletes `kv/services/claude-loop`.
+A one-shot script deleted `kv/services/claude-loop`, then was removed.
 
 The design history is in `docs/GOTCHAS.md`, `vault/Systems/claude-loop.md` and git history.

@@ -34,8 +34,7 @@ section heading. History sections for systems that are gone get no rule.
   `ignore_changes` too. Read the live config read-only first
   (`scripts/proxmox-ro-config.sh <node> <vmid>`) and expect only **cosmetic**
   `description`/`tags` diffs after import, plus state-side noise (`+ vm_id`, `+ timeout_*`
-  — provider attributes import doesn't populate, not API mutations). Full procedure:
-  `docs/runbooks/registry-import.md`.
+  — provider attributes import doesn't populate, not API mutations). The CT106 import runbook, `docs/runbooks/registry-import.md`, was removed with the dead registry (PET-778); read it with `git show 63d6909^:docs/runbooks/registry-import.md`.
 
 - **More brownfield divergences, from the Authentik capture** (PET-123, LXC 119): not every
   captured LXC is a community-scripts box, but the same "match it exactly" rule applies to
@@ -182,7 +181,7 @@ section heading. History sections for systems that are gone get no rule.
   it is not. **Pete-Pi is the jump host** from `.86` into `.50`: `ssh -A -i
   ~/.ssh/id_ed25519_pete_pi_2 pedro@192.168.86.46`. It also advertises both subnets on the
   tailnet — `tailscale-244` died with pve01 and pete-pi-1 took its routes
-  (`environments/homelab/tailscale.tf`; verified `tailscale status` 2026-09-10).
+  (`tailscale.tf` was removed; verified `tailscale status` 2026-09-10).
 
 - **`startup` is not declared in TF, so an apply strips it — keep it in `ignore_changes`.**
   Boot order and up/down delays are set on the node with
@@ -237,7 +236,7 @@ section heading. History sections for systems that are gone get no rule.
   and 236 on `lock: snapshot-delete`, so their backups failed too. `roles/backup-store` asserts
   the mount is NFS, but only when the role runs, never at boot. With `is_mountpoint yes`,
   Proxmox reports the store inactive while the path isn't mounted, and the job fails instead.
-  The one-time cleanup was `scripts/pve02-rescue-stranded-backups.sh`. It reads the stranded
+  A one-time cleanup script, since removed, read the stranded
   files through a bind mount of `/`, because a mount over the directory hides them.
 
 - **pve02 is the homelab NFS file server — it is load-bearing, not idle.** Since the
@@ -1014,7 +1013,7 @@ one for the syntax while the text lived only in `CLAUDE.md`.
 - **`ansible-lint .` run inside `ansible/` reports `Passed: 0 failure(s), 0 warning(s) in 0
   files processed of 1 encountered` and exits 0.** It is not linting the tree; it is linting
   nothing and saying so in a line nobody reads. Pass explicit targets — `ansible-lint roles/
-  playbooks/` processes 186 files here — and assert the processed count in CI.
+  playbooks/` processes the whole tree — and assert the processed count in CI.
 
 - **Zero is the wrong threshold for that assertion.** Once a `.ansible-lint` config exists in
   the directory, the same collapsed invocation reports `1 files processed`, still green. A
