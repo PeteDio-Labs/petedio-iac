@@ -184,7 +184,8 @@
 # so this play never touches /opt/plane, and the play above never touches /opt/plane-mcp.
 # Do not merge the two compose files for tidiness (vault/Hosts/235-plane.md).
 #
-# ONE SITE PER PERSON, ONE STACK. :8790 swaps in Pedro's PAT for pdlab.dev/mcp/plane (PET-667). Each entry in
+# ONE SITE PER PERSON, ONE STACK. :8790 swaps in the Claude Member user's PAT for pdlab.dev/mcp/plane
+# (PET-667, PET-660), so project threads stop acting as Pedro. plane_mcp_api_key holds that PAT. Each entry in
 # plane_mcp_members gets a site of its own: :8791 swaps in Tom's PAT for mcp-tom.pdlab.dev
 # (PET-610), and :8792 swaps in Sonia's for mcp-sonia.pdlab.dev (PET-650). Each route's Access
 # policy admits one email, so each port acts as one Plane user. To add a person, add an entry

@@ -8,6 +8,8 @@
 # Claude sends `Authorization: Bearer <opaque Access token>`; the server needs
 # `Authorization: Bearer <Plane PAT>`. That swap is this file's whole job.
 #
+# PLANE_API_KEY is the Claude Member user's PAT (PET-660), not Pedro's.
+#
 # Everything else passes through untouched — importantly Mcp-Method, Mcp-Name and
 # MCP-Protocol-Version, which the 2026-07-28 spec requires and gateways route on.
 {
