@@ -3,8 +3,10 @@
 #
 # Run AFTER configure-vault.yml (which creates the audit dir) and AFTER the operator has:
 #   - applied vault-config (creates the vault-snapshot policy + AppRole), and
-#   - seeded the vault-snapshot AppRole role_id/secret_id under /etc/vault-snapshot/, and
-#   - created the MinIO vault-snapshots bucket + svcacct and seeded kv/services/vault-snapshots.
+#   - run scripts/seed-vault-snapshot-approle.sh, which places the vault-snapshot AppRole
+#     role_id/secret_id under /etc/vault-snapshot/ (PET-790), and
+#   - run scripts/seed-minio-221.sh, which creates the MinIO vault-snapshots bucket + svcacct
+#     and seeds kv/services/vault-snapshots.
 # See docs/runbooks/vault-resilience.md for the full order + restore procedure.
 #
 # Usage:
