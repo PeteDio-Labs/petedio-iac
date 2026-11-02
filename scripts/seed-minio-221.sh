@@ -14,7 +14,8 @@
 #
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt (PET-519)
 #   MinIO root:  $MINIO_ROOT_USER/$MINIO_ROOT_PASSWORD, else $MINIO_CREDS_FILE
-#                (default ~/petedio/.secrets/minio-221.txt, lines ROOT_USER=… and ROOT_PASSWORD=…).
+#                (default ~/petedio/.secrets/minio-221.txt, lines ROOT_USER=… and ROOT_PASSWORD=…, or
+#                the MinIO env names MINIO_ROOT_USER=… and MINIO_ROOT_PASSWORD=…).
 #                This script never prompts for it and never prints it.
 #
 # Usage:
@@ -63,18 +64,8 @@ echo "  reachable, and the token is valid"
 step "MinIO root credential for $MINIO_ENDPOINT (used locally)"
 MROOT_U="${MINIO_ROOT_USER:-}"; MROOT_P="${MINIO_ROOT_PASSWORD:-}"
 if { [ -z "$MROOT_U" ] || [ -z "$MROOT_P" ]; } && [ -f "$MINIO_CREDS_FILE" ]; then
-  # Match the exact key at the start of a line, split at the FIRST = or :, and strip only a
-  # trailing CR and one pair of surrounding quotes. Every other byte of the value stays.
-  cred(){ KEY="$1" FILE="$MINIO_CREDS_FILE" python3 -c '
-import os, re
-for line in open(os.environ["FILE"], encoding="utf-8").read().splitlines():
-    m = re.match(r"^\s*(?:export\s+)?" + re.escape(os.environ["KEY"]) + r"\s*[=:]\s*(.*)$", line, re.I)
-    if m:
-        v = m.group(1)
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"\x27":
-            v = v[1:-1]
-        print(v, end="")
-        break'; }
+  # scripts/minio-cred.py matches ROOT_USER or MINIO_ROOT_USER at the start of a line.
+  cred(){ python3 "$SCRIPT_DIR/minio-cred.py" "$MINIO_CREDS_FILE" "$1" || true; }
   [ -n "$MROOT_U" ] || MROOT_U="$(cred ROOT_USER)"
   [ -n "$MROOT_P" ] || MROOT_P="$(cred ROOT_PASSWORD)"
 fi
