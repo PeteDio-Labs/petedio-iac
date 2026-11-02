@@ -1,0 +1,12 @@
+---
+# Guests whose /root/.ssh/authorized_keys must trust the inventory identity (PET-787).
+# 119 and 221 were not created with it: 221 is hand-managed and 119 was captured into
+# Terraform after the fact, so neither got the `keys` the proxmox-lxc module installs.
+lxc_root_key_guests:
+  - 119
+  - 221
+
+# The public half of the inventory identity. Left empty, the playbook derives it from
+# lxc_root_key_private_file on the control node. It is a public key, never a secret.
+lxc_root_key_public: ""
+lxc_root_key_private_file: "~/.ssh/id_ed25519_ansible"
