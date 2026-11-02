@@ -12,7 +12,7 @@ and `~/.ssh/id_ed25519_ansible`, so the collector's connection vars need no chan
 
 ## Run it
 
-From the Mac or 247, with root SSH to pve03:
+Authentik-119 and minio-221 both live on pve03, so the play changes only that node. It checks every node in `proxmox:pve_new:pve_gpu` for the listed guests. Run it from the Mac or 247 with root SSH to the nodes. `--check` still reads the guests and reports `added` or `present`; it writes nothing.
 
 1. Run `cd ansible && ansible-playbook playbooks/configure-root-key.yml --check`.
 2. Run `ansible-playbook playbooks/configure-root-key.yml`.

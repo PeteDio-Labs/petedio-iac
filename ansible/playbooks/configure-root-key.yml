@@ -30,9 +30,12 @@
     lxc_root_key_defaults: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../roles/lxc-root-key/defaults/main.yml') | from_yaml }}"
   tasks:
     - name: Derive the public key from the private file
-      ansible.builtin.command: ssh-keygen -y -f {{ lxc_root_key_private_file | default(lxc_root_key_defaults.lxc_root_key_private_file) }}
+      vars:
+        root_key_file: "{{ lxc_root_key_private_file | default(lxc_root_key_defaults.lxc_root_key_private_file) }}"
+      ansible.builtin.command: ssh-keygen -y -f {{ root_key_file | expanduser | quote }}
       register: root_key_derived
       changed_when: false
+      check_mode: false  # read-only, and --check needs the key
       when: (lxc_root_key_public | default('')) | length == 0
 
     - name: Keep it for the node plays

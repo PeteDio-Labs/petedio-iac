@@ -3,9 +3,14 @@
 # problem is that SSH into the guest is refused.
 - name: Refuse an empty key
   ansible.builtin.assert:
-    that: lxc_root_key_public | trim | regex_search('^ssh-(ed25519|rsa) ') is not none
+    that: lxc_root_key_public | trim | regex_search('^(ssh-(ed25519|rsa)|ecdsa-sha2-[a-z0-9]+|sk-[a-z0-9@.-]+) [A-Za-z0-9+/=]+') is not none
     fail_msg: "lxc_root_key_public is not an ssh public key line."
     quiet: true
+
+- name: Split the key into type and base64 for matching
+  ansible.builtin.set_fact:
+    lxc_root_key_type: "{{ (lxc_root_key_public | trim).split()[0] }}"
+    lxc_root_key_b64: "{{ (lxc_root_key_public | trim).split()[1] }}"
 
 - name: Find which listed guests live on this node
   ansible.builtin.command: pct status {{ item }}
@@ -13,6 +18,7 @@
   register: lxc_root_key_status
   changed_when: false
   failed_when: false
+  check_mode: false  # read-only: --check must still learn where each guest lives
 
 - name: Install the key where the guest runs
   ansible.builtin.shell: |
@@ -22,10 +28,14 @@
       umask 077
       mkdir -p /root/.ssh
       touch /root/.ssh/authorized_keys
-      if grep -qxF "$1" /root/.ssh/authorized_keys; then echo present; else
+      # Match on `type base64` so a key held under another comment is not appended twice.
+      if awk -v t="$2" -v k="$3" '"'"'$1==t && $2==k {f=1} END{exit !f}'"'"' /root/.ssh/authorized_keys; then echo present; else
+        # A file without a final newline would fuse the new key onto its last line.
+        [ -z "$(tail -c1 /root/.ssh/authorized_keys)" ] || echo >> /root/.ssh/authorized_keys
         printf "%s\n" "$1" >> /root/.ssh/authorized_keys && echo added
       fi
       chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys' sh '{{ lxc_root_key_public | trim }}'
+    '{{ lxc_root_key_type }}' '{{ lxc_root_key_b64 }}'
   args: { executable: /bin/bash }
   loop: "{{ lxc_root_key_status.results | selectattr('rc', 'equalto', 0) | list }}"
   loop_control:
@@ -46,7 +56,8 @@
 - name: Read back the key and sshd's root-login setting
   ansible.builtin.shell: |
     set -o pipefail
-    pct exec {{ item.item }} -- grep -cxF '{{ lxc_root_key_public | trim }}' /root/.ssh/authorized_keys
+    pct exec {{ item.item }} -- awk -v t='{{ lxc_root_key_type }}' \
+      -v k='{{ lxc_root_key_b64 }}' '$1==t && $2==k {n++} END{print n+0}' /root/.ssh/authorized_keys
     pct exec {{ item.item }} -- sshd -T | awk '$1=="permitrootlogin"{print $2}'
   args: { executable: /bin/bash }
   loop: "{{ lxc_root_key_status.results | selectattr('rc', 'equalto', 0) | list }}"
@@ -54,8 +65,11 @@
     label: "guest {{ item.item }}"
   register: lxc_root_key_verify
   changed_when: false
+  check_mode: false  # read-only
+  when: not ansible_check_mode
 
 - name: Assert the read-back
+  when: not ansible_check_mode
   ansible.builtin.assert:
     that:
       - item.stdout_lines[0] | int == 1
