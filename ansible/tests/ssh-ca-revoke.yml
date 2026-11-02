@@ -49,7 +49,7 @@
           changed_when: true
 
         - name: Revoke
-          ansible.builtin.include_tasks: ../roles/ssh-ca/tasks/revoke.yml
+          ansible.builtin.import_tasks: ../roles/ssh-ca/tasks/revoke.yml
 
         - name: Read what is left
           ansible.builtin.find:
@@ -69,6 +69,19 @@
         - name: Assert the test examined every seeded stale class
           ansible.builtin.assert:
             that: ssh_ca_principal_files.files | length == 2 + (stale_files | length) + 2
+
+        - name: Run the revoke tasks against directories that are not the role's own
+          ansible.builtin.include_tasks: cases/ssh-ca-revoke-guard-case.yml
+          loop: ["/etc/ssh", "/etc/ssh/", "relative/auth_principals", "/"]
+          loop_control: { loop_var: bad_dir }
+
+        - name: Assert the guard stopped every wrong directory
+          ansible.builtin.assert:
+            that: guard_refused | default([]) | length == 4
+
+        - name: Assert main.yml still runs the revoke tasks
+          ansible.builtin.assert:
+            that: "lookup('ansible.builtin.file', playbook_dir ~ '/../roles/ssh-ca/tasks/main.yml') is search('import_tasks: revoke.yml')"
       always:
         - name: Remove the scratch directory
           ansible.builtin.file:
