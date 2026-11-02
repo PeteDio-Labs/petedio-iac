@@ -12,6 +12,11 @@
     lxc_root_key_type: "{{ (lxc_root_key_public | trim).split()[0] }}"
     lxc_root_key_b64: "{{ (lxc_root_key_public | trim).split()[1] }}"
 
+- name: Build the install command's arguments on one line
+  # One line: a newline in the shell block would end the pct exec command early.
+  ansible.builtin.set_fact:
+    lxc_root_key_args: "{{ [lxc_root_key_public | trim, lxc_root_key_type, lxc_root_key_b64, lxc_root_key_dir] | map('quote') | join(' ') }}"
+
 - name: Find which listed guests live on this node
   ansible.builtin.command: pct status {{ item }}
   loop: "{{ lxc_root_key_guests }}"
@@ -26,16 +31,15 @@
     id={{ item.item }}
     pct exec "$id" -- sh -c '
       umask 077
-      mkdir -p /root/.ssh
-      touch /root/.ssh/authorized_keys
+      mkdir -p "$4"
+      touch "$4/authorized_keys"
       # Match on `type base64` so a key held under another comment is not appended twice.
-      if awk -v t="$2" -v k="$3" '"'"'$1==t && $2==k {f=1} END{exit !f}'"'"' /root/.ssh/authorized_keys; then echo present; else
+      if awk -v t="$2" -v k="$3" '"'"'$1==t && $2==k {f=1} END{exit !f}'"'"' "$4/authorized_keys"; then echo present; else
         # A file without a final newline would fuse the new key onto its last line.
-        [ -z "$(tail -c1 /root/.ssh/authorized_keys)" ] || echo >> /root/.ssh/authorized_keys
-        printf "%s\n" "$1" >> /root/.ssh/authorized_keys && echo added
+        [ -z "$(tail -c1 "$4/authorized_keys")" ] || echo >> "$4/authorized_keys"
+        printf "%s\n" "$1" >> "$4/authorized_keys" && echo added
       fi
-      chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys' sh '{{ lxc_root_key_public | trim }}'
-    '{{ lxc_root_key_type }}' '{{ lxc_root_key_b64 }}'
+      chmod 700 "$4"; chmod 600 "$4/authorized_keys"' sh {{ lxc_root_key_args }}
   args: { executable: /bin/bash }
   loop: "{{ lxc_root_key_status.results | selectattr('rc', 'equalto', 0) | list }}"
   loop_control:
@@ -57,7 +61,7 @@
   ansible.builtin.shell: |
     set -o pipefail
     pct exec {{ item.item }} -- awk -v t='{{ lxc_root_key_type }}' \
-      -v k='{{ lxc_root_key_b64 }}' '$1==t && $2==k {n++} END{print n+0}' /root/.ssh/authorized_keys
+      -v k='{{ lxc_root_key_b64 }}' '$1==t && $2==k {n++} END{print n+0}' {{ lxc_root_key_dir | quote }}/authorized_keys
     pct exec {{ item.item }} -- sshd -T | awk '$1=="permitrootlogin"{print $2}'
   args: { executable: /bin/bash }
   loop: "{{ lxc_root_key_status.results | selectattr('rc', 'equalto', 0) | list }}"

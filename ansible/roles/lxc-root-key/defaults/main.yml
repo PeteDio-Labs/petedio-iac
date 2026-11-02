@@ -10,3 +10,6 @@ lxc_root_key_guests:
 # lxc_root_key_private_file on the control node. It is a public key, never a secret.
 lxc_root_key_public: ""
 lxc_root_key_private_file: "~/.ssh/id_ed25519_ansible"
+
+# Directory inside the guest that holds authorized_keys. Tests point it elsewhere.
+lxc_root_key_dir: /root/.ssh
