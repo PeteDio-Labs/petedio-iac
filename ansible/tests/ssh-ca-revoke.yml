@@ -1,0 +1,76 @@
+# ssh-ca-revoke.yml — roles/ssh-ca revokes every principals file it does not own (PET-784).
+#
+# Runs on localhost against a temporary directory, touches nothing else, needs no credential.
+# Run it from `ansible/`:
+#
+#   ansible-playbook tests/ssh-ca-revoke.yml
+#
+# WHAT THIS EXISTS TO CATCH. sshd names the principals file after the local account, so a
+# leftover file for an account name outside the role's old `^[a-z_][a-z0-9_-]*$` pattern kept
+# its certificate login after the account left ssh_ca_users. Each stale name below sits in a
+# class the pattern missed: uppercase, a dot, a leading digit, an `@`, a hidden file, a
+# directory and a symlink. The test also seeds the shape the pattern did match.
+---
+- name: Revoke principals files for every name class
+  hosts: localhost
+  gather_facts: false
+  vars:
+    ssh_ca_present:
+      - { name: inventory, principals: [inventory-read] }
+      - { name: root, principals: [pedro] }
+    stale_files: [oldsvc, Admin, svc.user, 1000user, 'a@b', .hidden]
+    stale_dirs: [dir.stale]
+    stale_links: [link.stale]
+
+  tasks:
+    - name: Make a scratch principals directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: ssh-ca-revoke
+      register: scratch
+
+    - name: Run the test and always clean up
+      block:
+        - name: Set the directory the role reads
+          ansible.builtin.set_fact:
+            ssh_ca_principals_dir: "{{ scratch.path }}/auth_principals/"
+
+        - name: Seed present and stale entries
+          ansible.builtin.shell: |
+            set -e
+            d='{{ scratch.path }}/auth_principals'
+            mkdir -p "$d"
+            for n in inventory root {{ stale_files | map('quote') | join(' ') }}; do
+              printf 'x\n' > "$d/$n"
+            done
+            mkdir "$d/{{ stale_dirs[0] }}"
+            ln -s inventory "$d/{{ stale_links[0] }}"
+          args: { executable: /bin/bash }
+          changed_when: true
+
+        - name: Revoke
+          ansible.builtin.include_tasks: ../roles/ssh-ca/tasks/revoke.yml
+
+        - name: Read what is left
+          ansible.builtin.find:
+            paths: "{{ scratch.path }}/auth_principals"
+            file_type: any
+            hidden: true
+          register: left
+
+        - name: Assert only the present users' files remain
+          ansible.builtin.assert:
+            that: (left.files | map(attribute='path') | map('basename') | sort) == ['inventory', 'root']
+            fail_msg: "left: {{ left.files | map(attribute='path') | map('basename') | list }}"
+            success_msg: >-
+              Examined {{ ssh_ca_principal_files.files | length }} entries, removed
+              {{ ssh_ca_principal_files.files | length - 2 }}; kept inventory and root.
+
+        - name: Assert the test examined every seeded stale class
+          ansible.builtin.assert:
+            that: ssh_ca_principal_files.files | length == 2 + (stale_files | length) + 2
+      always:
+        - name: Remove the scratch directory
+          ansible.builtin.file:
+            path: "{{ scratch.path }}"
+            state: absent

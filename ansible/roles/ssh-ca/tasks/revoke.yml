@@ -1,0 +1,50 @@
+---
+# Revocation (PET-771, PET-784). Needs ssh_ca_present and ssh_ca_principals_dir.
+#
+# sshd names the principals file after the local account (`%u`), and an account name can be any
+# shape: uppercase, a dot, a leading digit, an `@`. So the removal set is not a name pattern. It
+# is everything in the directory except a present user's file, whatever its type or name, hidden
+# files and symlinks included. The directory belongs to this role; nothing else writes in it.
+# Names compare by basename, so a trailing slash in ssh_ca_principals_dir cannot turn a kept
+# file into a removed one. `file: state=absent` removes a directory with its contents.
+- name: Create the principals directory
+  ansible.builtin.file:
+    path: "{{ ssh_ca_principals_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: List everything in the principals directory
+  ansible.builtin.find:
+    paths: "{{ ssh_ca_principals_dir }}"
+    file_type: any
+    hidden: true
+    recurse: false
+  register: ssh_ca_principal_files
+
+- name: Remove everything that is not a present user's principals file
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ ssh_ca_principal_files.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: (item.path | basename) not in (ssh_ca_present | map(attribute='name') | list)
+
+- name: Read the directory back
+  ansible.builtin.find:
+    paths: "{{ ssh_ca_principals_dir }}"
+    file_type: any
+    hidden: true
+    recurse: false
+  register: ssh_ca_principal_left
+
+- name: Assert only present users' principals files are left
+  ansible.builtin.assert:
+    that: ssh_ca_principal_left.files | map(attribute='path') | map('basename')
+          | difference(ssh_ca_present | map(attribute='name') | list) | length == 0
+    fail_msg: >-
+      {{ inventory_hostname }}: {{ ssh_ca_principals_dir }} still holds
+      {{ ssh_ca_principal_left.files | map(attribute='path') | map('basename')
+         | difference(ssh_ca_present | map(attribute='name') | list) | join(', ') }}.
