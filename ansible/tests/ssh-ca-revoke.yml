@@ -31,10 +31,6 @@
 
     - name: Run the test and always clean up
       block:
-        - name: Set the directory the role reads
-          ansible.builtin.set_fact:
-            ssh_ca_principals_dir: "{{ scratch.path }}/auth_principals/"
-
         - name: Seed present and stale entries
           ansible.builtin.shell: |
             set -e
@@ -50,6 +46,8 @@
 
         - name: Revoke
           ansible.builtin.import_tasks: ../roles/ssh-ca/tasks/revoke.yml
+          vars:
+            ssh_ca_principals_dir: "{{ scratch.path }}/auth_principals/"
 
         - name: Read what is left
           ansible.builtin.find:
@@ -78,6 +76,7 @@
         - name: Assert the guard stopped every wrong directory
           ansible.builtin.assert:
             that: guard_refused | default([]) | length == 4
+            fail_msg: "refused: {{ guard_refused | default([]) }}"
 
         - name: Assert main.yml still runs the revoke tasks
           ansible.builtin.assert:
