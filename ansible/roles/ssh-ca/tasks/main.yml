@@ -43,37 +43,10 @@
     group: root
     mode: "0644"
 
-# Revocation first, before any account check can stop the host: every principals file for a
-# user that is not present in ssh_ca_users goes, whether its entry says `state: absent`, was
-# deleted, or was dropped by a host_vars override. The list on this host is the whole truth.
-# Only regular, non-hidden files with a user-name shape count, and names compare by basename,
-# so a trailing slash in ssh_ca_principals_dir cannot turn a kept file into a removed one.
-- name: Create the principals directory
-  ansible.builtin.file:
-    path: "{{ ssh_ca_principals_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: List the principals files on the host
-  ansible.builtin.find:
-    paths: "{{ ssh_ca_principals_dir }}"
-    file_type: file
-    hidden: false
-    use_regex: true
-    patterns: ['^[a-z_][a-z0-9_-]*$']
-  register: ssh_ca_principal_files
-
-- name: Remove every principals file for a user that is not present
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: absent
-  loop: "{{ ssh_ca_principal_files.files
-            | rejectattr('path', 'search', '/(' ~ (ssh_ca_present | map(attribute='name') | map('regex_escape') | join('|')) ~ ')$')
-            | list }}"
-  loop_control:
-    label: "{{ item.path | basename }}"
+# Revocation first, before any account check can stop the host. tasks/revoke.yml removes every
+# entry in the principals directory that is not a present user's file (PET-784).
+- name: Revoke the principals files of users that are not present
+  ansible.builtin.import_tasks: revoke.yml
 
 # The role owns an account it created, and marks it in the GECOS field. A `create: true` entry
 # that names an account someone else made, such as a real person's, fails the host instead of
@@ -261,6 +234,7 @@
       {{ 'ssh.service reloaded' if ssh_ca_sshd_unit == 'ssh.service'
          else 'ssh.socket reads the config at each connection' }};
       principals for {{ ssh_ca_present | map(attribute='name') | join(', ') }};
-      removed principals files {{ ssh_ca_principal_files.files | map(attribute='path')
+      examined {{ ssh_ca_principal_files.files | length }} principals entries;
+      removed {{ ssh_ca_principal_files.files | map(attribute='path')
         | map('basename') | reject('in', ssh_ca_present | map(attribute='name') | list) | join(', ') or 'none' }}.
       Prove the daemon with a certificate login.

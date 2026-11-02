@@ -31,7 +31,8 @@ ssh_ca_dropin: /etc/ssh/sshd_config.d/10-ssh-ca.conf
 # account. It gets no sudo: the minimal LXC template has none, and dpkg -l needs no root.
 #
 # To revoke, set `state: absent` on the entry, or delete the entry, and re-run the play. Every
-# principals file for a user not present here is removed. `state: absent` with `create: true`
+# entry in the principals directory that is not a present user's file is removed.
+# `state: absent` with `create: true`
 # also removes the account and its home. To drop one principal, remove it from the list. An
 # entry without `state` is present, and without `create` names an account the role does not own.
 ssh_ca_users:

@@ -62,7 +62,7 @@ user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host
   `ssh-ca-sign.sh` exits non-zero then. A scheduled caller must report that, not skip.
 - Revocation is by TTL. To cut a role off before its certificates expire, set `state: absent`
   on its `ssh_ca_users` entry, delete the entry, or remove the principal from the list, and
-  re-run the play. The role removes every principals file for a user it does not list.
+  re-run the play. The role removes every entry in the principals directory that is not a listed user's file, whatever its name or type (PET-784).
 - A `pedro` certificate is root from anywhere on the LAN, the .86 mesh or the tailnet for its hour. The phone
   arrives through the pete-pi-1 subnet router, which rewrites its address to a LAN address.
 - `prevent_destroy` guards the mount and the CA. To retire the CA, remove both `lifecycle`
