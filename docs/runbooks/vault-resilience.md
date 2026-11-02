@@ -61,6 +61,8 @@ ansible-playbook ansible/playbooks/vault-snapshot.yml
 
 ### Verify
 
+`<minio-alias>` is any `mc` alias for `http://192.168.50.221:9000`. List yours with `mc alias list`.
+
 ```sh
 vault audit list                                   # 'file/' present
 systemctl list-timers vault-snapshot.timer         # scheduled

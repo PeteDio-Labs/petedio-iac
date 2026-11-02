@@ -28,8 +28,10 @@
 # Usage:
 #   ./scripts/seed-vault-snapshot-approle.sh [--rotate]
 #
-# Testing: SEED_SNAPSHOT_SOURCE_ONLY=1 defines the functions and runs nothing.
-# scripts/test-seed-vault-snapshot-approle.sh runs the whole flow against stubs.
+# The new files are staged as *.new, proved, and only then swapped into place, so a failed
+# --rotate leaves the old secret_id working and reachable.
+#
+# Testing: scripts/test-seed-vault-snapshot-approle.sh runs the whole flow against stubs.
 set -euo pipefail
 umask 077
 
@@ -71,9 +73,10 @@ as_host() {
 # The proof, run on 223. It logs in the way the snapshot script does: both values come from
 # files through `key=@file`, so neither reaches an argument list. It prints the token's
 # policies and three capabilities, and revokes the token. It exits 0 only when the revoke
-# succeeds and every value matches.
-PROOF="export VAULT_ADDR=$HOST_VAULT_ADDR VAULT_CACERT=$HOST_VAULT_CACERT; \
-t=\$(vault write -field=token auth/approle/login role_id=@$DEST/role_id secret_id=@$DEST/secret_id 2>/dev/null) && [ -n \"\$t\" ] || { echo login=refused; exit 1; }; \
+# succeeds and every value matches. $1 is "" for the live files and ".new" for the staged ones.
+proof_cmd() {
+  printf %s "export VAULT_ADDR=$HOST_VAULT_ADDR VAULT_CACERT=$HOST_VAULT_CACERT; \
+t=\$(vault write -field=token auth/approle/login role_id=@$DEST/role_id$1 secret_id=@$DEST/secret_id$1 2>/dev/null) && [ -n \"\$t\" ] || { echo login=refused; exit 1; }; \
 export VAULT_TOKEN=\$t; \
 p=\$(vault token lookup -field=policies 2>/dev/null); \
 s=\$(vault token capabilities sys/storage/raft/snapshot 2>/dev/null); \
@@ -82,6 +85,16 @@ a=\$(vault token capabilities kv/data/admin/probe 2>/dev/null); \
 vault token revoke -self >/dev/null 2>&1 || { echo revoke=failed policies=\$p; exit 1; }; \
 echo login=ok policies=\$p snapshot=\$s minio_creds=\$k admin=\$a; \
 [ \"\$p\" = '[default vault-snapshot]' ] && [ \"\$s\" = read ] && [ \"\$k\" = read ] && [ \"\$a\" = deny ]"
+}
+
+# run_proof SUFFIX sets PROOF_OUT and returns the proof's exit code. An SSH failure (255)
+# stops the script, because it says nothing about the credentials.
+run_proof() {
+  local rc=0
+  PROOF_OUT="$(as_host "$(proof_cmd "$1")")" || rc=$?
+  [ "$rc" -ne 255 ] || die "SSH to $SNAP_HOST failed during the proof (exit 255). Nothing was proved; fix the connection and run this again."
+  return "$rc"
+}
 
 # Destroy one secret_id by its accessor, and print one verdict: destroyed, absent or failed.
 # Vault answers an accessor it does not hold with "failed to find accessor entry", and that
@@ -97,12 +110,30 @@ destroy_accessor() {
   fi
 }
 
-# deliver NAME writes stdin to $DEST/NAME on 223, mode 0600 from the first byte, swapped in whole.
-deliver() {
-  as_host "umask 0177 && cat > $DEST/$1.new && mv -f $DEST/$1.new $DEST/$1"
+# host_has returns 0 when 223 holds either credential file and 1 when it holds neither. Any
+# other exit code, an SSH failure (255) included, stops the script: a dropped connection must
+# not read as "file absent" and send the script on to mint over live credentials.
+host_has() {
+  local rc=0
+  as_host "test -e $DEST/role_id || test -e $DEST/secret_id" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) die "SSH to $SNAP_HOST failed while looking for $DEST (exit $rc). Fix the connection and run this again." ;;
+  esac
 }
 
-[ -z "${SEED_SNAPSHOT_SOURCE_ONLY:-}" ] || return 0 2>/dev/null || exit 0
+# host_read NAME prints $DEST/NAME, or nothing when the file is absent. An SSH failure stops the script.
+host_read() {
+  as_host "if test -e $DEST/$1; then cat $DEST/$1; fi" \
+    || die "SSH to $SNAP_HOST failed while reading $DEST/$1."
+}
+
+# deliver NAME writes stdin to $DEST/NAME.new on 223, mode 0600 from the first byte. The swap
+# into place happens only after the proof passes.
+deliver() {
+  as_host "umask 0177 && cat > $DEST/$1.new"
+}
 
 for t in vault jq ssh; do command -v "$t" >/dev/null || die "$t not in PATH"; done
 [ -z "$SNAP_SSH_KEY" ] || [ -f "$SNAP_SSH_KEY" ] || die "No SSH key at $SNAP_SSH_KEY. Unset SNAP_SSH_KEY or point it at the key $SNAP_HOST accepts."
@@ -113,26 +144,27 @@ as_host "command -v vault >/dev/null && test -d /opt/vault/tls" \
   || die "Cannot reach $SNAP_HOST, or it has no vault CLI. Check SSH and that the vault-unseal and configure-vault playbooks ran."
 
 step "Checking what 223 holds already"
-HAVE=0
-if as_host "test -e $DEST/role_id || test -e $DEST/secret_id"; then
+HAVE=0; OLD_LOGS_IN=0
+if host_has; then
   HAVE=1
-  if OUT="$(as_host "$PROOF")"; then
-    echo "  $OUT"
-    if [ "$ROTATE" -eq 0 ] && [ -z "$(as_host "cat $DEST/secret_id_accessor.old 2>/dev/null" || true)" ]; then
+  if run_proof ""; then
+    OLD_LOGS_IN=1
+    echo "  $PROOF_OUT"
+    if [ "$ROTATE" -eq 0 ] && [ -z "$(host_read secret_id_accessor.old)" ]; then
       echo "  The files on 223 log in as $ROLE. Nothing to do; pass --rotate to replace the secret_id."
       exit 0
     fi
   else
-    echo "  ${OUT:-no output}"
+    echo "  ${PROOF_OUT:-no output}"
     [ "$ROTATE" -eq 1 ] || die "$DEST holds AppRole files that fail the proof above. When login=refused, read them on 223, then re-run with --rotate to replace them."
   fi
 fi
 OLD_ACCESSOR=""
 if [ "$HAVE" -eq 1 ]; then
-  OLD_ACCESSOR="$(as_host "cat $DEST/secret_id_accessor 2>/dev/null" || true)"
+  OLD_ACCESSOR="$(host_read secret_id_accessor)"
 fi
 # An accessor a past --rotate replaced but could not destroy. Its secret_id may still log in.
-PENDING="$(as_host "cat $DEST/secret_id_accessor.old 2>/dev/null" || true)"
+PENDING="$(host_read secret_id_accessor.old)"
 
 step "Authenticating to Vault"
 [ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'. Run this from inside the repo, or export VAULT_CACERT."
@@ -168,41 +200,46 @@ if [ -n "$PENDING" ]; then
   fi
 fi
 
+# The trap is set before the mint, so a mint that returns a secret_id and no accessor still
+# leaves nothing that can log in. Any exit before the proof passes removes the staged files
+# and destroys the new secret_id, by accessor or, with none, by the secret_id on stdin. The
+# live files are never touched until the proof passes, so a failed --rotate leaves the old
+# secret_id working and reachable.
+SECRET_ID=""; ACCESSOR=""; STAGED=0; PROVEN=0
+cleanup_unproven() {
+  [ "$PROVEN" -eq 1 ] && return 0
+  if [ "$STAGED" -eq 1 ]; then
+    as_host "rm -f $DEST/role_id.new $DEST/secret_id.new $DEST/secret_id_accessor.new" \
+      && echo "  Removed the staged files from $DEST on 223." >&2
+  fi
+  if [ -n "$ACCESSOR" ]; then
+    if vault write "auth/approle/role/$ROLE/secret-id-accessor/destroy" secret_id_accessor="$ACCESSOR" >/dev/null 2>&1; then
+      echo "  Destroyed the unproven secret_id (accessor $ACCESSOR)." >&2
+    else
+      echo "  Could not destroy accessor $ACCESSOR. Run: vault write auth/approle/role/$ROLE/secret-id-accessor/destroy secret_id_accessor=$ACCESSOR" >&2
+    fi
+  elif [ -n "$SECRET_ID" ]; then
+    if printf '{"secret_id":"%s"}' "$SECRET_ID" | vault write "auth/approle/role/$ROLE/secret-id/destroy" - >/dev/null 2>&1; then
+      echo "  Destroyed the unproven secret_id (Vault returned no accessor for it)." >&2
+    else
+      echo "  Vault returned no accessor and refused to destroy the new secret_id. List accessors: vault list auth/approle/role/$ROLE/secret-id" >&2
+    fi
+  fi
+}
+trap cleanup_unproven EXIT
+
 step "Minting a secret_id for $ROLE"
 MINT_JSON="$(vault write -format=json -f "auth/approle/role/$ROLE/secret-id" \
   metadata='{"host":"vault-223","pet":"PET-790"}')"
 SECRET_ID="$(jq -r '.data.secret_id // empty' <<<"$MINT_JSON")"
 ACCESSOR="$(jq -r '.data.secret_id_accessor // empty' <<<"$MINT_JSON")"
 unset MINT_JSON
-[ -n "$SECRET_ID" ] && [ -n "$ACCESSOR" ] || die "vault write did not return a secret_id."
+[ -n "$SECRET_ID" ] && [ -n "$ACCESSOR" ] || die "vault write did not return both a secret_id and its accessor."
 echo "  accessor $ACCESSOR"
 
-# Any exit before the proof passes destroys this secret_id, so a failed run leaves nothing
-# that can log in.
-PROVEN=0
-DELIVERED=0
-destroy_unless_proven() {
-  [ "$PROVEN" -eq 1 ] && return 0
-  if [ "$DELIVERED" -eq 1 ]; then
-    as_host "rm -f $DEST/role_id $DEST/secret_id $DEST/secret_id_accessor" \
-      && echo "  Removed the unproven files from $DEST on 223." >&2
-  fi
-  if vault write "auth/approle/role/$ROLE/secret-id-accessor/destroy" secret_id_accessor="$ACCESSOR" >/dev/null 2>&1; then
-    echo "  Destroyed the unproven secret_id (accessor $ACCESSOR)." >&2
-  else
-    echo "  Could not destroy accessor $ACCESSOR. Run: vault write auth/approle/role/$ROLE/secret-id-accessor/destroy secret_id_accessor=$ACCESSOR" >&2
-  fi
-}
-trap destroy_unless_proven EXIT
-
-step "Delivering to $DEST on 223 (stdin only, never an argument)"
+step "Staging in $DEST on 223 (stdin only, never an argument)"
 as_host "mkdir -p $DEST && chmod 700 $DEST"
-DELIVERED=1
-# Record the accessor being replaced BEFORE its files are overwritten, so a run that dies
-# from here on still leaves a record of the secret_id to destroy.
-if [ -n "$OLD_ACCESSOR" ] && [ "$OLD_ACCESSOR" != "$ACCESSOR" ]; then
-  printf '%s' "$OLD_ACCESSOR" | deliver secret_id_accessor.old
-fi
+STAGED=1
 printf '%s' "$ROLE_ID" | deliver role_id
 printf '%s' "$SECRET_ID" | deliver secret_id
 unset SECRET_ID
@@ -210,21 +247,32 @@ unset SECRET_ID
 # that already holds that right. It lets a later --rotate remove this secret_id.
 printf '%s' "$ACCESSOR" | deliver secret_id_accessor
 
-step "Verifying on 223 (owner, mode and size only, never the contents)"
+step "Verifying the staged files on 223 (owner, mode and size only, never the contents)"
 for f in role_id secret_id; do
-  read -r LEN MODE OWNER <<<"$(as_host "stat -c '%s %a %U' $DEST/$f")"
-  [ "${LEN:-0}" -gt 0 ] || die "$DEST/$f is empty on 223."
+  read -r LEN MODE OWNER <<<"$(as_host "stat -c '%s %a %U' $DEST/$f.new")"
+  [ "${LEN:-0}" -gt 0 ] || die "$DEST/$f.new is empty on 223."
   [ "$MODE" = "600" ] && [ "$OWNER" = "root" ] \
-    || die "$DEST/$f is mode $MODE, owner $OWNER. Expected 600, root."
-  echo "  $f: $LEN bytes, mode $MODE, $OWNER."
+    || die "$DEST/$f.new is mode $MODE, owner $OWNER. Expected 600, root."
+  echo "  $f.new: $LEN bytes, mode $MODE, $OWNER."
 done
 
-step "Proving the login from 223"
-OUT="$(as_host "$PROOF")" || die "The login on 223 failed: ${OUT:-no output}"
-echo "  $OUT"
+step "Proving the staged login from 223"
+run_proof ".new" || die "The login on 223 failed: ${PROOF_OUT:-no output}"
+echo "  $PROOF_OUT"
 PROVEN=1
 
+# Record the accessor being replaced BEFORE the swap, so a run that dies from here on still
+# leaves a record of the secret_id to destroy.
 if [ -n "$OLD_ACCESSOR" ] && [ "$OLD_ACCESSOR" != "$ACCESSOR" ]; then
+  printf '%s' "$OLD_ACCESSOR" | as_host "umask 0177 && cat > $DEST/secret_id_accessor.old"
+fi
+step "Swapping the proven files into place"
+as_host "cd $DEST && mv -f role_id.new role_id && mv -f secret_id.new secret_id && mv -f secret_id_accessor.new secret_id_accessor"
+run_proof "" || die "The swapped files on 223 fail the proof: ${PROOF_OUT:-no output}"
+echo "  $PROOF_OUT"
+
+STATUS=0
+if [ "$HAVE" -eq 1 ] && [ -n "$OLD_ACCESSOR" ] && [ "$OLD_ACCESSOR" != "$ACCESSOR" ]; then
   step "Destroying the replaced secret_id"
   case "$(destroy_accessor "$OLD_ACCESSOR")" in
     destroyed) echo "  destroyed accessor $OLD_ACCESSOR." ;;
@@ -234,6 +282,9 @@ if [ -n "$OLD_ACCESSOR" ] && [ "$OLD_ACCESSOR" != "$ACCESSOR" ]; then
     *) die "destroy_accessor returned an unknown verdict." ;;
   esac
   as_host "rm -f $DEST/secret_id_accessor.old"
+elif [ "$OLD_LOGS_IN" -eq 1 ]; then
+  STATUS=1
+  printf '\033[31mWARNING\033[0m %s\n' "223 held working credential files but no secret_id_accessor, so the replaced secret_id is still valid and this script cannot destroy it. List the accessors and destroy the old one: vault list auth/approle/role/$ROLE/secret-id" >&2
 fi
 
 step "Next"
@@ -244,8 +295,9 @@ cat <<TXT
     cd ansible && ansible-playbook playbooks/vault-snapshot.yml
     ssh $SNAP_HOST systemctl start vault-snapshot.service
     ssh $SNAP_HOST journalctl -u vault-snapshot.service -n 30
-    mc ls <minio-alias>/vault-snapshots
+    mc ls <alias>/vault-snapshots   # <alias>: any mc alias for http://192.168.50.221:9000 (mc alias list)
 
   To take the access back, destroy the secret_id:
     vault write auth/approle/role/$ROLE/secret-id-accessor/destroy secret_id_accessor=$ACCESSOR
 TXT
+exit "$STATUS"

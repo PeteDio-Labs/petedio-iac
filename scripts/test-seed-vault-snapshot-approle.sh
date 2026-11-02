@@ -16,7 +16,7 @@ ok()  { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n       want %s, got %s\n' "$1" "$2" "$3"; }
 eq()  { [ "$3" = "$2" ] && ok "$1" || bad "$1" "[$2]" "[$3]"; }
 
-for t in jq python3; do command -v "$t" >/dev/null || { echo "SKIP: $t not in PATH"; exit 0; }; done
+for t in jq; do command -v "$t" >/dev/null || { echo "FAIL: $t not in PATH, so nothing was tested" >&2; exit 1; }; done
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 BIN="$T/bin"; STATE="$T/state"; HOSTDIR="$T/etc-vault-snapshot"; mkdir -p "$BIN" "$STATE"
@@ -26,6 +26,8 @@ cat > "$BIN/ssh" <<'STUB'
 # Run the last argument locally, as the stub host. The stub host has the vault CLI and TLS dir.
 cmd="${@: -1}"
 case "$cmd" in "command -v vault"*) exit 0 ;; esac
+# A dropped connection answers 255 to the credential-file check, as ssh does.
+[ -z "${FAKE_SSH_FLAKY:-}" ] || case "$cmd" in "test -e "*) exit 255 ;; esac
 exec bash -c "$cmd"
 STUB
 
@@ -40,11 +42,15 @@ case "$args" in
   "write -format=json -f auth/approle/role/vault-snapshot/secret-id "*)
     n=$(( $(cat "$S/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$S/n"
     echo "SECRETVALUE-$n" >> "$S/valid"
-    printf '{"data":{"secret_id":"SECRETVALUE-%s","secret_id_accessor":"ACC-%s"}}\n' "$n" "$n" ;;
+    if [ -n "${FAKE_NO_ACCESSOR:-}" ]; then printf '{"data":{"secret_id":"SECRETVALUE-%s"}}\n' "$n"
+    else printf '{"data":{"secret_id":"SECRETVALUE-%s","secret_id_accessor":"ACC-%s"}}\n' "$n" "$n"; fi ;;
   "write -field=token auth/approle/login "*)
     sid_file="${args##*secret_id=@}"
-    grep -qxF "$(cat "$sid_file" 2>/dev/null)" "$S/valid" 2>/dev/null && printf 'TOKEN' || exit 2 ;;
-  "token lookup -field=policies")       printf '%s' "${FAKE_POLICIES:-[default vault-snapshot]}" ;;
+    grep -qxF "$(cat "$sid_file" 2>/dev/null)" "$S/valid" 2>/dev/null || exit 2
+    case "$sid_file" in *.new) printf 'TOKEN-NEW' ;; *) printf 'TOKEN' ;; esac ;;
+  "token lookup -field=policies")
+    if [ "${VAULT_TOKEN:-}" = TOKEN-NEW ] && [ -n "${FAKE_POLICIES_NEW:-}" ]; then printf '%s' "$FAKE_POLICIES_NEW"
+    else printf '%s' "${FAKE_POLICIES:-[default vault-snapshot]}"; fi ;;
   "token capabilities sys/storage/raft/snapshot") echo read ;;
   "token capabilities kv/data/services/vault-snapshots") echo read ;;
   "token capabilities kv/data/admin/probe")        echo "${FAKE_ADMIN:-deny}" ;;
@@ -53,6 +59,9 @@ case "$args" in
     [ -z "${FAKE_DESTROY_FAIL:-}" ] || { echo "Error: permission denied" >&2; exit 2; }
     acc="${args##*accessor=}"; echo "$acc" >> "$S/destroyed"
     sid="SECRETVALUE-${acc#ACC-}"; grep -vxF "$sid" "$S/valid" > "$S/valid.new"; mv "$S/valid.new" "$S/valid" ;;
+  "write auth/approle/role/vault-snapshot/secret-id/destroy -")
+    sid="$(sed -n 's/.*"secret_id":"\([^"]*\)".*/\1/p')"; echo "SID:$sid" >> "$S/destroyed"
+    grep -vxF "$sid" "$S/valid" > "$S/valid.new"; mv "$S/valid.new" "$S/valid" ;;
   *) echo "stub vault: unhandled: $args" >&2; exit 99 ;;
 esac
 STUB
@@ -61,7 +70,7 @@ chmod +x "$BIN/ssh" "$BIN/vault"
 : > "$T/ca.crt"
 export STATE PATH="$BIN:$PATH" VAULT_TOKEN=t VAULT_CACERT="$T/ca.crt" SNAP_CRED_DIR="$HOSTDIR"
 SEED="$HERE/seed-vault-snapshot-approle.sh"
-reset() { rm -rf "$HOSTDIR" "$STATE"; mkdir -p "$STATE"; : > "$STATE/valid"; : > "$STATE/destroyed"; unset FAKE_POLICIES FAKE_DESTROY_FAIL FAKE_ADMIN FAKE_REVOKE_FAIL; }
+reset() { rm -rf "$HOSTDIR" "$STATE"; mkdir -p "$STATE"; : > "$STATE/valid"; : > "$STATE/destroyed"; unset FAKE_POLICIES FAKE_POLICIES_NEW FAKE_DESTROY_FAIL FAKE_ADMIN FAKE_REVOKE_FAIL FAKE_SSH_FLAKY FAKE_NO_ACCESSOR; }
 minted() { cat "$STATE/n" 2>/dev/null || echo 0; }
 mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 destroyed() { tr '\n' ' ' < "$STATE/destroyed" | sed 's/ $//'; }
@@ -131,6 +140,43 @@ reset
 FAKE_TOKEN_BAD=1 "$SEED" >/dev/null 2>&1; rc=$?
 [ "$rc" -ne 0 ] && ok "exits non-zero" || bad "exits non-zero" "non-zero" "$rc"
 eq "mints nothing" 0 "$(minted)"
+
+echo "a failed --rotate proof leaves the old secret_id working and in place"
+reset
+"$SEED" >/dev/null 2>&1
+export FAKE_POLICIES_NEW='[default vault-snapshot extra]'
+"$SEED" --rotate >/dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "exits non-zero" || bad "exits non-zero" "non-zero" "$rc"
+eq "live secret_id unchanged" SECRETVALUE-1 "$(cat "$HOSTDIR/secret_id")"
+eq "live accessor unchanged" ACC-1 "$(cat "$HOSTDIR/secret_id_accessor")"
+grep -qxF SECRETVALUE-1 "$STATE/valid" && ok "old secret_id still valid in Vault" || bad "old secret_id still valid in Vault" present absent
+eq "only the new secret_id destroyed" ACC-2 "$(destroyed)"
+eq "no staged files left" "" "$(ls "$HOSTDIR" | grep '\.new$' | tr '\n' ' ')"
+unset FAKE_POLICIES_NEW
+"$SEED" >/dev/null 2>&1; rc=$?
+eq "the old files still prove, so a re-run exits 0" 0 "$rc"
+
+echo "a dropped connection never reads as an absent file"
+reset
+FAKE_SSH_FLAKY=1 "$SEED" >/dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "exits non-zero" || bad "exits non-zero" "non-zero" "$rc"
+eq "mints nothing" 0 "$(minted)"
+
+echo "rotate when 223 holds no accessor file"
+reset
+"$SEED" >/dev/null 2>&1
+rm -f "$HOSTDIR/secret_id_accessor"
+OUT="$("$SEED" --rotate 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && ok "exits non-zero" || bad "exits non-zero" "non-zero" "$rc"
+case "$OUT" in *"no secret_id_accessor"*) ok "warns that the old secret_id is still valid" ;; *) bad "warns that the old secret_id is still valid" "warning" "$OUT" ;; esac
+eq "new secret_id placed" SECRETVALUE-2 "$(cat "$HOSTDIR/secret_id")"
+
+echo "a mint that returns no accessor leaves no live secret_id"
+reset
+FAKE_NO_ACCESSOR=1 "$SEED" >/dev/null 2>&1; rc=$?
+[ "$rc" -ne 0 ] && ok "exits non-zero" || bad "exits non-zero" "non-zero" "$rc"
+eq "secret_id destroyed by value" SID:SECRETVALUE-1 "$(destroyed)"
+[ ! -s "$STATE/valid" ] && ok "nothing valid remains" || bad "nothing valid remains" empty "$(cat "$STATE/valid")"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
