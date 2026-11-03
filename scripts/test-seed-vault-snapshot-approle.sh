@@ -48,9 +48,14 @@ case "$args" in
     sid_file="${args##*secret_id=@}"
     grep -qxF "$(cat "$sid_file" 2>/dev/null)" "$S/valid" 2>/dev/null || exit 2
     case "$sid_file" in *.new) printf 'TOKEN-NEW' ;; *) printf 'TOKEN' ;; esac ;;
-  "token lookup -field=policies")
-    if [ "${VAULT_TOKEN:-}" = TOKEN-NEW ] && [ -n "${FAKE_POLICIES_NEW:-}" ]; then printf '%s' "$FAKE_POLICIES_NEW"
-    else printf '%s' "${FAKE_POLICIES:-[default vault-snapshot]}"; fi ;;
+  "token lookup -field="*)              echo "flag provided but not defined: -field" >&2; exit 1 ;;
+  "token lookup -format=json")
+    # Vault 2.x prints indented JSON. The key to match is "policies", not "token_policies".
+    if [ "${VAULT_TOKEN:-}" = TOKEN-NEW ] && [ -n "${FAKE_POLICIES_NEW:-}" ]; then pol="$FAKE_POLICIES_NEW"
+    else pol="${FAKE_POLICIES:-[default vault-snapshot]}"; fi
+    pol="${pol#[}"; pol="${pol%]}"
+    json="$(printf '%s\n' $pol | jq -R . | jq -s .)"
+    jq -n --argjson p "$json" '{data:{policies:$p,token_policies:["default"],identity_policies:[]}}' ;;
   "token capabilities sys/storage/raft/snapshot") echo read ;;
   "token capabilities kv/data/services/vault-snapshots") echo read ;;
   "token capabilities kv/data/admin/probe")        echo "${FAKE_ADMIN:-deny}" ;;
