@@ -1,5 +1,7 @@
-# Deploys the static site to S3 and invalidates CloudFront over GitHub OIDC (PET-774).
-# No AWS key exists: the role trusts only this repo's main branch (modules/portfolio-site/iam.tf).
+# Deploys the static site to S3 and invalidates CloudFront (PET-774, PET-816). Matches
+# deploy_auth = "user" in modules/portfolio-site: the deploy IAM user's key sits in the
+# `production` environment secrets, which only main may use. The key reaches the AWS steps
+# only, never the install or build steps.
 name: deploy
 
 on:
@@ -8,7 +10,6 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  id-token: write # mint the OIDC token
   contents: read
 
 concurrency:
@@ -18,17 +19,22 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: production
     env:
-      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      AWS_DEFAULT_REGION: us-east-2
       BUCKET: ${{ vars.BUCKET }}
       DISTRIBUTION_ID: ${{ vars.DISTRIBUTION_ID }}
     steps:
-      # A missing variable would otherwise surface as an opaque AWS error, or as a sync to nowhere.
-      - name: Require deploy variables
+      # An empty value would surface as an opaque AWS error, or as a sync to nowhere.
+      - name: Require deploy variables and secrets
+        env:
+          HAS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
+          HAS_KEY_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY != '' }}
         run: |
-          for v in AWS_ROLE_ARN BUCKET DISTRIBUTION_ID; do
+          for v in BUCKET DISTRIBUTION_ID; do
             [ -n "${!v}" ] || { echo "::error::repository variable $v is empty"; exit 1; }
           done
+          [ "$HAS_KEY_ID" = true ] && [ "$HAS_KEY_SECRET" = true ] || { echo "::error::the production environment secrets AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are not both set"; exit 1; }
 
       # TODO before first use: pin each action to a full commit SHA, as petedio-iac does.
       - uses: actions/checkout@v4
@@ -37,12 +43,16 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
 
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          aws-region: us-east-2
+      - name: Confirm the deploy identity
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: aws sts get-caller-identity --query Arn --output text
 
       - name: Sync to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           count=$(find dist -type f | wc -l)
           [ "$count" -gt 0 ] || { echo "::error::dist/ is empty, refusing to sync with --delete"; exit 1; }
@@ -50,6 +60,9 @@ jobs:
           echo "synced $count file(s) to $BUCKET"
 
       - name: Invalidate CloudFront
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           id=$(aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" --query Invalidation.Id --output text)
           aws cloudfront wait invalidation-completed --distribution-id "$DISTRIBUTION_ID" --id "$id"

@@ -14,6 +14,12 @@ The brand tokens and components come from the toonish-ui kit (PET-809). Until it
 
 ## Deploy
 
-`.github/workflows/deploy.yml` runs on a push to `main`. It assumes the AWS role over OIDC,
-syncs `dist/` to the bucket and invalidates the cache. Set these repository variables from the
-`portfolio-site` module outputs: `AWS_ROLE_ARN`, `BUCKET`, `DISTRIBUTION_ID`.
+`.github/workflows/deploy.yml` runs on a push to `main` and matches `deploy_auth = "user"`. It signs in
+with the deploy user's key from the `production` environment secrets
+(`bash scripts/portfolio-deploy-key.sh` in `petedio-iac` creates them), syncs `dist/` to the bucket and
+invalidates the cache. Set the repository variables `BUCKET` and `DISTRIBUTION_ID` from the module
+outputs.
+
+For `deploy_auth = "oidc"`, replace the key secrets with `permissions: id-token: write`, an
+`aws-actions/configure-aws-credentials` step with `role-to-assume` set to the `deploy_role_arn` output,
+and drop the environment.
