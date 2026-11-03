@@ -5,8 +5,11 @@
 #
 # Auth: AppRole `vault-snapshot` (policy: sys/storage/raft/snapshot + read the MinIO
 # creds). role_id/secret_id are read with vault's key=@file syntax so the secret_id never
-# appears on a command line; MinIO creds are read from Vault and passed via MC_HOST_ env so
-# they are never written to ~/.mc/config.json or argv. No secret is ever echoed.
+# appears on a command line. MinIO creds are read from Vault and handed to curl as a config
+# on stdin (`-K -`), so they reach neither argv nor disk. No secret is ever echoed.
+#
+# The upload uses `curl --aws-sigv4`, not mc (PET-800): dl.min.io returns 410 Gone for every
+# community mc download, so the host installs no MinIO client.
 set -euo pipefail
 
 export VAULT_ADDR="{{ vault_snapshot_vault_addr }}"
@@ -16,8 +19,7 @@ ROLE_ID_FILE="{{ vault_snapshot_role_id_file }}"
 SECRET_ID_FILE="{{ vault_snapshot_secret_id_file }}"
 SNAP_DIR="{{ vault_snapshot_local_dir }}"
 RETAIN="{{ vault_snapshot_retain_local }}"
-MC="{{ vault_snapshot_mc_path }}"
-MC_ALIAS="{{ vault_snapshot_mc_alias }}"
+REGION="{{ vault_snapshot_minio_region }}"
 MINIO_URL="{{ vault_snapshot_minio_scheme }}://{{ vault_snapshot_minio_hostport }}"
 BUCKET="{{ vault_snapshot_bucket }}"
 CREDS_PATH="{{ vault_snapshot_minio_creds_path | regex_replace('^kv/data/', 'kv/') }}"
@@ -26,7 +28,8 @@ log() { printf 'vault-snapshot: %s\n' "$*"; }
 die() { printf 'vault-snapshot: ERROR: %s\n' "$*" >&2; exit 1; }
 
 command -v vault >/dev/null || die "vault CLI not found"
-[ -x "$MC" ] || die "mc not found at $MC"
+command -v curl >/dev/null || die "curl not found"
+command -v sha256sum >/dev/null || die "sha256sum not found"
 [ -r "$ROLE_ID_FILE" ] || die "role_id unreadable ($ROLE_ID_FILE) — operator must seed it"
 [ -r "$SECRET_ID_FILE" ] || die "secret_id unreadable ($SECRET_ID_FILE) — operator must seed it"
 
@@ -43,29 +46,49 @@ export VAULT_TOKEN
 # --- External-dependency PRECONDITIONS (PET-151) -------------------------------------
 # Verify the MinIO creds + destination bucket BEFORE doing any work, so a missing external
 # dependency fails fast with an actionable pointer — not mid-run after the snapshot is already
-# taken (the PR #58 lesson: the bucket was assumed to exist). Read MinIO creds (by reference)
-# and hand them to mc via MC_HOST_ env — not argv, not persisted to ~/.mc. -field returns just
-# the value, never logged.
-mc_key="$(vault kv get -field=access_key "$CREDS_PATH")" ||
+# taken (the PR #58 lesson: the bucket was assumed to exist). -field returns just the value,
+# never logged.
+s3_key="$(vault kv get -field=access_key "$CREDS_PATH")" ||
   die "MinIO access_key unreadable at ${CREDS_PATH} — is the vault-snapshots svcacct seeded? See docs/runbooks/vault-resilience.md."
-mc_sec="$(vault kv get -field=secret_key "$CREDS_PATH")" ||
+s3_sec="$(vault kv get -field=secret_key "$CREDS_PATH")" ||
   die "MinIO secret_key unreadable at ${CREDS_PATH} — is the vault-snapshots svcacct seeded? See docs/runbooks/vault-resilience.md."
-export MC_HOST_${MC_ALIAS}="{{ vault_snapshot_minio_scheme }}://${mc_key}:${mc_sec}@{{ vault_snapshot_minio_hostport }}"
-unset mc_key mc_sec
 
-# The bucket is created out-of-band by the operator — assert it exists rather than letting a
-# later `mc cp` fail with an opaque error after the snapshot work is already done.
-"$MC" ls "${MC_ALIAS}/${BUCKET}" >/dev/null 2>&1 ||
-  die "MinIO bucket '${BUCKET}' missing or unreachable at ${MINIO_URL} — create it before the timer can store snapshots: 'mc mb <alias>/${BUCKET} && mc version enable <alias>/${BUCKET}'. See docs/runbooks/vault-resilience.md."
+# One signed S3 call. The keys go to curl as a config on stdin, so they never appear in argv.
+# The HTTP status is the last line of stdout. A transport failure (no route, timeout) makes
+# curl exit non-zero.
+s3() {
+  curl -sS --connect-timeout 10 --max-time 900 --aws-sigv4 "aws:amz:${REGION}:s3" \
+    -K - -w '\n%{http_code}' "$@" <<EOF
+user = "${s3_key}:${s3_sec}"
+EOF
+}
+# Status of an s3 call, with the body discarded.
+s3_status() { s3 -o /dev/null "$@" | tail -n 1; }
+
+# The bucket is created out-of-band by the operator — assert it exists rather than letting the
+# upload fail with an opaque error after the snapshot work is already done.
+code="$(s3_status "${MINIO_URL}/${BUCKET}/?list-type=2&max-keys=1")" || code="000"
+[ "$code" = "200" ] ||
+  die "MinIO bucket '${BUCKET}' missing or unreachable at ${MINIO_URL} (HTTP ${code}) — create it before the timer can store snapshots: 'mc mb <alias>/${BUCKET} && mc version enable <alias>/${BUCKET}' from a host with mc. See docs/runbooks/vault-resilience.md."
 
 # Dependencies verified — take the snapshot.
 vault operator raft snapshot save "$snap" || die "raft snapshot save failed"
 [ -s "$snap" ] || die "snapshot file is empty: $snap"
 unset VAULT_TOKEN
 
-# Upload (bucket existence already asserted above; this die is the secondary guard).
-"$MC" cp --quiet "$snap" "${MC_ALIAS}/${BUCKET}/" >/dev/null || die "upload to MinIO failed"
-log "uploaded ${snap##*/} to ${MINIO_URL}/${BUCKET}/"
+# Upload. The payload hash goes in the signed headers, so MinIO verifies the body it stores.
+obj="${snap##*/}"
+size="$(wc -c <"$snap" | tr -d ' ')"
+sum="$(sha256sum "$snap" | cut -d' ' -f1)"
+code="$(s3_status -H "x-amz-content-sha256: ${sum}" --upload-file "$snap" "${MINIO_URL}/${BUCKET}/${obj}")" || code="000"
+[ "$code" = "200" ] || die "upload to MinIO failed (HTTP ${code})"
+
+# Read the object back: the stored size must equal the local size. A 200 on the PUT alone
+# does not prove the object landed whole.
+stored="$(s3 --head -o - "${MINIO_URL}/${BUCKET}/${obj}" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-length"{print $2}')" || stored=""
+[ "$stored" = "$size" ] || die "${obj} reads back as '${stored:-no size}' bytes in MinIO, expected ${size}"
+unset s3_key s3_sec
+log "uploaded ${obj} (${size} bytes, sha256 ${sum}) to ${MINIO_URL}/${BUCKET}/"
 
 # Local retention: keep the newest $RETAIN snapshots, drop older (durable copy is in MinIO).
 # shellcheck disable=SC2012
