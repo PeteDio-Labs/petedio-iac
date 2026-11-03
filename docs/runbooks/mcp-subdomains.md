@@ -20,7 +20,10 @@ for the lab connector. Pedro runs steps 2 to 4.
    Set `lab_agent_access_aud` in `ansible/playbooks/configure-pete-bot.yml` to that value in a
    PR, merge it, and run the configure-pete-bot play. Add the new lab connector, call a tool,
    and remove the old connector.
-4. **Check both.** An unauthenticated request must return 401:
+4. **Check both.** `scripts/lab-mcp-check.sh` probes the edge, the Plane shim, the 237 listener
+   and the audience tags, and exits 1 on any failed probe (`PET-827`). Before step 3 the lab
+   listener is off, because `lab_agent_access_aud` is empty. An unauthenticated request must
+   return 401:
    ```bash
    curl -sI https://mcp-plane.pdlab.dev/mcp | head -1
    curl -sI https://mcp-lab.pdlab.dev/mcp/lab | head -1
