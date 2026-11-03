@@ -11,18 +11,27 @@
 # data, NEVER removes a bucket, and NEVER suspends versioning — a converged host reports
 # zero changes and triggers no restart.
 
-# --- MinIO server + client binaries (pinned + checksummed) -----------------------
-# Supply-chain hygiene (cf. PET-111): pin BOTH the version and its sha256, bumped
-# together. The sha256 values were verified from the official dl.min.io `.sha256sum`
-# sidecars on 2026-06-10. To upgrade: change the version, fetch the matching
-# `<binary>.<version>.sha256sum`, and update the hash here in the same commit.
+# --- MinIO server + client binaries (pinned + checksummed, lab mirror) -----------
+# PET-801: dl.min.io returns 410 Gone for every community MinIO download, so the role
+# fetches both binaries from a lab-held mirror: assets on a GitHub release of this repo.
+# `scripts/mirror-minio-binaries.sh` publishes them. It refuses to upload a file whose
+# sha256 differs from the pin below, so the mirror holds exactly the bytes the role checks.
+#
+# Pin BOTH the version and its sha256, bumped together (cf. PET-111). The sha256 values
+# came from the official dl.min.io `.sha256sum` sidecars on 2026-06-10. The server value
+# also matches the binary on LXC 221 (PET-795 step 1c, 2026-11-03). To upgrade, change the
+# version and hash here, then run the mirror script with the new files in the same PR.
 minio_version: "RELEASE.2025-09-07T16-13-09Z"
 minio_sha256: "7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f"
-minio_server_url: "https://dl.min.io/server/minio/release/linux-amd64/archive/minio.{{ minio_version }}"
 
 minio_mc_version: "RELEASE.2025-08-13T08-35-41Z"
 minio_mc_sha256: "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
-minio_mc_url: "https://dl.min.io/client/mc/release/linux-amd64/archive/mc.{{ minio_mc_version }}"
+
+# Release that holds the mirrored assets. Asset names are `minio.<version>` and
+# `mc.<version>`, so a version bump adds assets and never overwrites one.
+minio_mirror_base: "https://github.com/PeteDio-Labs/petedio-iac/releases/download/minio-binaries"
+minio_server_url: "{{ minio_mirror_base }}/minio.{{ minio_version }}"
+minio_mc_url: "{{ minio_mirror_base }}/mc.{{ minio_mc_version }}"
 
 minio_bin: /usr/local/bin/minio
 minio_mc_bin: /usr/local/bin/mc

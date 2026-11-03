@@ -135,6 +135,30 @@ role, so an inline policy that grants more has no effect beyond the boundary. Th
 If the plan needs an action the policy lacks, the apply names it. Add that one action and record it
 here, and never add `iam:*` or drop the boundary condition.
 
+## Budget and anomaly permissions
+
+`budgets.tf` (PET-803) manages two budgets and a Cost Anomaly Detection monitor. The apply user
+needs these actions, which the inline policy above does not grant. Add them as a second statement
+before the first apply. Budget actions take a budget ARN; the `ce:` anomaly actions do not support
+resource scoping for monitors that do not exist yet, so they use `*`.
+
+```json
+{"Effect": "Allow",
+ "Action": ["budgets:ViewBudget", "budgets:ModifyBudget", "budgets:TagResource",
+            "budgets:UntagResource", "budgets:ListTagsForResource"],
+ "Resource": "arn:aws:budgets::ACCOUNT_ID:budget/petedio-credit-*"},
+{"Effect": "Allow",
+ "Action": ["ce:CreateAnomalyMonitor", "ce:GetAnomalyMonitors", "ce:UpdateAnomalyMonitor",
+            "ce:DeleteAnomalyMonitor", "ce:CreateAnomalySubscription",
+            "ce:GetAnomalySubscriptions", "ce:UpdateAnomalySubscription",
+            "ce:DeleteAnomalySubscription", "ce:TagResource", "ce:UntagResource",
+            "ce:ListTagsForResource"],
+ "Resource": "*"}
+```
+
+Pass `-var 'budget_alert_emails=["you@example.com"]'` on each plan and apply. Both budgets exclude
+credits from the calculation, so they track gross spend. `petedio-monthly-5usd` stays hand-made.
+
 ## Rotation
 
 - Discord bot token or DM: re-run `scripts/seed-watchdog-discord.sh`, then bump `value_wo_version`

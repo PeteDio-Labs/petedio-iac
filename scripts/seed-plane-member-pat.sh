@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # seed-plane-member-pat.sh — mint one person's Plane PAT in Plane's Django shell on LXC 235,
-# and store it in kv/services/plane-<name> (PET-610 for Tom, PET-650 generalized it for Sonia).
+# and store it in kv/services/plane-<name> (PET-610 for Tom, PET-650 generalized it for Sonia,
+# PET-660 added the Claude user behind pdlab.dev/mcp/plane).
 # Nobody sees the token: it travels from the api container's stdout into a variable here, and
 # from there into Vault through stdin.
 #
@@ -22,7 +23,9 @@
 # THE ORDER:
 #   1. Pedro invites the person to petedio in Plane with their role. The person signs in to
 #      Plane once, which creates their Plane user.
-#   2. The PR that adds their Caddy site and mcp-<name>.pdlab.dev merges.
+#   2. The PR that adds their Caddy site and mcp-<name>.pdlab.dev merges. For claude, the PR
+#      that points :8790 at kv/services/plane-claude merges, and apply-vault-config.sh runs so
+#      the ansible-247 policy may read the path.
 #   3. this script --name <name> --email <their email>
 #   4. ./scripts/deploy-plane.sh, so their Caddy site holds the token. The deploy reads every
 #      member's path and stops when one is absent, so step 3 comes first.
@@ -52,7 +55,7 @@ while [ $# -gt 0 ]; do
     --rotate) MODE=rotate ;;
     --revoke-older) MODE=revoke ;;
     --via-pve03) VIA=pve03 ;;
-    -h|--help) sed -n '2,43p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,46p' "$0"; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
@@ -66,7 +69,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 case "$NAME" in
   tom)   LABEL="pet-610-mcp-tom";   ROUTE="mcp-tom.pdlab.dev";   PORT=8791; ALLOW_ADMIN=0 ;;
   sonia) LABEL="pet-650-mcp-sonia"; ROUTE="mcp-sonia.pdlab.dev"; PORT=8792; ALLOW_ADMIN=1 ;;
-  "") echo "--name is required: tom or sonia" >&2; exit 2 ;;
+  # The dedicated Claude Member user (PET-660). Its site is :8790, which deploy-plane.sh feeds
+  # from kv/services/plane-claude as plane_mcp_api_key. Never an Admin.
+  claude) LABEL="pet-660-mcp-claude"; ROUTE="pdlab.dev/mcp/plane"; PORT=8790; ALLOW_ADMIN=0 ;;
+  "") echo "--name is required: tom, sonia or claude" >&2; exit 2 ;;
   *) printf 'unknown --name: %s. Add a row to the MEMBERS table first.\n' "$NAME" >&2; exit 2 ;;
 esac
 PATH_KV="kv/services/plane-$NAME"
