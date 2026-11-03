@@ -229,6 +229,7 @@
   ansible.builtin.command: ss -H -ltn 'sport = :22'
   register: ssh_ca_listeners
   changed_when: false
+  check_mode: false  # read-only; a --check run still needs its output for the next task
   retries: 10
   delay: 2
   until: ssh_ca_listeners.stdout | trim | length > 0
