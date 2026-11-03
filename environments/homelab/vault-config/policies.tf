@@ -121,7 +121,8 @@ resource "vault_policy" "terraform" {
 #   deploy-backup-store.sh     kv/services/backup-health
 #   deploy-minio-data.sh       kv/iac/minio-data-root
 #   deploy-palworld-panel.sh   kv/services/palworld-panel
-#   deploy-plane.sh            kv/db/plane, kv/services/plane, kv/services/plane-<member>
+#   deploy-plane.sh            kv/db/plane, kv/services/plane, kv/services/plane-claude,
+#                              kv/services/plane-<member>
 #   deploy-resume-builder.sh   kv/services/resume-builder
 # Those scripts run on 247. These stay on the Mac, by design:
 #   deploy-claude-247.sh  reads four App keys (claude-*); see the claude-ops exclusions.
@@ -154,6 +155,10 @@ resource "vault_policy" "ansible_247" {
     }
 
     path "kv/data/services/plane" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/plane-claude" {
       capabilities = ["read"]
     }
 
