@@ -74,17 +74,21 @@ echo "== 4. audience tags (Terraform outputs; not secrets)"
 if [ "$NO_TF" = 1 ]; then
   echo "  skipped (--no-tf)"
 else
-  command -v terraform >/dev/null && command -v vault >/dev/null || bad "terraform or vault not in PATH"
-  # Same token source as deploy-pete-bot.sh: $VAULT_TOKEN, else the macOS Keychain item.
-  if [ -z "${VAULT_TOKEN:-}" ] && command -v security >/dev/null; then
-    VAULT_TOKEN="$(security find-generic-password -s "${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}" -w 2>/dev/null || true)"
-    export VAULT_TOKEN
-  fi
-  [ -n "${VAULT_TOKEN:-}" ] || bad "no VAULT_TOKEN and no Keychain item: terraform cannot read the state"
-  if [ -z "${AWS_ACCESS_KEY_ID:-}" ] && command -v vault >/dev/null; then
-    AWS_ACCESS_KEY_ID="$(vault kv get -field=access_key kv/iac/minio 2>/dev/null || true)"
-    AWS_SECRET_ACCESS_KEY="$(vault kv get -field=secret_key kv/iac/minio 2>/dev/null || true)"
-    export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+  command -v terraform >/dev/null || bad "terraform not in PATH"
+  # The S3 backend needs the MinIO keys. Take them from the environment, else from Vault with
+  # the token from $VAULT_TOKEN or the macOS Keychain item (the source deploy-pete-bot.sh uses).
+  if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+    if [ -z "${VAULT_TOKEN:-}" ] && command -v security >/dev/null; then
+      VAULT_TOKEN="$(security find-generic-password -s "${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}" -w 2>/dev/null || true)"
+      export VAULT_TOKEN
+    fi
+    if [ -z "${VAULT_TOKEN:-}" ]; then
+      bad "no MinIO keys, no VAULT_TOKEN and no Keychain item: terraform cannot read the state"
+    elif command -v vault >/dev/null; then
+      AWS_ACCESS_KEY_ID="$(vault kv get -field=access_key kv/iac/minio 2>/dev/null || true)"
+      AWS_SECRET_ACCESS_KEY="$(vault kv get -field=secret_key kv/iac/minio 2>/dev/null || true)"
+      export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    fi
   fi
   if terraform -chdir="$HOMELAB" init -reconfigure -input=false >/dev/null 2>&1; then
     for o in lab_mcp_subdomain_access_aud; do
