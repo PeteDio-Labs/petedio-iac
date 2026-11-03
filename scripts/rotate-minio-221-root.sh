@@ -30,8 +30,8 @@
 # ORDER: run it once, now. Nothing needs to change first. MinIO is down for the restart
 # (about 5 seconds). Do not run a terraform apply at the same time: the state backend is on
 # this host. The Terraform state backend uses the tfstate service account (kv/iac/minio), not
-# this credential. After the run, `ansible-playbook playbooks/configure-minio.yml --check`
-# reports no change to /etc/default/minio, because the role renders the same line.
+# this credential. After the run, the convergence check in docs/runbooks/host-steps.md reports
+# no change to /etc/default/minio, because the role renders the same line.
 #
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt.
 #   SSH:         root@192.168.50.221 with ~/.ssh/id_ed25519_ansible (override $MINIO_SSH_KEY).
@@ -130,7 +130,10 @@ if not m0:
     raise SystemExit("no MINIO_ROOT_PASSWORD line")
 mfd = os.open("/root/.minio-rotation-pending", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(mfd, "w") as mh:
-    mh.write(hashlib.sha256(m0.group(1).strip().encode()).hexdigest())
+    v0 = m0.group(1).strip()
+    if len(v0) >= 2 and v0[0] == v0[-1] and v0[0] in "\"\x27":
+        v0 = v0[1:-1]
+    mh.write(hashlib.sha256(v0.encode()).hexdigest())
 new, n = re.subn(r"(?m)^(\s*MINIO_ROOT_PASSWORD=).*$", lambda m: m.group(1) + os.environ["NEWPW"], text)
 if n != 1:
     raise SystemExit("expected exactly one MINIO_ROOT_PASSWORD line, found %d" % n)
@@ -179,11 +182,24 @@ exit 1'
 # --- mc, with keys on stdin ------------------------------------------------------------------
 MCCFG="$TMP/mc"; mkdir -p "$MCCFG"
 m(){ mc --config-dir "$MCCFG" "$@"; }
-# auth_ok USER PASS succeeds only when MinIO accepts the pair. Callers establish reachability
-# first, so a failure here is a rejection, not an outage.
+# auth_ok USER PASS answers with its exit status: 0 MinIO accepted the pair, 1 MinIO rejected
+# it (the error names a bad access key or a signature mismatch), 2 anything else: a reset, a
+# timeout or a local mc failure. A caller counts only 1 as a rejection (Codex, PET-795).
 auth_ok(){
-  printf '%s\n%s\n' "$1" "$2" | m alias set probe "$MINIO_ENDPOINT" --api s3v4 --path auto >/dev/null 2>&1 \
-    && m ls probe >/dev/null 2>&1
+  local out rc=0
+  out="$(printf '%s\n%s\n' "$1" "$2" | m alias set probe "$MINIO_ENDPOINT" --api s3v4 --path auto 2>&1)" || rc=$?
+  if [ "$rc" = 0 ]; then out="$(m ls probe 2>&1)" || rc=$?; fi
+  [ "$rc" = 0 ] && return 0
+  if printf '%s' "$out" | grep -qiE 'InvalidAccessKeyId|SignatureDoesNotMatch|Access Key Id you provided|signature we calculated|InvalidAccessKey'; then
+    return 1
+  fi
+  return 2
+}
+# auth_state USER PASS prints accepted, rejected or unknown, and never fails.
+auth_state(){
+  local rc=0
+  auth_ok "$1" "$2" || rc=$?
+  case "$rc" in 0) echo accepted ;; 1) echo rejected ;; *) echo unknown ;; esac
 }
 
 # --- Vault helpers (the vault-seed skill, sections 3 and 4) ----------------------------------
@@ -244,7 +260,12 @@ unset STATE
 [ -n "$ENV_USER" ] && [ -n "$ENV_PASS" ] && [ -n "$PENDING" ] \
   || die "/etc/default/minio on $MINIO_HOST does not hold both MINIO_ROOT_USER and MINIO_ROOT_PASSWORD."
 ENV_SHA="$(P="$ENV_PASS" python3 -c 'import hashlib,os;print(hashlib.sha256(os.environ["P"].encode()).hexdigest())')"
-case "$PENDING" in none) MARKER_NOTE="none" ;; *) MARKER_NOTE="present" ;; esac
+PROVEN=0
+case "$PENDING" in
+  none) MARKER_NOTE="none" ;;
+  proven:*) MARKER_NOTE="present, old-password proof recorded"; PROVEN=1; PENDING="${PENDING#proven:}" ;;
+  *) MARKER_NOTE="present" ;;
+esac
 echo "  env file: user length ${#ENV_USER}, password length ${#ENV_PASS}, pending marker: $MARKER_NOTE"
 
 # --- Phase 2: what Vault holds ------------------------------------------------------------------
@@ -257,8 +278,14 @@ if [ -n "$VAULT_USER" ] && [ "$VAULT_USER" != "$ENV_USER" ]; then
 fi
 
 ENV_OK=0; VAULT_OK=0
-auth_ok "$ENV_USER" "$ENV_PASS" && ENV_OK=1
-if [ -n "$VAULT_PASS" ] && [ "$VAULT_PASS" != "$ENV_PASS" ]; then auth_ok "$ENV_USER" "$VAULT_PASS" && VAULT_OK=1; fi
+A="$(auth_state "$ENV_USER" "$ENV_PASS")"
+[ "$A" != unknown ] || die "could not tell whether MinIO accepts the env-file password: the check failed for a reason other than a rejection."
+[ "$A" = accepted ] && ENV_OK=1
+if [ -n "$VAULT_PASS" ] && [ "$VAULT_PASS" != "$ENV_PASS" ]; then
+  A="$(auth_state "$ENV_USER" "$VAULT_PASS")"
+  [ "$A" != unknown ] || die "could not tell whether MinIO accepts the Vault password: the check failed for a reason other than a rejection."
+  [ "$A" = accepted ] && VAULT_OK=1
+fi
 echo "  env-file password authenticates: $ENV_OK"
 if [ -n "$VAULT_PASS" ] && [ "$VAULT_PASS" != "$ENV_PASS" ]; then
   echo "  Vault password differs from the env file; it authenticates: $VAULT_OK"
@@ -315,11 +342,17 @@ unset ENV_PASS
 
 # --- Phase 4: prove new works, old fails ---------------------------------------------------------
 step "Prove the passwords against $MINIO_ENDPOINT"
-auth_ok "$ENV_USER" "$NEW_PASS" || die "the new password does not authenticate. $MINIO_HOST holds it in /etc/default/minio; re-run this script."
+[ "$(auth_state "$ENV_USER" "$NEW_PASS")" = accepted ] \
+  || die "the new password is not accepted. $MINIO_HOST holds it in /etc/default/minio; re-run this script."
 echo "  the new password authenticates"
-if [ -n "$OLD_PASS" ] && [ "$OLD_PASS" != "$NEW_PASS" ]; then
-  if auth_ok "$ENV_USER" "$OLD_PASS"; then die "the old password still authenticates after the restart."; fi
-  echo "  the old password is rejected (MinIO answered the new one a moment ago, so this is a rejection)"
+if [ "$PROVEN" = "1" ]; then
+  echo "  the old password's rejection was proven by the earlier run (recorded on $MINIO_HOST)"
+elif [ -n "$OLD_PASS" ] && [ "$OLD_PASS" != "$NEW_PASS" ]; then
+  case "$(auth_state "$ENV_USER" "$OLD_PASS")" in
+    rejected) echo "  the old password is rejected (MinIO named a bad key or a signature mismatch)" ;;
+    accepted) die "the old password still authenticates after the restart." ;;
+    *) followup_fail "the old-password check failed for a reason other than a rejection, so its rejection is unproven" ;;
+  esac
 else
   echo "  the old password is unknown to this run, so its rejection is unproven"
   followup_fail "old password not proven rejected"
@@ -327,10 +360,20 @@ fi
 if [ -f "$MINIO_CREDS_FILE" ]; then
   FP="$(python3 "$SCRIPT_DIR/minio-cred.py" "$MINIO_CREDS_FILE" ROOT_PASSWORD 2>/dev/null || true)"
   if [ -n "$FP" ] && [ "$FP" != "$NEW_PASS" ]; then
-    if auth_ok "$ENV_USER" "$FP"; then followup_fail "the password in $MINIO_CREDS_FILE still authenticates"
-    else echo "  the password in $MINIO_CREDS_FILE is rejected"; fi
+    case "$(auth_state "$ENV_USER" "$FP")" in
+      rejected) echo "  the password in $MINIO_CREDS_FILE is rejected" ;;
+      accepted) followup_fail "the password in $MINIO_CREDS_FILE still authenticates" ;;
+      *) followup_fail "the check of the password in $MINIO_CREDS_FILE failed for a reason other than a rejection" ;;
+    esac
   fi
   unset FP
+fi
+# Record that the proof is done, so an interruption before the Vault write completes does not
+# turn the next run's proof into a failure. The marker keeps the old password's sha256.
+if [ "$PROVEN" != "1" ] && [ -n "$OLD_PASS" ] && [ "$OLD_PASS" != "$NEW_PASS" ] && [ "$FOLLOWUP_FAILED" = "0" ]; then
+  OLD_SHA="$(P="$OLD_PASS" python3 -c 'import hashlib,os;print(hashlib.sha256(os.environ["P"].encode()).hexdigest())')"
+  printf 'proven:%s' "$OLD_SHA" | rsh 'cat > /root/.minio-rotation-pending' \
+    || followup_fail "could not record the proof on $MINIO_HOST"
 fi
 
 # --- Phase 5: Vault, check-and-set, read back ----------------------------------------------------
@@ -338,7 +381,9 @@ step "Write $ROOT_PATH"
 snap "$ROOT_PATH"
 [ "$VERSION" = "$V_VERSION" ] \
   || die "$ROOT_PATH changed from version $V_VERSION to $VERSION since the read. Another writer touched it. Re-run this script: it resumes."
-if [ "$VERSION" = "0" ]; then
+if [ "$(field root_password)" = "$NEW_PASS" ]; then
+  echo "  Vault already holds the new password (a previous run wrote it). Writing nothing."
+elif [ "$VERSION" = "0" ]; then
   NU="$ENV_USER" NP="$NEW_PASS" python3 -c '
 import json, os
 print(json.dumps({"root_user": os.environ["NU"], "root_password": os.environ["NP"]}))' \
@@ -357,7 +402,7 @@ snap "$ROOT_PATH"
 for f in $V_FIELDS; do
   [ -n "$(field "$f")" ] || die "the read-back of $ROOT_PATH lost the field $f."
 done
-echo "  written as version $VERSION, and the read-back matches (fields: $(fieldnames))"
+echo "  now at version $VERSION, and the read-back matches (fields: $(fieldnames))"
 
 # --- Phase 6: the state backend's service account -------------------------------------------------
 step "State backend service account ($STATE_PATH)"
@@ -416,5 +461,5 @@ if [ "$FOLLOWUP_FAILED" = "1" ]; then
   exit 3
 fi
 echo "  The root password is rotated, recorded in Vault, and every proof passed."
-echo "  Next: ansible-playbook playbooks/configure-minio.yml --check from ansible/ reports no change to /etc/default/minio."
+echo "  Next: run the convergence check in docs/runbooks/host-steps.md, section 'Rotate the MinIO root password on 221'."
 echo "  Then: comment on the PET item with the Vault version and the field names. Do not paste a value."

@@ -90,6 +90,17 @@ first (`vault-breakglass` on 247).
   restores the old file. Exit code 3 means the password is rotated and recorded, but a proof
   failed, such as the `tfstate` service account in `kv/iac/minio`. If a run dies after the
   restart, run the script again: a marker file on 221 makes it resume and rotate nothing twice.
-- **After:** `ansible-playbook playbooks/configure-minio.yml --check` from `ansible/` reports no
-  change to `/etc/default/minio`. Comment on the PET item with the Vault version and field
-  names, never a value.
+- **After:** run the convergence check from `ansible/`. The role asserts that the root
+  credentials arrive as extra-vars, so resolve them from Vault into a mode 0600 file first:
+
+  ```bash
+  umask 077
+  F="$(mktemp)"
+  vault kv get -format=json kv/iac/minio-root \
+    | jq '{minio_root_user: .data.data.root_user, minio_root_password: .data.data.root_password}' > "$F"
+  ansible-playbook playbooks/configure-minio.yml --check --diff -e @"$F"
+  shred -u "$F"
+  ```
+
+  The play reports no change to `/etc/default/minio`. Comment on the PET item with the Vault
+  version and field names, never a value.
