@@ -1,0 +1,24 @@
+---
+# host_vars for minio-221 (LXC 221 / 192.168.50.221) — the Terraform state backend. (PET-811)
+#
+# 221 predates roles/minio, and the role takes its live shape instead of the role's
+# defaults, because the data under /data/minio is the only copy of Terraform state and a
+# migration of it is a risk this change does not need. Read from the host on 2026-11-03
+# (PET-795 step 1c, Mac):
+#   MINIO_VOLUMES="/data/minio"      in /etc/default/minio
+#   /etc/default/minio               root:root 0600
+#   no `minio-user` account (no `minio` account either)
+#
+# NOT READ on 2026-11-03: the user the live minio.service runs as and the owner of
+# /data/minio. `minio_user: root` below is the inference from a hand-built host with no
+# service account, not a reading. The first `--check --diff` against 221 settles it: a
+# diff on /etc/systemd/system/minio.service names the real User=/Group=, and the fix is
+# to change these two lines, not to run the play. Probe commands:
+# docs/runbooks/minio-221-rebuild.md, "Match the role to 221".
+minio_data_dir: /data/minio
+minio_manage_data_dir: false
+minio_manage_account: false
+minio_user: root
+minio_group: root
+minio_config_env_group: root
+minio_config_env_mode: "0600"

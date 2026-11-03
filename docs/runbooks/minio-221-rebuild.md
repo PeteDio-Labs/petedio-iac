@@ -102,6 +102,13 @@ step — the role will read whatever `kv/iac/minio-root` holds.
 
 ### Step 3 — run the Ansible role
 
+> [!IMPORTANT]
+> `ansible/inventory/host_vars/minio-221.yml` makes the role match the **live** 221: data in
+> `/data/minio`, no service account, env file `root:root 0600`, and `minio_manage_data_dir:
+> false`. On a bare rebuilt container, create the directory first
+> (`ssh root@192.168.50.221 'install -d -m 0750 /data/minio'`), or the role stops at its
+> "data directory exists" assertion by design (PET-811). Restore in Step 4 fills it.
+
 From `ansible/`, resolve the root creds into a `0600` `@file` and run the play (the
 `minio` inventory group already targets `192.168.50.221`):
 
@@ -272,6 +279,27 @@ systemctl list-timers minio-tfstate-backup.timer                    # next run s
   `minio-user`. Re-running the role converges both.
 
 ---
+
+## Match the role to 221 (PET-811)
+
+221 predates the role. The role takes 221's shape through `host_vars/minio-221.yml`; the host
+does not migrate. Facts read on 2026-11-03: `MINIO_VOLUMES="/data/minio"`, no `minio-user`
+account, `/etc/default/minio` `root:root 0600`. **Not read:** the user `minio.service` runs as
+and the owner of `/data/minio`. The host_vars file sets `root` for both as an inference.
+
+To confirm, run these read-only probes on 221. They print no credential:
+
+```bash
+ssh root@192.168.50.221 'systemctl cat minio.service | grep -E "^(User|Group|ExecStart|EnvironmentFile)=";
+  stat -c "%U:%G %a %n" /data/minio /etc/default/minio; grep "^MINIO_VOLUMES=" /etc/default/minio'
+```
+
+If `User=` is not `root`, change `minio_user` and `minio_group` in the host_vars file in a PR.
+Do not run `configure-minio.yml` for real against 221 to find out. The check is
+`ansible-playbook playbooks/configure-minio.yml --check --diff --limit minio-221 -e @<0600 file>`.
+It passes when it reports no change to `/etc/default/minio`, the data directory or the service
+account. Under `--check` on a host without `mc`, the play prints `NOT EXAMINED` for the mc
+install and does not download it, so the check cannot fail on the mirror.
 
 ## Binary source (PET-801)
 
