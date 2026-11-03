@@ -1,9 +1,10 @@
 ---
 # Guests whose /root/.ssh/authorized_keys must trust the inventory identity (PET-787).
-# 119 and 221 were not created with it: 221 is hand-managed and 119 was captured into
-# Terraform after the fact, so neither got the `keys` the proxmox-lxc module installs.
+# 221 is hand-managed, so it never got the `keys` the proxmox-lxc module installs.
+# 119 is not listed on purpose (PET-793): its sshd sets PermitRootLogin no and stays that way.
+# The CVE collector reaches 119 through pve03 with `pct exec` (inventory/hosts.yml), so a key
+# there would be unused, and this role fails a guest whose root login is `no`.
 lxc_root_key_guests:
-  - 119
   - 221
 
 # The public half of the inventory identity. Left empty, the playbook derives it from

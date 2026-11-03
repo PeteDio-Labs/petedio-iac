@@ -13,4 +13,5 @@ collections:
   - name: ansible.posix        # authorized_key (claude-code)
     version: ">=2.2.2"
   - name: community.postgresql # configure-postgres.yml (postgres-rds, PET-19)
+  - name: community.proxmox    # proxmox_pct_remote connection to LXC 119 (PET-793; also needs paramiko)
   - name: community.docker     # configure-poker-api.yml (docker_image pull, PET-44)
