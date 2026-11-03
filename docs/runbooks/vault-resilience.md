@@ -61,7 +61,7 @@ ansible-playbook ansible/playbooks/vault-snapshot.yml
 
 ### Verify
 
-`<minio-alias>` is any `mc` alias for `http://192.168.50.221:9000`. List yours with `mc alias list`.
+`<minio-alias>` is any `mc` alias for `http://192.168.50.221:9000`, on a host that has `mc`. List yours with `mc alias list`. The Vault host needs no `mc`: the snapshot script signs its own S3 requests with `curl --aws-sigv4` (`PET-800`, because `dl.min.io` returns 410 Gone for `mc`).
 
 ```sh
 vault audit list                                   # 'file/' present

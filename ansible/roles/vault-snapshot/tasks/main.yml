@@ -4,16 +4,20 @@
 # docs/runbooks/vault-resilience.md). This role warns when the secret_id is missing, so a
 # half-configured host is visible instead of silently never backing up.
 ---
-- name: Install the mc (MinIO client) binary
-  ansible.builtin.get_url:
-    url: "{{ vault_snapshot_mc_url }}"
-    dest: "{{ vault_snapshot_mc_path }}"
-    mode: "0755"
-    owner: root
-    group: root
-    # Only fetch if missing — mc is a moving 'latest' URL; pin/refresh deliberately, don't
-    # re-pull every run. (Follow-up: pin to a dated release, cf. PET-111.)
-    force: false
+# No mc (PET-800): dl.min.io returns 410 Gone for every community MinIO download. The script
+# signs S3 requests with `curl --aws-sigv4`, so the role needs curl and nothing to download.
+- name: Find curl, which the snapshot script uses to reach MinIO
+  ansible.builtin.stat:
+    path: /usr/bin/curl
+  register: vault_snapshot_curl_stat
+
+- name: Stop if curl is missing
+  ansible.builtin.assert:
+    that: vault_snapshot_curl_stat.stat.exists
+    fail_msg: >-
+      /usr/bin/curl is missing on this host. The snapshot script needs curl 7.75 or later
+      for --aws-sigv4. Install curl, then rerun.
+    quiet: true
 
 - name: Ensure the snapshot credential + staging directories exist
   ansible.builtin.file:
