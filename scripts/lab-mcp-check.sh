@@ -77,6 +77,12 @@ if [ "$NO_TF" = 1 ]; then
   echo "  skipped (--no-tf)"
 else
   command -v terraform >/dev/null && command -v vault >/dev/null || bad "terraform or vault not in PATH"
+  # Same token source as deploy-pete-bot.sh: $VAULT_TOKEN, else the macOS Keychain item.
+  if [ -z "${VAULT_TOKEN:-}" ] && command -v security >/dev/null; then
+    VAULT_TOKEN="$(security find-generic-password -s "${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}" -w 2>/dev/null || true)"
+    export VAULT_TOKEN
+  fi
+  [ -n "${VAULT_TOKEN:-}" ] || bad "no VAULT_TOKEN and no Keychain item: terraform cannot read the state"
   if [ -z "${AWS_ACCESS_KEY_ID:-}" ] && command -v vault >/dev/null; then
     AWS_ACCESS_KEY_ID="$(vault kv get -field=access_key kv/iac/minio 2>/dev/null || true)"
     AWS_SECRET_ACCESS_KEY="$(vault kv get -field=secret_key kv/iac/minio 2>/dev/null || true)"
@@ -88,7 +94,7 @@ else
       if printf '%s' "$v" | grep -Eq '^[0-9a-f]{64}$'; then ok "$o = $v"; else bad "$o is empty or not 64 hex"; fi
     done
   else
-    bad "terraform init failed (check VAULT_TOKEN and the MinIO keys)"
+    bad "terraform init failed (check the MinIO keys)"
   fi
 fi
 

@@ -113,15 +113,15 @@ The answer names the kind of outcome (`clean`, `drift` or `read-failed`) and wha
 
 The MCP stays off while `lab_agent_access_aud` is empty. After `petedio-iac#462` applies:
 
-1. Read the audience tag: `(cd environments/homelab && terraform output -raw lab_mcp_access_aud)`.
+1. Read the audience tag: `(cd environments/homelab && terraform output -raw lab_mcp_subdomain_access_aud)`. The connector lives at `https://mcp-lab.pdlab.dev/mcp/lab` (`PET-824`, `PET-827`).
 2. Set `lab_agent_access_aud` to that value in a one-line PR. A thread opens it.
 3. After that PR merges and `deploy-pete-bot.sh` runs, check the edge:
 
 ```bash
-curl -sI https://pdlab.dev/mcp/lab | head -1
+curl -sI https://mcp-lab.pdlab.dev/mcp/lab | head -1
 ```
 
-Expect `HTTP/2 401`. Then add the connector `https://pdlab.dev/mcp/lab` on claude.ai in a browser. A request from the Mac straight to `192.168.50.237:3017` must time out, because the firewall admits only LXC 112.
+Expect `HTTP/2 401`. Then add the connector `https://mcp-lab.pdlab.dev/mcp/lab` on claude.ai in a browser. A request from the Mac straight to `192.168.50.237:3017` must time out, because the firewall admits only LXC 112.
 
 ## Patch report (`PET-679`)
 
