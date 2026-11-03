@@ -14,6 +14,6 @@ The brand tokens and components come from the toonish-ui kit (PET-809). Until it
 
 ## Deploy
 
-`.github/workflows/deploy.yml` runs on a push to `main`. It assumes the AWS role over OIDC,
+`.github/workflows/deploy.yml` runs on a push to `main`. It signs in with the deploy user's key from the `production` environment secrets (or the OIDC role, when the account allows it),
 syncs `dist/` to the bucket and invalidates the cache. Set these repository variables from the
 `portfolio-site` module outputs: `AWS_ROLE_ARN`, `BUCKET`, `DISTRIBUTION_ID`.

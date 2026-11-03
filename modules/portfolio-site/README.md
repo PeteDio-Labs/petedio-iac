@@ -1,7 +1,7 @@
 # portfolio-site (PET-774)
 
 Static site hosting on AWS: a private S3 bucket, a CloudFront distribution with OAC, an ACM
-certificate and a GitHub OIDC deploy role. Nothing in `environments/` calls this module yet.
+certificate and a deploy identity for GitHub Actions (`deploy_auth`: an OIDC role, or a deploy-only IAM user). Nothing in `environments/` calls this module yet.
 The first apply and the DNS change need Pedro's word.
 
 ## Cost: the module stays free
@@ -31,6 +31,17 @@ and 1,000 invalidation paths a month are free. The deploy workflow sends one (`/
 DNS stays in Cloudflare, so Route 53 is not used.
 
 Source: <https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/flat-rate-pricing-plan.html>.
+
+## Deploy auth
+
+`deploy_auth = "oidc"` (default) creates a GitHub OIDC role and no key. Use it on any account that allows
+an IAM OIDC provider. The `847547470418` account does not: a service control policy on its organization
+denies `iam:CreateOpenIDConnectProvider` and `iam:ListOpenIDConnectProviders` (PET-816), so
+`environments/portfolio` sets `deploy_auth = "user"`.
+
+`"user"` creates a deploy-only IAM user with the same policy. Terraform never creates its access key, so
+no secret reaches state. `scripts/portfolio-deploy-key.sh` creates the key and stores it as secrets on the
+repo's `production` environment, which only `main` may deploy to. Rotate with `--rotate`.
 
 ## Usage
 
