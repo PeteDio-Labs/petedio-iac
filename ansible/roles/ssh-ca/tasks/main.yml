@@ -185,6 +185,7 @@
   ansible.builtin.command: systemctl is-active ssh.socket
   register: ssh_ca_socket
   changed_when: false
+  check_mode: false  # read-only; a --check run still needs its output to pick the unit
   failed_when: false
 
 # Socket activation wins: ssh.socket holds port 22, so a SIGHUP to the running ssh.service makes
