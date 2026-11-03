@@ -127,9 +127,10 @@
     lab_agent_mcp_peer: 192.168.50.112
     lab_agent_access_team_domain: petedillo-labs.cloudflareaccess.com
     lab_agent_access_emails: [pedelgadillo@gmail.com]
-    # The Access app's audience tag: `terraform output -raw lab_mcp_access_aud` in
-    # environments/homelab, after the route is applied. Not a secret. Empty keeps the MCP off.
-    lab_agent_access_aud: ""
+    # The Access app's audience tag for mcp-lab.pdlab.dev: `terraform output -raw
+    # lab_mcp_subdomain_access_aud` in environments/homelab (PET-824, PET-827). Not a secret.
+    # Empty keeps the MCP off. lab-agent checks one tag, so this ends the pdlab.dev/mcp/lab route.
+    lab_agent_access_aud: "07e95c16cba3b182d908b6130d1b302fa9d704953dc151e9b4a54e5a4f3e50be"
     lab_agent_repos:
       vault: https://github.com/PeteDio-Labs/petedio-vault.git
       iac: https://github.com/PeteDio-Labs/petedio-iac.git

@@ -6,21 +6,22 @@
 #
 # Probes:
 #   1  edge:     an unauthenticated request to each MCP hostname must return 401
-#   2  shim:     the Plane Caddy shim on 235:8790 answers /healthz
+#   2  shim:     the Plane Caddy shim on 235:8790 answers /healthz, probed from LXC 112
+#                over SSH, because the shim admits only 112
 #   3  listener: lab-agent listens on 237:3017 (only 112 may reach it, so this runs over
 #                SSH on the node and uses pct exec)
 #   4  tags:     the two lab audience tags from Terraform, for lab_agent_access_aud
 #
-# Usage: ./scripts/lab-mcp-check.sh [--no-tf] [--node root@192.168.50.10]
+# Usage: ./scripts/lab-mcp-check.sh [--no-tf] [--node pve03]
 set -uo pipefail
 
 NO_TF=0
-NODE="root@192.168.50.10"
+NODE="pve03"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-tf) NO_TF=1 ;;
     --node) NODE="${2:?--node needs a value}"; shift ;;
-    -h|--help) printf 'usage: %s [--no-tf] [--node user@host]\n' "${0##*/}"; exit 0 ;;
+    -h|--help) printf 'usage: %s [--no-tf] [--node pve03]\n' "${0##*/}"; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
@@ -44,17 +45,31 @@ for url in https://mcp-plane.pdlab.dev/mcp https://mcp-lab.pdlab.dev/mcp/lab \
 done
 echo "  (the two pdlab.dev/mcp/* rows are the old path routes; a failure there is expected after the apex moves to CloudFront)"
 
-echo "== 2. Plane shim on 235:8790"
-code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://192.168.50.235:8790/healthz || true)"
-[ "$code" = 200 ] && ok "235:8790/healthz -> 200" || bad "235:8790/healthz -> $code"
+# pct runs on a node. pve03 is an unprivileged login, so it needs sudo (lab-verify.sh does the same).
+# The default node is the ssh alias pve03; a literal address would use the Mac's default key,
+# which pve03 refuses.
+if [ "$NODE" = pve03 ]; then PCT="sudo /usr/sbin/pct"; else PCT="pct"; fi
+on_node(){ ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$NODE" "$1" 2>&1; }
+
+echo "== 2. Plane shim on 235:8790 (from LXC 112, the only source it admits)"
+out="$(on_node "$PCT exec 112 -- curl -s -m 5 -o /dev/null -w '%{http_code}' http://192.168.50.235:8790/healthz")"
+case "$out" in
+  200) ok "235:8790/healthz from 112 -> 200" ;;
+  [0-9][0-9][0-9]) bad "235:8790/healthz from 112 -> $out" ;;
+  *) bad "could not run on $NODE: $(printf '%s' "$out" | tr -s '\n' ' ' | cut -c1-160)" ;;
+esac
 
 echo "== 3. lab-agent MCP listener on 237:3017 (via $NODE, pct exec 237)"
-if out="$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$NODE" "pct exec 237 -- ss -ltn 'sport = :3017'; pct exec 237 -- grep -c '^LAB_ACCESS_AUD=' /etc/lab-agent/lab-agent.env" 2>&1)"; then
+if out="$(on_node "$PCT exec 237 -- ss -ltn 'sport = :3017'; $PCT exec 237 -- grep -c '^LAB_ACCESS_AUD=' /etc/lab-agent/lab-agent.env")"; then
   if printf '%s' "$out" | grep -q ':3017'; then ok "237 listens on :3017"; else bad "237 does not listen on :3017 (lab_agent_access_aud empty, so MCP is off)"; fi
   last="$(printf '%s\n' "$out" | tail -1)"
-  [ "$last" = 1 ] && ok "env file carries LAB_ACCESS_AUD" || bad "env file has no LAB_ACCESS_AUD (count=$last)"
+  case "$last" in
+    1) ok "env file carries LAB_ACCESS_AUD" ;;
+    0) bad "env file has no LAB_ACCESS_AUD" ;;
+    *) bad "could not read the env file: $(printf '%s' "$last" | cut -c1-120)" ;;
+  esac
 else
-  bad "could not run on the node: $(printf '%s' "$out" | tr -s '\n' ' ' | cut -c1-160)"
+  bad "could not run on $NODE: $(printf '%s' "$out" | tr -s '\n' ' ' | cut -c1-160)"
 fi
 
 echo "== 4. audience tags (Terraform outputs; not secrets)"
