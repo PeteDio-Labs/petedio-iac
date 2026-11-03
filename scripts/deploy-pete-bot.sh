@@ -96,11 +96,6 @@ PB_CD_PUBLIC_KEY="$(field deploy_ssh_public_key)"
 if [ -z "$PB_CD_PUBLIC_KEY" ] && [ "${ALLOW_NO_CD_KEY:-}" != 1 ]; then
   die "deploy_ssh_public_key is empty. Run scripts/seed-pete-bot-cd-key.sh, then run this again. ALLOW_NO_CD_KEY=1 skips the key on purpose."
 fi
-# Optional (PET-617), together or not at all: the gateway's Anthropic key and lab-map's
-# bearer. Absent leaves the gateway off. scripts/seed-llm-gateway.sh writes both, and the
-# play refuses one without the other.
-PB_ANTHROPIC_KEY="$(field anthropic_api_key)"
-PB_GATEWAY_LAB_MAP="$(field gateway_token_lab_map)"
 unset SNAPSHOT
 
 # Optional (PET-670): lab-agent's two paths, read whole, like the one above. A path Vault
@@ -168,11 +163,6 @@ if [ -n "$LAB_ASK" ] && [ -n "$LAB_PVE_SECRET" ]; then
 else
   echo "  lab-agent: kv/services/lab-agent and kv/services/lab-agent-pve are not both seeded, so it stays off"
 fi
-if [ -n "$PB_ANTHROPIC_KEY" ]; then
-  echo "  gateway: key present, so the play requires llm: on"
-else
-  echo "  gateway: no anthropic_api_key, so the gateway stays off"
-fi
 
 if [ "$BUILD" = "1" ]; then
   step "Build the standalone binary"
@@ -206,7 +196,6 @@ OUT="$TMP/extra.json" \
 PB_TOKEN="$PB_TOKEN" PB_CLIENT="$PB_CLIENT" PB_OWNER="$PB_OWNER" \
 PB_BEARER="$PB_BEARER" PB_NOTIFY_BEARER="$PB_NOTIFY_BEARER" BIN="$BIN" \
 PB_UPDATES_TOKEN="$PB_UPDATES_TOKEN" \
-PB_ANTHROPIC_KEY="$PB_ANTHROPIC_KEY" PB_GATEWAY_LAB_MAP="$PB_GATEWAY_LAB_MAP" \
 PB_DESK_APP_ID="$PB_DESK_APP_ID" PB_DESK_INSTALLATION_ID="$PB_DESK_INSTALLATION_ID" \
 PB_DESK_APP_PEM="$PB_DESK_APP_PEM" PB_PLANE_API_KEY="$PB_PLANE_API_KEY" LAB_BIN="$LAB_BIN" \
 LAB_ASK="$LAB_ASK" LAB_VAULT_TOKEN="$LAB_VAULT_TOKEN" \
@@ -224,8 +213,6 @@ json.dump({
     "pete_bot_alert_bearer":     os.environ["PB_BEARER"],
     "pete_bot_notify_bearer":    os.environ["PB_NOTIFY_BEARER"],
     "pete_bot_github_updates_token": os.environ.get("PB_UPDATES_TOKEN", ""),
-    "pete_bot_anthropic_api_key": os.environ.get("PB_ANTHROPIC_KEY", ""),
-    "pete_bot_gateway_token_lab_map": os.environ.get("PB_GATEWAY_LAB_MAP", ""),
     "pete_bot_desk_app_id":          os.environ.get("PB_DESK_APP_ID", ""),
     "pete_bot_desk_installation_id": os.environ.get("PB_DESK_INSTALLATION_ID", ""),
     "pete_bot_desk_app_pem":         os.environ.get("PB_DESK_APP_PEM", ""),

@@ -43,37 +43,10 @@
     group: root
     mode: "0644"
 
-# Revocation first, before any account check can stop the host: every principals file for a
-# user that is not present in ssh_ca_users goes, whether its entry says `state: absent`, was
-# deleted, or was dropped by a host_vars override. The list on this host is the whole truth.
-# Only regular, non-hidden files with a user-name shape count, and names compare by basename,
-# so a trailing slash in ssh_ca_principals_dir cannot turn a kept file into a removed one.
-- name: Create the principals directory
-  ansible.builtin.file:
-    path: "{{ ssh_ca_principals_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: List the principals files on the host
-  ansible.builtin.find:
-    paths: "{{ ssh_ca_principals_dir }}"
-    file_type: file
-    hidden: false
-    use_regex: true
-    patterns: ['^[a-z_][a-z0-9_-]*$']
-  register: ssh_ca_principal_files
-
-- name: Remove every principals file for a user that is not present
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: absent
-  loop: "{{ ssh_ca_principal_files.files
-            | rejectattr('path', 'search', '/(' ~ (ssh_ca_present | map(attribute='name') | map('regex_escape') | join('|')) ~ ')$')
-            | list }}"
-  loop_control:
-    label: "{{ item.path | basename }}"
+# Revocation first, before any account check can stop the host. tasks/revoke.yml removes every
+# entry in the principals directory that is not a present user's file (PET-784).
+- name: Revoke the principals files of users that are not present
+  ansible.builtin.import_tasks: revoke.yml
 
 # The role owns an account it created, and marks it in the GECOS field. A `create: true` entry
 # that names an account someone else made, such as a real person's, fails the host instead of
@@ -212,14 +185,18 @@
   ansible.builtin.command: systemctl is-active ssh.socket
   register: ssh_ca_socket
   changed_when: false
+  check_mode: false  # read-only; a --check run still needs its output to pick the unit
   failed_when: false
 
+# Socket activation wins: ssh.socket holds port 22, so a SIGHUP to the running ssh.service makes
+# sshd re-exec and fail with "Cannot bind any address", which kills it (PET-794).
 - name: Find which sshd unit runs
   ansible.builtin.set_fact:
     ssh_ca_sshd_unit: >-
-      {{ 'ssh.service'
-         if (ansible_facts.services['ssh.service'] | default({})).state | default('') == 'running'
-         else ('ssh.socket' if ssh_ca_socket.stdout | trim == 'active' else '') }}
+      {{ 'ssh.socket' if ssh_ca_socket.stdout | trim == 'active'
+         else ('ssh.service'
+               if (ansible_facts.services['ssh.service'] | default({})).state | default('') == 'running'
+               else '') }}
 
 - name: Fail a host with no sshd unit this role knows
   ansible.builtin.assert:
@@ -228,13 +205,49 @@
 
 # Every run, not only on a change: a run that failed after writing the files would leave the
 # next run with nothing changed and a daemon that never loaded them. A reload keeps open
-# sessions. A socket-activated sshd reads the config per connection and needs none.
+# sessions. On a socket-activated host the ssh.service listener reads the config only when it
+# starts, and a SIGHUP makes it re-execute and fail to rebind the port ssh.socket holds, which
+# kills it (PET-794). Restart it instead: the socket keeps port 22, and ssh.service uses
+# KillMode=process, so open sessions survive.
 - name: Reload a running sshd
   ansible.builtin.systemd_service:
     name: ssh.service
     state: reloaded
   when: ssh_ca_sshd_unit == 'ssh.service'
   changed_when: false
+
+- name: Restart the listener behind ssh.socket
+  ansible.builtin.systemd_service:
+    name: ssh.service
+    state: restarted
+  when: ssh_ca_sshd_unit == 'ssh.socket'
+  changed_when: false
+
+# A reload or a bad config can leave sshd down, and a green play over a dead sshd locks you out.
+# Read the banner from the address port 22 is bound to, so the play fails if nothing answers as
+# SSH. Loopback is wrong for a host whose sshd or socket binds one address only (PET-794).
+- name: Read the address port 22 listens on  # noqa: command-instead-of-module
+  ansible.builtin.command: ss -H -ltn 'sport = :22'
+  register: ssh_ca_listeners
+  changed_when: false
+  check_mode: false  # read-only; a --check run still needs its output for the next task
+  retries: 10
+  delay: 2
+  until: ssh_ca_listeners.stdout | trim | length > 0
+
+- name: Pick the address to probe
+  ansible.builtin.set_fact:
+    ssh_ca_probe_host: >-
+      {%- set local = (ssh_ca_listeners.stdout_lines | first).split()[3] -%}
+      {%- set addr = local.rsplit(':', 1)[0] | replace('[', '') | replace(']', '') -%}
+      {{ '::1' if addr in ['::', '[::]'] else ('127.0.0.1' if addr in ['*', '0.0.0.0'] else addr) }}
+
+- name: Prove sshd still accepts connections
+  ansible.builtin.wait_for:
+    host: "{{ ssh_ca_probe_host }}"
+    port: 22
+    search_regex: "^SSH-"
+    timeout: 30
 
 # The effective configuration, not the drop-in: this proves the drop-in is included and wins.
 - name: Read back the effective sshd configuration
@@ -259,8 +272,10 @@
     msg: >-
       {{ inventory_hostname }}: CA files written and accepted by sshd -T;
       {{ 'ssh.service reloaded' if ssh_ca_sshd_unit == 'ssh.service'
-         else 'ssh.socket reads the config at each connection' }};
+         else 'ssh.service restarted behind ssh.socket' }};
+      sshd answered with an SSH banner on {{ ssh_ca_probe_host }}:22;
       principals for {{ ssh_ca_present | map(attribute='name') | join(', ') }};
-      removed principals files {{ ssh_ca_principal_files.files | map(attribute='path')
+      examined {{ ssh_ca_principal_files.files | length }} principals entries;
+      removed {{ ssh_ca_principal_files.files | map(attribute='path')
         | map('basename') | reject('in', ssh_ca_present | map(attribute='name') | list) | join(', ') or 'none' }}.
       Prove the daemon with a certificate login.

@@ -1,0 +1,16 @@
+---
+# Guests whose /root/.ssh/authorized_keys must trust the inventory identity (PET-787).
+# 221 is hand-managed, so it never got the `keys` the proxmox-lxc module installs.
+# 119 is not listed on purpose (PET-793): its sshd sets PermitRootLogin no and stays that way.
+# The CVE collector reaches 119 through pve03 with `pct exec` (inventory/hosts.yml), so a key
+# there would be unused, and this role fails a guest whose root login is `no`.
+lxc_root_key_guests:
+  - 221
+
+# The public half of the inventory identity. Left empty, the playbook derives it from
+# lxc_root_key_private_file on the control node. It is a public key, never a secret.
+lxc_root_key_public: ""
+lxc_root_key_private_file: "~/.ssh/id_ed25519_ansible"
+
+# Directory inside the guest that holds authorized_keys. Tests point it elsewhere.
+lxc_root_key_dir: /root/.ssh

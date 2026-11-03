@@ -22,7 +22,12 @@
 #   243  ex-waterfast      destroyed in PET-306 (2026-08-24) with fast.pdlab.dev; only its
 #                          DB row in databases.tf survives. Same "still named everywhere"
 #                          caution as 242
-#   244  ex-tailscale      died with pve01 and MUST NOT be recreated (see tailscale.tf)
+#   244  ex-tailscale      died with pve01 and MUST NOT be recreated: pete-pi-1 is the
+#                          tailnet subnet router, and a second router on the /24 would compete.
+#                          tailscale.tf was removed in PET-778
+#   106  ex-registry      zot died with pve01 on 2026-09-03 and MUST NOT be recreated as-is:
+#                          its lxc.idmap (uid/gid 200) makes `pct restore` fail, and it wanted
+#                          sdb3-storage, which is gone. registry.tf was removed in PET-778
 #   245  minio-data        live
 #   246  reserved          claimed for the still-unbuilt notes-svc by minio-data.tf
 #

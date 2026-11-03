@@ -116,7 +116,6 @@ The real values originate from **two** places:
 | `kv/poker/db`             | `DATABASE_URL`, `admin_password`, `poker_password`   | **Password manager** — set at the manual Postgres standup (LXC 231)     |
 | `kv/services/authentik`   | `secret_key`, `bootstrap_token`                      | `homelab-infra` → authentik creds vault file                            |
 | `kv/services/cloudflare`  | `tunnel_token`                                       | `homelab-infra` → cloudflare tunnel vault file                          |
-| `kv/services/registry`    | `password` (+ optional `username`, default `admin`)  | zot htpasswd user (password manager)                                    |
 
 ---
 
@@ -160,9 +159,6 @@ vault kv put kv/services/authentik \
 
 vault kv put kv/services/cloudflare \
     tunnel_token="<CLOUDFLARE_TUNNEL_TOKEN>"
-
-vault kv put kv/services/registry \
-    password="<REGISTRY_PASSWORD>"
 ```
 
 > [!CAUTION]

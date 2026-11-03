@@ -1,0 +1,16 @@
+# One wrong principals directory (`bad_dir`) run through the real revoke tasks. Records in
+# `guard_refused` whether the guard stopped them. Included by tests/ssh-ca-revoke.yml.
+---
+- name: Run revoke.yml against a directory that is not the role's own
+  block:
+    - name: Revoke
+      ansible.builtin.import_tasks: ../../roles/ssh-ca/tasks/revoke.yml
+      vars:
+        ssh_ca_principals_dir: "{{ bad_dir }}"
+    - name: Note that nothing stopped it
+      ansible.builtin.set_fact:
+        guard_refused: "{{ guard_refused | default([]) }}"
+  rescue:
+    - name: Note the refusal
+      ansible.builtin.set_fact:
+        guard_refused: "{{ guard_refused | default([]) + [bad_dir] }}"

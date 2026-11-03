@@ -133,6 +133,7 @@ check 2 "a Claude hook runs on every session"      "$PLAIN" .claude/hooks/guard.
 check 2 "a Claude rule loads by path"              "$PLAIN" .claude/rules/terraform.md
 check 2 "the working agreement sets merge rules"   "$PLAIN" Claude/working-agreement.md
 check 0 "a skill stays prose"                      "$PLAIN" .claude/skills/pet/SKILL.md
+check 2 "the self-merge skill is a merge guard"    "$PLAIN" .claude/skills/full-send/SKILL.md
 check 2 "a workflow edit moves the trust boundary" "$PLAIN" .github/workflows/ci.yml
 check 2 "a composite action is the same boundary"  "$PLAIN" .github/actions/x/action.yml
 check 2 "Vault roles and policies"                 "$PLAIN" vault-config/auth.tf
