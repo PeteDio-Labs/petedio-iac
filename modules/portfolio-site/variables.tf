@@ -23,7 +23,7 @@ variable "attach_domain" {
 variable "github_repo" {
   description = "GitHub repository (owner/name) allowed to assume the deploy role."
   type        = string
-  default     = "PeteDio-Labs/portfolio"
+  default     = "PeteDio-Labs/pdlabs-portfolio"
 }
 
 variable "github_branch" {
