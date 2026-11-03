@@ -160,16 +160,15 @@ for _ in $(seq 1 30); do
 done
 if [ "$ok" != 1 ]; then rollback; exit 1; fi
 echo "restarted, and /minio/health/ready answers" >&2
-# Refresh the on-host mc alias the role set. Keys go in on stdin, never argv.
-if [ -x /usr/local/bin/mc ]; then
-  U="$(sed -n "s/^[[:space:]]*MINIO_ROOT_USER=//p" "$ENVF" | tail -1)"
-  if printf "%s\n%s\n" "$U" "$NEWPW" | /usr/local/bin/mc alias set local http://127.0.0.1:9000 >/dev/null 2>&1; then
-    echo "refreshed the on-host mc alias local" >&2
-  else
-    echo "WARN: could not refresh the on-host mc alias local. Re-run configure-minio.yml." >&2
-  fi
-fi
 printf "NEWPASS=%s\n" "$NEWPW"'
+
+# Refresh the on-host mc alias `local` from the env file, in every mode that follows a restart.
+# The keys go in on stdin, never argv. Prints OK, SKIPPED (no mc on the host) or FAILED.
+REMOTE_ALIAS='set -euo pipefail
+if [ ! -x /usr/local/bin/mc ]; then echo SKIPPED; exit 0; fi
+U="$(sed -n "s/^[[:space:]]*MINIO_ROOT_USER=//p" /etc/default/minio | tail -1)"
+P="$(sed -n "s/^[[:space:]]*MINIO_ROOT_PASSWORD=//p" /etc/default/minio | tail -1)"
+if printf "%s\n%s\n" "$U" "$P" | /usr/local/bin/mc alias set local http://127.0.0.1:9000 >/dev/null 2>&1; then echo OK; else echo FAILED; fi'
 
 REMOTE_RESTART='set -euo pipefail
 systemctl restart minio
@@ -368,6 +367,13 @@ if [ -f "$MINIO_CREDS_FILE" ]; then
   fi
   unset FP
 fi
+# Refresh the on-host mc alias in every mode, so a resumed run does not leave the exposed
+# password in /root/.mc/config.json on the host.
+case "$(rsh "$REMOTE_ALIAS" 2>/dev/null || echo FAILED)" in
+  OK) echo "  refreshed the on-host mc alias local" ;;
+  SKIPPED) echo "  no mc on $MINIO_HOST, so there is no on-host alias to refresh" ;;
+  *) followup_fail "could not refresh the on-host mc alias local on $MINIO_HOST. Re-run configure-minio.yml." ;;
+esac
 # Record that the proof is done, so an interruption before the Vault write completes does not
 # turn the next run's proof into a failure. The marker keeps the old password's sha256.
 if [ "$PROVEN" != "1" ] && [ -n "$OLD_PASS" ] && [ "$OLD_PASS" != "$NEW_PASS" ] && [ "$FOLLOWUP_FAILED" = "0" ]; then
