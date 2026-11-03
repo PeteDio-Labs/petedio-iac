@@ -78,3 +78,32 @@ first (`vault-breakglass` on 247).
 - **Command:** `curl -s --cacert environments/homelab/vault-ca.crt https://192.168.50.223:8200/v1/sys/seal-status`
 - **Expected:** `"sealed": false`.
 - **Bad:** `"sealed": true` for more than 10 minutes. Unsealing needs the key. The Mac's Keychain holds the record of truth, and the Pi holds a copy for its timer. Follow `vault/Systems/vault-and-secrets.md`.
+
+## Rotate the MinIO root password on 221 (`rotate-minio-221-root.sh`)
+
+- **Precondition:** a Vault token in `$VAULT_TOKEN` (break-glass shell), root SSH to
+  `192.168.50.221` with `~/.ssh/id_ed25519_ansible`, and the LAN. Nothing runs a Terraform
+  apply during the run: the state backend is on this host, and MinIO restarts once.
+- **Command:** `./scripts/rotate-minio-221-root.sh --check`, then `./scripts/rotate-minio-221-root.sh`.
+  Pass `--no-creds-file` to leave `~/petedio/.secrets/minio-221.txt` alone.
+- **Expected:** `--check` changes nothing and prints `plan: rotate`. The rotation prints the new
+  password's length only, then proves the new password works and the old one fails, writes
+  `kv/iac/minio-root` with check-and-set, and reads it back. Exit code 0.
+- **Bad:** exit code 1 stops on the first failed step. A restart that does not become ready
+  restores the old file. Exit code 3 means the password is rotated and recorded, but a proof
+  failed, such as the `tfstate` service account in `kv/iac/minio`. If a run dies after the
+  restart, run the script again: a marker file on 221 makes it resume and rotate nothing twice.
+- **After:** run the convergence check from `ansible/`. The role asserts that the root
+  credentials arrive as extra-vars, so resolve them from Vault into a mode 0600 file first:
+
+  ```bash
+  umask 077
+  F="$(mktemp)"
+  vault kv get -format=json kv/iac/minio-root \
+    | jq '{minio_root_user: .data.data.root_user, minio_root_password: .data.data.root_password}' > "$F"
+  ansible-playbook playbooks/configure-minio.yml --check --diff -e @"$F"
+  shred -u "$F"
+  ```
+
+  The play reports no change to `/etc/default/minio`. Comment on the PET item with the Vault
+  version and field names, never a value.
