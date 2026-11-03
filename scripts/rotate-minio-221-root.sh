@@ -35,7 +35,7 @@
 #
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt.
 #   SSH:         root@192.168.50.221 with ~/.ssh/id_ed25519_ansible (override $MINIO_SSH_KEY).
-#   Local tools: vault, mc, ssh, curl, python3.
+#   Local tools: vault, mc, ssh, curl, python3. 221 needs only python3.
 #
 # Usage:
 #   ./scripts/rotate-minio-221-root.sh --check    # read-only: examine and report, change nothing
@@ -76,14 +76,19 @@ STATE_BUCKET="tfstate"
 
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
-for t in vault mc ssh curl python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
+# ROTATE_MINIO_SOURCE_ONLY=1 lets scripts/test-rotate-minio-221-root.sh load the REMOTE_* text
+# without the lab's tools, key or Vault (PET-797).
+SRC_ONLY="${ROTATE_MINIO_SOURCE_ONLY:-}"
+if [ -z "$SRC_ONLY" ]; then
+  for t in vault mc ssh curl python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
+fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FOLLOWUP_FAILED=0
 followup_fail(){ printf '  \033[1;31mFAIL\033[0m %s\n' "$*" >&2; FOLLOWUP_FAILED=1; }
 
 # --- SSH to 221 ----------------------------------------------------------------------------
-[ -r "$MINIO_SSH_KEY" ] || die "no SSH key at $MINIO_SSH_KEY. Set MINIO_SSH_KEY."
+[ -n "$SRC_ONLY" ] || [ -r "$MINIO_SSH_KEY" ] || die "no SSH key at $MINIO_SSH_KEY. Set MINIO_SSH_KEY."
 # rsh REMOTE-COMMAND reads a script on stdin. Nothing secret goes in argv.
 rsh(){ ssh -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new \
          -i "$MINIO_SSH_KEY" "root@$MINIO_HOST" "$@"; }
@@ -111,7 +116,12 @@ mark = "/root/.minio-rotation-pending"
 print("PENDING=" + (open(mark).read().strip() or "unknown" if os.path.exists(mark) else "none"))
 PY'
 
-REMOTE_ROTATE='set -euo pipefail
+# On-host readiness probe. 221 runs Debian 13 with no curl, so it uses python3 (PET-797).
+# Any connection error or non-2xx answer exits non-zero. Both REMOTE_* scripts prepend it.
+READY_FN='ready(){ python3 -c "import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:9000/minio/health/ready\", timeout=5)" >/dev/null 2>&1; }'
+
+REMOTE_ROTATE="$READY_FN"'
+set -euo pipefail
 umask 077
 ENVF=/etc/default/minio
 MARK=/root/.minio-rotation-pending
@@ -155,7 +165,7 @@ rollback() {
 if ! systemctl restart minio; then rollback; exit 1; fi
 ok=0
 for _ in $(seq 1 30); do
-  if curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/ready; then ok=1; break; fi
+  if ready; then ok=1; break; fi
   sleep 2
 done
 if [ "$ok" != 1 ]; then rollback; exit 1; fi
@@ -170,13 +180,16 @@ U="$(sed -n "s/^[[:space:]]*MINIO_ROOT_USER=//p" /etc/default/minio | tail -1)"
 P="$(sed -n "s/^[[:space:]]*MINIO_ROOT_PASSWORD=//p" /etc/default/minio | tail -1)"
 if printf "%s\n%s\n" "$U" "$P" | /usr/local/bin/mc alias set local http://127.0.0.1:9000 >/dev/null 2>&1; then echo OK; else echo FAILED; fi'
 
-REMOTE_RESTART='set -euo pipefail
+REMOTE_RESTART="$READY_FN"'
+set -euo pipefail
 systemctl restart minio
 for _ in $(seq 1 30); do
-  if curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/ready; then echo ready; exit 0; fi
+  if ready; then echo ready; exit 0; fi
   sleep 2
 done
 exit 1'
+
+[ -z "$SRC_ONLY" ] || return 0 2>/dev/null || exit 0
 
 # --- mc, with keys on stdin ------------------------------------------------------------------
 MCCFG="$TMP/mc"; mkdir -p "$MCCFG"
