@@ -36,3 +36,43 @@ variable "public_checks" {
   }))
   default = []
 }
+
+variable "budget_alert_emails" {
+  description = "Email addresses that receive budget and anomaly alerts. The repository ignores *.tfvars, so pass this on the command line."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.budget_alert_emails) > 0
+    error_message = "Set at least one address: a budget with no subscriber alerts nobody."
+  }
+}
+
+variable "monthly_budget_usd" {
+  description = "Monthly gross-spend limit for petedio-credit-burn."
+  type        = number
+  default     = 40
+}
+
+variable "cumulative_budget_usd" {
+  description = "Limit for petedio-credit-cumulative across the credit period."
+  type        = number
+  default     = 140
+}
+
+variable "anomaly_threshold_usd" {
+  description = "Minimum total impact of an anomaly, in USD, before the daily digest includes it."
+  type        = number
+  default     = 5
+}
+
+variable "credit_period_start" {
+  description = "Start of the cumulative budget, as YYYY-MM-DD_HH:MM in UTC."
+  type        = string
+  default     = "2026-11-01_00:00"
+}
+
+variable "credit_expires" {
+  description = "Date the AWS credit ends (YYYY-MM-DD). Ends the cumulative budget and fills the expires tag. PET-723 reminds to act before 2027-04-06."
+  type        = string
+  default     = "2027-04-20"
+}
