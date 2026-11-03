@@ -223,10 +223,26 @@
   changed_when: false
 
 # A reload or a bad config can leave sshd down, and a green play over a dead sshd locks you out.
-# Read the banner from port 22, so the play fails if nothing answers as SSH.
+# Read the banner from the address port 22 is bound to, so the play fails if nothing answers as
+# SSH. Loopback is wrong for a host whose sshd or socket binds one address only (PET-794).
+- name: Read the address port 22 listens on  # noqa: command-instead-of-module
+  ansible.builtin.command: ss -H -ltn 'sport = :22'
+  register: ssh_ca_listeners
+  changed_when: false
+  retries: 10
+  delay: 2
+  until: ssh_ca_listeners.stdout | trim | length > 0
+
+- name: Pick the address to probe
+  ansible.builtin.set_fact:
+    ssh_ca_probe_host: >-
+      {%- set local = (ssh_ca_listeners.stdout_lines | first).split()[3] -%}
+      {%- set addr = local.rsplit(':', 1)[0] | replace('[', '') | replace(']', '') -%}
+      {{ '::1' if addr in ['::', '[::]'] else ('127.0.0.1' if addr in ['*', '0.0.0.0'] else addr) }}
+
 - name: Prove sshd still accepts connections
   ansible.builtin.wait_for:
-    host: 127.0.0.1
+    host: "{{ ssh_ca_probe_host }}"
     port: 22
     search_regex: "^SSH-"
     timeout: 30
@@ -255,7 +271,7 @@
       {{ inventory_hostname }}: CA files written and accepted by sshd -T;
       {{ 'ssh.service reloaded' if ssh_ca_sshd_unit == 'ssh.service'
          else 'ssh.service restarted behind ssh.socket' }};
-      sshd answered with an SSH banner on port 22;
+      sshd answered with an SSH banner on {{ ssh_ca_probe_host }}:22;
       principals for {{ ssh_ca_present | map(attribute='name') | join(', ') }};
       examined {{ ssh_ca_principal_files.files | length }} principals entries;
       removed {{ ssh_ca_principal_files.files | map(attribute='path')
