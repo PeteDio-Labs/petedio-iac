@@ -12,7 +12,7 @@ vault_snapshot_vault_addr: "https://192.168.50.223:8200"
 vault_snapshot_vault_cacert: "/opt/vault/tls/vault.crt"
 
 # AppRole creds (role vault-snapshot, vault-config/auth.tf). role_id is not sensitive;
-# secret_id is — both are seeded out-of-band by the operator (root-only, 0600). The script
+# secret_id is — scripts/seed-vault-snapshot-approle.sh places both (root-only, 0600, PET-790). The script
 # reads them with vault's key=@file syntax so the secret never lands on a command line.
 vault_snapshot_cred_dir: /etc/vault-snapshot
 vault_snapshot_role_id_file: "{{ vault_snapshot_cred_dir }}/role_id"
@@ -29,11 +29,12 @@ vault_snapshot_minio_scheme: http
 vault_snapshot_minio_hostport: "192.168.50.221:9000"
 vault_snapshot_bucket: vault-snapshots
 vault_snapshot_minio_creds_path: "kv/data/services/vault-snapshots"
-vault_snapshot_mc_alias: vaultsnap
+# S3 signing region. MinIO's default is us-east-1; --aws-sigv4 must match it.
+vault_snapshot_minio_region: us-east-1
 
-# mc (MinIO client) — single static binary; the host has no MinIO tooling otherwise.
-vault_snapshot_mc_url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
-vault_snapshot_mc_path: /usr/local/bin/mc
+# No mc (PET-800): dl.min.io returns 410 Gone for every community MinIO download, so the
+# script talks S3 with `curl --aws-sigv4`, which the host already has. Do not add an mc
+# download back without a pinned source that serves it.
 
 # Where the rendered snapshot script lands.
 vault_snapshot_script_path: /usr/local/sbin/vault-snapshot.sh

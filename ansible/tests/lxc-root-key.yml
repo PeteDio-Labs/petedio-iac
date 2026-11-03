@@ -1,0 +1,109 @@
+# lxc-root-key.yml: run roles/lxc-root-key end to end against a fake `pct` (PET-787).
+#
+# Runs on localhost, touches only a temp directory, needs no credential. From `ansible/`:
+#
+#   ansible-playbook tests/lxc-root-key.yml
+#
+# WHAT THIS EXISTS TO CATCH. The role builds one shell command with several arguments. A newline
+# in that command ends `pct exec` early and the guest receives empty arguments, a failure no
+# syntax check or lint rule sees. The whole command runs here, twice. The seeded file has no
+# trailing newline, so a fused key shows as a wrong line count.
+---
+- name: Install a key through a fake pct, twice
+  hosts: localhost
+  gather_facts: false
+  vars:
+    test_key: "ssh-ed25519 AAAATESTKEYBASE64 new@host"
+    old_key: "ssh-ed25519 AAAAOLDKEY old@host"
+  tasks:
+    - name: Make a scratch directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: lxc-root-key-test.
+      register: scratch
+
+    - name: Run the test and always clean up
+      block:
+        - name: Make the bin and guest directories
+          ansible.builtin.file:
+            path: "{{ scratch.path }}/{{ item }}"
+            state: directory
+            mode: "0755"
+          loop: [bin, guest]
+
+        - name: Write the fake pct and sshd
+          ansible.builtin.copy:
+            dest: "{{ scratch.path }}/bin/{{ item.name }}"
+            mode: "0755"
+            content: "{{ item.body }}"
+          loop:
+            - name: pct
+              body: |
+                #!/usr/bin/env bash
+                case "$1" in
+                  status) echo "status: running" ;;
+                  exec) shift 3; exec "$@" ;;
+                  *) echo "fake pct: $*" >&2; exit 2 ;;
+                esac
+            - name: sshd
+              body: |
+                #!/usr/bin/env bash
+                echo "permitrootlogin yes"
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Seed a key file with no trailing newline
+          ansible.builtin.copy:
+            dest: "{{ scratch.path }}/guest/authorized_keys"
+            content: "{{ old_key }}"
+            mode: "0600"
+
+        - name: Install the key through the fake pct
+          environment:
+            PATH: "{{ scratch.path }}/bin:{{ lookup('ansible.builtin.env', 'PATH') }}"
+          block:
+            - name: Install the key
+              ansible.builtin.include_role:
+                name: lxc-root-key
+              vars:
+                lxc_root_key_guests: [119]
+                lxc_root_key_public: "{{ test_key }}"
+                lxc_root_key_dir: "{{ scratch.path }}/guest"
+
+        - name: Read the file after the first run
+          ansible.builtin.slurp:
+            src: "{{ scratch.path }}/guest/authorized_keys"
+          register: after_first
+
+        - name: Install the key again through the fake pct
+          environment:
+            PATH: "{{ scratch.path }}/bin:{{ lookup('ansible.builtin.env', 'PATH') }}"
+          block:
+            - name: Install the key again
+              ansible.builtin.include_role:
+                name: lxc-root-key
+              vars:
+                lxc_root_key_guests: [119]
+                lxc_root_key_public: "{{ test_key }}"
+                lxc_root_key_dir: "{{ scratch.path }}/guest"
+
+        - name: Read the file after the second run
+          ansible.builtin.slurp:
+            src: "{{ scratch.path }}/guest/authorized_keys"
+          register: after_second
+
+        - name: Assert two intact lines, and no change on the second run
+          ansible.builtin.assert:
+            that:
+              - (after_first.content | b64decode).splitlines() == [old_key, test_key]
+              - after_second.content == after_first.content
+            fail_msg: >-
+              Wanted [{{ old_key }}, {{ test_key }}] twice. Got
+              {{ (after_first.content | b64decode).splitlines() }} then
+              {{ (after_second.content | b64decode).splitlines() }}.
+            success_msg: "Examined 1 guest in 2 runs: 2 key lines, old key intact, second run changed nothing."
+      always:
+        - name: Remove the scratch directory
+          ansible.builtin.file:
+            path: "{{ scratch.path }}"
+            state: absent

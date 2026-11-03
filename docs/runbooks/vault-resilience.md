@@ -44,26 +44,24 @@ cd environments/homelab/vault-config && terraform init && terraform plan   # rev
 terraform apply
 cd -
 
-# 3. MinIO target — create the bucket + a SCOPED svcacct (write to this bucket only), enable
-#    versioning, and seed the creds into Vault (field names access_key/secret_key — the
-#    snapshot script reads those). Bucket/svcacct creation is an mc admin op on .221.
-mc mb   <minio-alias>/vault-snapshots
-mc version enable <minio-alias>/vault-snapshots
-# create a least-privilege svcacct restricted to the vault-snapshots bucket, then:
-vault kv put kv/services/vault-snapshots access_key='<svcacct-key>' secret_key='<svcacct-secret>'
+# 3. MinIO target — creates the bucket (versioned) and a SCOPED svcacct (this bucket only),
+#    and seeds kv/services/vault-snapshots (access_key/secret_key, which the snapshot script
+#    reads). The Mac runs it on Pedro's word (PET-511).
+./scripts/seed-minio-221.sh
 
-# 4. Seed the vault-snapshot AppRole creds on .223 (root-only, 0600). role_id is not secret;
-#    secret_id is. Mint with the root token, then place under /etc/vault-snapshot/.
-vault read  -field=role_id   auth/approle/role/vault-snapshot/role-id
-vault write -f -field=secret_id auth/approle/role/vault-snapshot/secret-id
-#   → on 223:  /etc/vault-snapshot/role_id   (0600 root)
-#              /etc/vault-snapshot/secret_id (0600 root)
+# 4. Seed the vault-snapshot AppRole creds on .223 (root-only, 0600). The script mints the
+#    secret_id, writes role_id and secret_id to /etc/vault-snapshot/ over SSH on stdin, proves
+#    the login on 223, and never prints the secret_id (PET-790). The Mac runs it on Pedro's
+#    word. To replace the secret_id later, pass --rotate.
+./scripts/seed-vault-snapshot-approle.sh
 
 # 5. Install the timer.
 ansible-playbook ansible/playbooks/vault-snapshot.yml
 ```
 
 ### Verify
+
+`<minio-alias>` is any `mc` alias for `http://192.168.50.221:9000`, on a host that has `mc`. List yours with `mc alias list`. The Vault host needs no `mc`: the snapshot script signs its own S3 requests with `curl --aws-sigv4` (`PET-800`, because `dl.min.io` returns 410 Gone for `mc`).
 
 ```sh
 vault audit list                                   # 'file/' present

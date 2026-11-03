@@ -135,7 +135,10 @@
         cmd: docker compose --env-file plane.env up -d
         chdir: "{{ plane_dir }}"
       register: plane_up
-      changed_when: "'Started' in plane_up.stderr or 'Created' in plane_up.stderr"
+      # `up -d` restarts the one-shot services (such as the migrator) on every run and logs
+      # `Started` for them, so `Started` is not a change. A new or recreated container logs
+      # `Created` or `Recreated`, which only a compose-file, env-file or image change causes.
+      changed_when: "'Created' in plane_up.stderr or 'Recreated' in plane_up.stderr"
 
     # The whole external-database decision is undone silently if these come up anyway.
     - name: Assert the bundled Postgres and MinIO are NOT running

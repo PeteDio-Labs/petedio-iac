@@ -1,0 +1,72 @@
+---
+# configure-root-key.yml: make the inventory SSH identity trusted by root on LXC 221 (PET-787).
+# LXC 119 is not listed: it keeps PermitRootLogin no, and the collector reaches it through pve03 (PET-793).
+#
+# `collect-cve-inventory.yml` (PET-770) read 25 of 27 hosts on 2026-11-02. authentik-119 and
+# minio-221 answered `Permission denied (publickey)`: neither was created with the key that
+# Terraform's proxmox-lxc module installs. 221 is hand-managed by design, and its inventory entry
+# already names root and the right key, so the fix is its authorized_keys.
+#
+# The play reaches each guest through its node with `pct exec`, as configure-timezone.yml does,
+# because SSH into the guest is the thing that fails. It appends the public key once, never
+# edits other lines, and reads the file and sshd's PermitRootLogin back. A listed guest found on
+# no node fails the run (the play exits 0 when a pattern matches nothing, so the last play checks).
+#
+#   cd ansible
+#   ansible-playbook playbooks/configure-root-key.yml --check
+#   ansible-playbook playbooks/configure-root-key.yml
+#
+# Run it from a host with root SSH to pve03 (the Mac or 247 through a node identity). Then re-run
+# playbooks/collect-cve-inventory.yml with no extra vars and read 27 of 27.
+#
+# The key comes from -e lxc_root_key_public=... or, by default, from `ssh-keygen -y` on the private
+# file named by lxc_root_key_private_file. Only the public half is read, shown or sent.
+- name: Read the public key to install
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    lxc_root_key_defaults: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../roles/lxc-root-key/defaults/main.yml') | from_yaml }}"
+  tasks:
+    - name: Derive the public key from the private file
+      vars:
+        root_key_file: "{{ lxc_root_key_private_file | default(lxc_root_key_defaults.lxc_root_key_private_file) }}"
+      ansible.builtin.command: ssh-keygen -y -f {{ root_key_file | expanduser | quote }}
+      register: root_key_derived
+      changed_when: false
+      check_mode: false  # read-only, and --check needs the key
+      when: (lxc_root_key_public | default('')) | length == 0
+
+    - name: Keep it for the node plays
+      ansible.builtin.set_fact:
+        root_key_public: "{{ lxc_root_key_public | default(root_key_derived.stdout | default('')) }}"
+        root_key_guests: "{{ lxc_root_key_guests | default(lxc_root_key_defaults.lxc_root_key_guests) }}"
+
+- name: Install the key through the nodes
+  hosts: proxmox:pve_new:pve_gpu
+  become: true
+  gather_facts: false
+  roles:
+    - role: lxc-root-key
+      vars:
+        lxc_root_key_public: "{{ hostvars['localhost'].root_key_public }}"
+        lxc_root_key_guests: "{{ hostvars['localhost'].root_key_guests }}"
+
+- name: Check every listed guest was found on exactly one node
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Compare the guests handled with the guests listed
+      vars:
+        handled: "{{ groups['proxmox'] | union(groups['pve_new'] | default([])) | union(groups['pve_gpu'] | default([]))
+                     | map('extract', hostvars, 'lxc_root_key_handled') | select('defined') | flatten }}"
+      ansible.builtin.assert:
+        that:
+          - hostvars['localhost'].root_key_guests | map('string') | sort == handled | map('string') | sort
+        fail_msg: >-
+          Listed {{ hostvars['localhost'].root_key_guests }}, handled {{ handled }}.
+          A guest on no node, or on two, is not a clean run.
+        success_msg: "Examined {{ handled | length }} guests on the nodes: {{ handled }}."
