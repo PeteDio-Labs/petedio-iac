@@ -4,6 +4,11 @@
 #
 #   ./scripts/test-rotate-minio-221-root.sh
 #
+# Needs Linux userland: the remote text uses GNU `chown --reference` and `chmod --reference`,
+# and the assertions use `sha256sum`. A stock Mac lacks them, so run this in a Linux shell or
+# with GNU coreutils first in PATH. The preflight below exits 2 instead of reporting a rotation
+# regression that is really a missing tool.
+#
 # Contacts nothing in the lab. It loads the shipped script with ROTATE_MINIO_SOURCE_ONLY=1, so
 # the text under test is the real text. It then:
 #   - runs that text with a PATH that has no curl, like Debian 13 on 221,
@@ -17,6 +22,17 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n       want %s, got %s\n' "$1" "$2" "$3"; }
 eq()  { [ "$3" = "$2" ] && ok "$1" || bad "$1" "[$2]" "[$3]"; }
+
+tmpf="$(mktemp)"
+for need in "sha256sum" "chown --reference=$tmpf $tmpf" "chmod --reference=$tmpf $tmpf"; do
+  # shellcheck disable=SC2086
+  if ! $need </dev/null >/dev/null 2>&1; then
+    rm -f "$tmpf"
+    printf 'PREFLIGHT FAIL: `%s` does not run here. This test needs GNU coreutils (Linux).\n' "${need%% *}" >&2
+    exit 2
+  fi
+done
+rm -f "$tmpf"
 
 export ROTATE_MINIO_SOURCE_ONLY=1
 # shellcheck source=/dev/null
