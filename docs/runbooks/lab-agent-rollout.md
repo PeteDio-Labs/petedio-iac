@@ -26,7 +26,7 @@ Merge `pete-bot#38` after step 1. Until the apply runs, the `pete-bot-cd` role c
 
 ## Step 1: apply the Vault config
 
-One run covers all three PRs. `scripts/apply-vault-config.sh` plans, then applies without a prompt whenever the plan destroys nothing. It confirms only a plan that destroys. Review a plan-only run first, then run the script.
+One run covers all three PRs. `scripts/apply-vault-config.sh` plans, then applies without a prompt whenever the plan destroys nothing. It confirms only a plan that destroys. Review a plan-only run (`--plan-only`) first, then run the script.
 
 Expected changes:
 
