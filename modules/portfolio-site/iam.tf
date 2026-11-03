@@ -55,7 +55,8 @@ data "aws_iam_policy_document" "deploy" {
 
   statement {
     sid       = "Invalidate"
-    actions   = ["cloudfront:CreateInvalidation"]
+    # GetInvalidation: the deploy workflow waits for the invalidation to complete.
+    actions   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"]
     resources = [aws_cloudfront_distribution.site.arn]
   }
 }
