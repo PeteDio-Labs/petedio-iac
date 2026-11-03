@@ -74,7 +74,7 @@ matching the scheme:
 - Inject the **ansible-automation public key** as root's authorized key (or your bootstrap
   key, then let the role/your tooling install the automation key).
 - Start the container and confirm `ssh root@192.168.50.221` works and it can reach the
-  internet (`curl -fsSI https://dl.min.io >/dev/null`) and Vault (`192.168.50.223:8200`).
+  internet (`curl -fsSI https://github.com >/dev/null`) and Vault (`192.168.50.223:8200`).
 
 > [!NOTE]
 > MinIO is a plain userspace server — it does **not** need the `nesting`/`keyctl`
@@ -116,7 +116,7 @@ ansible-playbook playbooks/configure-minio.yml -e @/tmp/minio-secrets.json
 shred -u /tmp/minio-secrets.json
 ```
 
-This installs the pinned MinIO + mc binaries, the systemd service, opens UFW
+This installs the pinned MinIO + mc binaries from the lab mirror (see *Binary source* below), the systemd service, opens UFW
 `9000`/`9001` from the LAN, **creates the empty `tfstate` bucket, and enables versioning**.
 Confirm the service is healthy:
 
@@ -270,3 +270,25 @@ systemctl list-timers minio-tfstate-backup.timer                    # next run s
 - **MinIO won't start after the role run:** check `journalctl -u minio` on .221; the usual
   causes are a bad `/etc/default/minio` (env file) or the data dir not owned by
   `minio-user`. Re-running the role converges both.
+
+---
+
+## Binary source (PET-801)
+
+`dl.min.io` returns 410 Gone for every community MinIO download, so the role does not use it.
+The role downloads `minio.<version>` and `mc.<version>` from the `minio-binaries` release of
+`PeteDio-Labs/petedio-iac` (`minio_mirror_base` in `ansible/roles/minio/defaults/main.yml`)
+and checks each against the pinned sha256.
+
+To publish or bump the mirror, get the server binary from 221 and the `mc` binary from a host
+that holds it, then run as Pedro with `gh` signed in:
+
+```bash
+scp root@192.168.50.221:/usr/local/bin/minio ./minio
+bash scripts/mirror-minio-binaries.sh --server ./minio --mc ./mc
+```
+
+The script refuses to upload a file whose sha256 differs from the pin, then downloads each
+asset back and checks it again. Run it before the first rebuild that needs `mc`: the role
+fails with a 404 until the `mc` asset exists. If 221 is lost, the mirror is the only copy that
+does not depend on 221, so keep it.
