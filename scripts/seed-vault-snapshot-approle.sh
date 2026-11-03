@@ -72,13 +72,14 @@ as_host() {
 
 # The proof, run on 223. It logs in the way the snapshot script does: both values come from
 # files through `key=@file`, so neither reaches an argument list. It prints the token's
-# policies and three capabilities, and revokes the token. It exits 0 only when the revoke
-# succeeds and every value matches. $1 is "" for the live files and ".new" for the staged ones.
+# policies and three capabilities, and revokes the token. Vault 2.x `token lookup` has no
+# `-field` flag, so the policies come from `-format=json`, parsed with sed because 223 need not
+# have jq. It exits 0 only when the revoke succeeds and every value matches. $1 is "" for the live files and ".new" for the staged ones.
 proof_cmd() {
   printf %s "export VAULT_ADDR=$HOST_VAULT_ADDR VAULT_CACERT=$HOST_VAULT_CACERT; \
 t=\$(vault write -field=token auth/approle/login role_id=@$DEST/role_id$1 secret_id=@$DEST/secret_id$1 2>/dev/null) && [ -n \"\$t\" ] || { echo login=refused; exit 1; }; \
 export VAULT_TOKEN=\$t; \
-p=\$(vault token lookup -field=policies 2>/dev/null); \
+p=\$(vault token lookup -format=json 2>/dev/null | tr -d ' \n' | sed -n 's/.*\"policies\":\[\([^]]*\)\].*/\1/p' | tr -d '\"' | tr ',' ' '); p=\"[\$p]\"; \
 s=\$(vault token capabilities sys/storage/raft/snapshot 2>/dev/null); \
 k=\$(vault token capabilities kv/data/services/vault-snapshots 2>/dev/null); \
 a=\$(vault token capabilities kv/data/admin/probe 2>/dev/null); \
