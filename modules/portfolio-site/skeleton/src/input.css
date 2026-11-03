@@ -1,0 +1,10 @@
+@import "tailwindcss";
+@source "./";
+
+/* Placeholder tokens. PET-809 (toonish-ui kit) replaces these. */
+@theme {
+  --color-ink: #14121f;
+  --color-paper: #fbf8f1;
+  --color-accent: #ff4fa3;
+  --font-display: "Trebuchet MS", system-ui, sans-serif;
+}
