@@ -152,5 +152,6 @@ cat <<TXT
 
   Prove it works, as claude-ops on 247:
     VAULT_ADDR=https://192.168.50.223:8200 VAULT_CACERT=~/.config/claude-ops-vault/ca.pem \\
-      VAULT_TOKEN="\$(cat ~/.config/claude-ops-vault/token)" vault token lookup -field=policies
+      VAULT_TOKEN="\$(cat ~/.config/claude-ops-vault/token)" vault token lookup -format=json
+    The output lists the policies under "data" > "policies". Vault 2.x has no -field flag here.
 TXT
