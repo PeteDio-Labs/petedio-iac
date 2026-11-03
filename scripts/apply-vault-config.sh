@@ -80,7 +80,13 @@ fi
 
 step "review (as code) — refuse to apply on any destroy"
 if grep -qE '^No changes\.' /tmp/vc-plan.txt; then
-  echo "No changes — nothing to apply."; exit 0
+  echo "No changes — nothing to apply."
+  if [ "$PLAN_ONLY" = "1" ]; then
+    echo "  guard verdict: 0 to destroy; a real run would apply nothing."
+    step "plan-only: nothing applied"
+    echo "  examined: $VCDIR (full plan in /tmp/vc-plan.txt); No changes."
+  fi
+  exit 0
 fi
 PLAN_LINE="$(grep -E '^Plan: ' /tmp/vc-plan.txt | tail -1 || true)"
 [ -n "$PLAN_LINE" ] || die "no 'Plan:' summary — inspect /tmp/vc-plan.txt."
