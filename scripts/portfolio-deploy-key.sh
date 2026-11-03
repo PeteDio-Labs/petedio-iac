@@ -33,13 +33,13 @@ use_vault=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --profile) profile="${2:-}"; shift 2 ;;
+    --profile) [ $# -ge 2 ] || { echo "--profile needs a value." >&2; exit 2; }; profile="$2"; shift 2 ;;
     --rotate) mode="rotate"; shift ;;
     --reset) mode="reset"; shift ;;
     --check) mode="check"; shift ;;
     --vault) use_vault=1; shift ;;
-    --user) user="${2:-}"; shift 2 ;;
-    --repo) repo="${2:-}"; shift 2 ;;
+    --user) [ $# -ge 2 ] || { echo "--user needs a value." >&2; exit 2; }; user="$2"; shift 2 ;;
+    --repo) [ $# -ge 2 ] || { echo "--repo needs a value." >&2; exit 2; }; repo="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
