@@ -91,6 +91,9 @@ if [ "$PLAN_ONLY" = "1" ]; then
   if [ "$DES" != "0" ]; then
     printf '\033[1;33mThis plan would REMOVE %s resource(s); a real run refuses without --allow-destroy:\033[0m\n' "$DES"
     grep -E '^  # .* will be destroyed' /tmp/vc-plan.txt | sed 's/^  # /  /; s/ will be destroyed//' || true
+    echo "  guard verdict: a real run would REFUSE (needs --allow-destroy and a typed confirmation)."
+  else
+    echo "  guard verdict: 0 to destroy; a real run would apply this plan without a prompt."
   fi
   step "plan-only: nothing applied"
   echo "  examined: $VCDIR (full plan in /tmp/vc-plan.txt); $PLAN_LINE"
