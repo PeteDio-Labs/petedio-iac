@@ -1,11 +1,11 @@
 ---
-# configure-root-key.yml: make the inventory SSH identity trusted by root on LXC 119 and 221 (PET-787).
+# configure-root-key.yml: make the inventory SSH identity trusted by root on LXC 221 (PET-787).
+# LXC 119 is not listed: it keeps PermitRootLogin no, and the collector reaches it through pve03 (PET-793).
 #
 # `collect-cve-inventory.yml` (PET-770) read 25 of 27 hosts on 2026-11-02. authentik-119 and
 # minio-221 answered `Permission denied (publickey)`: neither was created with the key that
-# Terraform's proxmox-lxc module installs. 221 is hand-managed by design and 119 was captured
-# into Terraform after it existed. Both inventory entries already name root and the right key, so
-# the fix is the guests' authorized_keys, not the collector's connection vars.
+# Terraform's proxmox-lxc module installs. 221 is hand-managed by design, and its inventory entry
+# already names root and the right key, so the fix is its authorized_keys.
 #
 # The play reaches each guest through its node with `pct exec`, as configure-timezone.yml does,
 # because SSH into the guest is the thing that fails. It appends the public key once, never
