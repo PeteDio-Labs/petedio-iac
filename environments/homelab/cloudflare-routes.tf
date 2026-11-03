@@ -115,6 +115,43 @@ module "cloudflare_ingress" {
       }
     }
 
+    # The same two MCP servers on their own hostnames (PET-824), so the apex can serve the
+    # portfolio from CloudFront (PET-816). Each is a sibling of the path route above and
+    # below it: same origin, same one-person allow-list, same Managed OAuth. The path routes
+    # stay until the connectors point here, then a later PR removes them.
+    #
+    # Plane: the :8790 site of the Caddy shim already maps /mcp to the server's mount, so the
+    # connector URL is https://mcp-plane.pdlab.dev/mcp.
+    "mcp-plane.pdlab.dev" = {
+      service       = "http://192.168.50.235:8790"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+
+      managed_oauth = {
+        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        access_token_lifetime = "15m"
+        session_duration      = "168h"
+      }
+    }
+
+    # Lab: lab-agent serves only /mcp/lab (pete-bot src/lab/mcp.ts MCP_PATH), so the connector
+    # URL is https://mcp-lab.pdlab.dev/mcp/lab. This Access app has its own audience tag, so
+    # lab-agent needs lab_agent_access_aud set to the lab_mcp_subdomain_access_aud output
+    # before this route answers. lab-agent checks one tag, so that change ends the path route.
+    "mcp-lab.pdlab.dev" = {
+      service       = "http://192.168.50.237:3017"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+
+      managed_oauth = {
+        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        access_token_lifetime = "15m"
+        session_duration      = "168h"
+      }
+    }
+
     # Tom's Plane MCP (PET-610), a copy of pdlab.dev/mcp/plane with a different origin port and email.
     # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
     # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same
@@ -323,4 +360,9 @@ resource "cloudflare_dns_record" "registry" {
 output "lab_mcp_access_aud" {
   description = "Access application audience tag for pdlab.dev/mcp/lab, which lab-agent checks on the Cf-Access-Jwt-Assertion JWT. It is not a secret."
   value       = module.cloudflare_ingress.access_application_auds["pdlab.dev/mcp/lab"]
+}
+
+output "lab_mcp_subdomain_access_aud" {
+  description = "Access application audience tag for mcp-lab.pdlab.dev (PET-824). Set it as lab_agent_access_aud when the connector moves off pdlab.dev/mcp/lab. It is not a secret."
+  value       = module.cloudflare_ingress.access_application_auds["mcp-lab.pdlab.dev"]
 }
