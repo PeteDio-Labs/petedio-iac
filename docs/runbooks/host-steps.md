@@ -32,7 +32,10 @@ first (`vault-breakglass` on 247).
 
 - **Precondition:** a Vault token in `$VAULT_TOKEN` (break-glass shell). The script refuses to
   run with no token and never prompts. The change is merged to `main` first.
-- **Command:** `./scripts/apply-vault-config.sh`
+- **Command:** `./scripts/apply-vault-config.sh`. To review the plan first, run
+  `./scripts/apply-vault-config.sh --plan-only`. It plans, prints the destroy count and exits 0
+  without applying or leaving a saved plan. It prints `No changes` or the `Plan:` line and the
+  directory it examined, and exits non-zero when init or plan fails.
 - **Expected:** a plan, then an apply. Read the plan before you let it apply: it lists only the
   policies, roles or mounts the PR described, and zero resources to destroy.
 - **Bad:** the script refuses a plan that destroys anything. Do not add `--allow-destroy`

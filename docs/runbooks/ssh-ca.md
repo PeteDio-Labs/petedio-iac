@@ -22,7 +22,9 @@ user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host
 
 ## Phase 1: turn on the CA and canary one host
 
-1. To create the CA, run `scripts/apply-vault-config.sh` on 247 from the break-glass shell. Read
+1. To create the CA, run `scripts/apply-vault-config.sh` on 247 from the break-glass shell. To
+   read the plan first, run it with `--plan-only`: it prints the plan and the destroy guard's
+   verdict, then exits without applying. Read
    the plan: it adds the mount, the CA, two roles and one policy, and changes `breakglass-247`.
 2. Check that Vault serves the key:
    `curl -s --cacert environments/homelab/vault-ca.crt https://192.168.50.223:8200/v1/ssh-client-signer/public_key`

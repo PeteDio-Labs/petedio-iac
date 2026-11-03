@@ -23,17 +23,25 @@ set -euo pipefail
 # because it was being watched. A flag cannot be left on: it is spent when the command
 # ends.
 ALLOW_DESTROY=0
+# --plan-only (PET-791) runs init and plan, prints the review, and exits 0 without applying.
+# It writes no saved plan, so nothing is left on disk for a later `terraform apply` to pick up.
+PLAN_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --allow-destroy) ALLOW_DESTROY=1 ;;
+    --plan-only) PLAN_ONLY=1 ;;
     -h|--help)
-      printf 'usage: %s [--allow-destroy]\n\n' "${0##*/}"
+      printf 'usage: %s [--plan-only] [--allow-destroy]\n\n' "${0##*/}"
+      printf '  --plan-only      plan and print the review, then exit 0 without applying.\n'
+      printf '                   Needs the same Vault token. Cannot combine with --allow-destroy.\n'
       printf '  --allow-destroy  apply a plan that removes resources. Off by default;\n'
       printf '                   the plan is printed and confirmed before anything runs.\n'
       exit 0 ;;
     *) printf 'unknown argument: %s (try --help)\n' "$arg" >&2; exit 2 ;;
   esac
 done
+
+[ "$PLAN_ONLY" = "0" ] || [ "$ALLOW_DESTROY" = "0" ] || { printf -- '--plan-only and --allow-destroy cannot be combined: a plan-only run never applies.\n' >&2; exit 2; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -63,16 +71,40 @@ AWS_SECRET_ACCESS_KEY="$(vault kv get -field=secret_key kv/iac/minio)"; export A
 
 step "init + plan"
 terraform init -reconfigure -input=false >/tmp/vc-init.log 2>&1 || { tail -15 /tmp/vc-init.log; die "terraform init failed."; }
-terraform plan -input=false -no-color -out=tfplan 2>&1 | tee /tmp/vc-plan.txt
+if [ "$PLAN_ONLY" = "1" ]; then
+  rm -f tfplan
+  terraform plan -input=false -no-color 2>&1 | tee /tmp/vc-plan.txt
+else
+  terraform plan -input=false -no-color -out=tfplan 2>&1 | tee /tmp/vc-plan.txt
+fi
 
 step "review (as code) — refuse to apply on any destroy"
 if grep -qE '^No changes\.' /tmp/vc-plan.txt; then
-  echo "No changes — nothing to apply."; exit 0
+  echo "No changes — nothing to apply."
+  if [ "$PLAN_ONLY" = "1" ]; then
+    echo "  guard verdict: 0 to destroy; a real run would apply nothing."
+    step "plan-only: nothing applied"
+    echo "  examined: $VCDIR (full plan in /tmp/vc-plan.txt); No changes."
+  fi
+  exit 0
 fi
 PLAN_LINE="$(grep -E '^Plan: ' /tmp/vc-plan.txt | tail -1 || true)"
 [ -n "$PLAN_LINE" ] || die "no 'Plan:' summary — inspect /tmp/vc-plan.txt."
 DES="$(sed -E 's/.* ([0-9]+) to destroy.*/\1/' <<<"$PLAN_LINE")"
 echo "  $PLAN_LINE"
+if [ "$PLAN_ONLY" = "1" ]; then
+  # Say what was examined: a plan-only run that exits 0 must not look like a clean plan.
+  if [ "$DES" != "0" ]; then
+    printf '\033[1;33mThis plan would REMOVE %s resource(s); a real run refuses without --allow-destroy:\033[0m\n' "$DES"
+    grep -E '^  # .* will be destroyed' /tmp/vc-plan.txt | sed 's/^  # /  /; s/ will be destroyed//' || true
+    echo "  guard verdict: a real run would REFUSE (needs --allow-destroy and a typed confirmation)."
+  else
+    echo "  guard verdict: 0 to destroy; a real run would apply this plan without a prompt."
+  fi
+  step "plan-only: nothing applied"
+  echo "  examined: $VCDIR (full plan in /tmp/vc-plan.txt); $PLAN_LINE"
+  exit 0
+fi
 if [ "$DES" != "0" ]; then
   if [ "$ALLOW_DESTROY" != "1" ]; then
     printf '\n\033[1;31mThis plan REMOVES %s resource(s):\033[0m\n' "$DES"
