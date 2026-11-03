@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # seed-plane-member-pat.sh — mint one person's Plane PAT in Plane's Django shell on LXC 235,
 # and store it in kv/services/plane-<name> (PET-610 for Tom, PET-650 generalized it for Sonia,
-# PET-660 added the Claude user behind pdlab.dev/mcp/plane).
+# PET-660 added the Claude user behind mcp-plane.pdlab.dev).
 # Nobody sees the token: it travels from the api container's stdout into a variable here, and
 # from there into Vault through stdin.
 #
@@ -71,7 +71,7 @@ case "$NAME" in
   sonia) LABEL="pet-650-mcp-sonia"; ROUTE="mcp-sonia.pdlab.dev"; PORT=8792; ALLOW_ADMIN=1 ;;
   # The dedicated Claude Member user (PET-660). Its site is :8790, which deploy-plane.sh feeds
   # from kv/services/plane-claude as plane_mcp_api_key. Never an Admin.
-  claude) LABEL="pet-660-mcp-claude"; ROUTE="pdlab.dev/mcp/plane"; PORT=8790; ALLOW_ADMIN=0 ;;
+  claude) LABEL="pet-660-mcp-claude"; ROUTE="mcp-plane.pdlab.dev"; PORT=8790; ALLOW_ADMIN=0 ;;
   "") echo "--name is required: tom, sonia or claude" >&2; exit 2 ;;
   *) printf 'unknown --name: %s. Add a row to the MEMBERS table first.\n' "$NAME" >&2; exit 2 ;;
 esac

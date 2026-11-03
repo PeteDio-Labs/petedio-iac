@@ -10,7 +10,7 @@
 #                over SSH, because the shim admits only 112
 #   3  listener: lab-agent listens on 237:3017 (only 112 may reach it, so this runs over
 #                SSH on the node and uses pct exec)
-#   4  tags:     the two lab audience tags from Terraform, for lab_agent_access_aud
+#   4  tag:      the lab audience tag from Terraform, for lab_agent_access_aud
 #
 # Usage: ./scripts/lab-mcp-check.sh [--no-tf] [--node pve03]
 set -uo pipefail
@@ -34,8 +34,7 @@ ok(){ RAN=$((RAN+1)); printf '  ok    %s\n' "$*"; }
 bad(){ RAN=$((RAN+1)); FAIL=$((FAIL+1)); printf '  FAIL  %s\n' "$*"; }
 
 echo "== 1. edge (expect 401 unauthenticated)"
-for url in https://mcp-plane.pdlab.dev/mcp https://mcp-lab.pdlab.dev/mcp/lab \
-           https://pdlab.dev/mcp/plane https://pdlab.dev/mcp/lab; do
+for url in https://mcp-plane.pdlab.dev/mcp https://mcp-lab.pdlab.dev/mcp/lab; do
   code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST "$url" || true)"
   case "$code" in
     401) ok "$url -> 401" ;;
@@ -43,7 +42,6 @@ for url in https://mcp-plane.pdlab.dev/mcp https://mcp-lab.pdlab.dev/mcp/lab \
     *)   bad "$url -> $code (want 401; 403 means Access passed and the origin refused)" ;;
   esac
 done
-echo "  (the two pdlab.dev/mcp/* rows are the old path routes; a failure there is expected after the apex moves to CloudFront)"
 
 # pct runs on a node. pve03 is an unprivileged login, so it needs sudo (lab-verify.sh does the same).
 # The default node is the ssh alias pve03; a literal address would use the Mac's default key,
@@ -89,7 +87,7 @@ else
     export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
   fi
   if terraform -chdir="$HOMELAB" init -reconfigure -input=false >/dev/null 2>&1; then
-    for o in lab_mcp_subdomain_access_aud lab_mcp_access_aud; do
+    for o in lab_mcp_subdomain_access_aud; do
       v="$(terraform -chdir="$HOMELAB" output -raw "$o" 2>/dev/null || true)"
       if printf '%s' "$v" | grep -Eq '^[0-9a-f]{64}$'; then ok "$o = $v"; else bad "$o is empty or not 64 hex"; fi
     done

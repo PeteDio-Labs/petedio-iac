@@ -34,3 +34,9 @@ for the lab connector. Pedro runs steps 2 to 4.
 
 Rollback: the path routes stay until step 5, so step 2 and 3 can be reversed by re-adding the old
 connector. After step 3, the lab path route fails until `lab_agent_access_aud` is set back.
+
+## Status (PET-827)
+
+Both connectors run at the new hostnames, and `find_host` through `https://mcp-lab.pdlab.dev/mcp/lab`
+is verified. Step 5 is done: the apply on merge of the PR that removes the old routes deletes
+their DNS records and Access applications, and the `lab_mcp_access_aud` output.
