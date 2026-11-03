@@ -16,8 +16,9 @@
 # secrets on the repo's `production` environment, which only `main` may deploy to. The script
 # never prints it, never writes it to disk and never puts it in a command line.
 #
-# FAILS CLOSED. It exits non-zero unless the read-back shows the user with exactly one key,
-# both secrets present on the environment, and the new key authenticating as the deploy user.
+# FAILS CLOSED. The new key must authenticate as the deploy user before it is stored anywhere.
+# It exits non-zero unless the read-back shows the user with exactly one key and both secrets
+# present on the environment.
 # It prints what it examined at each step.
 set -uo pipefail
 set +x
@@ -89,31 +90,37 @@ secret=$(printf '%s' "$new" | python3 -c 'import json,sys; print(json.load(sys.s
 unset new
 echo "created key $key_id"
 
+# Prove the new key works as the deploy user BEFORE it replaces anything. A key that fails here
+# was never stored, so the old secrets (if any) keep working.
+who=""
+for _ in 1 2 3 4 5 6; do
+  who=$(AWS_ACCESS_KEY_ID="$key_id" AWS_SECRET_ACCESS_KEY="$secret" aws sts get-caller-identity --query Arn --output text 2>/dev/null) && break
+  sleep 5   # a new key can take a few seconds to propagate
+done
+case "$who" in
+  *":user/$user") echo "new key authenticates as: $who" ;;
+  *)
+    echo "New key did not authenticate as $user (got '${who:-nothing}'). Nothing was stored; deleting it." >&2
+    awsx iam delete-access-key --user-name "$user" --access-key-id "$key_id" >&2
+    exit 1
+    ;;
+esac
+
 fail=0
 printf '%s' "$key_id" | gh secret set AWS_ACCESS_KEY_ID --env "$env_name" --repo "$repo" || fail=1
 printf '%s' "$secret" | gh secret set AWS_SECRET_ACCESS_KEY --env "$env_name" --repo "$repo" || fail=1
 
 if [ "$use_vault" -eq 1 ] && [ "$fail" -eq 0 ]; then
-  python3 -c 'import json,sys; print(json.dumps({"access_key_id": sys.argv[1], "secret_access_key": sys.stdin.read()}))' "$key_id" <<<"$secret" \
+  # printf, not a here-string: a here-string appends a newline to the secret.
+  printf '%s' "$secret" \
+    | python3 -c 'import json,sys; print(json.dumps({"access_key_id": sys.argv[1], "secret_access_key": sys.stdin.read()}))' "$key_id" \
     | vault kv put kv/services/portfolio-deploy - >/dev/null || fail=1
-fi
-
-# Prove the new key works as the deploy user before deleting the old one.
-if [ "$fail" -eq 0 ]; then
-  who=""
-  for _ in 1 2 3 4 5 6; do
-    who=$(AWS_ACCESS_KEY_ID="$key_id" AWS_SECRET_ACCESS_KEY="$secret" aws sts get-caller-identity --query Arn --output text 2>/dev/null) && break
-    sleep 5   # a new key can take a few seconds to propagate
-  done
-  case "$who" in
-    *":user/$user") echo "new key authenticates as: $who" ;;
-    *) echo "New key did not authenticate as $user (got '${who:-nothing}')." >&2; fail=1 ;;
-  esac
 fi
 unset secret
 
 if [ "$fail" -ne 0 ]; then
-  echo "FAILED. The old key (if any) is untouched. New key $key_id is left in place; delete it with:" >&2
+  echo "FAILED while storing the key. The old key (if any) is not deleted, but the GitHub secrets may now hold the new one." >&2
+  echo "New key $key_id is left in place. Re-run with --rotate to replace both, or delete it with:" >&2
   echo "  aws --profile $profile iam delete-access-key --user-name $user --access-key-id $key_id" >&2
   exit 1
 fi
