@@ -1,6 +1,6 @@
 # portfolio (skeleton)
 
-Copy this directory into the `PeteDio-Labs/portfolio` repo. Static HTML and one CSS file built
+Copy this directory into the `PeteDio-Labs/pdlabs-portfolio` repo. Static HTML and one CSS file built
 with the Tailwind CLI under Bun. No React and no runtime JavaScript framework.
 
 ```bash
