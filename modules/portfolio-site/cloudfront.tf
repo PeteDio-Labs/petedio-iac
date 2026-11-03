@@ -1,13 +1,9 @@
 # Distribution shape is chosen so the CloudFront Free flat-rate plan stays available: OAC (not
-# OAI), AWS managed cache and header policies (no ForwardedValues), one behavior, one function,
+# OAI), the AWS managed cache policy and our own response headers policy, headers.tf (no ForwardedValues), one behavior, one function,
 # no real-time logs. The module attaches no WAF and no plan: see README.md for why.
 
 data "aws_cloudfront_cache_policy" "optimized" {
   name = "Managed-CachingOptimized"
-}
-
-data "aws_cloudfront_response_headers_policy" "security" {
-  name = "Managed-SecurityHeadersPolicy"
 }
 
 resource "aws_cloudfront_origin_access_control" "site" {
@@ -59,7 +55,7 @@ resource "aws_cloudfront_distribution" "site" {
     cached_methods             = ["GET", "HEAD"]
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.optimized.id
-    response_headers_policy_id = data.aws_cloudfront_response_headers_policy.security.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
 
     function_association {
       event_type   = "viewer-request"
