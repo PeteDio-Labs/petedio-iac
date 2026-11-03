@@ -92,8 +92,8 @@ ansible-playbook playbooks/configure-lab-watchdog.yml -e "@$TMP/extra.json" "$@"
 step "Done"
 cat <<'TXT'
   Prove the path from 247 (posts one line to the Lab-Agent DM):
-    ssh -i ~/.ssh/id_ed25519_pedro claude@192.168.50.247 'sudo lab-watchdog --check'
-    ssh -i ~/.ssh/id_ed25519_pedro claude@192.168.50.247 'sudo lab-watchdog --test'
+    ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.247 'lab-watchdog --check'
+    ssh -i ~/.ssh/id_ed25519_ansible root@192.168.50.247 'lab-watchdog --test'
   Prove a DOWN post: stop nothing in production. Point one target at a closed port with
   `-e '{"lab_watchdog_targets":[{"name":"canary","url":"http://127.0.0.1:9/","ok":"200"}]}'`,
   run two cycles, expect one DOWN line, then redeploy without the override.
