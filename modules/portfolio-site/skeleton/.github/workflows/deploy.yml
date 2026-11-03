@@ -1,5 +1,8 @@
-# Deploys the static site to S3 and invalidates CloudFront over GitHub OIDC (PET-774).
-# No AWS key exists: the role trusts only this repo's main branch (modules/portfolio-site/iam.tf).
+# Tests, builds, then deploys to S3 and invalidates CloudFront (PET-816).
+# The AWS account's SCP denies the GitHub OIDC provider, so the deploy job signs in as a
+# deploy-only IAM user (petedio-iac, modules/portfolio-site). Its key lives in the
+# `production` environment secrets, and that environment accepts only main. Pull requests
+# run ci.yml and never reach the deploy job.
 name: deploy
 
 on:
@@ -8,7 +11,6 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  id-token: write # mint the OIDC token
   contents: read
 
 concurrency:
@@ -16,39 +18,61 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run build
+      - name: Check the build wrote every page
+        run: |
+          set -eu
+          for f in index.html ui.html 404.html toonish.css favicon.svg; do test -s "dist/$f" || { echo "missing dist/$f"; exit 1; }; done
+          n=$(ls dist/work/*.html | wc -l)
+          echo "dist/work holds $n case-study pages"
+          test "$n" -ge 4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          if-no-files-found: error
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
     env:
-      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-2
       BUCKET: ${{ vars.BUCKET }}
       DISTRIBUTION_ID: ${{ vars.DISTRIBUTION_ID }}
     steps:
-      # A missing variable would otherwise surface as an opaque AWS error, or as a sync to nowhere.
-      - name: Require deploy variables
+      # An empty value would surface as an opaque AWS error, or as a sync to nowhere.
+      - name: Require deploy variables and secrets
         run: |
-          for v in AWS_ROLE_ARN BUCKET DISTRIBUTION_ID; do
-            [ -n "${!v}" ] || { echo "::error::repository variable $v is empty"; exit 1; }
+          for v in BUCKET DISTRIBUTION_ID AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            [ -n "${!v}" ] || { echo "::error::$v is empty (variables: BUCKET, DISTRIBUTION_ID; environment secrets: the two AWS keys)"; exit 1; }
           done
-
-      # TODO before first use: pin each action to a full commit SHA, as petedio-iac does.
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-
-      - run: bun install --frozen-lockfile
-      - run: bun run build
-
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/download-artifact@v4
         with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          aws-region: us-east-2
-
+          name: dist
+          path: dist
+      - name: Confirm the deploy identity
+        run: aws sts get-caller-identity --query Arn --output text
       - name: Sync to S3
         run: |
           count=$(find dist -type f | wc -l)
           [ "$count" -gt 0 ] || { echo "::error::dist/ is empty, refusing to sync with --delete"; exit 1; }
           aws s3 sync dist "s3://$BUCKET" --delete --cache-control "public, max-age=300"
           echo "synced $count file(s) to $BUCKET"
-
       - name: Invalidate CloudFront
         run: |
           id=$(aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" --query Invalidation.Id --output text)

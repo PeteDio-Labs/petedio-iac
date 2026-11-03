@@ -58,13 +58,20 @@ old_keys=$(awsx iam list-access-keys --user-name "$user" --query 'AccessKeyMetad
 old_count=$(printf '%s\n' "$old_keys" | wc -w | tr -d ' ')
 echo "user $user has $old_count access key(s)"
 
-report_secrets() {
-  gh secret list --env "$env_name" --repo "$repo" --json name --jq '.[].name' 2>/dev/null | sort | tr '\n' ' '
+# Read back the environment's secret names. Fails unless the read succeeds and both names are there.
+check_secrets() {
+  local names
+  names=$(gh secret list --env "$env_name" --repo "$repo" --json name --jq '.[].name') || { echo "Could not read the environment secrets on $repo/$env_name." >&2; return 1; }
+  echo "environment secrets on $repo/$env_name: $(printf '%s' "$names" | sort | tr '\n' ' ')"
+  for want in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+    printf '%s\n' "$names" | grep -qx "$want" || { echo "Missing environment secret $want on $repo/$env_name." >&2; return 1; }
+  done
 }
 
 if [ "$mode" = "check" ]; then
-  echo "environment secrets on $repo/$env_name: $(report_secrets)"
-  [ "$old_count" -eq 1 ] || { echo "Expected exactly one key." >&2; exit 1; }
+  check_secrets || exit 1
+  [ "$old_count" -eq 1 ] || { echo "Expected exactly one key, found $old_count." >&2; exit 1; }
+  echo "OK: one key and both secrets present (the key value is not readable, so this does not prove they match)."
   exit 0
 fi
 
@@ -72,17 +79,41 @@ if [ "$mode" = "create" ] && [ "$old_count" -gt 0 ]; then
   echo "The user already has a key and AWS cannot show it again. Re-run with --rotate to replace it." >&2
   exit 1
 fi
-[ "$old_count" -lt 2 ] || { echo "The user has 2 keys (the AWS maximum). Delete one by hand, then re-run." >&2; exit 1; }
+if [ "$old_count" -ge 2 ]; then
+  # Two keys mean an earlier rotation stopped part way: GitHub may hold a mismatched pair, and no
+  # secret value for either key is recoverable. Delete both and make a fresh key.
+  echo "The user has $old_count keys (an earlier rotation stopped part way). Deleting all of them, then creating a fresh key."
+  for k in $old_keys; do
+    awsx iam delete-access-key --user-name "$user" --access-key-id "$k" || { echo "Could not delete $k." >&2; exit 1; }
+    echo "deleted key $k"
+  done
+  old_keys=""
+fi
 
 # The environment holds the secrets and limits deployment to main.
 echo "creating environment $env_name on $repo, main only"
 gh api -X PUT "repos/$repo/environments/$env_name" \
   -F 'deployment_branch_policy[protected_branches]=false' \
   -F 'deployment_branch_policy[custom_branch_policies]=true' --silent || { echo "Could not create the environment." >&2; exit 1; }
-if ! gh api "repos/$repo/environments/$env_name/deployment-branch-policies" --jq '.branch_policies[].name' | grep -qx main; then
-  gh api -X POST "repos/$repo/environments/$env_name/deployment-branch-policies" -f name=main -f type=branch --silent \
-    || { echo "Could not restrict the environment to main." >&2; exit 1; }
+# Require EXACTLY one policy: the branch `main`. Remove any other, then read the set back.
+pol="repos/$repo/environments/$env_name/deployment-branch-policies"
+policies=$(gh api "$pol" --jq '.branch_policies[] | [.id, .name, .type] | @tsv') || { echo "Could not read the deployment branch policies." >&2; exit 1; }
+have_main=0
+while IFS=$'\t' read -r pid pname ptype; do
+  [ -n "$pid" ] || continue
+  if [ "$pname" = "main" ] && [ "$ptype" = "branch" ]; then
+    have_main=1
+  else
+    echo "removing deployment policy '$pname' ($ptype) from $env_name"
+    gh api -X DELETE "$pol/$pid" --silent || { echo "Could not remove policy '$pname'." >&2; exit 1; }
+  fi
+done <<<"$policies"
+if [ "$have_main" -eq 0 ]; then
+  gh api -X POST "$pol" -f name=main -f type=branch --silent || { echo "Could not add the main branch policy." >&2; exit 1; }
 fi
+final_policies=$(gh api "$pol" --jq '[.branch_policies[] | "\(.name):\(.type)"] | join(",")') || { echo "Could not read the policies back." >&2; exit 1; }
+[ "$final_policies" = "main:branch" ] || { echo "Environment $env_name allows '$final_policies', not only main:branch. No key was created." >&2; exit 1; }
+echo "environment $env_name deploys only from: $final_policies"
 
 new=$(awsx iam create-access-key --user-name "$user" --output json) || { echo "create-access-key failed (the account's SCP may deny it)." >&2; exit 1; }
 key_id=$(printf '%s' "$new" | python3 -c 'import json,sys; print(json.load(sys.stdin)["AccessKey"]["AccessKeyId"])') || exit 1
@@ -119,9 +150,8 @@ fi
 unset secret
 
 if [ "$fail" -ne 0 ]; then
-  echo "FAILED while storing the key. The old key (if any) is not deleted, but the GitHub secrets may now hold the new one." >&2
-  echo "New key $key_id is left in place. Re-run with --rotate to replace both, or delete it with:" >&2
-  echo "  aws --profile $profile iam delete-access-key --user-name $user --access-key-id $key_id" >&2
+  echo "FAILED while storing the key. GitHub may hold a mismatched pair, and the new secret is gone." >&2
+  echo "Re-run with --rotate: it sees the extra key, deletes every key and makes a fresh one." >&2
   exit 1
 fi
 
@@ -130,7 +160,7 @@ for old in $old_keys; do
   echo "deleted old key $old"
 done
 
-echo "environment secrets on $repo/$env_name: $(report_secrets)"
+check_secrets || exit 1
 final=$(awsx iam list-access-keys --user-name "$user" --query 'AccessKeyMetadata[].AccessKeyId' --output text | wc -w | tr -d ' ')
 [ "$final" -eq 1 ] || { echo "Expected one key, found $final." >&2; exit 1; }
 echo "OK: $user has one key ($key_id), stored as environment secrets on $repo/$env_name."
