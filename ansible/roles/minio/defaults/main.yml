@@ -42,7 +42,19 @@ minio_group: minio-user
 # The single data drive for the state backend. A fresh host starts empty; the runbook
 # restores the `tfstate` objects from backup BEFORE the first `terraform init`.
 minio_data_dir: /var/lib/minio
-minio_config_env: /etc/default/minio   # systemd EnvironmentFile (0640, holds root creds)
+minio_config_env: /etc/default/minio   # systemd EnvironmentFile (holds root creds)
+minio_config_env_owner: root
+minio_config_env_group: "{{ minio_group }}"
+minio_config_env_mode: "0640"
+
+# PET-811: LXC 221 predates this role. Its data lives in /data/minio, it has no
+# `minio-user`, and its env file is root:root 0600 (inventory/host_vars/minio-221.yml).
+# Where the host already owns an account and a data directory, set these to false so the
+# role takes the names as given and creates nothing. With manage_data_dir false the role
+# also asserts the directory exists, so a wrong path fails the run instead of silently
+# pointing MinIO at an empty directory (an empty tfstate backend).
+minio_manage_account: true
+minio_manage_data_dir: true
 
 # --- Network ---------------------------------------------------------------------
 # S3 API on :9000, web console on :9001 (matches backend.tf endpoint .221:9000).
