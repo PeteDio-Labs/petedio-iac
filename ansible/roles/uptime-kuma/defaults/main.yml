@@ -247,6 +247,9 @@ uptime_kuma_monitors:
     description: "Media triage API on 237. Liveness only; Muse is its caller."
 
   # -- services that ran unwatched (PET-706) -----------------------------------
+  # RETIRED, STILL LIVE IN KUMA: the `usaa` monitor (PET-590). This list no longer declares
+  # it and the provisioner does not prune, so delete it in the Kuma UI after CT 238 is gone,
+  # and confirm it no longer appears on the status page.
   # petedio-search binds 192.168.50.246 and the LAN reaches it, so the Pi does too.
   # /healthz proves only that the server is up; the embedding lane has its own check
   # in configure-search.yml.
