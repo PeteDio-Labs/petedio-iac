@@ -44,13 +44,6 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
-    # usaa (LXC 238, PET-590). The same gated read as plane, for `usaa = {}` in
-    # databases.tf. Apply this, and seed kv/db/usaa with scripts/seed-usaa-db.sh, BEFORE
-    # the merge that adds that entry, or its apply-on-merge fails on this path.
-    path "kv/data/db/usaa" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/iac/proxmox" {
       capabilities = ["read"]
     }
@@ -142,7 +135,7 @@ resource "vault_policy" "terraform" {
 #   deploy-claude-247.sh  reads four App keys (claude-*); see the claude-ops exclusions.
 #   deploy-codex-248.sh   reads kv/services/codex-review-app, the Codex reviewer's App key.
 #   deploy-uptime-kuma.sh needs macOS `security`.
-#   deploy-pete-bot.sh, deploy-usaa.sh, deploy-search.sh, deploy-media-dash.sh log in with
+#   deploy-pete-bot.sh, deploy-search.sh, deploy-media-dash.sh log in with
 #     an admin token, not this AppRole.
 # NEVER kv/admin/*: the root token and the unseal material live there.
 #
@@ -392,34 +385,6 @@ resource "vault_policy" "lab_agent_presence" {
     # default policy's other grants (cubbyhole, lookup, wrapping) are not needed.
     path "auth/token/renew-self" {
       capabilities = ["update"]
-    }
-  EOT
-}
-
-# usaa-cd: the savings tracker's deploy (PET-695). It reads the app's own credentials and its
-# own SSH key, both under the app's paths, and nothing else. It does NOT read
-# kv/iac/lxc-ssh: that key opens root on every Terraform-built LXC, and the deploy needs
-# only usaa-238. seed-usaa-cd.sh generates a key for this app, and configure-usaa.yml
-# installs its public half on usaa-238 alone.
-#
-# ⚠ It does NOT read kv/services/pete-bot. Vault cannot scope a read to one field, and that
-# path holds the Discord token and the desk App's key. The notify token the app needs is a
-# copy in kv/services/usaa, written by scripts/seed-usaa-cd.sh. Rotating pete-bot's token
-# means running that script again.
-resource "vault_policy" "usaa_cd" {
-  name = "usaa-cd"
-
-  policy = <<-EOT
-    path "kv/data/db/usaa" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/usaa" {
-      capabilities = ["read"]
-    }
-
-    path "kv/metadata/services/usaa" {
-      capabilities = ["list"]
     }
   EOT
 }
