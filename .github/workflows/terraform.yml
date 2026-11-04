@@ -165,6 +165,7 @@ jobs:
       VAULT_ADDR: https://192.168.50.223:8200
       VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
       TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
+      TF_VAR_manage_backup_job: ${{ vars.MANAGE_BACKUP_JOB || 'false' }}
       TF_VAR_postgres_db_password_versions: ${{ vars.POSTGRES_DB_PASSWORD_VERSIONS || '{}' }}
     outputs:
       safe: ${{ steps.gate.outputs.safe }}
@@ -274,6 +275,7 @@ jobs:
       # and the preflight step below, so they can't drift. Default false → pool is a no-op and the
       # preflight is skipped. Flip MANAGE_RESOURCE_POOL=true AFTER granting Pool.Allocate (PET-159).
       TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
+      TF_VAR_manage_backup_job: ${{ vars.MANAGE_BACKUP_JOB || 'false' }}
       # Password rotation for the databases in databases.tf. The owner password is
       # write-only, so it is invisible to the plan diff and Terraform cannot notice a
       # rotated Vault value on its own — bumping a database's integer here is what
