@@ -1,0 +1,9 @@
+# zizmor config (PET-835). Third-party actions must pin a full commit SHA.
+# Workflows from this organisation's own repos track a ref, so a caller picks up
+# the reusable workflow it calls without a SHA bump on every merge.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        PeteDio-Labs/*: ref-pin
+        "*": hash-pin

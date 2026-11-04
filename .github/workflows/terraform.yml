@@ -108,6 +108,44 @@ jobs:
         working-directory: .
         run: terraform fmt -check -recursive
 
+      # PET-835: every third-party action must pin a full commit SHA (policy in
+      # .github/zizmor.yml). The self-hosted runner on LXC 232 applies on merge, so a moved
+      # tag in an action is code that runs next to the Vault token. zizmor is pinned to the
+      # version this was verified against. Only `unpinned-uses` gates: the other audits
+      # (template-injection, artipacked, dangerous-triggers) have open findings that are
+      # printed here and not yet triaged. The step counts the workflows zizmor completed and
+      # fails if that differs from the files on disk, so a collapsed glob cannot pass.
+      - name: Pinned actions (zizmor)
+        working-directory: .
+        run: |
+          set -uo pipefail
+          pip install --quiet "zizmor==1.32.0"
+          WORKFLOWS=$(find .github/workflows -maxdepth 1 -name '*.yml' | wc -l | tr -d ' ')
+          if [ "$WORKFLOWS" -eq 0 ]; then echo "::error::found 0 workflow files"; exit 1; fi
+          zizmor --offline --format json-v1 --config .github/zizmor.yml .github/workflows \
+            > /tmp/zizmor.json 2> /tmp/zizmor.err
+          RC=$?
+          # zizmor exits 0 clean or 10-14 for findings; any other code is a failure to run.
+          if [ "$RC" -ne 0 ] && { [ "$RC" -lt 10 ] || [ "$RC" -gt 14 ]; }; then
+            cat /tmp/zizmor.err; echo "::error::zizmor failed to run (exit $RC)"; exit 1
+          fi
+          DONE=$(grep -c 'completed .github/workflows/' /tmp/zizmor.err || true)
+          if [ "$DONE" -ne "$WORKFLOWS" ]; then
+            echo "::error::zizmor completed $DONE of $WORKFLOWS workflow files"; exit 1
+          fi
+          python3 - <<'PY' || exit 1
+          import collections, json, sys
+          findings = json.load(open("/tmp/zizmor.json"))
+          counts = collections.Counter(f["ident"] for f in findings)
+          unpinned = [f for f in findings if f["ident"] == "unpinned-uses"]
+          for f in unpinned:
+              loc = f["locations"][0]["symbolic"]["key"]["Local"]["verbatim_path"]
+              print(f"::error file={loc}::unpinned action reference; pin a full commit SHA")
+          print("zizmor findings by audit (only unpinned-uses gates):", dict(counts))
+          sys.exit(1 if unpinned else 0)
+          PY
+          echo "zizmor examined ${DONE} of ${WORKFLOWS} workflow files: 0 unpinned actions."
+
       - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
         run: terraform init -input=false -backend=false
 
@@ -165,6 +203,7 @@ jobs:
       VAULT_ADDR: https://192.168.50.223:8200
       VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
       TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
+      TF_VAR_manage_backup_job: ${{ vars.MANAGE_BACKUP_JOB || 'false' }}
       TF_VAR_postgres_db_password_versions: ${{ vars.POSTGRES_DB_PASSWORD_VERSIONS || '{}' }}
     outputs:
       safe: ${{ steps.gate.outputs.safe }}
@@ -274,6 +313,7 @@ jobs:
       # and the preflight step below, so they can't drift. Default false → pool is a no-op and the
       # preflight is skipped. Flip MANAGE_RESOURCE_POOL=true AFTER granting Pool.Allocate (PET-159).
       TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
+      TF_VAR_manage_backup_job: ${{ vars.MANAGE_BACKUP_JOB || 'false' }}
       # Password rotation for the databases in databases.tf. The owner password is
       # write-only, so it is invisible to the plan diff and Terraform cannot notice a
       # rotated Vault value on its own — bumping a database's integer here is what
