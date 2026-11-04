@@ -29,8 +29,10 @@ restart**):
 - Pinned, checksum-verified **MinIO server** + **mc client** binaries → `/usr/local/bin`
   (versions/sha256 in `defaults/main.yml`, verified against the official `.sha256sum`
   sidecars — bump version + hash together, cf. PET-111)
-- `minio-user` system account + the data directory (`/var/lib/minio`)
-- `/etc/default/minio` environment file (`0640`, root creds injected at runtime — see
+- `minio-user` system account + the data directory (`/var/lib/minio`). LXC 221 overrides
+  these in `inventory/host_vars/minio-221.yml` (`/data/minio`, root, no account created,
+  `minio_manage_*: false`) because it predates the role (PET-811)
+- `/etc/default/minio` environment file (`0640` by default, `0600` root on 221; root creds injected at runtime — see
   below) and the `minio.service` systemd unit
 - Converges every bucket in **`minio_buckets`** (`tasks/buckets.yml`): creates it if
   absent, **enables versioning** if off (the recovery net for the lock-light backend —

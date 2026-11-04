@@ -46,63 +46,38 @@ module "cloudflare_ingress" {
     # at the bottom of this file. Its connector now runs on the game host itself so the panel
     # can bind loopback only (PET-266).
 
-    # Plane MCP, reachable from the phone (PET-292), at pdlab.dev/mcp/plane since PET-667.
-    # Every MCP server lives under pdlab.dev/mcp/<name>, one path route and one Access app
-    # each. The lab connector (/mcp/lab) joins as a sibling, never behind Plane. PET-667
-    # retired the first home of this route, mcp.pdlab.dev, once the connector moved here.
+    # The Plane and lab MCP servers on their own hostnames (PET-824), so the apex can serve the
+    # portfolio from CloudFront (PET-816). The old pdlab.dev/mcp/<name> path routes are gone
+    # (PET-827). Managed OAuth gates an MCP client that speaks OAuth and never renders a page,
+    # unlike the browser-gated routes above. access_emails is the WHOLE authorization boundary:
+    # the Plane shim holds a service PAT and lab-agent sees Proxmox and Vault metadata, so keep
+    # each list to one person.
     #
-    # Managed OAuth gates an MCP client that speaks OAuth and never renders a page, unlike the
-    # browser-gated routes above.
+    # Both origins are LAN addresses because cloudflared runs on LXC 112, a different host.
+    # The Plane shim checks no Access JWT, so the origin firewall on 235
+    # (plane-mcp-firewall.service) admits only 112. lab-agent admits only 112 and verifies the
+    # JWT's audience tag and email, and the lab-mcp allowlist on 237 drops every other source.
     #
-    # Origin is the Caddy shim on plane-235 (:8790), not the MCP server itself. Caddy
-    # maps /mcp/plane to the server's /http/api-key mount and swaps Claude's opaque Access
-    # token for the Plane PAT. That mount wants the PAT in a header, and it is the only mount
-    # that runs no OAuth of its own, which is what Managed OAuth requires of an origin.
-    #
-    # Why the origin is a LAN address and not loopback: cloudflared runs on LXC 112, a
-    # DIFFERENT host, so a 127.0.0.1 bind on 235 would be unreachable. Caddy checks no
-    # Access JWT, so the origin firewall on 235 (plane-mcp-firewall.service) is the
-    # boundary: it admits only 112 to :8790 and to each member's port. The MCP server itself
-    # is never published; only Caddy reaches it.
-    #
-    # access_emails is the WHOLE authorization boundary here. The shim holds a service PAT,
-    # so anyone who passes Access acts as its owner in Plane — keep this list to one person.
-    "pdlab.dev/mcp/plane" = {
-      hostname      = "pdlab.dev"
-      path          = "^/mcp/plane(/.*)?$"
-      access_path   = "/mcp/plane"
+    # Plane: the :8790 site of the Caddy shim already maps /mcp to the server's mount, so the
+    # connector URL is https://mcp-plane.pdlab.dev/mcp.
+    "mcp-plane.pdlab.dev" = {
       service       = "http://192.168.50.235:8790"
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["pedelgadillo@gmail.com"]
 
       managed_oauth = {
-        # Claude's connector callback. This list is the security boundary on dynamic
-        # client registration — only these redirect targets can ever be registered.
         allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
-
-        # Short-lived tokens, long-lived grant: the phone re-auths silently for a week
-        # rather than bouncing to Authentik every 15 minutes.
         access_token_lifetime = "15m"
         session_duration      = "168h"
       }
     }
 
-    # The lab MCP (PET-667): lab-agent's read-only lab tools, for claude.ai project threads.
-    # The origin is lab-agent's second listener on media-dash-237 (:3017), a LAN address because
-    # cloudflared runs on LXC 112.
-    #
-    # ⚠ TWO CHECKS AT THE ORIGIN, UNLIKE THE PLANE SHIM. lab-agent admits only 112's address
-    # and verifies the Cf-Access-Jwt-Assertion JWT against this app's audience tag and the
-    # email below. The lab-mcp allowlist on 237 also drops every other source. Either check
-    # alone still holds when the other fails.
-    #
-    # Every tool is a read, so the route can read the lab and change nothing. It still sees
-    # Proxmox and Vault metadata, so access_emails stays one person.
-    "pdlab.dev/mcp/lab" = {
-      hostname      = "pdlab.dev"
-      path          = "^/mcp/lab(/.*)?$"
-      access_path   = "/mcp/lab"
+    # Lab: lab-agent serves only /mcp/lab (pete-bot src/lab/mcp.ts MCP_PATH), so the connector
+    # URL is https://mcp-lab.pdlab.dev/mcp/lab. This Access app has its own audience tag, so
+    # lab-agent needs lab_agent_access_aud set to the lab_mcp_subdomain_access_aud output
+    # before this route answers.
+    "mcp-lab.pdlab.dev" = {
       service       = "http://192.168.50.237:3017"
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
@@ -115,11 +90,11 @@ module "cloudflare_ingress" {
       }
     }
 
-    # Tom's Plane MCP (PET-610), a copy of pdlab.dev/mcp/plane with a different origin port and email.
+    # Tom's Plane MCP (PET-610), a copy of mcp-plane.pdlab.dev with a different origin port and email.
     # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
     # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same
     # rule applies as above: access_emails is the whole boundary, so keep it to Tom alone, and
-    # keep pdlab.dev/mcp/plane to Pedro alone.
+    # keep mcp-plane.pdlab.dev to Pedro alone.
     "mcp-tom.pdlab.dev" = {
       service       = "http://192.168.50.235:8791"
       access        = true
@@ -168,7 +143,7 @@ module "cloudflare_ingress" {
     # Pedro, Tom and Sonia (PET-650). Only the app is routed. Attachments live in MinIO on 245, which stays
     # private, so uploads and file views work on the LAN and the tailnet only.
     #
-    # This is a different route from pdlab.dev/mcp/plane above. That one holds Pedro's PAT, so it
+    # This is a different route from mcp-plane.pdlab.dev above. That one holds Pedro's PAT, so it
     # stays a one-person list. Here, each person signs in to Plane as themselves.
     "plane.pdlab.dev" = {
       service       = "http://192.168.50.235:8080"
@@ -316,11 +291,11 @@ resource "cloudflare_dns_record" "registry" {
   depends_on = [module.cloudflare_ingress]
 }
 
-# The Access application audience tag for pdlab.dev/mcp/lab (PET-667). lab-agent checks it
+# The Access application audience tag for mcp-lab.pdlab.dev (PET-824). lab-agent checks it
 # against the `aud` claim of the Cf-Access-Jwt-Assertion JWT, so a token issued for another
 # Access app in the team cannot reach the lab tools. It is an identifier, not a secret.
 # configure-pete-bot.yml carries it as lab_agent_access_aud, and the MCP stays off until it does.
-output "lab_mcp_access_aud" {
-  description = "Access application audience tag for pdlab.dev/mcp/lab, which lab-agent checks on the Cf-Access-Jwt-Assertion JWT. It is not a secret."
-  value       = module.cloudflare_ingress.access_application_auds["pdlab.dev/mcp/lab"]
+output "lab_mcp_subdomain_access_aud" {
+  description = "Access application audience tag for mcp-lab.pdlab.dev (PET-824). lab-agent checks it on the Cf-Access-Jwt-Assertion JWT. Set it as lab_agent_access_aud. It is not a secret."
+  value       = module.cloudflare_ingress.access_application_auds["mcp-lab.pdlab.dev"]
 }

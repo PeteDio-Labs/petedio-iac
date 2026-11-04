@@ -10,7 +10,9 @@
 #   kv/services/plane  secret_key_minio -> plane_minio_secret_key
 #   kv/services/plane  live_secret_key  -> plane_live_secret_key  (LIVE_SERVER_SECRET_KEY)
 #   kv/services/plane  mq_password      -> plane_mq_password      (bundled RabbitMQ)
-#   kv/services/plane  api_key          -> plane_mcp_api_key      (the MCP shim's Plane PAT, PET-610)
+#   kv/services/plane-claude api_key    -> plane_mcp_api_key      (the :8790 site's Plane PAT: the
+#                                          dedicated Claude Member user, PET-660; seeded by
+#                                          scripts/seed-plane-member-pat.sh --name claude)
 #   kv/services/plane-<name> api_key    -> plane_mcp_member_keys[<name>], for each name in
 #                                          MCP_MEMBERS (PET-610, PET-650; each seeded by
 #                                          scripts/seed-plane-member-pat.sh --name <name>)
@@ -61,8 +63,12 @@ LIVE_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=live_secret_key kv/servi
   || die "cannot read kv/services/plane field 'live_secret_key'."
 MQ_PW="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=mq_password kv/services/plane)" \
   || die "cannot read kv/services/plane field 'mq_password'."
-MCP_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=api_key kv/services/plane)" \
-  || die "cannot read kv/services/plane field 'api_key'."
+# The :8790 site (pdlab.dev/mcp/plane) acts as the Claude Member user, never as Pedro (PET-660).
+# There is no fallback to kv/services/plane: a missing PAT stops the deploy, because a silent
+# fallback would put project threads back on Pedro's identity. plane-sync keeps Pedro's PAT.
+MCP_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=api_key kv/services/plane-claude)" \
+  || die "cannot read kv/services/plane-claude field 'api_key' — run scripts/seed-plane-member-pat.sh --name claude first."
+[ -n "$MCP_KEY" ] || die "kv/services/plane-claude field 'api_key' is empty."
 # One personal MCP site each. Keep this list equal to plane_mcp_members in configure-plane.yml,
 # and give each name a kv/data/services/plane-<name> path in vault-config's ansible-247 policy;
 # the play stops when a member's PAT is missing.

@@ -74,7 +74,7 @@ matching the scheme:
 - Inject the **ansible-automation public key** as root's authorized key (or your bootstrap
   key, then let the role/your tooling install the automation key).
 - Start the container and confirm `ssh root@192.168.50.221` works and it can reach the
-  internet (`curl -fsSI https://dl.min.io >/dev/null`) and Vault (`192.168.50.223:8200`).
+  internet (`curl -fsSI https://github.com >/dev/null`) and Vault (`192.168.50.223:8200`).
 
 > [!NOTE]
 > MinIO is a plain userspace server — it does **not** need the `nesting`/`keyctl`
@@ -102,6 +102,13 @@ step — the role will read whatever `kv/iac/minio-root` holds.
 
 ### Step 3 — run the Ansible role
 
+> [!IMPORTANT]
+> `ansible/inventory/host_vars/minio-221.yml` makes the role match the **live** 221: data in
+> `/data/minio`, no service account, env file `root:root 0600`, and `minio_manage_data_dir:
+> false`. On a bare rebuilt container, create the directory first
+> (`ssh root@192.168.50.221 'install -d -m 0750 /data/minio'`), or the role stops at its
+> "data directory exists" assertion by design (PET-811). Restore in Step 4 fills it.
+
 From `ansible/`, resolve the root creds into a `0600` `@file` and run the play (the
 `minio` inventory group already targets `192.168.50.221`):
 
@@ -116,7 +123,7 @@ ansible-playbook playbooks/configure-minio.yml -e @/tmp/minio-secrets.json
 shred -u /tmp/minio-secrets.json
 ```
 
-This installs the pinned MinIO + mc binaries, the systemd service, opens UFW
+This installs the pinned MinIO + mc binaries from the lab mirror (see *Binary source* below), the systemd service, opens UFW
 `9000`/`9001` from the LAN, **creates the empty `tfstate` bucket, and enables versioning**.
 Confirm the service is healthy:
 
@@ -270,3 +277,46 @@ systemctl list-timers minio-tfstate-backup.timer                    # next run s
 - **MinIO won't start after the role run:** check `journalctl -u minio` on .221; the usual
   causes are a bad `/etc/default/minio` (env file) or the data dir not owned by
   `minio-user`. Re-running the role converges both.
+
+---
+
+## Match the role to 221 (PET-811)
+
+221 predates the role. The role takes 221's shape through `host_vars/minio-221.yml`; the host
+does not migrate. Facts read on 2026-11-03: `MINIO_VOLUMES="/data/minio"`, no `minio-user`
+account, `/etc/default/minio` `root:root 0600`. **Not read:** the user `minio.service` runs as
+and the owner of `/data/minio`. The host_vars file sets `root` for both as an inference.
+
+To confirm, run these read-only probes on 221. They print no credential:
+
+```bash
+ssh root@192.168.50.221 'systemctl cat minio.service | grep -E "^(User|Group|ExecStart|EnvironmentFile)=";
+  stat -c "%U:%G %a %n" /data/minio /etc/default/minio; grep "^MINIO_VOLUMES=" /etc/default/minio'
+```
+
+If `User=` is not `root`, change `minio_user` and `minio_group` in the host_vars file in a PR.
+Do not run `configure-minio.yml` for real against 221 to find out. The check is
+`ansible-playbook playbooks/configure-minio.yml --check --diff --limit minio-221 -e @<0600 file>`.
+It passes when it reports no change to `/etc/default/minio`, the data directory or the service
+account. Under `--check` on a host without `mc`, the play prints `NOT EXAMINED` for the mc
+install and does not download it, so the check cannot fail on the mirror.
+
+## Binary source (PET-801)
+
+`dl.min.io` returns 410 Gone for every community MinIO download, so the role does not use it.
+The role downloads `minio.<version>` and `mc.<version>` from the `minio-binaries` release of
+`PeteDio-Labs/petedio-iac` (`minio_mirror_base` in `ansible/roles/minio/defaults/main.yml`)
+and checks each against the pinned sha256.
+
+To publish or bump the mirror, get the server binary from 221 and the `mc` binary from a host
+that holds it, then run as Pedro with `gh` signed in:
+
+```bash
+scp root@192.168.50.221:/usr/local/bin/minio ./minio
+bash scripts/mirror-minio-binaries.sh --server ./minio --mc ./mc
+```
+
+The script refuses to upload a file whose sha256 differs from the pin, then downloads each
+asset back and checks it again. Run it before the first rebuild that needs `mc`: the role
+fails with a 404 until the `mc` asset exists. If 221 is lost, the mirror is the only copy that
+does not depend on 221, so keep it.

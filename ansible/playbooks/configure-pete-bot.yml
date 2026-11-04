@@ -121,15 +121,16 @@
     # reaches the private vault over https with a token it mints from the read-only
     # petedio-workspace-mirror App, scoped to petedio-vault with contents:read (PET-542).
     lab_agent_github_key_file: /etc/lab-agent/github-app.pem
-    # The lab MCP (PET-667). The route pdlab.dev/mcp/lab sends here through cloudflared on
+    # The lab MCP (PET-667). The route mcp-lab.pdlab.dev sends here through cloudflared on
     # LXC 112, the only source the allowlist and lab-agent admit.
     lab_agent_mcp_port: 3017
     lab_agent_mcp_peer: 192.168.50.112
     lab_agent_access_team_domain: petedillo-labs.cloudflareaccess.com
     lab_agent_access_emails: [pedelgadillo@gmail.com]
-    # The Access app's audience tag: `terraform output -raw lab_mcp_access_aud` in
-    # environments/homelab, after the route is applied. Not a secret. Empty keeps the MCP off.
-    lab_agent_access_aud: ""
+    # The Access app's audience tag for mcp-lab.pdlab.dev: `terraform output -raw
+    # lab_mcp_subdomain_access_aud` in environments/homelab (PET-824, PET-827). Not a secret.
+    # Empty keeps the MCP off.
+    lab_agent_access_aud: "07e95c16cba3b182d908b6130d1b302fa9d704953dc151e9b4a54e5a4f3e50be"
     lab_agent_repos:
       vault: https://github.com/PeteDio-Labs/petedio-vault.git
       iac: https://github.com/PeteDio-Labs/petedio-iac.git
@@ -211,7 +212,7 @@
           - lab_agent_access_aud | length == 0 or lab_agent_access_aud is match('\\A[0-9a-f]{64}\\Z')
         fail_msg: >-
           lab_agent_access_aud must be empty (MCP off) or the 64-hex audience tag from
-          `terraform output -raw lab_mcp_access_aud`.
+          `terraform output -raw lab_mcp_subdomain_access_aud`.
 
     - name: Look for the lab-agent binary on the controller
       ansible.builtin.stat:
