@@ -52,8 +52,22 @@ PATHS=(kv/db/usaa kv/services/usaa)
 # cluster config over SSH and demands the literal answer GONE. Any other result, including an
 # SSH failure, stops the script before it deletes anything.
 PVE_HOST="${PVE_HOST:-root@192.168.50.10}"
-if ! guard="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$PVE_HOST" \
-    '[ -d /etc/pve/nodes ] && ! ls /etc/pve/nodes/*/lxc/238.conf >/dev/null 2>&1 && echo GONE' 2>/dev/null)"; then
+# The remote script lists every node's lxc/ and qemu-server/ directory. `set -e` makes any
+# listing error end it without printing GONE, so a permission or I/O error is never read as
+# absence. It prints PRESENT when a 238 config exists and GONE only after every listing worked.
+REMOTE='set -e
+[ -d /etc/pve/nodes ]
+n=0
+for d in /etc/pve/nodes/*/; do
+  for kind in lxc qemu-server; do
+    list="$(ls "${d}${kind}")"
+    case " $(echo $list) " in *" 238.conf "*) echo PRESENT; exit 0 ;; esac
+  done
+  n=$((n+1))
+done
+[ "$n" -ge 1 ]
+echo GONE'
+if ! guard="$(printf '%s\n' "$REMOTE" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$PVE_HOST" bash -s 2>/dev/null)"; then
   guard="unreadable"
 fi
 if [ "$guard" != "GONE" ]; then
