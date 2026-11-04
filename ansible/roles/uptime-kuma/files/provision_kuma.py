@@ -159,6 +159,27 @@ def reconcile_maintenances(api, specs, result):
             result["failed"].append({"name": f"maintenance:{title}", "error": str(exc)})
 
 
+def retire_monitors(api, declared_specs, retired, by_name, result):
+    """Delete each monitor named in `retired` (PET-590).
+
+    The reconcile loop only adds and edits, so a monitor for a decommissioned host stays and
+    goes permanently red. A name that is also declared is refused: that is a config mistake,
+    not a retirement. A name Kuma does not have is skipped, which makes a rerun a no-op.
+    """
+    declared = {spec["name"] for spec in declared_specs}
+    for name in retired:
+        if name in declared:
+            result["failed"].append({"name": name, "error": "listed as retired and declared"})
+            continue
+        if name not in by_name:
+            continue
+        try:
+            api.delete_monitor(by_name[name]["id"])
+            result["retired"].append(name)
+        except (UptimeKumaException, Exception) as exc:  # noqa: BLE001
+            result["failed"].append({"name": name, "error": str(exc)})
+
+
 def main():
     cfg = json.load(open(sys.argv[1]))
     result = {
@@ -273,21 +294,7 @@ def main():
                 result["failed"].append({"name": name, "error": str(exc)})
 
         # --- retired monitors (PET-590) -------------------------------------
-        # The loop above only adds and edits, so a monitor for a decommissioned host stays and
-        # goes permanently red. A name listed in `retired_monitors` is deleted if it exists.
-        # A name that is also declared is refused: that is a config mistake, not a retirement.
-        declared = {spec["name"] for spec in cfg["monitors"]}
-        for name in cfg.get("retired_monitors", []):
-            if name in declared:
-                result["failed"].append({"name": name, "error": "listed as retired and declared"})
-                continue
-            if name not in by_name:
-                continue
-            try:
-                api.delete_monitor(by_name[name]["id"])
-                result["retired"].append(name)
-            except (UptimeKumaException, Exception) as exc:  # noqa: BLE001
-                result["failed"].append({"name": name, "error": str(exc)})
+        retire_monitors(api, cfg["monitors"], cfg.get("retired_monitors", []), by_name, result)
 
         # --- maintenance windows (PET-635) ----------------------------------
         # After the monitors, so a window can name a monitor this run created.
