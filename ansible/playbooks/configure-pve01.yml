@@ -18,7 +18,7 @@
 #      source wins, so apt never sees the repository twice.
 #   4. Downloads the LXC template Terraform pins onto pve01's own `local` store with
 #      pveam. Templates are per node, and a create against a missing one fails after the
-#      merge (usaa.tf).
+#      merge.
 #   5. Installs the pinned NVIDIA driver with DKMS (roles/nvidia-driver, host mode) and
 #      asserts both cards answer with the UUIDs the Ollama lanes pin.
 #   6. When CT 246 exists, passes the device nodes into it (roles/lxc-gpu). Before the

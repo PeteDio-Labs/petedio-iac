@@ -1,6 +1,6 @@
 # forgejo — the read-only Forgejo mirror (PET-756).
 #
-# ⚠ SPLIT OUT OF hosts.yml ON PURPOSE, like usaa.yml and metrics.yml. ansible.cfg loads the whole
+# ⚠ SPLIT OUT OF hosts.yml ON PURPOSE, like metrics.yml. ansible.cfg loads the whole
 # inventory/ DIRECTORY, so this file needs no registration. `ansible-playbook` exits 0 when a play
 # matches zero hosts, which is why the group name below must match `hosts: forgejo` in
 # configure-forgejo-mirror.yml.

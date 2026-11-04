@@ -1,4 +1,4 @@
-# metrics — its own inventory source, like netboot.yml and usaa.yml, so an edit to hosts.yml does
+# metrics — its own inventory source, like netboot.yml, so an edit to hosts.yml does
 # not re-run playbooks that watch it. LXC 240 is created by Terraform
 # (environments/homelab/metrics.tf) and configured by playbooks/configure-metrics.yml (PET-708).
 ---

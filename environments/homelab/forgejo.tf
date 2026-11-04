@@ -35,11 +35,11 @@ module "forgejo" {
   target_node  = "pve03"
 
   # ⚠ PIN THE TEMPLATE TO ONE pve03 ACTUALLY HAS. Templates live on each node's own `local`.
-  # pve03 carries only debian-13-standard_13.6-1_amd64.tar.zst (see usaa.tf).
+  # pve03 carries only debian-13-standard_13.6-1_amd64.tar.zst.
   template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
   ssh_public_key   = var.ssh_public_key
 
-  # True, as on usaa.tf: the module sets `started = var.start_on_boot` and Terraform manages run
+  # True, as on metrics.tf: the module sets `started = var.start_on_boot` and Terraform manages run
   # state, so false would stop a hand-started container on the next apply.
   start_on_boot = true
 

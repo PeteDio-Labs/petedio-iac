@@ -43,7 +43,7 @@ module "metrics" {
   template_file_id = "local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst"
   ssh_public_key   = var.ssh_public_key
 
-  # True, as on usaa.tf: the module sets `started = var.start_on_boot` and Terraform manages run
+  # True, as on palworld.tf: the module sets `started = var.start_on_boot` and Terraform manages run
   # state, so false would stop a hand-started container on the next apply.
   start_on_boot = true
 

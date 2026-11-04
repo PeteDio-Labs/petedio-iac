@@ -4,7 +4,7 @@
 # WHY 239 / .239, AND WHY pve02
 #
 # 239 is the next free number in the 23x apps block, and VMID = last IP octet, as
-# everywhere else here. usaa-238 holds 238 (PET-590). It can't be .12: ollama-host holds
+# everywhere else here. 238 was the retired usaa container (PET-590). It can't be .12: ollama-host holds
 # that address and is the machine this server boots. It sits on pve02 by Pedro's decision, so the netboot server doesn't
 # share a node with pve03, which stages the ollama-host backups during the rebuild.
 #
