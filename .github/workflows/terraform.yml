@@ -122,9 +122,10 @@ jobs:
           pip install --quiet "zizmor==1.32.0"
           WORKFLOWS=$(find .github/workflows -maxdepth 1 -name '*.yml' | wc -l | tr -d ' ')
           if [ "$WORKFLOWS" -eq 0 ]; then echo "::error::found 0 workflow files"; exit 1; fi
+          # The runner's bash is -e: capture the findings exit code instead of dying on it.
+          RC=0
           zizmor --offline --format json-v1 --config .github/zizmor.yml .github/workflows \
-            > /tmp/zizmor.json 2> /tmp/zizmor.err
-          RC=$?
+            > /tmp/zizmor.json 2> /tmp/zizmor.err || RC=$?
           # zizmor exits 0 clean or 10-14 for findings; any other code is a failure to run.
           if [ "$RC" -ne 0 ] && { [ "$RC" -lt 10 ] || [ "$RC" -gt 14 ]; }; then
             cat /tmp/zizmor.err; echo "::error::zizmor failed to run (exit $RC)"; exit 1
