@@ -163,7 +163,7 @@ def main():
     cfg = json.load(open(sys.argv[1]))
     result = {
         "created": [], "updated": [], "unchanged": [],
-        "failed": [], "warnings": [],
+        "failed": [], "warnings": [], "retired": [],
         "notifications_created": [], "notifications_updated": [],
         "notifications_attached": [],
         "maintenances_created": [], "maintenances_updated": [],
@@ -269,6 +269,23 @@ def main():
                         result["updated"].append({"name": name, "changed": list(delta)})
                     else:
                         result["unchanged"].append(name)
+            except (UptimeKumaException, Exception) as exc:  # noqa: BLE001
+                result["failed"].append({"name": name, "error": str(exc)})
+
+        # --- retired monitors (PET-590) -------------------------------------
+        # The loop above only adds and edits, so a monitor for a decommissioned host stays and
+        # goes permanently red. A name listed in `retired_monitors` is deleted if it exists.
+        # A name that is also declared is refused: that is a config mistake, not a retirement.
+        declared = {spec["name"] for spec in cfg["monitors"]}
+        for name in cfg.get("retired_monitors", []):
+            if name in declared:
+                result["failed"].append({"name": name, "error": "listed as retired and declared"})
+                continue
+            if name not in by_name:
+                continue
+            try:
+                api.delete_monitor(by_name[name]["id"])
+                result["retired"].append(name)
             except (UptimeKumaException, Exception) as exc:  # noqa: BLE001
                 result["failed"].append({"name": name, "error": str(exc)})
 
