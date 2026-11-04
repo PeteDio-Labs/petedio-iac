@@ -37,7 +37,6 @@ prometheus_node_targets:
   - { host: palworld-234, address: 192.168.50.234 }
   - { host: plane-235, address: 192.168.50.235 }
   - { host: media-dash-237, address: 192.168.50.237 }
-  - { host: usaa-238, address: 192.168.50.238 }
   - { host: netboot-239, address: 192.168.50.239 }
   - { host: metrics-240, address: 192.168.50.240 }
   - { host: minio-data-245, address: 192.168.50.245 }
