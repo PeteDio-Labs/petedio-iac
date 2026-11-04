@@ -14,7 +14,7 @@ consume, the whole KV entry:
 
 | Data source | File | Plaintext-in-state |
 |---|---|---|
-| `kv/poker/db` | `postgres.tf` | `DATABASE_URL`, `admin_password`, `poker_password` |
+| `kv/admin/postgres` | `postgres.tf` | `admin_password` |
 | `kv/admin/db` | `admin.tf` | `owner_password` |
 | `kv/iac/cloudflare` | `cloudflare.tf` | `api_token` (+ non-secret `account_id`/`zone_id`/`tunnel_id`) |
 
