@@ -91,6 +91,12 @@ minio_buckets:
 # systemd unit Description=. Per-host so `systemctl status minio` says which MinIO this is.
 minio_service_description: "MinIO (Terraform state backend, LXC 221)"
 
+# PET-851: the environment file and unit keep the shape of a host that predates the role.
+# Defaults write the role's own shape. 221 overrides all three (inventory/host_vars/minio-221.yml).
+minio_config_env_header: true          # false omits the "ANSIBLE MANAGED" comment lines
+minio_opts: "--address {{ minio_server_address }} --console-address {{ minio_console_address }}"
+minio_service_type: notify             # "" omits the Type= line from the unit
+
 # --- Root credentials (REQUIRED — no default, never commit) ----------------------
 # Resolve from Vault and pass as a no_log extra-var via a 0600 JSON @file — the
 # configure-postgres.yml pattern (PET-106). Referenced Vault path (by name only):

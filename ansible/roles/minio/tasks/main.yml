@@ -117,12 +117,14 @@
     group: "{{ minio_config_env_group }}"
     mode: "{{ minio_config_env_mode }}"
     content: |
+      {% if minio_config_env_header | bool %}
       # ANSIBLE MANAGED (roles/minio) — do not edit by hand.
       # Root credentials come from Vault (kv/iac/minio-root); never commit real values.
+      {% endif %}
       MINIO_ROOT_USER={{ minio_root_user }}
       MINIO_ROOT_PASSWORD={{ minio_root_password }}
       MINIO_VOLUMES="{{ minio_data_dir }}"
-      MINIO_OPTS="--address {{ minio_server_address }} --console-address {{ minio_console_address }}"
+      MINIO_OPTS="{{ minio_opts }}"
   no_log: true
   notify: Restart minio
 
@@ -142,7 +144,9 @@
       AssertFileIsExecutable={{ minio_bin }}
 
       [Service]
-      Type=notify
+      {% if minio_service_type | length > 0 %}
+      Type={{ minio_service_type }}
+      {% endif %}
       User={{ minio_user }}
       Group={{ minio_group }}
       EnvironmentFile={{ minio_config_env }}
