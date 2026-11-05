@@ -112,20 +112,26 @@ if [ -e "$DEST" ] && [ -n "$(ls -A "$DEST" 2>/dev/null)" ] && [ ! -d "$OBJ" ]; t
   die "$DEST exists and is not an export from this script; choose an empty directory"
 fi
 
-# Version inventory: key<TAB>versionId<TAB>isDeleteMarker<TAB>isLatest, sorted. Includes every
+# Version inventory: key<TAB>versionId<TAB>isDeleteMarker<TAB>ordinal, sorted by key then
+# ordinal. The client emits no isLatest field. It lists a key's versions newest first and may
+# set versionOrdinal (1 = latest); the ordinal here is that field, else the position within the
+# key's run, so ordinal 1 identifies the latest version or delete marker. Includes every
 # historical version and delete marker, which `mc rb --force` also destroys.
 list_versions(){ m ls --versions --recursive --json "adm/$BUCKET/" | python3 -c '
 import json, sys
-rows = []
+rows, pos = [], {}
 for line in sys.stdin:
     line = line.strip()
     if not line: continue
     d = json.loads(line)
     if d.get("status") != "success": sys.exit("listing error: %s" % line)
-    if d.get("type") == "file":
-        rows.append("%s\t%s\t%s\t%s" % (d["key"], d.get("versionId") or "null",
-                    str(bool(d.get("isDeleteMarker"))).lower(), str(bool(d.get("isLatest"))).lower()))
-print("\n".join(sorted(rows)))
+    if d.get("type") != "file": continue
+    k = d["key"]
+    pos[k] = pos.get(k, 0) + 1
+    ordinal = int(d.get("versionOrdinal") or pos[k])
+    rows.append((k, ordinal, "%s\t%s\t%s\t%d" % (k, d.get("versionId") or "null",
+                 str(bool(d.get("isDeleteMarker"))).lower(), ordinal)))
+print("\n".join(r[2] for r in sorted(rows, key=lambda r: (r[0], r[1]))))
 '; }
 
 INV="$(list_versions)" || die "cannot list bucket versions"
@@ -139,7 +145,7 @@ if [ "$REMOVE" != 1 ]; then
   mkdir -p "$OBJ" "$VER"
   m mirror --overwrite "adm/$BUCKET" "$OBJ" >/dev/null || die "mc mirror failed"
   # Every non-delete-marker version, including noncurrent ones, under versions/<id>/<key>.
-  while IFS=$'\t' read -r k vid dm _latest; do
+  while IFS=$'\t' read -r k vid dm _ordinal; do
     [ -n "$k" ] && [ "$dm" = false ] || continue
     mkdir -p "$VER/$vid/$(dirname "$k")"
     m cat --version-id "$vid" "adm/$BUCKET/$k" > "$VER/$vid/$k" || die "cannot export version $vid of $k"
@@ -176,7 +182,7 @@ while IFS= read -r k; do
   [ -n "$k" ] || continue
   check "objects/$k" m cat "adm/$BUCKET/$k"
 done <<< "$KEYS"
-while IFS=$'\t' read -r k vid dm _latest; do
+while IFS=$'\t' read -r k vid dm _ordinal; do
   [ -n "$k" ] && [ "$dm" = false ] || continue
   check "versions/$vid/$k" m cat --version-id "$vid" "adm/$BUCKET/$k"
 done <<< "$INV"
@@ -218,7 +224,9 @@ if printf '%s\n' "$blist" | grep -q "[[:space:]]$BUCKET/\?\$"; then die "bucket 
 echo "gone: bucket $BUCKET (bucket listing read back without it)"
 
 # not_found OUTPUT: true only for MinIO's own "no such service account" answer.
-not_found(){ printf '%s' "$1" | grep -qiE 'not found|does not exist|no such|NoSuchServiceAccount|specified service account'; }
+# The generic prefix "Unable to get information of the specified service account" appears on every
+# failed lookup, so it must not match.
+not_found(){ printf '%s' "$1" | grep -qiE 'NoSuchServiceAccount|service account is not found|service account does not exist'; }
 
 # Scoped key recorded in Vault. Absent Vault path is fine; any other read error is not.
 out="$(vault kv get -format=json "$SVC_PATH" 2>&1)" && rc=0 || rc=$?
@@ -247,4 +255,4 @@ else
   die "cannot read $SVC_PATH: $out"
 fi
 echo
-echo "Done. Next: merge the follow-up that removes the bucket from minio_data.yml (PET-590)."
+echo "Done. Keep $DEST backed up. Next: run scripts/retire-usaa-vault.sh --apply for kv/db/usaa and kv/services/usaa, then archive petedio-usaa (PET-590)."
