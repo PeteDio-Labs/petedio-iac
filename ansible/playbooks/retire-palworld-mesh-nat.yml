@@ -1,0 +1,91 @@
+---
+# retire-palworld-mesh-nat.yml — remove the Palworld mesh NAT from pve03. (PET-779)
+#
+#   ansible-playbook -i inventory/pve03.yml playbooks/retire-palworld-mesh-nat.yml --check --diff
+#   ansible-playbook -i inventory/pve03.yml playbooks/retire-palworld-mesh-nat.yml
+#
+# The removed `palworld-mesh-nat` role (recoverable at commit 1f6acdf) installed four things
+# on pve03, and destroying CT 234 removes none of them. This play removes all four:
+#   1. the `palworld-mesh-nat` systemd unit (its stop deletes the nft table),
+#   2. the nftables table `palworld_mesh`,
+#   3. /etc/palworld-mesh-nat.nft and the unit file,
+#   4. the sysctl drop-in /etc/sysctl.d/99-palworld-mesh-nat.conf.
+#
+# ⚠ THE RUNNING net.ipv4.ip_forward VALUE IS LEFT ALONE. pve03 forwards for its other
+# guests (roles/pve-firewall explains the default route over the .86 WiFi), and this play
+# cannot tell which setting those guests rely on. Removing the drop-in only stops this role
+# from asserting the value on the next boot. Read `sysctl net.ipv4.ip_forward` afterwards.
+#
+# Every task is idempotent, and a node that never had the NAT finishes with no change.
+- name: Remove the Palworld mesh NAT from pve03
+  hosts: pve03
+  become: true
+  gather_facts: false
+  vars:
+    palworld_nat_service_name: palworld-mesh-nat
+    palworld_nat_table: palworld_mesh
+    palworld_nat_rules_file: /etc/palworld-mesh-nat.nft
+    palworld_nat_unit_file: /etc/systemd/system/palworld-mesh-nat.service
+    palworld_nat_sysctl_file: /etc/sysctl.d/99-palworld-mesh-nat.conf
+
+  tasks:
+    - name: Stop and disable the NAT unit
+      ansible.builtin.systemd:
+        name: "{{ palworld_nat_service_name }}"
+        state: stopped
+        enabled: false
+      register: palworld_nat_unit
+      # A node without the unit reports "Could not find"; that is the state this play wants.
+      failed_when: >-
+        palworld_nat_unit is failed and
+        'Could not find' not in (palworld_nat_unit.msg | default(''))
+      when: not ansible_check_mode
+
+    - name: Read whether the nftables table is still loaded
+      ansible.builtin.command:
+        cmd: nft list table ip {{ palworld_nat_table }}
+      register: palworld_nat_table_live
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Delete the nftables table when it is still loaded
+      ansible.builtin.command:
+        cmd: nft delete table ip {{ palworld_nat_table }}
+      changed_when: true
+      when: palworld_nat_table_live.rc == 0 and not ansible_check_mode
+
+    - name: Remove the NAT files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ palworld_nat_rules_file }}"
+        - "{{ palworld_nat_unit_file }}"
+        - "{{ palworld_nat_sysctl_file }}"
+
+    - name: Reload systemd so it forgets the unit
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    - name: Read the table again
+      ansible.builtin.command:
+        cmd: nft list table ip {{ palworld_nat_table }}
+      register: palworld_nat_table_after
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not ansible_check_mode
+
+    - name: Assert nothing of the NAT remains
+      ansible.builtin.assert:
+        that:
+          - palworld_nat_table_after.rc != 0
+        fail_msg: >-
+          Table {{ palworld_nat_table }} is still loaded on {{ inventory_hostname }} after the
+          delete. Read `nft list table ip {{ palworld_nat_table }}` before going on.
+        success_msg: >-
+          Table {{ palworld_nat_table }} is gone, and its unit, rules file and sysctl drop-in
+          are removed from {{ inventory_hostname }}.
+      when: not ansible_check_mode
