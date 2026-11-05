@@ -112,6 +112,8 @@
     state: mounted
   when: not (ansible_check_mode and not backup_lv_dev.stat.exists)
 
+# The two checks below read the live host, so a dry run that only predicts the bind mount
+# would fail them on a host the play has not changed yet. They run on a real apply only.
 # findmnt prints the source of a bind mount as `/dev/mapper/...[/]`, which names the LV
 # behind it. Matching the LV proves the bind sits on the store and not on an empty
 # directory over the root disk.
@@ -119,20 +121,39 @@
   ansible.builtin.command: findmnt -no SOURCE {{ backup_store_client_mount }}
   register: backup_bind_src
   changed_when: false
-  check_mode: false
   failed_when: backup_store_lv | replace('-', '--') not in backup_bind_src.stdout
-  when: not (ansible_check_mode and not backup_lv_dev.stat.exists)
+  when: not ansible_check_mode
+
+# The cluster-wide storage entry is registered by tasks/client.yml, which runs after this
+# file on a first build. Look it up first: assert `active` when the entry exists, and say
+# so when it does not, so a fresh cluster still reaches the client play.
+- name: Read the configured Proxmox storages
+  ansible.builtin.command: pvesm status
+  register: backup_server_pvesm
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
 
 - name: Prove Proxmox reports the store active on this node
   ansible.builtin.command: pvesm status --storage {{ backup_store_pve_storage_id }}
   register: backup_server_storage_status
   changed_when: false
-  check_mode: false
   failed_when: >-
     backup_server_storage_status.rc != 0
     or (backup_server_storage_status.stdout_lines | length) < 2
     or backup_server_storage_status.stdout_lines[1].split()[2] != 'active'
-  when: not (ansible_check_mode and not backup_lv_dev.stat.exists)
+  when:
+    - not ansible_check_mode
+    - backup_store_pve_storage_id in (backup_server_pvesm.stdout | default(''))
+
+- name: Note that the storage entry is not registered yet
+  ansible.builtin.debug:
+    msg: >-
+      {{ backup_store_pve_storage_id }} is not in the cluster's storage list yet.
+      tasks/client.yml registers it, and checks it is active, on the nodes that follow.
+  when:
+    - not ansible_check_mode
+    - backup_store_pve_storage_id not in (backup_server_pvesm.stdout | default(''))
 
 - name: Install the NFS server
   ansible.builtin.apt:
