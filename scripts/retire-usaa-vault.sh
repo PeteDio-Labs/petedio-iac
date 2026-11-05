@@ -54,7 +54,9 @@ PATHS=(kv/db/usaa kv/services/usaa)
 # The default is pve02 (192.168.50.11). Every node reads the same /etc/pve, so any reachable
 # node answers the question. Set PVE_HOST to use another node.
 # SSH uses the inventory key that Ansible uses for root on the nodes. Set PVE_SSH_KEY to use
-# another key. A missing or refused key fails the guard closed.
+# another key. The guard stops unless the output is GONE, so an SSH login failure stops it
+# before any deletion. SSH may still log in through ssh-agent or ssh config; the GONE check
+# holds either way.
 PVE_HOST="${PVE_HOST:-root@192.168.50.11}"
 PVE_SSH_KEY="${PVE_SSH_KEY:-$HOME/.ssh/id_ed25519_ansible}"
 # The remote script lists every node's lxc/ and qemu-server/ directory. `set -e` makes any
