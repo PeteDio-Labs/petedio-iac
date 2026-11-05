@@ -21,7 +21,7 @@
   connection: local
   become: false
   tasks:
-    - name: pve02 is in the inventory
+    - name: Pve02 is in the inventory
       ansible.builtin.assert:
         that: "'pve02' in groups['proxmox']"
         fail_msg: pve02 is not in group proxmox. The next play would match nothing and exit 0.
