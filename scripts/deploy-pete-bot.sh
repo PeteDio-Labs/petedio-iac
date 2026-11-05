@@ -46,6 +46,18 @@ for t in vault ansible-playbook python3; do command -v "$t" >/dev/null || die "$
 # can still deploy an artifact someone else compiled.
 [ "$BUILD" = "1" ] && { command -v bun >/dev/null || die "bun not in PATH (or pass --no-build)."; }
 
+# ⚠ A STALE CLONE SHIPS OLD CODE AND EXITS 0 (PET-859). The binary is built from whatever
+# $SRC holds, so a clone behind origin/main deployed code from before two merged PRs, and
+# the live lab MCP then answered "unknown tool". Build only from a tree that contains
+# origin/main. A failed fetch stops the deploy: "could not check" is not "up to date".
+if [ "$BUILD" = "1" ]; then
+  step "Source freshness"
+  git -C "$SRC" fetch --quiet origin main || die "cannot fetch origin/main in $SRC, so I cannot tell whether it is current."
+  git -C "$SRC" merge-base --is-ancestor origin/main HEAD \
+    || die "$SRC ($(git -C "$SRC" rev-parse --short HEAD)) does not contain origin/main ($(git -C "$SRC" rev-parse --short origin/main)). Run git pull --ff-only there, or pass --no-build."
+  printf 'building %s, which contains origin/main (%s)\n' "$(git -C "$SRC" rev-parse --short HEAD)" "$(git -C "$SRC" rev-parse --short origin/main)"
+fi
+
 step "Credentials"
 # The Vault token comes from $VAULT_TOKEN, else the macOS Keychain. The script never
 # prompts for it, so a paste never lands in a terminal's scrollback.
