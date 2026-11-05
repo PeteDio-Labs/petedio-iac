@@ -1,0 +1,60 @@
+---
+# configure-lab-runner-known-hosts.yml — pin the nodes' SSH host keys on both runners (PET-861).
+#
+#   ansible-playbook -i inventory/ playbooks/configure-lab-runner-known-hosts.yml
+#
+# WHY. scripts/lab-action.sh reads the nodes as root from a runner with a fresh certificate. If
+# it trusted whatever key answered first, a machine posing as a node could feed lab-verify.sh
+# output that the script passes to `eval`, and so run commands on the runner, where the
+# certificate opens root on the real nodes. So the runner never learns a node key by itself.
+# This play reads each node's host key over the operator's own SSH session, which already
+# verifies those keys (ansible.cfg, PET-112), and writes them to a file that lab-action.sh
+# requires with StrictHostKeyChecking=yes.
+#
+# Run it from the Mac or 247 after configure-ssh-ca.yml. Re-run it when a node is rebuilt or its
+# host key changes; until then, lab-action.sh refuses to connect to that node.
+#
+# Manual-validation-first (PET-266): nothing in .github/workflows runs this play.
+
+- name: Read the nodes' ed25519 host keys
+  hosts: pve_gpu:proxmox:pve_new
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Read the host public key
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: lab_node_host_key
+
+- name: Pin the node keys on the runners
+  hosts: runner
+  gather_facts: false
+  become: true
+  vars:
+    lab_known_hosts_path: /etc/ssh/lab-node-known-hosts
+    lab_node_hosts: "{{ groups['pve_gpu'] + groups['proxmox'] + groups['pve_new'] }}"
+  tasks:
+    - name: Check every node returned one ed25519 key  # noqa: run-once[task]
+      ansible.builtin.assert:
+        that:
+          - lab_node_hosts | length == 3
+          - >-
+            lab_node_hosts
+            | map('extract', hostvars, ['lab_node_host_key', 'content'])
+            | map('b64decode') | map('trim')
+            | select('match', '^ssh-ed25519 [A-Za-z0-9+/=]+( .*)?$') | list | length == 3
+        fail_msg: "Expected 3 nodes with an ed25519 host key, got {{ lab_node_hosts }}."
+      run_once: true
+
+    - name: Write the pinned known_hosts file
+      ansible.builtin.copy:
+        dest: "{{ lab_known_hosts_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Written by configure-lab-runner-known-hosts.yml (PET-861). scripts/lab-action.sh
+          # trusts only these keys. Re-run the play to change them; never edit this by hand.
+          {% for h in lab_node_hosts %}
+          {{ h }},{{ hostvars[h].ansible_host }} {{ (hostvars[h].lab_node_host_key.content | b64decode | trim).split(' ')[:2] | join(' ') }}
+          {% endfor %}

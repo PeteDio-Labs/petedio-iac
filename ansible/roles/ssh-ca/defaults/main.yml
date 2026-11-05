@@ -37,11 +37,15 @@ ssh_ca_dropin: /etc/ssh/sshd_config.d/10-ssh-ca.conf
 # entry without `state` is present, and without `create` names an account the role does not own.
 ssh_ca_users:
   - name: root
-    principals: [pedro]
+    principals: "{{ ['pedro'] + ssh_ca_root_extra_principals }}"
     create: false
   - name: inventory
     principals: [inventory-read]
     create: true
+
+# Principals a host adds to root's file beside `pedro`. The node groups set [lab-runner] in
+# group_vars (PET-861), so lab-action.yml can run lab-verify.sh and lab-updates.sh from the runners.
+ssh_ca_root_extra_principals: []
 
 # The GECOS field on every account the role creates. The role creates or removes only an account
 # that carries it, so `create: true` cannot take over an account someone else made.
