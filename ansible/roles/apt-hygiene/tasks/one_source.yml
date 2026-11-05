@@ -14,7 +14,7 @@
       ansible.builtin.command: "apt-cache rdepends --installed {{ src.package }}"
       register: apt_rdeps
       changed_when: false
-      check_mode: false
+      check_mode: false  # lab-action: read-only (apt-cache rdepends reads)
 
     # noqa reason: the assert below parses this stdout for the literal "1 to remove". No
     # apt module emits that, and the check is what caught a purge that would have taken a
@@ -23,7 +23,7 @@
       ansible.builtin.command: "apt-get -s purge {{ src.package }}"
       register: apt_sim
       changed_when: false
-      check_mode: false
+      check_mode: false  # lab-action: read-only (apt-get -s only simulates)
 
     # apt prints "no longer required" and "will be REMOVED" as separate lists,
     # and reading them as one makes an autoremove candidate look like a casualty

@@ -1,0 +1,12 @@
+# Playbooks lab-action.yml may run on the Proxmox nodes (PET-861). One file name per line.
+#
+# A thread runs `playbook_check` on any name here with no approval, and `playbook_apply` after
+# Pedro approves the run's lab-write job in GitHub. Before you add a name, read every
+# `check_mode: false` task in its tree, and mark each one that only reads with
+# `# lab-action: read-only`. scripts/lab-playbook-guard.py refuses an unmarked one. Run
+# `scripts/lab-playbook-guard.py --all` to see each playbook's status. Runs are limited to the node
+# groups (proxmox, pve_new, pve_gpu), because the lab-runner certificate opens nothing else.
+apt-hygiene.yml
+configure-journald.yml
+configure-node-exporter.yml
+configure-timezone.yml
