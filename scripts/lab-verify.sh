@@ -235,6 +235,43 @@ for e in "104|sonarr|192.168.50.15:8989|/var/lib/sonarr/config.xml" "105|radarr|
   h=$(on "$hostnode" "curl -s -m 10 -H 'X-Api-Key: $k' http://$addr/api/v3/health | grep -c '\"type\":\"error\"'")
   [ "${h:-0}" -eq 0 ] && ok "$nm health" "no errors" || bad "$nm health" "$h error-level issues"
 done
+# Bazarr (222), by its API (PET-854). A web root that answers says nothing about whether
+# Bazarr synced the library: a failed sync leaves it up with empty series and movie lists
+# (PET-852 hit exactly that). So read the key from its own config, ask /api/system/health,
+# and report how many series and movies it lists. An unreadable key, a dead API, an empty
+# list or a health issue all fail, and none of them skips.
+bz_node=$(node_for 222)
+if [ -z "$bz_node" ]; then bad "bazarr" "guest 222 not found on any node"; else
+  # The key sits in the auth: block of config.yaml. Other blocks carry apikey: lines too
+  # (sonarr, radarr), so take only the one under auth:.
+  bz_key=$(pct_on "$bz_node" 222 "cat /var/lib/bazarr/config/config.yaml" \
+    | awk '/^[a-z_]+:/ {sec=$1} sec=="auth:" && $1=="apikey:" {print $2; exit}' | tr -d "'\"")
+  if [ -z "$bz_key" ]; then bad "bazarr api key" "not readable from /var/lib/bazarr/config/config.yaml"; else
+    bz() {  # path -> body
+      on "$bz_node" "curl -s -m 10 -H 'X-API-KEY: $bz_key' 'http://192.168.50.222:6767$1'"
+    }
+    bz_total() {  # path -> total, or empty when the body carries none
+      bz "$1" | grep -o '"total": *[0-9]*' | head -1 | grep -o '[0-9]*$'
+    }
+    bz_health=$(bz /api/system/health)
+    if ! grep -q '"data"' <<< "$bz_health"; then
+      bad "bazarr api" "/api/system/health gave no data"
+    else
+      bz_issues=$(grep -o '"object"' <<< "$bz_health" | wc -l | tr -d ' ')
+      [ "${bz_issues:-0}" -eq 0 ] && ok "bazarr health" "no issues reported" \
+        || bad "bazarr health" "$bz_issues issue(s) reported by /api/system/health"
+    fi
+    bz_series=$(bz_total "/api/series?start=0&length=1")
+    bz_movies=$(bz_total "/api/movies?start=0&length=1")
+    if [ -z "$bz_series" ] || [ -z "$bz_movies" ]; then
+      bad "bazarr library" "series='${bz_series:-none}' movies='${bz_movies:-none}' -- the API gave no total"
+    elif [ "$bz_series" -eq 0 ] || [ "$bz_movies" -eq 0 ]; then
+      bad "bazarr library" "lists $bz_series series and $bz_movies movies -- a sync with Sonarr or Radarr failed"
+    else
+      ok "bazarr library" "lists $bz_series series and $bz_movies movies"
+    fi
+  fi
+fi
 # The library itself, per guest, at whatever path that guest actually mounts it.
 #
 # WHY THIS EXISTS. sonarr/radarr/prowlarr moved to pve03 on 2026-09-04 and pve03

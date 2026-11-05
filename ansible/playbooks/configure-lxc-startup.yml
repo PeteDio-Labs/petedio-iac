@@ -8,7 +8,7 @@
 #   ansible-playbook playbooks/configure-lxc-startup.yml --check
 #   ansible-playbook playbooks/configure-lxc-startup.yml
 #
-# It changes only the `startup` line of the six declared guests, and it restarts nothing.
+# It changes only the `startup` line of the seven declared guests, and it restarts nothing.
 #
 # ⚠ A PLAY PER NODE CANNOT SEE A GUEST THAT IS MISSING. `pct config` answers only for a
 # container on the node it runs on, so each node compares only the declared guests it holds.

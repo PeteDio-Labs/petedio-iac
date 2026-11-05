@@ -17,7 +17,7 @@
 # guest has lost, and a --check run fails on one.
 #
 # --------------------------------------------------------------- what it is not --
-# It declares the six media guests and nothing else. It reads every container on a node to
+# It declares the seven media guests and nothing else. It reads every container on a node to
 # find them, and it never compares or changes a guest that this map does not name.
 #
 # The values are the ones PET-305 set, declared as found. In Proxmox terms, `order` is the
@@ -32,5 +32,6 @@ lxc_startup_declared:
   "104": { order: "7", up: "0", down: "15" }    # sonarr, pve03
   "105": { order: "7", up: "0", down: "15" }    # radarr, pve03
   "109": { order: "7", up: "0", down: "15" }    # prowlarr, pve03
+  "222": { order: "7", up: "0", down: "15" }    # bazarr, pve03 — the arr order, declared with PET-852
   "110": { order: "6", up: "20", down: "30" }   # qbittorrent-vpn, pve02
   "236": { order: "7", up: "0", down: "15" }    # plex-gpu, pve02 — no startup line until PET-451
