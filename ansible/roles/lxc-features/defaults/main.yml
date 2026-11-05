@@ -115,6 +115,12 @@ lxc_features_declared:
   # sandboxed, so systemd builds mount namespaces: nesting. Nothing here runs Docker, so
   # no keyctl. The GPU device nodes are roles/lxc-gpu's, not a feature flag.
   "246": { nesting: "1" }                # ollama-246 — Ollama (both GPUs) + petedio-search
+  # bazarr-222 on pve03 (PET-852), Debian 13, systemd 257. Bazarr runs as a plain unit, but
+  # the three mount units fail without nesting, as in 231 and 237. Nothing here runs
+  # Docker, so no keyctl. petedio-media-iac's scripts/lxc-mounts-222.sh sets nesting=1 at
+  # creation, so this entry matches what it finds. The play fails on a container it does
+  # not name, which is why the entry ships with the container.
+  "222": { nesting: "1" }                # bazarr-222 — subtitles for Sonarr and Radarr
   # Declared but on neither node as of 2026-09-09. Kept so they are configured on
   # the way back rather than remembered: 106's rootfs will not `pct restore`
   # (lxc.idmap), and 244 is absent from both nodes' `pct list`.
