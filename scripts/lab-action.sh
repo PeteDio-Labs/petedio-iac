@@ -3,6 +3,8 @@
 #
 #   scripts/lab-action.sh lab_verify    # scripts/lab-verify.sh --quiet
 #   scripts/lab-action.sh lab_updates   # scripts/lab-updates.sh
+#   scripts/lab-action.sh playbook_check <playbook.yml>   # scripts/lab-playbook.sh check
+#   scripts/lab-action.sh playbook_apply <playbook.yml>   # only in the lab-write job
 #
 # .github/workflows/lab-action.yml calls this on a homelab runner when a thread dispatches it, so
 # a read-back no longer needs a paste-in prompt on 247 or the Mac. Both actions are checks, so
@@ -31,13 +33,29 @@
 set -euo pipefail
 
 ACTION="${1:-}"
+TARGET="${2:-}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # The allowlist. An action not named here is refused before anything is signed.
 case "$ACTION" in
   lab_verify)  CMD=("$REPO_ROOT/scripts/lab-verify.sh" --quiet); SUMMARY='^[0-9]+ passed, [0-9]+ failed, [0-9]+ skipped' ;;
   lab_updates) CMD=("$REPO_ROOT/scripts/lab-updates.sh");        SUMMARY='^examined [0-9]+ hosts or guests' ;;
-  *) echo "REFUSED: '$ACTION' is not an allowlisted action (lab_verify, lab_updates)." >&2; exit 2 ;;
+  # Phase 2: a playbook on the nodes. lab-playbook.sh runs the guard before Ansible starts. The
+  # workflow runs playbook_apply only in the lab-write job, after a clean check at the same commit.
+  playbook_check|playbook_apply)
+    # The name must match a fixed pattern and appear in the allowlist before anything is signed.
+    # This needs no PyYAML, so it holds on a runner without it.
+    if ! [[ "$TARGET" =~ ^[a-z0-9][a-z0-9-]*\.yml$ ]] \
+       || ! sed -e 's/#.*//' -e 's/[[:space:]]//g' "$REPO_ROOT/scripts/lab-playbooks.txt" | grep -qxF "$TARGET"; then
+      echo "REFUSED: '$TARGET' is not a playbook name in scripts/lab-playbooks.txt." >&2
+      exit 2
+    fi
+    if python3 -c 'import yaml' 2>/dev/null; then
+      python3 "$REPO_ROOT/scripts/lab-playbook-guard.py" "$TARGET" || exit 2
+    fi
+    CMD=("$REPO_ROOT/scripts/lab-playbook.sh" "${ACTION#playbook_}" "$TARGET")
+    SUMMARY='^playbook (check|apply) [a-z0-9-]+\.yml: [0-9]+ of [0-9]+ hosts' ;;
+  *) echo "REFUSED: '$ACTION' is not an allowlisted action (lab_verify, lab_updates, playbook_check, playbook_apply)." >&2; exit 2 ;;
 esac
 
 for v in VAULT_ADDR VAULT_CACERT VAULT_TOKEN; do
@@ -100,9 +118,7 @@ Host pve02
   HostName 192.168.50.11
 Host pve03
   HostName 192.168.50.10
-Host 192.168.50.12
-  HostName 192.168.50.12
-Host pve02 pve03 192.168.50.12
+Host pve02 pve03 192.168.50.10 192.168.50.11 192.168.50.12
   User root
   IdentityFile $HOME/.ssh/lab_runner
   CertificateFile $HOME/.ssh/lab_runner-cert.pub

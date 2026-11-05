@@ -1,21 +1,28 @@
 # lab-action — run one allowlisted lab action on the homelab runner (PET-861).
 #
-# WHY. A thread used to hand Pedro a prompt to paste into 247 or the Mac for every read-back. A
+# WHY. A thread used to hand Pedro a prompt to paste into 247 or the Mac for every host step. A
 # thread dispatches this workflow instead, with the GitHub tools it already has, and reads the
-# run log. Phase 1 holds two check actions, so neither waits for approval. lab_verify also creates
-# and deletes temporary files to prove storage works; scripts/lab-action.sh lists them.
+# run log.
 #
-#   lab_verify   scripts/lab-verify.sh --quiet
-#   lab_updates  scripts/lab-updates.sh
+#   lab_verify      scripts/lab-verify.sh --quiet                  no approval
+#   lab_updates     scripts/lab-updates.sh                         no approval
+#   playbook_check  ansible-playbook --check on the nodes          no approval
+#   playbook_apply  a check, then the real run after Pedro's tap   lab-write environment
 #
-# Write actions (playbook apply, seeds) come in a later phase, in a job bound to the `lab-write`
-# environment. That environment waits for Pedro's approval in GitHub, and the Vault write role
-# binds the environment claim, so a job that skips the environment cannot mint it.
+# lab_verify also creates and deletes temporary files to prove storage works; scripts/lab-action.sh
+# lists them. A playbook must be in scripts/lab-playbooks.txt and pass
+# scripts/lab-playbook-guard.py (Pedro, 2026-11-05: check free, apply needs his tap).
+#
+# APPROVAL. playbook_apply runs its check in the `run` job, then waits in the `apply` job, which is
+# bound to the `lab-write` environment. Only Pedro can approve that environment, and it accepts
+# main only. The thread posts the run link; Pedro approves in the GitHub app after he reads the
+# check's summary. Both jobs run the same commit, so the check covers the code that applies.
 #
 # SECURITY. Only `main` runs here: the Vault role binds ref, event and this file
 # (vault-config/auth.tf, lab-action-read), so a fork, a pull request, a push or a schedule mints
 # nothing. Starting a dispatch needs write access to this repo. The run log is public, so
-# scripts/lab-action.sh prints status and counts only and masks key-shaped strings.
+# scripts/lab-action.sh prints status and counts only, masks key-shaped strings, and passes no
+# --diff to Ansible.
 name: lab-action
 
 on:
@@ -28,6 +35,13 @@ on:
         options:
           - lab_verify
           - lab_updates
+          - playbook_check
+          - playbook_apply
+      target:
+        description: "For playbook actions: a file name from scripts/lab-playbooks.txt"
+        required: false
+        type: string
+        default: ""
       pet:
         description: "The PET item this run answers, for example PET-861"
         required: false
@@ -60,10 +74,11 @@ jobs:
         shell: bash
         env:
           ACTION: ${{ inputs.action }}
+          TARGET: ${{ inputs.target }}
           PET: ${{ inputs.pet }}
           ACTOR: ${{ github.actor }}
         run: |
-          echo "action=$ACTION pet=${PET:-none} sha=$GITHUB_SHA actor=$ACTOR"
+          echo "action=$ACTION target=${TARGET:-none} pet=${PET:-none} sha=$GITHUB_SHA actor=$ACTOR"
           for t in ssh ssh-keygen curl python3; do
             command -v "$t" >/dev/null || { echo "ABORT: $t is not installed on this runner."; exit 1; }
           done
@@ -88,8 +103,65 @@ jobs:
       - name: Run the action
         shell: bash
         env:
-          ACTION: ${{ inputs.action }}
+          # playbook_apply checks here first; the apply job runs only after this job passes.
+          ACTION: ${{ inputs.action == 'playbook_apply' && 'playbook_check' || inputs.action }}
+          TARGET: ${{ inputs.target }}
           # lab-verify.sh reads the org's runners with gh. This token can't list them, so that
           # check reports the refusal rather than a dead runner (PET-500).
           GH_TOKEN: ${{ github.token }}
-        run: scripts/lab-action.sh "$ACTION"
+        run: scripts/lab-action.sh "$ACTION" "$TARGET"
+
+  apply:
+    # The Vault binding is the gate. This line only stops a run of main's copy on another ref. A
+    # branch carries its own copy of this file, so a writer who dispatches a branch can run steps
+    # on a runner, as any self-hosted job can. Vault refuses that run, because ref is not main.
+    # Waits for Pedro's approval of the lab-write environment, after a clean check in `run`.
+    needs: run
+    if: github.ref == 'refs/heads/main' && inputs.action == 'playbook_apply'
+    environment: lab-write
+    # Two applies never run on the nodes at once. A newer apply that queues behind a pending one
+    # cancels it, and the thread reads that run as cancelled, never as applied.
+    concurrency:
+      group: lab-write
+      cancel-in-progress: false
+    runs-on: [self-hosted, linux, x64, homelab]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Say what this run does
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          TARGET: ${{ inputs.target }}
+          PET: ${{ inputs.pet }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "action=$ACTION target=${TARGET:-none} pet=${PET:-none} sha=$GITHUB_SHA actor=$ACTOR"
+          for t in ssh ssh-keygen curl python3; do
+            command -v "$t" >/dev/null || { echo "ABORT: $t is not installed on this runner."; exit 1; }
+          done
+
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Vault — lab-action-read via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: lab-action-read
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: true
+
+      - name: Run the action
+        shell: bash
+        env:
+          ACTION: playbook_apply
+          TARGET: ${{ inputs.target }}
+        run: scripts/lab-action.sh "$ACTION" "$TARGET"

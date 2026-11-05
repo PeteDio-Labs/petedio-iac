@@ -1,0 +1,16 @@
+# Playbooks lab-action.yml may run on the Proxmox nodes (PET-861). One file name per line.
+#
+# A thread runs `playbook_check` on any name here with no approval, and `playbook_apply` after
+# Pedro approves the run's lab-write job in GitHub. Before you add a name, read every
+# `check_mode: false` task in its tree, and mark each one that only reads with
+# `# lab-action: read-only`. scripts/lab-playbook-guard.py refuses an unmarked one. Run
+# `scripts/lab-playbook-guard.py --all` to see each playbook's status. Runs are limited to the node
+# groups (proxmox, pve_new, pve_gpu), because the lab-runner certificate opens nothing else.
+#
+# A check cannot see what command and shell tasks would do, because Ansible skips them in check
+# mode. Most guest steps here run through `pct exec`, so read a check's skipped count, not only
+# its changed count, before you approve an apply.
+# configure-journald.yml and configure-node-exporter.yml stay off this list: their roles read
+# the result of a command or uri task that check mode skips, so a check fails before it reports.
+apt-hygiene.yml
+configure-timezone.yml
