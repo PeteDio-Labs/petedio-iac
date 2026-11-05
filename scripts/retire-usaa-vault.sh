@@ -51,7 +51,10 @@ PATHS=(kv/db/usaa kv/services/usaa)
 # (a stopped container, a dropped reply and a failed ping all look alike), so this reads the
 # cluster config over SSH and demands the literal answer GONE. Any other result, including an
 # SSH failure, stops the script before it deletes anything.
-PVE_HOST="${PVE_HOST:-root@192.168.50.10}"
+# The default is pve02 (192.168.50.11). It accepts the operator's default SSH key, which
+# 192.168.50.10 (pve03) refuses. Every node reads the same /etc/pve, so any reachable node
+# answers the question. Set PVE_HOST to use another node.
+PVE_HOST="${PVE_HOST:-root@192.168.50.11}"
 # The remote script lists every node's lxc/ and qemu-server/ directory. `set -e` makes any
 # listing error end it without printing GONE, so a permission or I/O error is never read as
 # absence. It prints PRESENT when a 238 config exists and GONE only after every listing worked.
