@@ -126,12 +126,13 @@
 
 # The cluster-wide storage entry is registered by tasks/client.yml, which runs after this
 # file on a first build. Look it up first: assert `active` when the entry exists, and say
-# so when it does not, so a fresh cluster still reaches the client play.
+# so when it does not, so a fresh cluster still reaches the client play. A failed or empty read of the list
+# fails the play: absence in a list that was read is not the same as a list that was not.
 - name: Read the configured Proxmox storages
   ansible.builtin.command: pvesm status
   register: backup_server_pvesm
   changed_when: false
-  failed_when: false
+  failed_when: backup_server_pvesm.rc != 0 or (backup_server_pvesm.stdout_lines | length) < 1
   when: not ansible_check_mode
 
 - name: Prove Proxmox reports the store active on this node
