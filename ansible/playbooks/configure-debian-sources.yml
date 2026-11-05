@@ -1,0 +1,33 @@
+---
+# configure-debian-sources.yml — declare the Debian suites on pve02. (PET-828)
+#
+# pve02 had no trixie-security and no trixie-updates, so it could not see Debian 13
+# security fixes. The role writes debian.sources and removes debian-base.list. It leaves
+# pve-no-subscription.list alone.
+#
+#   cd ansible
+#   ansible-playbook playbooks/configure-debian-sources.yml --check --diff
+#   ansible-playbook playbooks/configure-debian-sources.yml
+#
+# Run it with the default inventory directory. `-i inventory/hosts.yml` alone exits 2
+# on playbooks that also name pve03, which lives in inventory/pve03.yml.
+#
+# ⚠ A HOST PATTERN THAT MATCHES NOTHING EXITS 0, so the first play asserts pve02 is in it.
+# pve01 and pve03 already carry these suites and are not targeted.
+
+- name: Assert the play will reach pve02
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  tasks:
+    - name: Pve02 is in the inventory
+      ansible.builtin.assert:
+        that: "'pve02' in groups['proxmox']"
+        fail_msg: pve02 is not in group proxmox. The next play would match nothing and exit 0.
+
+- name: Declare the Debian suites on pve02
+  hosts: pve02
+  become: true
+  roles:
+    - debian-sources
