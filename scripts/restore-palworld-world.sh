@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # restore-palworld-world.sh — put the saved Palworld world onto a fresh game host. (PET-381)
 #
+# Palworld is retired (PET-779). Keep this script to restore the saved world onto a new
+# server: docs/runbooks/palworld-restore.md.
+#
 # WHY A SCRIPT AND NOT AN ANSIBLE TASK, which is what workflow rule 6 asks for by default.
 # Recorded verbatim so nobody re-litigates it:
 #
@@ -159,8 +162,8 @@ Copying SaveGames does NOT select the world: the server reads DedicatedServerNam
 Pal/Saved/Config/LinuxServer/GameUserSettings.ini, and a host that generates its own world
 boots THAT one and comes up fully green on an empty map.
 
-  1. Converge so the role pins DedicatedServerName:
-       cd ansible && ansible-playbook -i inventory/ playbooks/configure-palworld.yml
+  1. Install the game and pin DedicatedServerName. The palworld role and playbooks left
+     the tree in PET-779; docs/runbooks/palworld-restore.md says how to recover them.
   2. Start it:  ssh $TARGET_USER@$TARGET systemctl start palworld
   3. VERIFY — this is the only check that counts:
        curl -su admin:<AdminPassword> http://$TARGET:8212/v1/api/info

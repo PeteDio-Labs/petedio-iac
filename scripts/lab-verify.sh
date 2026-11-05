@@ -128,11 +128,11 @@ done
 # and then reconciled into state — see docs/runbooks/pve03-platform-move.md.
 sec "Placement matches intent"
 # 110 qbittorrent + 236 plex sit beside the disks; 233 is the pve02 CI runner, one per
-# host by design (PET-335); 239 is netboot, on pve02 by Pedro's decision (PET-720);
+# host by design (PET-335);
 # 240 is metrics-240, on pve02 per the PET-712 survey and iac#491 (PET-740).
 # 246 is ollama-246 on pve01, the only node with GPUs for it (PET-528).
 # Everything else belongs on pve03.
-INTENT_PVE02="110 236 233 239 240"
+INTENT_PVE02="110 236 233 240"
 INTENT_PVE01="246"
 PLACEMENT=$(on $PVE02 'pvesh get /cluster/resources --type vm --output-format json' 2>/dev/null)
 if [ -z "$PLACEMENT" ]; then

@@ -12,7 +12,7 @@ This role installs the daemon and hands it the token — it never writes ingress
 A tunnel's ingress config applies to **every connector on that tunnel**. A rule pointing at
 `http://127.0.0.1:8080` therefore only makes sense if every connector on the tunnel has that
 origin — so a loopback origin needs its **own tunnel**, with its connector on the origin host.
-See the `module.cloudflare_ingress_palworld` comment in `cloudflare-routes.tf`.
+The Palworld tunnel that motivated this role is retired (`PET-779`).
 
 ## Variables
 
@@ -35,5 +35,4 @@ then re-run the play with the new token.
 
 ## Used by
 
-`ansible/playbooks/configure-palworld-tunnel.yml` — the connector for `palworld.pdlab.dev`
-on `palworld-234`.
+No playbook uses this role since `PET-779` retired the Palworld connector.

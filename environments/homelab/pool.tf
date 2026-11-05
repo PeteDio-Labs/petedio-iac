@@ -60,7 +60,6 @@ locals {
     media_dash = module.media_dash.vm_id
     claude     = module.claude_code.vm_id
     codex      = module.codex.vm_id
-    netboot    = module.netboot.vm_id
     metrics    = module.metrics.vm_id
     ollama     = module.ollama.vm_id
   } : {}

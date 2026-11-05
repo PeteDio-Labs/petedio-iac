@@ -55,7 +55,7 @@ the two-lane layout that `host_vars/ollama-246.yml` already describes.
    Gate: the value is on `PET-528`, and the thread commits it to
    `roles/nvidia-driver/defaults/main.yml`.
 3. **Make the USB stick** from the Proxmox VE 9 ISO that matches the cluster's major
-   version. Check its sha256 against proxmox.com. Netboot CT 239 is the fallback.
+   version. Check its sha256 against proxmox.com.
 4. **Quiesce the backup store.** These steps unmount it so no node hangs on a dead NFS
    server:
    - On pve02 and pve03, run `pgrep -a vzdump || echo none`. Stop if a backup is running.
@@ -235,8 +235,7 @@ they were. Then restore the two-node cluster's third vote:
 
 ## After it passes
 
-- Delete netboot CT 239 and its code (`netboot.tf` says so). The destroy needs the repo
-  variable `ALLOW_DESTROY=true`.
+- Netboot CT 239 and its code are removed (`PET-779`).
 - Reclaim the Ubuntu root LV on sda once nobody needs the rollback.
 - Give pve01's own guests a backup job. The `ollama-backups` storage is a `dir` at
   `/mnt/ollama-backups`, and pve01 serves the store from `/srv/backups`, so pve01
