@@ -8,7 +8,7 @@
 # undercounts, and the age line is how you tell.
 #
 # Covers the three nodes (pve02, pve03, pve01 at 192.168.50.12), every running LXC on them,
-# the ollama-246 VM on pve01 (no pct; read over ssh) and pi1. A guest that is not running is
+# pi1 (no pct; read over ssh). ollama-246 is an LXC on pve01, so the pve01 loop covers it. A guest that is not running is
 # not examined and is not counted.
 #
 # Reports what it examined. "0 upgradable across 0 guests" must not look like
@@ -25,7 +25,6 @@ PVE03=pve03
 # not by alias: an ssh config written before 2026-09-03 may still map `pve01` to .10, which
 # is pve03 now (same rule as lab-verify.sh).
 PVE01=root@192.168.50.12
-OLLAMA246=root@192.168.50.246
 PI=pi1
 KEY="$HOME/.ssh/id_ed25519_ansible"
 EXAMINED=0; UNREADABLE=0; PENDING=0; REBOOT=0; NOSEC=0
@@ -34,7 +33,7 @@ UNREADABLE_NAMES=""; NOSEC_NAMES=""
 # The ${o[@]+...} form keeps bash 3.2, the Mac's, from failing on an empty array under -u.
 on() {
   local o=()
-  case "$1" in "$PVE01"|"$OLLAMA246") o=(-i "$KEY");; esac
+  [ "$1" = "$PVE01" ] && o=(-i "$KEY")
   ssh -n -o ConnectTimeout=8 -o BatchMode=yes ${o[@]+"${o[@]}"} "$1" "$2" 2>/dev/null
 }
 # pve03 is an unprivileged login, so pct needs sudo there (lab-verify.sh does the same).
@@ -58,7 +57,15 @@ newest=$(stat -c %Y /var/lib/apt/periodic/update-success-stamp /var/lib/apt/list
 age=$(( ( $(date +%s) - newest ) / 86400 ))
 rb=no; [ -e /var/run/reboot-required ] && rb=yes
 ua=no; dpkg -s unattended-upgrades >/dev/null 2>&1 && ua=yes
-ss=no; cat /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null | grep -Eiv "^[[:space:]]*#" | grep -Eiq "^(deb[[:space:]]|Suites:).*security" && ss=yes
+ss=no
+# Only files APT reads: sources.list, *.list and *.sources. A .save or .bak file is ignored by APT,
+# and a deb822 stanza with "Enabled: no" is too.
+for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+  [ -f "$f" ] && grep -Eiv "^[[:space:]]*#" "$f" | grep -Eiq "^deb[[:space:]].*security" && ss=yes
+done
+for f in /etc/apt/sources.list.d/*.sources; do
+  [ -f "$f" ] && awk -v RS= "tolower(\$0) ~ /suites:[^\n]*security/ && tolower(\$0) !~ /enabled:[ \t]*(no|false)/{f=1} END{exit !f}" "$f" && ss=yes
+done
 echo "$PRETTY_NAME|$up|$sec|$age|$rb|$ua|$ss"
 '
 KERNEL_Q="dpkg-query -W -f '\${Package}\n' 'proxmox-kernel-*-pve-signed' 2>/dev/null | sort -V | tail -1"
@@ -115,9 +122,9 @@ for n in $PVE02 $PVE03 $PVE01; do
   done
 done
 
-# Not LXC: a VM on pve01 and a Pi. Neither has pct, so the same probe runs over ssh.
-printf "\n%s\n" "== VM and bare metal (read over ssh)"
-report "246 ollama-246 (VM)" "$(on "$OLLAMA246" "sh -c '$PROBE'")"
+# Not LXC: the Pi has no pct, so the same probe runs over ssh. ollama-246 is an LXC on pve01
+# and appears in that node's loop.
+printf "\n%s\n" "== bare metal (read over ssh)"
 report "pi1" "$(on "$PI" "sh -c '$PROBE'")"
 
 printf "\nexamined %d hosts or guests; %d unreadable%s; %d packages upgradable; %d need a reboot; %d with no security suite%s\n" \
