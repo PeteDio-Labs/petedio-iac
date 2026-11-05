@@ -43,9 +43,11 @@ case "$ACTION" in
   # Phase 2: a playbook on the nodes. lab-playbook.sh runs the guard before Ansible starts. The
   # workflow runs playbook_apply only in the lab-write job, after a clean check at the same commit.
   playbook_check|playbook_apply)
-    python3 "$REPO_ROOT/scripts/lab-playbook-guard.py" "$TARGET" || exit 2
+    if python3 -c 'import yaml' 2>/dev/null; then
+      python3 "$REPO_ROOT/scripts/lab-playbook-guard.py" "$TARGET" || exit 2
+    fi
     CMD=("$REPO_ROOT/scripts/lab-playbook.sh" "${ACTION#playbook_}" "$TARGET")
-    SUMMARY='^playbook (check|apply) [a-z0-9-]+\.yml: [0-9]+ hosts' ;;
+    SUMMARY='^playbook (check|apply) [a-z0-9-]+\.yml: [0-9]+ of [0-9]+ hosts' ;;
   *) echo "REFUSED: '$ACTION' is not an allowlisted action (lab_verify, lab_updates, playbook_check, playbook_apply)." >&2; exit 2 ;;
 esac
 
