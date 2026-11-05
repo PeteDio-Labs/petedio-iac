@@ -31,19 +31,28 @@ step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
 sha(){ if command -v sha256sum >/dev/null; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi; }
 
-command -v mc >/dev/null || die "mc (MinIO client) not found."
-[ -f "$TARGET_KEY" ] || die "SSH key not found: $TARGET_KEY"
-SSH=(ssh -i "$TARGET_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$TARGET_USER@$TARGET")
+SSH=(ssh -i "$TARGET_KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$TARGET_USER@$TARGET")
+
+# Preflight. Every check runs before the script touches CT 234, and each failure prints one
+# ABORT line that names the missing prerequisite. Run this on the Mac: it holds mc, the
+# ansible key and a Vault login. claude-ops on 247 holds none of the three (PET-779).
+step "Checking prerequisites"
+for tool in ssh gzip tar mc vault; do
+  command -v "$tool" >/dev/null || die "$tool not found on $(hostname -s). Run this on the Mac, which has mc and vault."
+done
+command -v sha256sum >/dev/null || command -v shasum >/dev/null || die "neither sha256sum nor shasum found."
+[ -f "$TARGET_KEY" ] || die "SSH key not found: $TARGET_KEY. Set TARGET_KEY to the key that reaches root@$TARGET."
+[ -n "${VAULT_TOKEN:-}" ] || die "VAULT_TOKEN is not exported. Log in to Vault, then export VAULT_TOKEN, so 'vault kv get kv/iac/minio-root' works."
+[ -n "${VAULT_ADDR:-}" ] || die "VAULT_ADDR is not set."
+"${SSH[@]}" true || die "Cannot ssh to $TARGET_USER@$TARGET with $TARGET_KEY."
+echo "  ok: tools, ssh key, Vault login, ssh to $TARGET"
 
 step "Resolving minio-221 credentials"
-MINIO_USER=""; MINIO_PASS=""
-if command -v vault >/dev/null && [ -n "${VAULT_TOKEN:-}" ]; then
-  MINIO_USER="$(vault kv get -field=root_user kv/iac/minio-root 2>/dev/null || true)"
-  MINIO_PASS="$(vault kv get -field=root_password kv/iac/minio-root 2>/dev/null || true)"
-fi
-[ -n "$MINIO_USER" ] && [ -n "$MINIO_PASS" ] || die "No minio-221 credential: set VAULT_TOKEN so 'vault kv get kv/iac/minio-root' works."
+MINIO_USER="$(vault kv get -field=root_user kv/iac/minio-root 2>/dev/null || true)"
+MINIO_PASS="$(vault kv get -field=root_password kv/iac/minio-root 2>/dev/null || true)"
+[ -n "$MINIO_USER" ] && [ -n "$MINIO_PASS" ] || die "Vault returned no credential at kv/iac/minio-root. Check the token's policy and VAULT_ADDR."
 export MC_HOST_pal221="http://${MINIO_USER}:${MINIO_PASS}@${MINIO_URL#http://}"
-mc ls "pal221/${BUCKET}" >/dev/null || die "Cannot list pal221/${BUCKET}."
+mc ls "pal221/${BUCKET}" >/dev/null || die "Cannot list pal221/${BUCKET} on ${MINIO_URL}."
 echo "  ok (credential held in the environment only)"
 
 step "Checking the world on $TARGET"
@@ -62,7 +71,7 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 gzip -t "$WORK/$ARCHIVE" || die "archive fails gzip integrity"
 LOCAL_FILES="$(tar tzf "$WORK/$ARCHIVE" | grep -c "/SaveGames/.*[^/]$" || true)"
 WORLD="$(tar tzf "$WORK/$ARCHIVE" | sed -nE 's#.*SaveGames/0/([0-9A-F]{32})/Level\.sav$#\1#p' | head -1)"
-echo "  $(ls -lh "$WORK/$ARCHIVE" | awk '{print $5}'), $LOCAL_FILES save files, world $WORLD"
+echo "  $(wc -c < "$WORK/$ARCHIVE" | tr -d "[:space:]") bytes, $LOCAL_FILES save files, world $WORLD"
 [ -n "$WORLD" ] || die "No SaveGames/0/<worldguid>/Level.sav inside the archive."
 [ "$LOCAL_FILES" -eq "$REMOTE_FILES" ] || die "File count mismatch: host $REMOTE_FILES, archive $LOCAL_FILES."
 SUM="$(sha "$WORK/$ARCHIVE")"
