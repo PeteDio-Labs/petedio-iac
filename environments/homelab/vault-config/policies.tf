@@ -44,13 +44,6 @@ resource "vault_policy" "ci_read" {
       capabilities = ["read"]
     }
 
-    # usaa (LXC 238, PET-590). The same gated read as plane, for `usaa = {}` in
-    # databases.tf. Apply this, and seed kv/db/usaa with scripts/seed-usaa-db.sh, BEFORE
-    # the merge that adds that entry, or its apply-on-merge fails on this path.
-    path "kv/data/db/usaa" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/iac/proxmox" {
       capabilities = ["read"]
     }
@@ -68,6 +61,13 @@ resource "vault_policy" "ci_read" {
     }
 
     path "kv/data/iac/authentik" {
+      capabilities = ["read"]
+    }
+
+    # The postgresql provider's server-wide admin credential (PET-691). One named path
+    # under kv/admin, never the prefix (PET-702). The kv/poker/* grants below stay until
+    # the follow-up that retires them, which runs after the provider reads this path.
+    path "kv/data/admin/postgres" {
       capabilities = ["read"]
     }
 
@@ -95,6 +95,13 @@ resource "vault_policy" "terraform" {
 
   policy = <<-EOT
     path "kv/data/iac/*" {
+      capabilities = ["read"]
+    }
+
+    # The postgresql provider's server-wide admin credential (PET-691). One named path
+    # under kv/admin, never the prefix (PET-702). The kv/poker/* grants below stay until
+    # the follow-up that retires them, which runs after the provider reads this path.
+    path "kv/data/admin/postgres" {
       capabilities = ["read"]
     }
 
@@ -127,7 +134,7 @@ resource "vault_policy" "terraform" {
 #   deploy-claude-247.sh  reads four App keys (claude-*); see the claude-ops exclusions.
 #   deploy-codex-248.sh   reads kv/services/codex-review-app, the Codex reviewer's App key.
 #   deploy-uptime-kuma.sh needs macOS `security`.
-#   deploy-pete-bot.sh, deploy-usaa.sh, deploy-search.sh, deploy-media-dash.sh log in with
+#   deploy-pete-bot.sh, deploy-search.sh, deploy-media-dash.sh log in with
 #     an admin token, not this AppRole.
 # NEVER kv/admin/*: the root token and the unseal material live there.
 #
@@ -269,7 +276,7 @@ resource "vault_policy" "media_ci" {
 # media-dash-cd: the petedio-media-control repo's CD role (PET-355) — deploy.yml compiles
 # the mtrace binary and installs it plus its systemd unit on media-dash-237 on merge (the
 # runner SSHes in). Least-privilege: ONLY the ansible SSH key (to reach 237) and the app's
-# own service secret. Mirrors water-fast-cd. Apply BEFORE the CD workflow lands or the
+# own service secret. Mirrors pete-bot-cd. Apply BEFORE the CD workflow lands or the
 # first run 403s.
 #
 # ⚠ IT IS DELIBERATELY NOT GIVEN THE *arr API KEYS, and that is the whole security story
@@ -358,34 +365,6 @@ resource "vault_policy" "lab_agent_presence" {
     # default policy's other grants (cubbyhole, lookup, wrapping) are not needed.
     path "auth/token/renew-self" {
       capabilities = ["update"]
-    }
-  EOT
-}
-
-# usaa-cd: the savings tracker's deploy (PET-695). It reads the app's own credentials and its
-# own SSH key, both under the app's paths, and nothing else. It does NOT read
-# kv/iac/lxc-ssh: that key opens root on every Terraform-built LXC, and the deploy needs
-# only usaa-238. seed-usaa-cd.sh generates a key for this app, and configure-usaa.yml
-# installs its public half on usaa-238 alone.
-#
-# ⚠ It does NOT read kv/services/pete-bot. Vault cannot scope a read to one field, and that
-# path holds the Discord token and the desk App's key. The notify token the app needs is a
-# copy in kv/services/usaa, written by scripts/seed-usaa-cd.sh. Rotating pete-bot's token
-# means running that script again.
-resource "vault_policy" "usaa_cd" {
-  name = "usaa-cd"
-
-  policy = <<-EOT
-    path "kv/data/db/usaa" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/usaa" {
-      capabilities = ["read"]
-    }
-
-    path "kv/metadata/services/usaa" {
-      capabilities = ["list"]
     }
   EOT
 }
@@ -691,10 +670,6 @@ resource "vault_policy" "claude_ops" {
       capabilities = ["read"]
     }
 
-    path "kv/data/services/resume-builder" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/search" {
       capabilities = ["read"]
     }
@@ -708,10 +683,6 @@ resource "vault_policy" "claude_ops" {
     }
 
     path "kv/data/services/vault-snapshots" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/services/water-fast" {
       capabilities = ["read"]
     }
   EOT

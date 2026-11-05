@@ -31,6 +31,7 @@
   ansible.builtin.group:
     name: "{{ minio_group }}"
     system: true
+  when: minio_manage_account | bool
 
 - name: Create the minio system user
   ansible.builtin.user:
@@ -40,6 +41,7 @@
     shell: /usr/sbin/nologin
     home: "{{ minio_data_dir }}"
     create_home: false
+  when: minio_manage_account | bool
 
 - name: Create the MinIO data directory
   ansible.builtin.file:
@@ -48,6 +50,25 @@
     owner: "{{ minio_user }}"
     group: "{{ minio_group }}"
     mode: "0750"
+  when: minio_manage_data_dir | bool
+
+# Fails closed. A host that owns its data directory (221) must already have it: creating
+# an empty one here would repoint the state backend at no data.
+- name: Read the MinIO data directory the host owns
+  ansible.builtin.stat:
+    path: "{{ minio_data_dir }}"
+  register: minio_data_dir_stat
+  when: not (minio_manage_data_dir | bool)
+
+- name: Assert the host-owned MinIO data directory exists
+  ansible.builtin.assert:
+    that:
+      - minio_data_dir_stat.stat.exists
+      - minio_data_dir_stat.stat.isdir
+    fail_msg: >-
+      {{ minio_data_dir }} is missing or not a directory, and minio_manage_data_dir is
+      false. Refusing to continue: the role would point MinIO at an empty path.
+  when: not (minio_manage_data_dir | bool)
 
 # --- Binaries (pinned + checksummed) ---------------------------------------------
 
@@ -61,6 +82,15 @@
     mode: "0755"
   notify: Restart minio
 
+# PET-811: under --check, get_url downloads the mirror asset to compare it, so a host
+# without mc (221) fails the check when the asset is unpublished or the mirror is down.
+# Under --check the install is skipped when mc is absent, and the debug task below says
+# so: the check then reports what it did not examine instead of failing or passing silently.
+- name: Look for an installed mc client
+  ansible.builtin.stat:
+    path: "{{ minio_mc_bin }}"
+  register: minio_mc_stat
+
 - name: Install the mc client binary ({{ minio_mc_version }})
   ansible.builtin.get_url:
     url: "{{ minio_mc_url }}"
@@ -69,15 +99,23 @@
     owner: root
     group: root
     mode: "0755"
+  when: not ansible_check_mode or minio_mc_stat.stat.exists
+
+- name: Report that --check did not examine the mc install
+  ansible.builtin.debug:
+    msg: >-
+      NOT EXAMINED: {{ minio_mc_bin }} is absent, so --check skipped the mc download from
+      {{ minio_mc_url }}. A real run installs it. The bucket tasks are skipped under --check too.
+  when: ansible_check_mode and not minio_mc_stat.stat.exists
 
 # --- Service config --------------------------------------------------------------
 
 - name: Write the MinIO environment file (root creds + volumes)
   ansible.builtin.copy:
     dest: "{{ minio_config_env }}"
-    owner: root
-    group: "{{ minio_group }}"
-    mode: "0640"
+    owner: "{{ minio_config_env_owner }}"
+    group: "{{ minio_config_env_group }}"
+    mode: "{{ minio_config_env_mode }}"
     content: |
       # ANSIBLE MANAGED (roles/minio) — do not edit by hand.
       # Root credentials come from Vault (kv/iac/minio-root); never commit real values.

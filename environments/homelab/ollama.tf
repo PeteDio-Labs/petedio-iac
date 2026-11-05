@@ -66,7 +66,7 @@ module "ollama" {
   template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
   ssh_public_key   = var.ssh_public_key
 
-  # True, as on usaa.tf: the module sets `started = var.start_on_boot` and Terraform
+  # True, as on metrics.tf: the module sets `started = var.start_on_boot` and Terraform
   # manages run state, so false would stop a hand-started container on the next apply.
   start_on_boot = true
 

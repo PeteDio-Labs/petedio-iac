@@ -100,6 +100,12 @@ uptime_kuma_notifications: >-
      if uptime_kuma_pete_bot_bearer | length > 0 else [])
   }}
 
+# Monitors to DELETE from Kuma. The provisioner adds and edits declared monitors but never
+# prunes, so a monitor removed from the list below stays live and goes red. Name it here to
+# have the next deploy delete it. Remove the name once a deploy has retired it.
+uptime_kuma_retired_monitors:
+  - usaa   # PET-590: LXC 238 destroyed
+
 # ------------------------------------------------------------------ monitors --
 # EVERY target is a raw IP. A monitor that resolved a name would go DOWN during
 # an injected DNS fault and report a service outage that never happened — the
@@ -169,7 +175,7 @@ uptime_kuma_monitors:
   # trains you to ignore the dashboard, the opposite of what the fault study needs.
   # Noticed while removing lidarr in PET-319. That one turned out never to have
   # been provisioned, so nothing was orphaned, but the gap is real: after removing
-  # an entry here, delete the monitor in the UI or via uptime-kuma-api as well.
+  # an entry here, name it in uptime_kuma_retired_monitors (PET-590) so the next deploy deletes it.
   # -- arr stack behind /mnt/media --------------------------------------------
   - name: sonarr
     type: http
@@ -247,13 +253,6 @@ uptime_kuma_monitors:
     description: "Media triage API on 237. Liveness only; Muse is its caller."
 
   # -- services that ran unwatched (PET-706) -----------------------------------
-  # /healthz answers {"ok":true,"db":<bool>}. A 200 alone does not prove the database
-  # connects, so the usaa monitor reads the keyword the app sets when it does.
-  - name: usaa
-    type: keyword
-    url: "http://192.168.50.238:8080/healthz"
-    keyword: '"db":true'
-    description: "Savings tracker on 238. DOWN means the app is off or its database does not connect."
   # petedio-search binds 192.168.50.246 and the LAN reaches it, so the Pi does too.
   # /healthz proves only that the server is up; the embedding lane has its own check
   # in configure-search.yml.
@@ -352,7 +351,6 @@ uptime_kuma_maintenances:
       - postgres       # 231
       - plane          # 235
       - mtrace         # 237
-      - usaa           # 238
       - minio-data     # 245
 
 # ------------------------------------------------------- backup to the HDD --

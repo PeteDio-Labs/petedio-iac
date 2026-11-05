@@ -36,7 +36,6 @@ prometheus_node_targets:
   - { host: runner-233, address: 192.168.50.233 }
   - { host: plane-235, address: 192.168.50.235 }
   - { host: media-dash-237, address: 192.168.50.237 }
-  - { host: usaa-238, address: 192.168.50.238 }
   - { host: metrics-240, address: 192.168.50.240 }
   - { host: minio-data-245, address: 192.168.50.245 }
   - { host: claude-247, address: 192.168.50.247 }

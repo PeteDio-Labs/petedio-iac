@@ -75,7 +75,7 @@ MCCFG="$(mktemp -d)"; trap 'rm -rf "$MCCFG"' EXIT
 m(){ mc --config-dir "$MCCFG" "$@"; }
 # set_alias ALIAS USER PASS stores an alias. `mc alias set` reads both keys from stdin, and
 # printf is a builtin, so neither key reaches argv. An MC_HOST_<alias> URL breaks on a raw
-# `:`, `@` or `%` in a secret (seed-usaa-minio.sh).
+# `:`, `@` or `%` in a secret.
 set_alias(){
   printf '%s\n%s\n' "$2" "$3" | m alias set "$1" "$MINIO_ENDPOINT" --api s3v4 --path auto >/dev/null 2>&1
 }

@@ -14,8 +14,13 @@ output "cloudfront_domain" {
 }
 
 output "deploy_role_arn" {
-  description = "Role ARN, for the deploy workflow's AWS_ROLE_ARN variable."
-  value       = aws_iam_role.deploy.arn
+  description = "Role ARN, for the deploy workflow's AWS_ROLE_ARN variable. Null when deploy_auth is \"user\"."
+  value       = one(aws_iam_role.deploy[*].arn)
+}
+
+output "deploy_user_name" {
+  description = "Deploy IAM user, for scripts/portfolio-deploy-key.sh. Null when deploy_auth is \"oidc\"."
+  value       = one(aws_iam_user.deploy[*].name)
 }
 
 output "acm_validation_records" {

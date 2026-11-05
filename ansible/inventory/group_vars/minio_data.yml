@@ -37,6 +37,11 @@ minio_buckets:
   - name: plane
     quota_bytes: 21474836480 # 20 GiB
 
+  # usaa-statements — KEPT AFTER THE TRACKER WAS RETIRED. The petedio-usaa tracker, its LXC
+  # and its routes were torn down on 2026-11-04 (PET-590), but this bucket holds the only
+  # copy of the statements, so no automation deletes it. Pedro decides whether to export
+  # and remove it; deleting it means removing this entry and running `mc rb` by hand.
+  #
   # usaa-statements — six years of bank statements (2020-06 to 2026-07) and the SQLite
   # database built from them, for the pipeline in the usaa project (PET-392/393).
   #

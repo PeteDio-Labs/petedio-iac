@@ -17,7 +17,7 @@
 #
 # SECRETS (PET-106): postgres_admin_password is REQUIRED and deliberately has NO
 # default — a committed placeholder would silently become the live admin password
-# on a bare re-run. Resolve it from Vault (kv/poker/db, field admin_password) and
+# on a bare re-run. Resolve it from Vault (kv/admin/postgres, field admin_password) and
 # pass it as a no_log extra-var via a 0600 JSON @file, the repo's shell-wrapper
 # convention (see scripts/deploy-poker-api.sh / deploy-openfaas.sh for the
 # pattern). It MUST match the password the cyrilgdn provider connects with
@@ -36,14 +36,14 @@
     postgres_admin_user: "postgres"
 
   pre_tasks:
-    - name: Assert the admin password was provided (Vault kv/poker/db — never a committed default)
+    - name: Assert the admin password was provided (Vault kv/admin/postgres — never a committed default)
       ansible.builtin.assert:
         that:
           - postgres_admin_password is defined
           - postgres_admin_password | length > 0
         fail_msg: >-
           Missing postgres_admin_password. Don't run this playbook bare — resolve it from
-          Vault (kv/poker/db, field admin_password) and pass it as a no_log extra-var via
+          Vault (kv/admin/postgres, field admin_password) and pass it as a no_log extra-var via
           a 0600 JSON @file (see the header / scripts/deploy-poker-api.sh for the pattern).
       no_log: true
 

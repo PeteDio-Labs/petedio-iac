@@ -276,6 +276,7 @@
       status_page_title: "{{ uptime_kuma_status_page_title }}"
       api_key_name: "{{ uptime_kuma_api_key_name }}"
       monitors: "{{ uptime_kuma_monitors + (uptime_kuma_push_declared | default([])) }}"
+      retired_monitors: "{{ uptime_kuma_retired_monitors }}"
       notifications: "{{ uptime_kuma_notifications }}"
       maintenances: "{{ uptime_kuma_maintenances }}"
   no_log: true
@@ -287,7 +288,8 @@
   # provision_kuma.py reports seven lists that mean the instance changed: created and
   # updated for monitors, notifications_created, notifications_updated and
   # notifications_attached for the notification channels, and maintenances_created and
-  # maintenances_updated for the maintenance windows (PET-635). Until PET-486 this read
+  # maintenances_updated for the maintenance windows (PET-635), and retired for deleted
+  # monitors (PET-590). Until PET-486 this read
   # the first two only, so a run that changed nothing but a notification reported ok.
   changed_when: >-
     (kuma_provision.stdout | from_json).created | length > 0
@@ -297,6 +299,7 @@
     or (kuma_provision.stdout | from_json).notifications_attached | length > 0
     or (kuma_provision.stdout | from_json).maintenances_created | length > 0
     or (kuma_provision.stdout | from_json).maintenances_updated | length > 0
+    or (kuma_provision.stdout | from_json).retired | length > 0
 
 - name: Remove the provisioning config
   ansible.builtin.file:

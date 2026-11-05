@@ -51,6 +51,18 @@ variable "manage_resource_pool" {
   default     = false
 }
 
+variable "manage_backup_job" {
+  description = <<-EOT
+    Gate for backup.tf (PET-834). FALSE until two hand steps are done: the IaC token
+    (petedio@pam!iac) holds the privileges that create a cluster backup job, and pve01
+    mounts the ollama-backups store. While false the job is a no-op (count 0), so a missing
+    privilege cannot fail apply-on-merge for the whole workspace, as in the PET-159 incident.
+    Set the repo variable MANAGE_BACKUP_JOB=true after both steps.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "ssh_public_key" {
   description = "SSH public key installed for root inside each LXC (matches the key Ansible logs in with)."
   type        = string

@@ -55,3 +55,11 @@ targetRules = ["curl-auth-user"]
 paths = ['''docs/runbooks/uptime-kuma-fault-study\.md$''']
 regexTarget = "secret"
 regexes = ['''^":\$\(vault kv get -field=metrics_api_key kv/services/uptime-kuma\)"$''']
+
+[[allowlists]]
+description = "configure-pete-bot.yml holds the Cloudflare Access audience tag of the lab MCP: a public identifier, not a secret (PET-827)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''ansible/playbooks/configure-pete-bot\.yml$''']
+regexTarget = "match"
+regexes = ['''access_aud:\s*"[0-9a-f]{64}"''']

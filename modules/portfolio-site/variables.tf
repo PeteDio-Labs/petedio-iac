@@ -23,7 +23,7 @@ variable "attach_domain" {
 variable "github_repo" {
   description = "GitHub repository (owner/name) allowed to assume the deploy role."
   type        = string
-  default     = "PeteDio-Labs/portfolio"
+  default     = "PeteDio-Labs/pdlabs-portfolio"
 }
 
 variable "github_branch" {
@@ -32,8 +32,23 @@ variable "github_branch" {
   default     = "main"
 }
 
+variable "deploy_auth" {
+  description = <<-EOT
+    How the deploy workflow authenticates. "oidc" creates a GitHub OIDC deploy role (no key).
+    "user" creates a deploy-only IAM user, for accounts whose service control policy denies
+    the OIDC provider; the access key is made by scripts/portfolio-deploy-key.sh, not Terraform.
+  EOT
+  type        = string
+  default     = "oidc"
+
+  validation {
+    condition     = contains(["oidc", "user"], var.deploy_auth)
+    error_message = "deploy_auth must be \"oidc\" or \"user\"."
+  }
+}
+
 variable "create_github_oidc_provider" {
-  description = "Create the account's GitHub OIDC provider. Set false if the account already has one: an account holds one per URL."
+  description = "Create the account's GitHub OIDC provider (deploy_auth oidc only). Set false if the account already has one: an account holds one per URL."
   type        = bool
   default     = true
 }
