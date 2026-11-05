@@ -135,6 +135,24 @@
     group: root
     mode: "0644"
     content: |
+      {% if minio_unit_legacy_layout | bool %}
+      [Unit]
+      Description={{ minio_service_description }}
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      {% if minio_service_type | length > 0 %}
+      Type={{ minio_service_type }}
+      {% endif %}
+      User={{ minio_user }}
+      Group={{ minio_group }}
+      EnvironmentFile={{ minio_config_env }}
+      ExecStart={{ minio_bin }} server $MINIO_OPTS $MINIO_VOLUMES
+      Restart=always
+      LimitNOFILE=65536
+      [Install]
+      WantedBy=multi-user.target
+      {% else %}
       # ANSIBLE MANAGED (roles/minio).
       [Unit]
       Description={{ minio_service_description }}
@@ -160,6 +178,7 @@
 
       [Install]
       WantedBy=multi-user.target
+      {% endif %}
   notify: Restart minio
 
 - name: Flush handlers so MinIO is (re)started before the bucket tasks run
