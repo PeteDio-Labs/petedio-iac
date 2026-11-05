@@ -113,12 +113,12 @@
 
     placement_cases:
       - name: each declared guest on one node
-        found: { pve02: ["110", "236"], pve03: ["101", "104", "105", "109"] }
+        found: { pve02: ["110", "236"], pve03: ["101", "104", "105", "109", "222"] }
         want_unread: []
         want_misplaced: []
 
       - name: 236 renumbered, so no node reports it
-        found: { pve02: ["110"], pve03: ["101", "104", "105", "109"] }
+        found: { pve02: ["110"], pve03: ["101", "104", "105", "109", "222"] }
         want_unread: []
         want_misplaced:
           - { vmid: "236", nodes: [] }
@@ -133,6 +133,7 @@
           - { vmid: "105", nodes: [] }
           - { vmid: "109", nodes: [] }
           - { vmid: "110", nodes: [pve02, pve03] }
+          - { vmid: "222", nodes: [] }
           - { vmid: "236", nodes: [pve02, pve03] }
 
       - name: pve03 gave no report
@@ -143,6 +144,7 @@
           - { vmid: "104", nodes: [] }
           - { vmid: "105", nodes: [] }
           - { vmid: "109", nodes: [] }
+          - { vmid: "222", nodes: [] }
 
   tasks:
     - name: Check the declaration in roles/lxc-startup/defaults/main.yml
