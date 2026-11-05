@@ -389,6 +389,11 @@ if [ -n "$VPN" ] && [ -n "$WAN" ]; then
 else skip "vpn exit check" "could not read one of the addresses"; fi
 
 sec "Monitoring tells the truth"
+# scripts/lab-action.sh sets LAB_ACTION=1 on runner 232, which holds no key for the Pi (PET-861).
+# Say so as a skip, so a run from there stays green when everything it can read is healthy.
+if [ "${LAB_ACTION:-0}" = 1 ]; then
+  skip "monitoring on the Pi" "lab-action has no certificate for pi1; run from the Mac to read it"
+else
 UP=$(on $PI 'sudo docker exec uptime-kuma sqlite3 /app/data/kuma.db "select count(*) from monitor where active=1"')
 [ "${UP:-0}" -ge 15 ] && ok "monitors active" "$UP" || bad "monitors active" "only ${UP:-0}"
 # A monitor named for a host that no longer exists is worse than no monitor.
@@ -406,6 +411,7 @@ BKOK=$(printf '%s\n' "$LASTBK" | grep -m1 '^ok ' || true)
 if [ -n "$BKOK" ]; then ok "kuma backup wrote" "${BKOK#ok }"
 elif [ -z "$LASTBK" ]; then bad "kuma backup" "no run recorded on the Pi"
 else bad "kuma backup" "$(printf '%s\n' "$LASTBK" | tail -1)"; fi
+fi
 
 # ⚠ A STORE CAN BE ACTIVE WITH NOTHING MOUNTED ON IT. From 2026-09-14 to 2026-09-28 pve02's
 # share was unmounted, vzdump wrote every archive to the root disk until it filled, and three
@@ -469,6 +475,11 @@ done
 # passes, and an inactive unit fails whichever view produced it.
 sec "Runners"
 on_root() { ssh -n -o ConnectTimeout=8 -o BatchMode=yes -i "$HOME/.ssh/id_ed25519_ansible" "root@$1" "$2" 2>/dev/null; }
+# From lab-action (PET-861), the job token can't list the org's runners and 232 holds no root key
+# for the runner hosts, so both views are unreadable there. Placement below still reads the nodes.
+if [ "${LAB_ACTION:-0}" = 1 ]; then
+  skip "runner registration" "lab-action can't read the org's runners or the runner hosts; run from the Mac"
+else
 RUNNERS_ERR=$(mktemp)
 RUNNERS_JSON=$(gh api orgs/PeteDio-Labs/actions/runners 2>"$RUNNERS_ERR") || RUNNERS_JSON=""
 if [ -z "$RUNNERS_JSON" ]; then
@@ -493,6 +504,7 @@ for x in json.load(sys.stdin).get('runners',[]):
   if [ "$u" = "active" ]; then skip "$r" "unit active on the host; GitHub's view unread"
   else bad "$r" "unit ${u:-unread} on the host"; fi
 done
+fi
 R232=$(node_for 232); R233=$(node_for 233)
 if [ -z "$R232" ] || [ -z "$R233" ]; then
   bad "runners spread across nodes" "could not locate 232 (${R232:-?}) or 233 (${R233:-?})"

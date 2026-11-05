@@ -37,10 +37,8 @@ permissions:
   contents: read
   id-token: write
 
-# One lab action at a time, and a queued one waits instead of cancelling the one that runs.
-concurrency:
-  group: lab-action
-  cancel-in-progress: false
+# No concurrency group: both actions only read, and a shared group lets a newer queued dispatch
+# cancel an older one, which a thread would read as a result.
 
 env:
   VAULT_ADDR: https://192.168.50.223:8200
@@ -48,8 +46,9 @@ env:
 
 jobs:
   run:
-    # The workflow_ref binding is the gate, and this is a second one: a run on any other ref
-    # stops before it reaches the runner.
+    # The Vault binding is the gate. This line only stops a run of main's copy on another ref. A
+    # branch carries its own copy of this file, so a writer who dispatches a branch can run steps
+    # on 232, as any self-hosted job can. Vault refuses that run, because ref is not main.
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, x64, homelab]
     timeout-minutes: 20

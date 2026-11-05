@@ -15,8 +15,8 @@
 # key and certificate are deleted on exit. No standing key exists anywhere.
 #
 # WHAT IT PRINTS. The run log is public, because petedio-iac is. The scripts print status and
-# counts, never values, and this wrapper masks any 32-character hex string as well, which is the
-# shape of an *arr API key. It exits non-zero when the action fails, when Vault refuses, and when
+# counts, never values, and this wrapper masks any run of 32 or more letters, digits, `_` or `-`
+# as well, which covers API keys and tokens. It also masks commit SHAs, which is the price. It exits non-zero when the action fails, when Vault refuses, and when
 # the script ends without its summary line, so a run that examined nothing never reads as green.
 #
 # Needs: VAULT_ADDR, VAULT_CACERT and VAULT_TOKEN (the lab-action-read role), curl, python3,
@@ -57,8 +57,14 @@ python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["signed_
   "$WORK/signed.json" > "$HOME/.ssh/lab_runner-cert.pub"
 ssh-keygen -L -f "$HOME/.ssh/lab_runner-cert.pub" | grep -q '^ *lab-runner$' \
   || { echo "ABORT: the signed certificate does not name the lab-runner principal." >&2; exit 1; }
-# The scripts need no Vault access, so they never see the token.
+# The scripts need no Vault access. Revoke the token now, so it dies with the signing and not at
+# the end of its TTL, and never hand it to them.
+curl -sS --cacert "$VAULT_CACERT" -m 10 -o /dev/null -H "X-Vault-Token: $VAULT_TOKEN" \
+  -X POST "$VAULT_ADDR/v1/auth/token/revoke-self" \
+  || echo "WARN: could not revoke the Vault token; it expires at the end of its 15-minute TTL." >&2
 unset VAULT_TOKEN
+# lab-verify.sh skips, rather than fails, the checks this runner has no key for.
+export LAB_ACTION=1
 
 # The aliases lab-verify.sh and lab-updates.sh use, mapped to the nodes' addresses as root. pve01
 # is reached by address in lab-verify.sh, so it gets a Host block by address. pi1 and the runners
@@ -90,7 +96,7 @@ RC=$?
 set -e
 
 # Mask before anything leaves the job, then strip colour codes for a readable log.
-sed -E -e 's/\x1b\[[0-9;]*m//g' -e 's/\b[0-9a-fA-F]{32}\b/[masked]/g' "$WORK/out.txt" > "$WORK/clean.txt"
+sed -E -e 's/\x1b\[[0-9;]*m//g' -e 's/\b[A-Za-z0-9_-]{32,}\b/[masked]/g' "$WORK/out.txt" > "$WORK/clean.txt"
 cat "$WORK/clean.txt"
 
 LINE="$(grep -E "$SUMMARY" "$WORK/clean.txt" | tail -1 || true)"
