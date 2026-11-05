@@ -27,7 +27,7 @@
 # and runs a container image (hello-world on the runners).
 #
 # Needs: VAULT_ADDR, VAULT_CACERT and VAULT_TOKEN (the lab-action-read role), curl, python3,
-# ssh-keygen and ssh.
+# ssh-keygen, ssh, and the pinned node keys in /etc/ssh/lab-node-known-hosts.
 set -euo pipefail
 
 ACTION="${1:-}"
@@ -42,6 +42,16 @@ esac
 
 for v in VAULT_ADDR VAULT_CACERT VAULT_TOKEN; do
   [ -n "${!v:-}" ] || { echo "ABORT: $v is not set; the job did not log in to Vault." >&2; exit 1; }
+done
+
+# The nodes' host keys, pinned by ansible/playbooks/configure-lab-runner-known-hosts.yml. Check
+# before anything is signed, so a runner without them mints no certificate.
+KNOWN_HOSTS="${LAB_KNOWN_HOSTS:-/etc/ssh/lab-node-known-hosts}"
+for h in 192.168.50.10 192.168.50.11 192.168.50.12; do
+  grep -qE "(^|,)$h ssh-ed25519 " "$KNOWN_HOSTS" 2>/dev/null || {
+    echo "ABORT: no pinned host key for $h in $KNOWN_HOSTS; run configure-lab-runner-known-hosts.yml." >&2
+    exit 1
+  }
 done
 
 umask 077
@@ -82,9 +92,9 @@ export LAB_ACTION=1
 # is reached by address in lab-verify.sh, so it gets a Host block by address. pi1 and the runners
 # accept no lab-runner certificate, so lab-verify.sh skips their checks under LAB_ACTION=1.
 #
-# Host keys: the temporary HOME has no known_hosts, so the first contact is trusted. A machine
-# that answers in a node's place can feed false output but cannot reuse the certificate, which
-# also pins the source address to the two runners.
+# Host keys: only the pinned file counts, with StrictHostKeyChecking=yes, so a machine that answers
+# in a node's place is refused before any output reaches the scripts. lab-verify.sh passes some
+# node output to `eval`, so trusting a first contact would let an impostor run commands here.
 cat > "$HOME/.ssh/config" <<EOF
 Host pve02
   HostName 192.168.50.11
@@ -97,8 +107,10 @@ Host pve02 pve03 192.168.50.12
   IdentityFile $HOME/.ssh/lab_runner
   CertificateFile $HOME/.ssh/lab_runner-cert.pub
   IdentitiesOnly yes
-  StrictHostKeyChecking accept-new
-  UserKnownHostsFile $HOME/.ssh/known_hosts
+Host *
+  StrictHostKeyChecking yes
+  UserKnownHostsFile $KNOWN_HOSTS
+  GlobalKnownHostsFile $KNOWN_HOSTS
 EOF
 
 # ssh reads ~/.ssh/config from the account's passwd home, not from $HOME, so the scripts' plain
