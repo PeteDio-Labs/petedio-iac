@@ -89,6 +89,73 @@
     state: mounted
   when: not (ansible_check_mode and not backup_lv_dev.stat.exists)
 
+# ⚠ THE SERVER IS ALSO A PROXMOX NODE, AND IT NEEDS THE CLIENTS' PATH (PET-834). pve02
+# and pve03 reach the store as an NFS mount at /mnt/ollama-backups. The `ollama-backups`
+# storage is one cluster-wide entry (/etc/pve/storage.cfg) with `is_mountpoint yes`, so
+# pve01 reads it as inactive until something is mounted at that same path. A bind mount
+# from the LV's real path gives pve01 that path without NFS-mounting its own export, which
+# would add a network hop to a local disk. A bind mount is a mount point, so
+# `is_mountpoint` still stops vzdump from writing to the root disk when the LV is absent.
+# requires-mounts-for orders the bind after the LV, so a boot never binds an empty directory.
+- name: Create the path the cluster's storage entry points at
+  ansible.builtin.file:
+    path: "{{ backup_store_client_mount }}"
+    state: directory
+    mode: "0755"
+
+- name: Bind the store onto that path
+  ansible.posix.mount:
+    path: "{{ backup_store_client_mount }}"
+    src: "{{ backup_store_path }}"
+    fstype: none
+    opts: "bind,nofail,x-systemd.requires-mounts-for={{ backup_store_path }}"
+    state: mounted
+  when: not (ansible_check_mode and not backup_lv_dev.stat.exists)
+
+# The two checks below read the live host, so a dry run that only predicts the bind mount
+# would fail them on a host the play has not changed yet. They run on a real apply only.
+# findmnt prints the source of a bind mount as `/dev/mapper/...[/]`, which names the LV
+# behind it. Matching the LV proves the bind sits on the store and not on an empty
+# directory over the root disk.
+- name: Prove the bind sits on the backup volume
+  ansible.builtin.command: findmnt -no SOURCE {{ backup_store_client_mount }}
+  register: backup_bind_src
+  changed_when: false
+  failed_when: backup_store_lv | replace('-', '--') not in backup_bind_src.stdout
+  when: not ansible_check_mode
+
+# The cluster-wide storage entry is registered by tasks/client.yml, which runs after this
+# file on a first build. Look it up first: assert `active` when the entry exists, and say
+# so when it does not, so a fresh cluster still reaches the client play. A failed or empty read of the list
+# fails the play: absence in a list that was read is not the same as a list that was not.
+- name: Read the configured Proxmox storages
+  ansible.builtin.command: pvesm status
+  register: backup_server_pvesm
+  changed_when: false
+  failed_when: backup_server_pvesm.rc != 0 or (backup_server_pvesm.stdout_lines | length) < 1
+  when: not ansible_check_mode
+
+- name: Prove Proxmox reports the store active on this node
+  ansible.builtin.command: pvesm status --storage {{ backup_store_pve_storage_id }}
+  register: backup_server_storage_status
+  changed_when: false
+  failed_when: >-
+    backup_server_storage_status.rc != 0
+    or (backup_server_storage_status.stdout_lines | length) < 2
+    or backup_server_storage_status.stdout_lines[1].split()[2] != 'active'
+  when:
+    - not ansible_check_mode
+    - backup_store_pve_storage_id in (backup_server_pvesm.stdout | default(''))
+
+- name: Note that the storage entry is not registered yet
+  ansible.builtin.debug:
+    msg: >-
+      {{ backup_store_pve_storage_id }} is not in the cluster's storage list yet.
+      tasks/client.yml registers it, and checks it is active, on the nodes that follow.
+  when:
+    - not ansible_check_mode
+    - backup_store_pve_storage_id not in (backup_server_pvesm.stdout | default(''))
+
 - name: Install the NFS server
   ansible.builtin.apt:
     name: nfs-kernel-server
