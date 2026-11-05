@@ -43,6 +43,13 @@ case "$ACTION" in
   # Phase 2: a playbook on the nodes. lab-playbook.sh runs the guard before Ansible starts. The
   # workflow runs playbook_apply only in the lab-write job, after a clean check at the same commit.
   playbook_check|playbook_apply)
+    # The name must match a fixed pattern and appear in the allowlist before anything is signed.
+    # This needs no PyYAML, so it holds on a runner without it.
+    if ! [[ "$TARGET" =~ ^[a-z0-9][a-z0-9-]*\.yml$ ]] \
+       || ! sed -e 's/#.*//' -e 's/[[:space:]]//g' "$REPO_ROOT/scripts/lab-playbooks.txt" | grep -qxF "$TARGET"; then
+      echo "REFUSED: '$TARGET' is not a playbook name in scripts/lab-playbooks.txt." >&2
+      exit 2
+    fi
     if python3 -c 'import yaml' 2>/dev/null; then
       python3 "$REPO_ROOT/scripts/lab-playbook-guard.py" "$TARGET" || exit 2
     fi
