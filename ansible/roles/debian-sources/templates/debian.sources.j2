@@ -1,0 +1,12 @@
+# Managed by ansible role debian-sources (PET-828) — local edits are overwritten.
+Types: deb
+URIs: {{ debian_sources_mirror }}
+Suites: {{ debian_sources_codename }} {{ debian_sources_codename }}-updates
+Components: {{ debian_sources_components }}
+Signed-By: {{ debian_sources_keyring }}
+
+Types: deb
+URIs: {{ debian_sources_security_mirror }}
+Suites: {{ debian_sources_codename }}-security
+Components: {{ debian_sources_components }}
+Signed-By: {{ debian_sources_keyring }}

@@ -1,0 +1,55 @@
+---
+- name: Assert the node runs the codename the sources name
+  ansible.builtin.assert:
+    that: ansible_facts["distribution_release"] == debian_sources_codename
+    fail_msg: >-
+      {{ inventory_hostname }} runs {{ ansible_facts["distribution_release"] }}, not
+      {{ debian_sources_codename }}. Writing {{ debian_sources_codename }} suites would
+      point apt at the wrong release.
+
+- name: Assert the Debian keyring is installed
+  ansible.builtin.stat:
+    path: "{{ debian_sources_keyring }}"
+  register: debian_sources_key
+  failed_when: not debian_sources_key.stat.exists
+
+- name: Declare the Debian suites
+  ansible.builtin.template:
+    src: debian.sources.j2
+    dest: "{{ debian_sources_file }}"
+    mode: "0644"
+  register: debian_sources_written
+
+# The retired file duplicates the main suite, so keeping it makes apt warn about
+# a target configured twice.
+- name: Remove the file the declaration replaces
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ debian_sources_retire }}"
+  register: debian_sources_removed
+
+- name: Refresh the package index when a source changed
+  ansible.builtin.apt:
+    update_cache: true
+  when: debian_sources_written is changed or debian_sources_removed is changed
+
+# noqa reason: apt-cache policy is a read; ansible.builtin.apt exposes no candidate origin.
+- name: Read the probe package's origins  # noqa: command-instead-of-module
+  ansible.builtin.command: apt-cache policy {{ debian_sources_probe_package }}
+  register: debian_sources_policy
+  changed_when: false
+  check_mode: false
+
+# A green run that proved nothing is this repo's recurring bug, so the play fails
+# unless the security suite appears in what apt now reads. Check mode cannot refresh
+# the index, so it skips the assertion and says so.
+- name: Assert apt reads the security suite
+  ansible.builtin.assert:
+    that: (debian_sources_codename ~ '-security') in debian_sources_policy.stdout
+    fail_msg: >-
+      apt-cache policy {{ debian_sources_probe_package }} on {{ inventory_hostname }}
+      shows no {{ debian_sources_codename }}-security origin:
+      {{ debian_sources_policy.stdout | truncate(400) }}
+    success_msg: "{{ inventory_hostname }} reads {{ debian_sources_codename }}-security."
+  when: not ansible_check_mode

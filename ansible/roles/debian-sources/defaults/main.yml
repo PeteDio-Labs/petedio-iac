@@ -1,0 +1,22 @@
+---
+# debian-sources — declare the Debian suites a node reads. (PET-828)
+#
+# pve02 listed one source, `trixie main contrib non-free` in debian-base.list, with no
+# trixie-security and no trixie-updates. It could not see a Debian 13 security fix:
+# libbrotli1 stayed at 1.1.0-2+b7 while the fix is 1.1.0-2+deb13u1, and lab-updates.sh
+# reported security=0, which looked like "patched" and meant "cannot see".
+# pve01 and pve03 already carry the same suites (debian.sources, sources.list).
+
+debian_sources_file: /etc/apt/sources.list.d/debian.sources
+debian_sources_codename: trixie
+debian_sources_components: "main contrib non-free"
+debian_sources_mirror: http://deb.debian.org/debian
+debian_sources_security_mirror: http://security.debian.org/debian-security
+debian_sources_keyring: /usr/share/keyrings/debian-archive-keyring.pgp
+
+# Files this role replaces. Each is removed only after debian_sources_file is in place.
+debian_sources_retire:
+  - /etc/apt/sources.list.d/debian-base.list
+
+# A package with a Debian security fix that the node must be able to see after the play.
+debian_sources_probe_package: libbrotli1
