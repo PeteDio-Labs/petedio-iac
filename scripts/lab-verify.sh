@@ -196,6 +196,7 @@ done <<'EOF'
 sonarr|http://192.168.50.15:8989/
 radarr|http://192.168.50.16:7878/
 prowlarr|http://192.168.50.20:9696/
+bazarr|http://192.168.50.222:6767/
 qbittorrent|http://192.168.50.21:8080/
 seerr|http://192.168.50.33:5055/
 plex|http://192.168.86.236:32400/identity
