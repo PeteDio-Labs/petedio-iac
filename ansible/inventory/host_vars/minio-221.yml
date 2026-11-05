@@ -1,24 +1,37 @@
 ---
-# host_vars for minio-221 (LXC 221 / 192.168.50.221) — the Terraform state backend. (PET-811)
+# host_vars for minio-221 (LXC 221 / 192.168.50.221) — the Terraform state backend. (PET-811, PET-851)
 #
 # 221 predates roles/minio, and the role takes its live shape instead of the role's
 # defaults, because the data under /data/minio is the only copy of Terraform state and a
-# migration of it is a risk this change does not need. Read from the host on 2026-11-03
-# (PET-795 step 1c, Mac):
-#   MINIO_VOLUMES="/data/minio"      in /etc/default/minio
-#   /etc/default/minio               root:root 0600
-#   no `minio-user` account (no `minio` account either)
+# migration of it is a risk this change does not need. Read from the host on 2026-11-04
+# (PET-795 step 4c, Mac; PET-851):
+#   minio.service             13 lines, no header, no blank lines, After= before Wants=,
+#                             Description "MinIO (PeteDio TF state backend)", User/Group minio-user,
+#                             no Type=, no RestartSec/TimeoutStopSec/SendSIGKILL/OOMScoreAdjust
+#                             (read from the PET-851 --check --diff, 2026-11-05)
+#   minio-user                uid 999, gid 991
+#   /data/minio               minio-user:minio-user 0755
+#   /etc/default/minio        root:root 0600, four lines, no comment header:
+#                             MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, MINIO_VOLUMES="/data/minio",
+#                             MINIO_OPTS="--console-address :9001 --address :9000"
+#   ufw                       not installed
 #
-# NOT READ on 2026-11-03: the user the live minio.service runs as and the owner of
-# /data/minio. `minio_user: root` below is the inference from a hand-built host with no
-# service account, not a reading. The first `--check --diff` against 221 settles it: a
-# diff on /etc/systemd/system/minio.service names the real User=/Group=, and the fix is
-# to change these two lines, not to run the play. Probe commands:
-# docs/runbooks/minio-221-rebuild.md, "Match the role to 221".
+# The proof is a `--check --diff` that reports no change to minio.service or
+# /etc/default/minio. Never run the play for real against 221: it is the state backend.
+# Probe commands: docs/runbooks/minio-221-rebuild.md, "Match the role to 221".
 minio_data_dir: /data/minio
 minio_manage_data_dir: false
 minio_manage_account: false
-minio_user: root
-minio_group: root
+minio_user: minio-user
+minio_group: minio-user
 minio_config_env_group: root
 minio_config_env_mode: "0600"
+minio_config_env_header: false
+minio_opts: "--console-address :9001 --address :9000"
+minio_service_type: ""
+minio_unit_legacy_layout: true
+minio_service_description: "MinIO (PeteDio TF state backend)"
+
+# 221 has no ufw. Installing it needs an SSH allow rule first, and the LAN already
+# gates 221, so the role leaves the firewall alone.
+minio_firewall_enabled: false

@@ -283,9 +283,10 @@ systemctl list-timers minio-tfstate-backup.timer                    # next run s
 ## Match the role to 221 (PET-811)
 
 221 predates the role. The role takes 221's shape through `host_vars/minio-221.yml`; the host
-does not migrate. Facts read on 2026-11-03: `MINIO_VOLUMES="/data/minio"`, no `minio-user`
-account, `/etc/default/minio` `root:root 0600`. **Not read:** the user `minio.service` runs as
-and the owner of `/data/minio`. The host_vars file sets `root` for both as an inference.
+does not migrate. Facts read on 2026-11-04 (PET-851): `minio.service` runs as `minio-user` with no
+`Type=` line, `/data/minio` is `minio-user:minio-user`, and `/etc/default/minio` is `root:root 0600`
+with four lines, no comment header, and `MINIO_OPTS="--console-address :9001 --address :9000"`.
+`ufw` is absent, so `minio_firewall_enabled` is `false` for 221.
 
 To confirm, run these read-only probes on 221. They print no credential:
 
@@ -294,7 +295,7 @@ ssh root@192.168.50.221 'systemctl cat minio.service | grep -E "^(User|Group|Exe
   stat -c "%U:%G %a %n" /data/minio /etc/default/minio; grep "^MINIO_VOLUMES=" /etc/default/minio'
 ```
 
-If `User=` is not `root`, change `minio_user` and `minio_group` in the host_vars file in a PR.
+If a probe disagrees with the host_vars file, change the file in a PR.
 Do not run `configure-minio.yml` for real against 221 to find out. The check is
 `ansible-playbook playbooks/configure-minio.yml --check --diff --limit minio-221 -e @<0600 file>`.
 It passes when it reports no change to `/etc/default/minio`, the data directory or the service
