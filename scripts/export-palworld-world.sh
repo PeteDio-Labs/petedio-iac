@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # export-palworld-world.sh — save the live Palworld world to MinIO before CT 234 is
-# destroyed, and prove the copy restores. (PET-779)
+# destroyed, and verify the stored copy by checksum. It does not extract the archive. (PET-779)
 #
-# Run it on 247 on Pedro's word, BEFORE setting ALLOW_DESTROY=true. It stops palworld.service
+# Run it on the Mac (247 has no mc, vault or ansible key) on Pedro's word, BEFORE setting ALLOW_DESTROY=true. It stops palworld.service
 # on the target so the save is consistent (the game saves on SIGTERM), copies Pal/Saved into
 # an archive, uploads it to the palworld-backups bucket, then downloads it again and compares
 # checksums. It deletes nothing: every earlier archive in the bucket stays.
@@ -94,5 +94,5 @@ cat <<DONE
   archive: pal221/${BUCKET}/${ARCHIVE}  (sha256 sidecar beside it)
   world:   ${WORLD}
   Restore: ARCHIVE=${ARCHIVE} ./scripts/restore-palworld-world.sh  (see docs/runbooks/palworld-restore.md)
-  Existing archives in the bucket are untouched.
+  Earlier archives in the bucket are untouched.
 DONE

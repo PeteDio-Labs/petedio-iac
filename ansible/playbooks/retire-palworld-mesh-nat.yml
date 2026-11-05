@@ -9,12 +9,14 @@
 #   1. the `palworld-mesh-nat` systemd unit (its stop deletes the nft table),
 #   2. the nftables table `palworld_mesh`,
 #   3. /etc/palworld-mesh-nat.nft and the unit file,
-#   4. the sysctl drop-in /etc/sysctl.d/99-palworld-mesh-nat.conf.
+#   4. the sysctl drop-in /etc/sysctl.d/99-palworld-mesh-nat.conf, only with
+#      `-e palworld_nat_remove_forwarding=true`.
 #
-# ⚠ THE RUNNING net.ipv4.ip_forward VALUE IS LEFT ALONE. pve03 forwards for its other
-# guests (roles/pve-firewall explains the default route over the .86 WiFi), and this play
-# cannot tell which setting those guests rely on. Removing the drop-in only stops this role
-# from asserting the value on the next boot. Read `sysctl net.ipv4.ip_forward` afterwards.
+# ⚠ THE DROP-IN STAYS BY DEFAULT. It holds the only persistent net.ipv4.ip_forward=1 on
+# pve03, and the node ships with 0. pve03 forwards for its other guests (roles/pve-firewall
+# explains the default route over the .86 WiFi). Removing the drop-in leaves the running
+# value at 1 and reverts it to 0 at the next reboot, with no sign of why. Read
+# `sysctl net.ipv4.ip_forward` and what depends on it, then pass the variable.
 #
 # Every task is idempotent, and a node that never had the NAT finishes with no change.
 - name: Remove the Palworld mesh NAT from pve03
@@ -27,8 +29,29 @@
     palworld_nat_rules_file: /etc/palworld-mesh-nat.nft
     palworld_nat_unit_file: /etc/systemd/system/palworld-mesh-nat.service
     palworld_nat_sysctl_file: /etc/sysctl.d/99-palworld-mesh-nat.conf
+    palworld_nat_remove_forwarding: false
+    palworld_nat_files: >-
+      {{ [palworld_nat_rules_file, palworld_nat_unit_file]
+         + ([palworld_nat_sysctl_file] if palworld_nat_remove_forwarding else []) }}
 
   tasks:
+    - name: Read the NAT unit's state
+      # noqa: command-instead-of-module — the systemd module cannot report "enabled" for a
+      # unit that may not exist, and this read must not fail the play.
+      ansible.builtin.command:  # noqa: command-instead-of-module
+        cmd: systemctl is-enabled {{ palworld_nat_service_name }}
+      register: palworld_nat_unit_state
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Report the NAT unit's state
+      ansible.builtin.debug:
+        msg: >-
+          {{ palworld_nat_service_name }} is
+          {{ (palworld_nat_unit_state.stdout | default('') | trim) or 'not installed' }}
+          on {{ inventory_hostname }}.
+
     - name: Stop and disable the NAT unit
       ansible.builtin.systemd:
         name: "{{ palworld_nat_service_name }}"
@@ -59,10 +82,7 @@
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
-      loop:
-        - "{{ palworld_nat_rules_file }}"
-        - "{{ palworld_nat_unit_file }}"
-        - "{{ palworld_nat_sysctl_file }}"
+      loop: "{{ palworld_nat_files }}"
 
     - name: Reload systemd so it forgets the unit
       ansible.builtin.systemd:
@@ -78,14 +98,28 @@
       check_mode: false
       when: not ansible_check_mode
 
+    - name: Read the NAT files again
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ palworld_nat_files }}"
+      register: palworld_nat_files_after
+      when: not ansible_check_mode
+
     - name: Assert nothing of the NAT remains
       ansible.builtin.assert:
         that:
-          - palworld_nat_table_after.rc != 0
+          # nft exits 1 with "No such file or directory" for a missing table. Any other
+          # failure (nft missing, no permission) is not proof that the table is gone.
+          - palworld_nat_table_after.rc == 1
+          - "'No such file or directory' in palworld_nat_table_after.stderr"
+          - palworld_nat_files_after.results | selectattr('stat.exists') | list | length == 0
         fail_msg: >-
-          Table {{ palworld_nat_table }} is still loaded on {{ inventory_hostname }} after the
-          delete. Read `nft list table ip {{ palworld_nat_table }}` before going on.
+          The NAT is not fully gone from {{ inventory_hostname }}. nft exit
+          {{ palworld_nat_table_after.rc }}: {{ palworld_nat_table_after.stderr | trim }}.
+          Files still present:
+          {{ palworld_nat_files_after.results | selectattr('stat.exists') | map(attribute='item') | list }}.
         success_msg: >-
-          Table {{ palworld_nat_table }} is gone, and its unit, rules file and sysctl drop-in
-          are removed from {{ inventory_hostname }}.
+          Table {{ palworld_nat_table }} is absent, and {{ palworld_nat_files | length }} NAT
+          files are removed from {{ inventory_hostname }}. Examined: the nft exit code and
+          message, and each file path.
       when: not ansible_check_mode
