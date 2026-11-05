@@ -11,10 +11,10 @@ first (`vault-breakglass` on 247).
 
 ## Report OS patch state (`lab-updates.sh`)
 
-- **Precondition:** SSH to `pve02` and `pve03` works from the session.
+- **Precondition:** SSH to `pve02`, `pve03`, `root@192.168.50.12` (pve01, with `~/.ssh/id_ed25519_ansible`) and `pi1` works from the session.
 - **Command:** `./scripts/lab-updates.sh`
 - **Expected:** one row per node and guest, the age of each apt list, and a last line that
-  names the counts of hosts examined and read. Exit code 0.
+  names the counts of hosts examined and unreadable, the name of each unreadable host, and each host with no security suite (`nosec`, whose `security=n/a` proves nothing). Exit code 0.
 - **Bad:** exit code 1, or a row that starts `ERR`. A host the script could not read is never
   counted as "0 upgradable". A list age of many days means the count undercounts.
 - **Changes nothing:** the script runs no `apt-get update`, upgrade or reboot.
