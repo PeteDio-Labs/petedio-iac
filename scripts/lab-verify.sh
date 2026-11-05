@@ -537,6 +537,11 @@ fi
 # lands on either at random and a single bad runner makes CI a coin flip rather than an
 # outage. That is harder to notice, not easier.
 for v in 232 233; do
+  # From lab-action (PET-861) this probe would pull and run an image with no approval, so skip it.
+  if [ "${LAB_ACTION:-0}" = 1 ]; then
+    skip "runner-$v can run containers" "lab-action runs no container; run from the Mac"
+    continue
+  fi
   n=$(node_for "$v")
   if [ -z "$n" ]; then
     bad "runner-$v can run containers" "guest not found on either node"

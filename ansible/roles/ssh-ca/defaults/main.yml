@@ -44,7 +44,7 @@ ssh_ca_users:
     create: true
 
 # Principals a host adds to root's file beside `pedro`. The node groups set [lab-runner] in
-# group_vars (PET-861), so lab-action.yml can run lab-verify.sh and lab-updates.sh from 232.
+# group_vars (PET-861), so lab-action.yml can run lab-verify.sh and lab-updates.sh from the runners.
 ssh_ca_root_extra_principals: []
 
 # The GECOS field on every account the role creates. The role creates or removes only an account

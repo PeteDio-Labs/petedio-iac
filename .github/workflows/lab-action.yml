@@ -2,7 +2,8 @@
 #
 # WHY. A thread used to hand Pedro a prompt to paste into 247 or the Mac for every read-back. A
 # thread dispatches this workflow instead, with the GitHub tools it already has, and reads the
-# run log. Phase 1 holds two read-only actions, so neither waits for approval:
+# run log. Phase 1 holds two check actions, so neither waits for approval. lab_verify also creates
+# and deletes temporary files to prove storage works; scripts/lab-action.sh lists them.
 #
 #   lab_verify   scripts/lab-verify.sh --quiet
 #   lab_updates  scripts/lab-updates.sh
@@ -48,7 +49,7 @@ jobs:
   run:
     # The Vault binding is the gate. This line only stops a run of main's copy on another ref. A
     # branch carries its own copy of this file, so a writer who dispatches a branch can run steps
-    # on 232, as any self-hosted job can. Vault refuses that run, because ref is not main.
+    # on a runner, as any self-hosted job can. Vault refuses that run, because ref is not main.
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, x64, homelab]
     timeout-minutes: 20

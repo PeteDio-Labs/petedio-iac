@@ -129,7 +129,8 @@ resource "vault_ssh_secret_backend_role" "pedro" {
 # lab-runner (PET-861): the lab-action.yml job on runner 232 signs a fresh key per run and reads the
 # nodes with it, so lab-verify.sh and lab-updates.sh run without a paste-in prompt. The nodes map
 # this principal to root (roles/ssh-ca, group_vars for the node groups), because both scripts run
-# `pct exec`. source-address pins the certificate to 232, and the TTL outlives one run only. No
+# `pct exec`. source-address pins the certificate to the two runners, 232 and 233, because both
+# carry the homelab label and GitHub can give the job to either. The TTL outlives one run only. No
 # pty and no forwarding: the scripts run commands and never open a shell.
 resource "vault_ssh_secret_backend_role" "lab_runner" {
   backend  = vault_mount.ssh_client_signer.path
@@ -149,7 +150,7 @@ resource "vault_ssh_secret_backend_role" "lab_runner" {
   # The same sentinel as inventory-read, for the same reason: no request can drop the default.
   allowed_critical_options = "petedio-no-overrides"
   default_critical_options = {
-    "source-address" = "192.168.50.232/32"
+    "source-address" = "192.168.50.232/32,192.168.50.233/32"
   }
 
   ttl     = "1800"

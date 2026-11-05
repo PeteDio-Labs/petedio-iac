@@ -367,7 +367,7 @@ resource "vault_jwt_auth_backend_role" "claude_247_deploy" {
 
 # lab-action-read role → lab-action-read policy (PET-861). lab-action.yml runs lab-verify.sh or
 # lab-updates.sh on the homelab runner when a thread dispatches it, with no approval, because both
-# scripts only read. The policy signs one SSH role whose certificate works only from 232.
+# scripts only check. The policy signs one SSH role whose certificate works only from the runners.
 #
 # ⚠ BOUND TO THE WORKFLOW AND THE EVENT, as claude-247-deploy is. workflow_ref pins the file and
 # event_name pins workflow_dispatch, so a push, a schedule or a pull request cannot mint it, and no
