@@ -365,6 +365,32 @@ resource "vault_jwt_auth_backend_role" "claude_247_deploy" {
   token_ttl      = 900
 }
 
+# lab-action-read role → lab-action-read policy (PET-861). lab-action.yml runs lab-verify.sh or
+# lab-updates.sh on the homelab runner when a thread dispatches it, with no approval, because both
+# scripts only read. The policy signs one SSH role whose certificate works only from 232.
+#
+# ⚠ BOUND TO THE WORKFLOW AND THE EVENT, as claude-247-deploy is. workflow_ref pins the file and
+# event_name pins workflow_dispatch, so a push, a schedule or a pull request cannot mint it, and no
+# other workflow on main can either. A dispatch needs write access, so a fork cannot start one.
+# Writes get their own role in a later phase, bound to the `lab-write` environment, which waits
+# on Pedro's approval in GitHub.
+resource "vault_jwt_auth_backend_role" "lab_action_read" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "lab-action-read"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository   = var.github_repo
+    ref          = "refs/heads/main"
+    event_name   = "workflow_dispatch"
+    workflow_ref = "${var.github_repo}/.github/workflows/lab-action.yml@refs/heads/main"
+  }
+  token_policies = [vault_policy.lab_action_read.name]
+  token_ttl      = 900
+}
+
 # claude-ops role → claude-ops policy (PET-531). The token backend's OWN role — not an
 # AppRole and not a JWT role — because the token it mints is delivered by hand, once, by
 # scripts/seed-claude-ops-vault-token.sh from an operator's Vault session onto claude-247 for

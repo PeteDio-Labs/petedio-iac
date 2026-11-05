@@ -126,6 +126,41 @@ resource "vault_ssh_secret_backend_role" "pedro" {
   }
 }
 
+# lab-runner (PET-861): the lab-action.yml job on runner 232 signs a fresh key per run and reads the
+# nodes with it, so lab-verify.sh and lab-updates.sh run without a paste-in prompt. The nodes map
+# this principal to root (roles/ssh-ca, group_vars for the node groups), because both scripts run
+# `pct exec`. source-address pins the certificate to 232, and the TTL outlives one run only. No
+# pty and no forwarding: the scripts run commands and never open a shell.
+resource "vault_ssh_secret_backend_role" "lab_runner" {
+  backend  = vault_mount.ssh_client_signer.path
+  name     = "lab-runner"
+  key_type = "ca"
+
+  depends_on = [vault_policy.breakglass_247]
+
+  allow_user_certificates = true
+  allowed_users           = "lab-runner"
+  default_user            = "lab-runner"
+  allow_user_key_ids      = false
+
+  allowed_extensions = ""
+  default_extensions = {}
+
+  # The same sentinel as inventory-read, for the same reason: no request can drop the default.
+  allowed_critical_options = "petedio-no-overrides"
+  default_critical_options = {
+    "source-address" = "192.168.50.232/32"
+  }
+
+  ttl     = "1800"
+  max_ttl = "1800"
+
+  allowed_user_key_config {
+    type    = "ed25519"
+    lengths = [0]
+  }
+}
+
 # Signs one role and reads nothing else. Attach it to the login that a role's caller uses. The
 # collector's AppRole on 237 lands with PET-770, bound to 237's /32 like ansible-247.
 resource "vault_policy" "ssh_sign_inventory_read" {
@@ -133,6 +168,17 @@ resource "vault_policy" "ssh_sign_inventory_read" {
 
   policy = <<-EOT
     path "${vault_mount.ssh_client_signer.path}/sign/${vault_ssh_secret_backend_role.inventory_read.name}" {
+      capabilities = ["update"]
+    }
+  EOT
+}
+
+# Signs lab-runner and reads nothing else. The lab-action-read JWT role (auth.tf) carries it.
+resource "vault_policy" "lab_action_read" {
+  name = "lab-action-read"
+
+  policy = <<-EOT
+    path "${vault_mount.ssh_client_signer.path}/sign/${vault_ssh_secret_backend_role.lab_runner.name}" {
       capabilities = ["update"]
     }
   EOT

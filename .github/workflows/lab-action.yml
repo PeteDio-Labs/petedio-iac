@@ -1,0 +1,95 @@
+# lab-action — run one allowlisted lab action on the homelab runner (PET-861).
+#
+# WHY. A thread used to hand Pedro a prompt to paste into 247 or the Mac for every read-back. A
+# thread dispatches this workflow instead, with the GitHub tools it already has, and reads the
+# run log. Phase 1 holds two read-only actions, so neither waits for approval:
+#
+#   lab_verify   scripts/lab-verify.sh --quiet
+#   lab_updates  scripts/lab-updates.sh
+#
+# Write actions (playbook apply, seeds) come in a later phase, in a job bound to the `lab-write`
+# environment. That environment waits for Pedro's approval in GitHub, and the Vault write role
+# binds the environment claim, so a job that skips the environment cannot mint it.
+#
+# SECURITY. Only `main` runs here: the Vault role binds ref, event and this file
+# (vault-config/auth.tf, lab-action-read), so a fork, a pull request, a push or a schedule mints
+# nothing. Starting a dispatch needs write access to this repo. The run log is public, so
+# scripts/lab-action.sh prints status and counts only and masks key-shaped strings.
+name: lab-action
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "The allowlisted action to run"
+        required: true
+        type: choice
+        options:
+          - lab_verify
+          - lab_updates
+      pet:
+        description: "The PET item this run answers, for example PET-861"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+# One lab action at a time, and a queued one waits instead of cancelling the one that runs.
+concurrency:
+  group: lab-action
+  cancel-in-progress: false
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+
+jobs:
+  run:
+    # The workflow_ref binding is the gate, and this is a second one: a run on any other ref
+    # stops before it reaches the runner.
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, homelab]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Say what this run does
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          PET: ${{ inputs.pet }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "action=$ACTION pet=${PET:-none} sha=$GITHUB_SHA actor=$ACTOR"
+          for t in ssh ssh-keygen curl python3; do
+            command -v "$t" >/dev/null || { echo "ABORT: $t is not installed on this runner."; exit 1; }
+          done
+
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Vault — lab-action-read via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: lab-action-read
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: true
+
+      - name: Run the action
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          # lab-verify.sh reads the org's runners with gh. This token can't list them, so that
+          # check reports the refusal rather than a dead runner (PET-500).
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/lab-action.sh "$ACTION"
