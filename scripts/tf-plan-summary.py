@@ -12,17 +12,30 @@ import sys
 
 
 def redact(address):
-    """Drop for_each and count keys: an evaluated key can carry a secret into a public comment."""
-    out, depth = [], 0
-    for ch in address:
-        if ch == "[":
-            if depth == 0:
-                out.append("[…]")
-            depth += 1
-        elif ch == "]":
-            depth = max(0, depth - 1)
-        elif depth == 0:
-            out.append(ch)
+    """Drop for_each and count keys: an evaluated key can carry a secret into a public comment.
+
+    A key is a quoted string with escapes, so a `]` inside quotes does not end it.
+    """
+    out, i, n = [], 0, len(address)
+    while i < n:
+        if address[i] != "[":
+            out.append(address[i])
+            i += 1
+            continue
+        out.append("[…]")
+        i += 1
+        in_quote = False
+        while i < n:
+            c = address[i]
+            if in_quote and c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                in_quote = not in_quote
+            elif c == "]" and not in_quote:
+                i += 1
+                break
+            i += 1
     return "".join(out)
 
 

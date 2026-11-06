@@ -43,6 +43,15 @@ def guard2(path, content):
         return run(sys.executable, G, d, "--base", "main", "--head", "pr").returncode
 
 
+def symlink_case():
+    with tempfile.TemporaryDirectory() as d:
+        repo(d, "b = 2\n")
+        os.symlink("../../payload.txt", os.path.join(d, "environments/homelab/extra.tf"))
+        run("git", "-C", d, "add", "-A")
+        run("git", "-C", d, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "s")
+        return run(sys.executable, G, d, "--base", "main", "--head", "pr").returncode
+
+
 def check(name, got, want):
     ok = got == want
     print(("PASS " if ok else "FAIL ") + name, "" if ok else f"(got {got}, want {want})")
@@ -61,8 +70,13 @@ results = [
     check("file read refused", guard('x = file("/etc/passwd")\n'), 1),
     check("tfvars refused", guard2("environments/homelab/r.auto.tfvars", 'proxmox_endpoint="x"\n'), 1),
     check("providers.tf refused", guard2("environments/homelab/providers.tf", "# c\n"), 1),
+    check("symlink refused", symlink_case(), 1),
+    check("tab in file name still inspected", guard2("environments/homelab/a\tb.tf", 'data "external" "x" {}\n'), 1),
     check("tf outside roots refused", guard2("payload/main.tf", "x = 1\n"), 1),
-    check("comment mentioning provisioner passes", guard("# no provisioner here\n"), 0),
+    check("comment cannot hide a token", guard("# no provisioner here\n"), 1),
+    check("inline comment in data type refused", guard('data /* x */ "external" "r" {}\n'), 1),
+    check("comment before call paren refused", guard('x = file /* x */ ("/etc/passwd")\n'), 1),
+
 ]
 with tempfile.TemporaryDirectory() as d:
     check_empty = run(sys.executable, G, d).returncode
@@ -83,6 +97,15 @@ with open(f.name, "w") as g:
     json.dump(plan, g)
 r = run(sys.executable, S, f.name)
 results.append(check("instance keys redacted", "sekrit" not in r.stdout and "x.y[…]" in r.stdout, True))
+plan["prior_state"] = {}
+with open(f.name, "w") as g:
+    json.dump(plan, g)
+plan["resource_changes"] = [{"address": 'x.y["a]SECRET"]', "change": {"actions": ["create"]}}]
+plan["prior_state"] = {"values": {"root_module": {"resources": [{}]}}}
+with open(f.name, "w") as g:
+    json.dump(plan, g)
+r = run(sys.executable, S, f.name)
+results.append(check("bracket inside key stays redacted", "SECRET" not in r.stdout, True))
 plan["prior_state"] = {}
 with open(f.name, "w") as g:
     json.dump(plan, g)
