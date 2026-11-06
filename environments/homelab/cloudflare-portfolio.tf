@@ -14,9 +14,9 @@ locals {
 }
 
 variable "portfolio_apex_live" {
-  description = "Point the pdlab.dev apex at CloudFront. Leave false until environments/portfolio is applied with attach_domain = true, because CloudFront answers 403 for a host it has no alias for."
+  description = "Point the pdlab.dev apex at CloudFront. Keep false unless environments/portfolio has attach_domain = true, because CloudFront answers 403 for a host it has no alias for. It is true since the alias went live (PET-816)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 # ACM proves ownership of pdlab.dev by this CNAME. It must stay unproxied, and it must stay after

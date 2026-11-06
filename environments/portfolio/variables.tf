@@ -4,7 +4,7 @@ variable "aws_profile" {
 }
 
 variable "attach_domain" {
-  description = "Attach pdlab.dev to the distribution. Leave false until the ACM validation record exists in Cloudflare."
+  description = "Attach pdlab.dev to the distribution. Applied true on 2026-11-06 (PET-816). Setting it false removes the alias and the certificate validation."
   type        = bool
-  default     = false
+  default     = true
 }
