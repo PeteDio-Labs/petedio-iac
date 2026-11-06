@@ -57,7 +57,6 @@ jobs:
       TF_IN_AUTOMATION: "1"
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
       PAYLOAD_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
       TF_VAR_manage_backup_job: ${{ vars.MANAGE_BACKUP_JOB || 'false' }}
@@ -70,29 +69,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # python3, not gh: the homelab runner has no gh (plane-reconcile.yml, exit 127).
       - name: Find the pull request
         id: pr
         shell: bash
-        run: |
-          set -euo pipefail
-          N=$(gh api "repos/${GH_REPO}/commits/${HEAD_SHA}/pulls" --jq '[.[] | select(.state=="open")][0].number // empty')
-          if [ -z "$N" ]; then
-            # The workflow_run payload names the PR when GitHub has indexed it. If it does, an
-            # empty lookup is a failure to find it, so fail instead of reporting green.
-            if [ -n "${PAYLOAD_PR}" ]; then
-              echo "::error::PR ${PAYLOAD_PR} was named by the trigger but the lookup for head $HEAD_SHA found no open PR into main"
-              exit 1
-            fi
-            echo "No open pull request into main has head $HEAD_SHA, so nothing was planned and nothing was examined."
-            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          BASE=$(gh api "repos/${GH_REPO}/pulls/${N}" --jq .base.ref)
-          if [ "$BASE" != "main" ]; then
-            echo "PR $N targets $BASE, not main, so nothing was planned and nothing was examined."
-            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          echo "number=$N" >> "$GITHUB_OUTPUT"
-          echo "skip=false" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/tf-plan-gh.py find-pr "$HEAD_SHA" "$PAYLOAD_PR"
 
       - name: Check out the merge of the pull request into main
         if: steps.pr.outputs.skip == 'false'
@@ -109,15 +92,13 @@ jobs:
       - name: Verify the merge parents
         if: steps.pr.outputs.skip == 'false'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           P1=$(git -C pr rev-parse 'HEAD^1'); P2=$(git -C pr rev-parse 'HEAD^2')
           [ "$P2" = "$HEAD_SHA" ] || { echo "::error::merge second parent $P2 is not the PR head $HEAD_SHA"; exit 1; }
-          ST=$(gh api "repos/${GH_REPO}/compare/${P1}...main" --jq .status)
-          case "$ST" in
-            identical|ahead) echo "base parent $P1 is contained in main ($ST)." ;;
-            *) echo "::error::base parent $P1 is not contained in main (compare status: $ST)"; exit 1 ;;
-          esac
+          python3 -I scripts/tf-plan-gh.py base-ok "$P1" || { echo "::error::base parent $P1 is not contained in main"; exit 1; }
 
       - name: Guard
         id: guard
@@ -144,14 +125,14 @@ jobs:
           if [ "${{ steps.guard.outputs.rc }}" = "1" ]; then
             {
               echo "### Terraform plan not run"
-              echo "This pull request changes something Terraform runs or fetches, so a runner with credentials does not plan it. Run \`terraform plan\` locally."
+              echo "This pull request changes something Terraform runs, fetches or points credentials at, so a runner with credentials does not plan it (head \`${HEAD_SHA:0:7}\`). Run \`terraform plan\` locally."
               echo; echo '```'; grep '^REFUSE' guard.txt; echo '```'
             } > comment.md
           else
             # Replace any earlier plan comment, which names an older commit.
             {
               echo "### No Terraform plan for this commit"
-              echo "The changed files at \`${HEAD_SHA:0:7}\` are outside \`environments/homelab\` and \`modules\`, so there is nothing to plan."
+              echo "The changed files at \`${HEAD_SHA:0:7}\` are outside the planned Terraform roots (the homelab root and its three modules; vault-config has its own state), so there is nothing to plan."
             } > comment.md
           fi
 
@@ -232,11 +213,11 @@ jobs:
           terraform show -json tfplan > plan.json
           {
             python3 -I "$GITHUB_WORKSPACE/scripts/tf-plan-summary.py" plan.json
-            echo; echo "_Plan of the merge of this pull request into main at \`$(git -C "$GITHUB_WORKSPACE/pr" rev-parse --short HEAD)\`, with \`-lock=false\`. Nothing was applied._"
+            echo; echo "_Plan of the merge of this pull request (head \`${HEAD_SHA:0:7}\`) into main, with \`-lock=false\`. Nothing was applied._"
           } > "$GITHUB_WORKSPACE/comment.md"
 
       - name: Say the plan did not run
-        if: failure() && steps.pr.outputs.skip == 'false'
+        if: failure() && (steps.pr.outputs.skip == 'false' || steps.pr.outcome == 'failure')
         shell: bash
         run: |
           {
@@ -246,28 +227,20 @@ jobs:
 
       - name: Post the comment
         id: post
-        if: always() && steps.pr.outputs.skip == 'false' && hashFiles('comment.md') != ''
+        if: always() && steps.pr.outputs.skip != 'true' && hashFiles('comment.md') != ''
         shell: bash
         env:
-          PR: ${{ steps.pr.outputs.number }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.number || env.PAYLOAD_PR }}
         run: |
           set -euo pipefail
           # A newer commit may have landed while this plan ran. Do not overwrite its comment.
-          CUR=$(gh api "repos/${GH_REPO}/pulls/${PR}" --jq .head.sha)
+          CUR=$(python3 -I scripts/tf-plan-gh.py head-sha "$PR")
           if [ "$CUR" != "$HEAD_SHA" ]; then
             echo "PR $PR head moved to $CUR; this plan was for $HEAD_SHA, so no comment was posted."
             exit 0
           fi
-          MARK='<!-- terraform-plan-comment -->'
-          { echo "$MARK"; cat comment.md; } > body.md
-          ID=$(gh api "repos/${GH_REPO}/issues/${PR}/comments" --paginate \
-                 --jq "[.[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$MARK\")))][0].id // empty")
-          if [ -n "$ID" ]; then
-            gh api -X PATCH "repos/${GH_REPO}/issues/comments/${ID}" -F body=@body.md > /dev/null
-          else
-            gh api -X POST "repos/${GH_REPO}/issues/${PR}/comments" -F body=@body.md > /dev/null
-          fi
-          echo "Commented on PR $PR."
+          python3 -I scripts/tf-plan-gh.py upsert "$PR" comment.md
 
       # The runner persists between jobs. Delete the checkout, the plan and its JSON, which holds
       # sensitive inputs, on success, failure and cancellation.

@@ -32,11 +32,13 @@ FILE_TOKENS = [
     (r'\bprovider\s*"|\brequired_providers\b', "provider configuration"),
     (r'\bproviders\s*=', "provider passed to a module"),
     (r'\bbackend\s*"', "backend block"),
+    (r'\\[uU][0-9a-fA-F]{4}', "unicode escape in a string"),
     # A function call may have comments between the name and "(" in HCL.
     (r'\b(file|fileexists|fileset|filebase64|filebase64sha256|filebase64sha512|filemd5|filesha1|filesha256|filesha512|templatefile|pathexpand|nonsensitive)\b'
      r'\s*(?:/\*.*?\*/\s*|(?:#|//)[^\n]*\n\s*)*\(', "file read or nonsensitive()"),
 ]
-# Checked on a file's added lines only: existing Vault reads stay legal, new ones do not.
+# Checked on a file's added lines only: Vault reads already in the file stay legal, and a
+# Vault read added by the diff is refused.
 ADDED_TOKENS = [
     (r'\b(data|ephemeral|resource)\b(?:\s|/\*.*?\*/)*"?vault_', "new Vault read or write"),
 ]
@@ -61,6 +63,11 @@ ALLOWED_ROOTS = re.compile(
     r'^(environments/homelab/[^/]+$|modules/(proxmox-lxc|postgres-db|cloudflare-ingress)/)')
 PLANNED = re.compile(r'^(environments/homelab/(?!vault-config/)|modules/)')
 TERRAFORM_FILE = re.compile(r'\.(tf|tfvars|hcl)$|\.tf\.json$')
+
+
+def safe(p):
+    """A path is attacker text. Escape it so it cannot forge a line the workflow parses."""
+    return ascii(p)[1:-1].replace("`", "?")
 
 
 def git(repo, *args):
@@ -94,27 +101,26 @@ def main():
         print(f"guard error: {base}..{head} changed 0 files, so nothing was examined")
         return 2
     files = [p for _, _, p in entries]
-    unsafe = [p for p in files if not SAFE_NAME.fullmatch(p)]
+    unsafe = [p for p in files
+              if (PLANNED.match(p) or TERRAFORM_FILE.search(p)) and not SAFE_NAME.fullmatch(p)]
     if unsafe:
         # A name is attacker text. Print it escaped and never as a bare line, so it cannot forge
         # the PLANNED_PATHS or REFUSE lines the workflow parses.
         print(f"guard examined {len(files)} changed files, 0 under planned paths")
         print("PLANNED_PATHS=0")
         for p in unsafe:
-            print("REFUSE file name with characters outside the safe set: " + ascii(p).replace("`", "?"))
+            print("REFUSE file name with characters outside the safe set: " + safe(p))
         return 1
     planned = [p for p in files if PLANNED.match(p)]
     reasons = []
     for mode, status, p in entries:
         if mode in ("120000", "160000") and status != "D":
-            reasons.append(f"{p}: symlink or submodule")
+            reasons.append(f"{safe(p)}: symlink or submodule")
+        if not PLANNED.match(p):
+            continue  # Only paths the homelab root can load matter. vault-config has its own state.
         for pat, why in FORBIDDEN_PATH:
             if re.search(pat, p):
-                reasons.append(f"{p}: {why}")
-        in_vault_config = p.startswith("environments/homelab/vault-config/")
-        if planned and TERRAFORM_FILE.search(p) and not ALLOWED_ROOTS.match(p) and not in_vault_config:
-            reasons.append(f"{p}: Terraform file outside the planned roots")
-        # vault-config has its own state and is never planned, so its content is not scanned.
+                reasons.append(f"{safe(p)}: {why}")
         if status == "D" or not TERRAFORM_FILE.search(p) or not ALLOWED_ROOTS.match(p):
             continue
         body = git(repo, "show", f"{head}:{p}")
@@ -124,20 +130,20 @@ def main():
         text = body.stdout.decode(errors="replace")
         for pat, why in FILE_TOKENS:
             if re.search(pat, text, re.S):
-                reasons.append(f"{p}: {why}")
+                reasons.append(f"{safe(p)}: {why}")
         for m in SOURCE.finditer(text):
             if m.group(2) is None or not ALLOWED_SOURCE.match(m.group(2)):
-                reasons.append(f"{p}: source other than the three reviewed modules")
+                reasons.append(f"{safe(p)}: source other than the three reviewed modules")
         d = git(repo, "diff", "-U0", f"{base}..{head}", "--", p)
         added = "\n".join(l[1:] for l in d.stdout.decode(errors="replace").splitlines()
                           if l.startswith("+") and not l.startswith("+++"))
-        # An existing Vault block must keep reading the same secret.
+        # A Vault block already in the file must keep reading the same secret.
         if re.search(r'\b(data|ephemeral)\b\s*"?vault_', text) and \
-                re.search(r'\b(path|mount|name)\s*=|\bkv/', added):
-            reasons.append(f"{p}: added path, mount, name or kv/ line in a file that reads Vault")
+                re.search(r'(path|mount|name|vault\w*)\s*=|\bkv/', added):
+            reasons.append(f"{safe(p)}: added path, mount, name or kv/ line in a file that reads Vault")
         for pat, why in ADDED_TOKENS:
             if re.search(pat, added, re.S):
-                reasons.append(f"{p}: {why}")
+                reasons.append(f"{safe(p)}: {why}")
     print(f"guard examined {len(files)} changed files, {len(planned)} under planned paths")
     print(f"PLANNED_PATHS={len(planned)}")
     if reasons:

