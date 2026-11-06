@@ -40,11 +40,11 @@ def find_pr(head, payload_pr):
     prs = [p for p in api("GET", f"commits/{head}/pulls")
            if p["state"] == "open" and p["head"]["sha"] == head
            and (not payload_pr or str(p["number"]) == str(payload_pr))]
+    if not payload_pr:
+        prs = [p for p in prs if p["base"]["ref"] == "main"]
     if not prs:
-        if payload_pr:
-            print(f"::error::PR {payload_pr} was named by the trigger but no open PR has head {head}")
-            return 1
-        print(f"No open PR has head {head}: nothing was planned and nothing was examined.")
+        # The head moved or the PR closed while this run queued. Nothing was examined.
+        print(f"No open PR has head {head} (it moved or closed): nothing was planned and nothing was examined.")
         out("skip", "true")
         return 0
     n, base = prs[0]["number"], prs[0]["base"]["ref"]

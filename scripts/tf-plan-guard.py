@@ -62,7 +62,7 @@ FORBIDDEN_PATH = [
 ALLOWED_ROOTS = re.compile(
     r'^(environments/homelab/[^/]+$|modules/(proxmox-lxc|postgres-db|cloudflare-ingress)/)')
 PLANNED = re.compile(
-    r'^(environments/homelab/(?!vault-config/)|modules/(proxmox-lxc|postgres-db|cloudflare-ingress|baremetal-host)/)')
+    r'^(environments/homelab/(?!vault-config/)|modules/(proxmox-lxc|postgres-db|cloudflare-ingress|baremetal-host)(/|$))')
 TERRAFORM_FILE = re.compile(r'\.(tf|tfvars|hcl)$|\.tf\.json$')
 
 
@@ -140,7 +140,7 @@ def main():
                           if l.startswith("+") and not l.startswith("+++"))
         # A Vault block already in the file must keep reading the same secret.
         if re.search(r'\b(data|ephemeral)\b\s*"?vault_', text) and \
-                re.search(r'(path|mount|vault\w*)\s*=|\bkv/', added):
+                re.search(r'(path|mount|name|vault\w*)\s*=|\bkv/', added):
             reasons.append(f"{safe(p)}: added path, mount, name or kv/ line in a file that reads Vault")
         for pat, why in ADDED_TOKENS:
             if re.search(pat, added, re.S):

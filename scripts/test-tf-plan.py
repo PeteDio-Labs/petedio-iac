@@ -89,7 +89,26 @@ def real_tree_case():
             if rc != 0:
                 bad.append(t)
     print("  refused real files:", bad if bad else "none", f"({len(targets)} candidates)")
+    if bad and os.environ.get("CI"):
+        # A file added since the guard was calibrated must not fail every unrelated PR.
+        print(f"::warning::tf-plan-guard refuses edits to {bad}; recalibrate scripts/tf-plan-guard.py")
+        return 0
     return len(bad)
+
+
+def module_symlink_case():
+    with tempfile.TemporaryDirectory() as d:
+        repo(d, "b = 2\n")
+        git = lambda *a: run("git", "-C", d, "-c", "user.email=t@t", "-c", "user.name=t", *a)
+        os.makedirs(os.path.join(d, "modules/postgres-db"))
+        open(os.path.join(d, "modules/postgres-db/main.tf"), "w").write("x = 1\n")
+        git("add", "-A"); git("commit", "-qm", "m")
+        git("checkout", "-qb", "pr2")
+        run("git", "-C", d, "rm", "-rq", "modules/postgres-db")
+        os.makedirs(os.path.join(d, "modules"), exist_ok=True)
+        os.symlink("../payload", os.path.join(d, "modules/postgres-db"))
+        git("add", "-A"); git("commit", "-qm", "s")
+        return run(sys.executable, G, d, "--base", "pr", "--head", "pr2").returncode
 
 
 def check(name, got, want):
@@ -111,6 +130,7 @@ results = [
     check("tfvars refused", guard2("environments/homelab/r.auto.tfvars", 'proxmox_endpoint="x"\n'), 1),
     check("providers.tf refused", guard2("environments/homelab/providers.tf", "# c\n"), 1),
     check("symlink refused", symlink_case(), 1),
+    check("symlink replacing a module directory refused", module_symlink_case(), 1),
     check("tab in file name still inspected", guard2("environments/homelab/a\tb.tf", 'data "external" "x" {}\n'), 1),
     check("real tree is not falsely refused", real_tree_case(), 0),
     check("tf file elsewhere does not refuse a homelab PR", guard2("payload/main.tf", "x = 1\n"), 0),

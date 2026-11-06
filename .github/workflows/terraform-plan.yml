@@ -10,7 +10,8 @@
 # triggers on `workflow_run` instead: GitHub runs main's copy of it, whoever opened the PR.
 #   1. Vault binds role terraform-plan to this file on main and event workflow_run
 #      (vault-config/auth.tf), so no other trigger or file mints the credentials.
-#   2. Only same-repo pull requests whose `terraform` validate passed are planned. A fork never is.
+#   2. Only same-repo pull requests are planned; a fork never is. The `terraform` run's success is
+#      not a gate: a PR controls that workflow and could make it pass. The guard and the mirror are.
 #   3. Providers install only from a mirror of main's lock file, so a PR cannot add one. The PR is checked out into pr/, apart from main's scripts in the workspace root. The
 #      guard runs from main's copy, and refuses a PR that adds a provisioner, an external or http
 #      data source, a non-local source, a lock-file change or a backend change. A refused PR gets
@@ -209,8 +210,8 @@ jobs:
           umask 077
           terraform init -input=false -lockfile=readonly
           terraform plan -input=false -no-color -lock=false -out=tfplan > plan.log 2>&1 || {
-            { grep -m1 '^Error' plan.log || true; } | cut -c1-100 | sed 's/^/plan.log: /'
-            echo "::error::terraform plan failed (last lines above)"; exit 1; }
+            { grep -m1 'Error:' plan.log || true; } | cut -c1-100 | sed 's/^/plan.log: /'
+            echo "::error::terraform plan failed (first error above)"; exit 1; }
           terraform show -json tfplan > plan.json
           SRC=0
           {
@@ -254,3 +255,11 @@ jobs:
         if: always()
         shell: bash
         run: rm -rf pr comment.md body.md guard.txt
+
+      # A refusal is not a plan. Colour the check so a green run never stands for work not done.
+      - name: Fail when the guard refused the pull request
+        if: always() && steps.guard.outputs.rc == '1'
+        shell: bash
+        run: |
+          echo "::error::terraform-plan did not plan this pull request because the guard refused it. See the PR comment."
+          exit 1
