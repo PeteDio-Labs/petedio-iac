@@ -1,0 +1,62 @@
+---
+# patch-nodejs.yml — upgrade nodejs on seerr and claude-247. (PET-846)
+#
+# The PET-815 audit found nodejs 22.23.2 on claude-247 and 22.22.0 on seerr, both from
+# NodeSource, and NodeSource offered 22.23.4. Node.js 22.23.4 is the release the Node.js
+# security advisories name as the fix for CVE-2026-111497 (a Brotli decoder write). Seerr
+# serves its web UI from node on 0.0.0.0:5055, so that host carries the exposure.
+#
+#   cd ansible
+#   ansible-playbook playbooks/patch-nodejs.yml --check --diff
+#   ansible-playbook playbooks/patch-nodejs.yml
+#
+# `only_upgrade` acts only with `state: latest`; with the module default it changes nothing
+# (PET-815 defect 1). The play never installs nodejs where it is absent.
+#
+# ⚠ A HOST PATTERN THAT MATCHES NOTHING EXITS 0, so the first play asserts both hosts exist.
+# ⚠ Run it when nobody uses Seerr: the service restarts once if the package changed.
+
+- name: Assert the play will reach both hosts
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  tasks:
+    - name: Seerr and claude-247 are in the inventory
+      ansible.builtin.assert:
+        that:
+          - "'seerr' in groups['all']"
+          - "'claude-247' in groups['all']"
+        fail_msg: seerr or claude-247 is not in the inventory. The next play would match fewer hosts than it names.
+
+- name: Upgrade nodejs
+  hosts: seerr:claude-247
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Upgrade nodejs to the NodeSource candidate
+      ansible.builtin.apt:
+        name: nodejs
+        state: latest # noqa: package-latest
+        only_upgrade: true
+        update_cache: true
+        cache_valid_time: 0
+      register: patch_nodejs_result
+
+    - name: Read the installed nodejs version
+      ansible.builtin.command: dpkg-query -W -f='${Version}' nodejs
+      register: patch_nodejs_version
+      changed_when: false
+
+    - name: Fail below the fixed release
+      ansible.builtin.command: dpkg --compare-versions {{ patch_nodejs_version.stdout }} ge 22.23.4-1nodesource1
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Restart seerr when node changed
+      ansible.builtin.systemd_service:
+        name: seerr
+        state: restarted
+      when:
+        - inventory_hostname == 'seerr'
+        - patch_nodejs_result is changed
