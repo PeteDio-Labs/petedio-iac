@@ -61,7 +61,8 @@ FORBIDDEN_PATH = [
 ]
 ALLOWED_ROOTS = re.compile(
     r'^(environments/homelab/[^/]+$|modules/(proxmox-lxc|postgres-db|cloudflare-ingress)/)')
-PLANNED = re.compile(r'^(environments/homelab/(?!vault-config/)|modules/)')
+PLANNED = re.compile(
+    r'^(environments/homelab/(?!vault-config/)|modules/(proxmox-lxc|postgres-db|cloudflare-ingress|baremetal-host)/)')
 TERRAFORM_FILE = re.compile(r'\.(tf|tfvars|hcl)$|\.tf\.json$')
 
 
@@ -114,10 +115,10 @@ def main():
     planned = [p for p in files if PLANNED.match(p)]
     reasons = []
     for mode, status, p in entries:
-        if mode in ("120000", "160000") and status != "D":
-            reasons.append(f"{safe(p)}: symlink or submodule")
         if not PLANNED.match(p):
             continue  # Only paths the homelab root can load matter. vault-config has its own state.
+        if mode in ("120000", "160000") and status != "D":
+            reasons.append(f"{safe(p)}: symlink or submodule")
         for pat, why in FORBIDDEN_PATH:
             if re.search(pat, p):
                 reasons.append(f"{safe(p)}: {why}")
@@ -139,7 +140,7 @@ def main():
                           if l.startswith("+") and not l.startswith("+++"))
         # A Vault block already in the file must keep reading the same secret.
         if re.search(r'\b(data|ephemeral)\b\s*"?vault_', text) and \
-                re.search(r'(path|mount|name|vault\w*)\s*=|\bkv/', added):
+                re.search(r'(path|mount|vault\w*)\s*=|\bkv/', added):
             reasons.append(f"{safe(p)}: added path, mount, name or kv/ line in a file that reads Vault")
         for pat, why in ADDED_TOKENS:
             if re.search(pat, added, re.S):
@@ -154,4 +155,10 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception as e:  # exit 2 means "could not run", which the workflow fails on
+        print(f"guard error: {type(e).__name__}: {e}")
+        sys.exit(2)

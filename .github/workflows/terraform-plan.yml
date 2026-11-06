@@ -134,6 +134,7 @@ jobs:
               echo "### No Terraform plan for this commit"
               echo "The changed files at \`${HEAD_SHA:0:7}\` are outside the planned Terraform roots (the homelab root and its three modules; vault-config has its own state), so there is nothing to plan."
             } > comment.md
+            echo update_only=--update-only >> "$GITHUB_OUTPUT"
           fi
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
@@ -211,13 +212,16 @@ jobs:
             { grep -m1 '^Error' plan.log || true; } | cut -c1-100 | sed 's/^/plan.log: /'
             echo "::error::terraform plan failed (last lines above)"; exit 1; }
           terraform show -json tfplan > plan.json
+          SRC=0
           {
-            python3 -I "$GITHUB_WORKSPACE/scripts/tf-plan-summary.py" plan.json
+            python3 -I "$GITHUB_WORKSPACE/scripts/tf-plan-summary.py" plan.json || SRC=$?
             echo; echo "_Plan of the merge of this pull request (head \`${HEAD_SHA:0:7}\`) into main, with \`-lock=false\`. Nothing was applied._"
           } > "$GITHUB_WORKSPACE/comment.md"
+          # A summary that read nothing is a failure, and its text stays in the comment.
+          [ "$SRC" -eq 0 ] || { echo "::error::plan summary examined nothing"; exit 1; }
 
       - name: Say the plan did not run
-        if: failure() && (steps.pr.outputs.skip == 'false' || steps.pr.outcome == 'failure')
+        if: failure() && (steps.pr.outputs.skip == 'false' || steps.pr.outcome == 'failure') && hashFiles('comment.md') == ''
         shell: bash
         run: |
           {
@@ -232,6 +236,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.pr.outputs.number || env.PAYLOAD_PR }}
+          UPDATE_ONLY: ${{ steps.skipwhy.outputs.update_only }}
         run: |
           set -euo pipefail
           # A newer commit may have landed while this plan ran. Do not overwrite its comment.
@@ -240,7 +245,8 @@ jobs:
             echo "PR $PR head moved to $CUR; this plan was for $HEAD_SHA, so no comment was posted."
             exit 0
           fi
-          python3 -I scripts/tf-plan-gh.py upsert "$PR" comment.md
+          # A commit with nothing to plan replaces an earlier plan comment and posts none of its own.
+          python3 -I scripts/tf-plan-gh.py upsert "$PR" comment.md ${UPDATE_ONLY}
 
       # The runner persists between jobs. Delete the checkout, the plan and its JSON, which holds
       # sensitive inputs, on success, failure and cancellation.

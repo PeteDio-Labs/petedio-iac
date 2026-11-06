@@ -1585,7 +1585,7 @@ does this, and it was tested against pve02: a wrong CA and a wrong hostname are 
 
 - **Trigger:** `workflow_run`, so GitHub runs `main`'s copy of the file. A PR cannot edit the steps that hold the token. Vault role `terraform-plan` binds `workflow_run`, `main` and that file.
 - **Providers:** installed from a mirror of `main`'s lock, with `direct` installs excluded and the lock read-only. A PR cannot add `external`, `archive`, `http` or `local`, whatever its HCL says.
-- **Guard:** `scripts/tf-plan-guard.py` is a text allowlist. It is the weaker layer: reviews found bypasses in HCL syntax (comments between tokens, unquoted labels, `\u` escapes) one after another. Treat a new bypass as expected, not exotic, and never let the guard stand alone.
+- **Guard:** `scripts/tf-plan-guard.py` is a text allowlist. It is the weaker layer: reviews found bypasses in HCL syntax (comments between tokens, unquoted labels, `\u` escapes) one after another. Expect further bypasses, and never let the guard stand alone.
 - **Comment:** addresses only, with every `[instance key]` redacted, because a `for_each` key can carry an evaluated value.
 - **Files:** the runner persists between jobs. The plan JSON holds sensitive inputs, so the job writes it owner-only and removes the checkout at the end.
 - **No `gh`:** the runner has none. `scripts/tf-plan-gh.py` uses python3 and urllib.

@@ -7,7 +7,8 @@ already required by lab-action.yml. Reads GH_TOKEN and GH_REPO from the environm
   find-pr    HEAD_SHA PAYLOAD_PR   writes number=, skip= to $GITHUB_OUTPUT
   base-ok    BASE_SHA              exit 0 when main contains BASE_SHA
   head-sha   PR_NUMBER             prints the PR head SHA
-  upsert     PR_NUMBER FILE        creates or updates the bot's marked plan comment
+  upsert     PR_NUMBER FILE [--update-only]
+                                   creates or updates the bot's marked plan comment
 """
 import json
 import os
@@ -36,7 +37,9 @@ def out(key, value):
 
 
 def find_pr(head, payload_pr):
-    prs = [p for p in api("GET", f"commits/{head}/pulls") if p["state"] == "open"]
+    prs = [p for p in api("GET", f"commits/{head}/pulls")
+           if p["state"] == "open" and p["head"]["sha"] == head
+           and (not payload_pr or str(p["number"]) == str(payload_pr))]
     if not prs:
         if payload_pr:
             print(f"::error::PR {payload_pr} was named by the trigger but no open PR has head {head}")
@@ -54,16 +57,28 @@ def find_pr(head, payload_pr):
     return 0
 
 
-def upsert(n, path):
+def all_comments(n):
+    page, found = 1, []
+    while True:
+        batch = api("GET", f"issues/{n}/comments?per_page=100&page={page}")
+        found += batch
+        if len(batch) < 100:
+            return found
+        page += 1
+
+
+def upsert(n, path, update_only=False):
     body = open(path).read()
     if len(body) > LIMIT:
         body = body[:LIMIT] + "\n\n_Comment cut at the GitHub size limit. Run the plan locally for the rest._"
     body = f"{MARK}\n{body}"
-    comments = api("GET", f"issues/{n}/comments?per_page=100")
-    mine = [c for c in comments
+    mine = [c for c in all_comments(n)
             if c["user"]["login"] == "github-actions[bot]" and c["body"].startswith(MARK)]
     if mine:
         api("PATCH", f"issues/comments/{mine[0]['id']}", {"body": body})
+    elif update_only:
+        print(f"No earlier plan comment on PR {n}, so none was posted.")
+        return 0
     else:
         api("POST", f"issues/{n}/comments", {"body": body})
     print(f"Commented on PR {n}.")
@@ -83,7 +98,7 @@ def main():
         print(api("GET", f"pulls/{args[0]}")["head"]["sha"])
         return 0
     if cmd == "upsert":
-        return upsert(args[0], args[1])
+        return upsert(args[0], args[1], "--update-only" in args)
     print(__doc__)
     return 2
 
