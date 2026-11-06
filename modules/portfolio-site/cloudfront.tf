@@ -14,6 +14,8 @@ resource "aws_cloudfront_origin_access_control" "site" {
 }
 
 # S3 through OAC has no directory index, so /case-studies/ must become /case-studies/index.html.
+# The build writes pages as <name>.html (work.html, work/ssh-ca.html), so an extensionless path
+# such as /work maps to /work.html. A path with an extension passes through unchanged.
 resource "aws_cloudfront_function" "index_rewrite" {
   name    = "${var.name}-index-rewrite"
   runtime = "cloudfront-js-2.0"
@@ -25,7 +27,7 @@ resource "aws_cloudfront_function" "index_rewrite" {
       if (uri.endsWith('/')) {
         request.uri = uri + 'index.html';
       } else if (!uri.split('/').pop().includes('.')) {
-        request.uri = uri + '/index.html';
+        request.uri = uri + '.html';
       }
       return request;
     }
