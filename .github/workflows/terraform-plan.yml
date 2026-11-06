@@ -11,7 +11,7 @@
 #   1. Vault binds role terraform-plan to this file on main and event workflow_run
 #      (vault-config/auth.tf), so no other trigger or file mints the credentials.
 #   2. Only same-repo pull requests whose `terraform` validate passed are planned. A fork never is.
-#   3. The PR is checked out into pr/, apart from main's scripts in the workspace root. The
+#   3. Providers install only from a mirror of main's lock file, so a PR cannot add one. The PR is checked out into pr/, apart from main's scripts in the workspace root. The
 #      guard runs from main's copy, and refuses a PR that adds a provisioner, an external or http
 #      data source, a non-local source, a lock-file change or a backend change. A refused PR gets
 #      a comment that says to plan locally.
@@ -74,9 +74,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          N=$(gh api "repos/${GH_REPO}/commits/${HEAD_SHA}/pulls" --jq '[.[] | select(.state=="open")][0].number // empty')
+          N=$(gh api "repos/${GH_REPO}/commits/${HEAD_SHA}/pulls" --jq '[.[] | select(.state=="open" and .base.ref=="main")][0].number // empty')
           if [ -z "$N" ]; then
-            echo "No open pull request has head $HEAD_SHA, so nothing was planned."
+            echo "No open pull request into main has head $HEAD_SHA, so nothing was planned."
             echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           echo "number=$N" >> "$GITHUB_OUTPUT"
@@ -90,6 +90,22 @@ jobs:
           path: pr
           fetch-depth: 2
           persist-credentials: false
+
+      # The merge's parents must be this head and a commit that main contains. terraform.yml
+      # validates PRs into any branch, and the guard diffs against HEAD^1, so a PR into an
+      # unreviewed base branch would hide that branch's content from the guard.
+      - name: Verify the merge parents
+        if: steps.pr.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          P1=$(git -C pr rev-parse 'HEAD^1'); P2=$(git -C pr rev-parse 'HEAD^2')
+          [ "$P2" = "$HEAD_SHA" ] || { echo "::error::merge second parent $P2 is not the PR head $HEAD_SHA"; exit 1; }
+          ST=$(gh api "repos/${GH_REPO}/compare/${P1}...main" --jq .status)
+          case "$ST" in
+            identical|ahead) echo "base parent $P1 is contained in main ($ST)." ;;
+            *) echo "::error::base parent $P1 is not contained in main (compare status: $ST)"; exit 1 ;;
+          esac
 
       - name: Guard
         id: guard
@@ -125,6 +141,26 @@ jobs:
         with:
           terraform_version: 1.16.3 # same pin as terraform.yml (PET-362); bump all of them together
           terraform_wrapper: false
+
+      # Providers come from main's lock file and nowhere else. A PR cannot add `external`,
+      # `archive`, `http` or `local` by naming it in HCL, because the mirror below holds only the
+      # providers main's configuration already uses and `direct` installs are excluded.
+      - name: Install main's providers into a private mirror
+        id: mirror
+        if: steps.pr.outputs.skip == 'false' && steps.guard.outputs.rc == '0' && steps.guard.outputs.planned != '0'
+        working-directory: environments/homelab
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init -input=false -backend=false
+          RC="$RUNNER_TEMP/tf-plan.tfrc"
+          {
+            echo 'provider_installation {'
+            echo "  filesystem_mirror { path = \"$PWD/.terraform/providers\" }"
+            echo '  direct { exclude = ["registry.terraform.io/*/*"] }'
+            echo '}'
+          } > "$RC"
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
 
       - name: Encode Vault CA
         id: vault_ca
@@ -162,18 +198,21 @@ jobs:
         working-directory: pr/environments/homelab
         env:
           VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+          TF_CLI_CONFIG_FILE: ${{ steps.mirror.outputs.rc }}
         shell: bash
         run: |
           set -euo pipefail
+          # Main's lock file replaces the PR's, and init may not change it.
+          cp "$GITHUB_WORKSPACE/environments/homelab/.terraform.lock.hcl" .terraform.lock.hcl
           # plan.json holds sensitive inputs. Keep it owner-only; the cleanup step deletes it.
           umask 077
-          terraform init -input=false
+          terraform init -input=false -lockfile=readonly
           terraform plan -input=false -no-color -lock=false -out=tfplan > plan.log 2>&1 || {
             tail -n 5 plan.log | sed 's/^/plan.log: /'
             echo "::error::terraform plan failed (last lines above)"; exit 1; }
           terraform show -json tfplan > plan.json
           {
-            python3 "$GITHUB_WORKSPACE/scripts/tf-plan-summary.py" plan.json
+            python3 -I "$GITHUB_WORKSPACE/scripts/tf-plan-summary.py" plan.json
             echo; echo "_Plan of the merge of this pull request into main at \`$(git -C "$GITHUB_WORKSPACE/pr" rev-parse --short HEAD)\`, with \`-lock=false\`. Nothing was applied._"
           } > "$GITHUB_WORKSPACE/comment.md"
 
