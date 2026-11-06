@@ -2,16 +2,32 @@
 # Pedro's Proton inbox. Proton's free plan cannot host a custom domain, so forwarding is the free path.
 # Cloudflare creates the MX and SPF records when routing turns on. This zone holds no mail records otherwise.
 #
-# Two steps stay with Pedro, because Terraform cannot do them:
-#   1. The API token at kv/iac/cloudflare needs Email Routing permissions: Zone > Email Routing Rules > Edit
-#      and Account > Email Routing Addresses > Edit. Without them the apply fails.
-#   2. Cloudflare emails a verification link to the destination address. Click it once. A rule that points
-#      at an unverified address forwards nothing.
-# Keep email_routing_live false until step 1 is done, then set it true.
+# Cloudflare refuses a forwarding rule until the destination address is verified, so activation has two phases,
+# each behind its own repository variable:
+#   0. Add three permissions to the API token at kv/iac/cloudflare:
+#        Zone > Email Routing Rules > Edit
+#        Zone > Zone Settings > Edit        (the DNS resource turns routing on)
+#        Account > Email Routing Addresses > Edit
+#      Without them the first enabled apply fails.
+#   1. Set the repository variable EMAIL_ROUTING_LIVE=true. The apply turns routing on and registers the
+#      destination. Cloudflare then emails a verification link to it.
+#   2. Click the link in the Proton inbox.
+#   3. Set EMAIL_ROUTING_FORWARD=true. The apply creates the forwarding rule.
 variable "email_routing_live" {
-  description = "Turn on Cloudflare Email Routing for pdlab.dev and forward privacy@pdlab.dev to the destination below. Keep false until the Cloudflare API token has Email Routing permissions."
+  description = "Phase 1: turn on Cloudflare Email Routing for pdlab.dev and register the destination address. Keep false until the Cloudflare API token has the Email Routing and Zone Settings permissions."
   type        = bool
   default     = false
+}
+
+variable "email_routing_forward" {
+  description = "Phase 2: create the forwarding rules. Set true only after email_routing_live is true and the destination address is verified."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.email_routing_forward || var.email_routing_live
+    error_message = "email_routing_forward needs email_routing_live = true: the rule depends on the destination address."
+  }
 }
 
 locals {
@@ -34,7 +50,7 @@ resource "cloudflare_email_routing_address" "destination" {
 }
 
 resource "cloudflare_email_routing_rule" "alias" {
-  for_each = var.email_routing_live ? toset(local.email_routing_aliases) : toset([])
+  for_each = var.email_routing_forward ? toset(local.email_routing_aliases) : toset([])
 
   zone_id = local.cloudflare_zone_id
   name    = "Forward ${each.value}"
@@ -48,7 +64,7 @@ resource "cloudflare_email_routing_rule" "alias" {
 
   actions = [{
     type  = "forward"
-    value = [local.email_routing_destination]
+    value = [cloudflare_email_routing_address.destination[0].email]
   }]
 
   depends_on = [cloudflare_email_routing_dns.pdlab]
