@@ -1,0 +1,200 @@
+# terraform-plan — plan a pull request's homelab Terraform and comment the result (PET-866).
+#
+# WHY. `terraform.yml` validates a pull request and plans only after the merge, so a thread could
+# not read a plan and Pedro ran `terraform plan` by hand. This workflow posts the plan as a
+# comment: counts, resource addresses, and a flag on every destroy or replace. It prints no
+# attribute values, because the repo and the comment are public.
+#
+# HOW IT STAYS SAFE (PET-104 still holds). This repo is public and the runner can reach Proxmox,
+# MinIO and Vault. A `pull_request` run would execute the PR's own workflow there, so this file
+# triggers on `workflow_run` instead: GitHub runs main's copy of it, whoever opened the PR.
+#   1. Vault binds role terraform-plan to this file on main and event workflow_run
+#      (vault-config/auth.tf), so no other trigger or file mints the credentials.
+#   2. Only same-repo pull requests whose `terraform` validate passed are planned. A fork never is.
+#   3. The PR is checked out into pr/, apart from main's scripts in the workspace root. The
+#      guard runs from main's copy, and refuses a PR that adds a provisioner, an external or http
+#      data source, a non-local source, a lock-file change or a backend change. A refused PR gets
+#      a comment that says to plan locally.
+#   4. `-lock=false`, so a plan never blocks an apply, and nothing here writes state. This
+#      workflow has no apply step.
+# A collaborator's branch still runs Terraform with read credentials. The guard narrows that, and
+# does not remove it.
+#
+# SCOPE. environments/homelab only, which is what apply-on-merge covers. environments/portfolio
+# needs AWS credentials the runners lack, and offsite-watchdog is not in CI (PET-866).
+name: terraform-plan
+
+on:
+  workflow_run:
+    workflows: [terraform]
+    types: [completed]
+
+permissions:
+  contents: read
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+
+jobs:
+  plan:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, homelab]
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    concurrency:
+      group: tf-plan-${{ github.event.workflow_run.head_sha }}
+      cancel-in-progress: true
+    env:
+      TF_IN_AUTOMATION: "1"
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
+      TF_VAR_manage_backup_job: ${{ vars.MANAGE_BACKUP_JOB || 'false' }}
+      TF_VAR_email_routing_live: ${{ vars.EMAIL_ROUTING_LIVE || 'false' }}
+      TF_VAR_email_routing_forward: ${{ vars.EMAIL_ROUTING_FORWARD || 'false' }}
+      TF_VAR_postgres_db_password_versions: ${{ vars.POSTGRES_DB_PASSWORD_VERSIONS || '{}' }}
+    steps:
+      # Main's copy: the workflow's own scripts. Never read a script from pr/.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Find the pull request
+        id: pr
+        shell: bash
+        run: |
+          set -euo pipefail
+          N=$(gh api "repos/${GH_REPO}/commits/${HEAD_SHA}/pulls" --jq '[.[] | select(.state=="open")][0].number // empty')
+          if [ -z "$N" ]; then
+            echo "No open pull request has head $HEAD_SHA, so nothing was planned."
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "number=$N" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the merge of the pull request into main
+        if: steps.pr.outputs.skip == 'false'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: refs/pull/${{ steps.pr.outputs.number }}/merge
+          path: pr
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Guard
+        id: guard
+        if: steps.pr.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/tf-plan-guard.py pr | tee guard.txt
+          RC=${PIPESTATUS[0]}
+          PLANNED=$(sed -n 's/^PLANNED_PATHS=//p' guard.txt)
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+          echo "planned=${PLANNED:-0}" >> "$GITHUB_OUTPUT"
+          # rc 2 means the guard could not read the diff: fail the job, do not skip.
+          [ "$RC" -le 1 ]
+
+      - name: Say why no plan runs
+        id: skipwhy
+        if: steps.pr.outputs.skip == 'false' && (steps.guard.outputs.rc == '1' || steps.guard.outputs.planned == '0')
+        shell: bash
+        run: |
+          if [ "${{ steps.guard.outputs.rc }}" = "1" ]; then
+            {
+              echo "### Terraform plan not run"
+              echo "This pull request changes something Terraform runs or fetches, so a runner with credentials does not plan it. Run \`terraform plan\` locally."
+              echo; echo '```'; grep '^REFUSE' guard.txt; echo '```'
+            } > comment.md
+          else
+            echo "skip comment: no environments/homelab or modules path changed."
+          fi
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        if: steps.pr.outputs.skip == 'false' && steps.guard.outputs.rc == '0' && steps.guard.outputs.planned != '0'
+        with:
+          terraform_version: 1.16.3 # same pin as terraform.yml (PET-362); bump all of them together
+          terraform_wrapper: false
+
+      - name: Encode Vault CA
+        id: vault_ca
+        if: steps.pr.outputs.skip == 'false' && steps.guard.outputs.rc == '0' && steps.guard.outputs.planned != '0'
+        shell: bash
+        run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      # The CA is read from main's copy above, never from pr/.
+      - name: Vault — terraform-plan via OIDC
+        id: vault
+        if: steps.pr.outputs.skip == 'false' && steps.guard.outputs.rc == '0' && steps.guard.outputs.planned != '0'
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: terraform-plan
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: true
+          exportEnv: true
+          secrets: |
+            kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;
+            kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY ;
+            kv/data/iac/proxmox api_token | TF_VAR_proxmox_api_token ;
+            kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key ;
+            kv/data/iac/cloudflare api_token | TF_VAR_cloudflare_api_token ;
+            kv/data/iac/cloudflare account_id | TF_VAR_cloudflare_account_id ;
+            kv/data/iac/cloudflare zone_id | TF_VAR_cloudflare_zone_id ;
+            kv/data/iac/cloudflare tunnel_id | TF_VAR_cloudflare_tunnel_id
+
+      - name: Plan
+        id: plan
+        if: steps.pr.outputs.skip == 'false' && steps.guard.outputs.rc == '0' && steps.guard.outputs.planned != '0'
+        working-directory: pr/environments/homelab
+        env:
+          VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform init -input=false
+          terraform plan -input=false -no-color -lock=false -out=tfplan > plan.log 2>&1 || {
+            tail -n 5 plan.log | sed 's/^/plan.log: /'
+            echo "::error::terraform plan failed (last lines above)"; exit 1; }
+          terraform show -json tfplan > plan.json
+          {
+            python3 "$GITHUB_WORKSPACE/scripts/tf-plan-summary.py" plan.json
+            echo; echo "_Plan of the merge of this pull request into main at \`$(git -C "$GITHUB_WORKSPACE/pr" rev-parse --short HEAD)\`, with \`-lock=false\`. Nothing was applied._"
+          } > "$GITHUB_WORKSPACE/comment.md"
+
+      - name: Say the plan did not run
+        if: failure() && steps.pr.outputs.skip == 'false' && steps.guard.outputs.rc == '0' && steps.guard.outputs.planned != '0'
+        shell: bash
+        run: |
+          {
+            echo "### Terraform plan did not run"
+            echo "A step failed before a plan existed, so this pull request was examined by nothing. Read the [run log](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
+          } > comment.md
+
+      - name: Post the comment
+        if: always() && steps.pr.outputs.skip == 'false' && hashFiles('comment.md') != ''
+        shell: bash
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          MARK='<!-- terraform-plan-comment -->'
+          { echo "$MARK"; cat comment.md; } > body.md
+          ID=$(gh api "repos/${GH_REPO}/issues/${PR}/comments" --paginate \
+                 --jq "[.[] | select(.body | startswith(\"$MARK\"))][0].id // empty")
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/${GH_REPO}/issues/comments/${ID}" -F body=@body.md > /dev/null
+          else
+            gh api -X POST "repos/${GH_REPO}/issues/${PR}/comments" -F body=@body.md > /dev/null
+          fi
+          echo "Commented on PR $PR."

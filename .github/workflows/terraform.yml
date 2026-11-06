@@ -12,9 +12,10 @@
 #   * apply     — push to main ONLY (i.e. already-merged, trusted code). Self-hosted; the
 #                 ONLY job that mints Vault creds and touches state. PR-controlled code never
 #                 runs here.
-# Tradeoff: PRs no longer get a `terraform plan` comment (a real plan needs the LAN backend +
-# provider creds, which we deliberately withhold from PR runs). Authoritative plan is the
-# operator's (local) or is visible in the apply-on-merge log. The matching Vault-role change
+# PR plans (PET-866): this file still plans nothing on a PR. terraform-plan.yml triggers on
+# `workflow_run` of this one, so main's copy runs on the runner and comments a credential-free
+# summary. Read its header before you change any trigger here.
+# Authoritative plan: the PR comment, the operator's local plan, or the apply-on-merge log. The matching Vault-role change
 # (drop the pull_request sub from the github-actions role) is in vault-config/auth.tf.
 
 name: terraform
@@ -146,6 +147,11 @@ jobs:
           sys.exit(1 if unpinned else 0)
           PY
           echo "zizmor examined ${DONE} of ${WORKFLOWS} workflow files: 0 unpinned actions."
+
+      # PET-866: the plan-on-PR guard and summary decide what a runner with credentials will plan.
+      - name: Test the plan guard and summary
+        working-directory: .
+        run: python3 scripts/test-tf-plan.py
 
       - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
         run: terraform init -input=false -backend=false
