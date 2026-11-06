@@ -51,19 +51,10 @@
         state: present
         update_cache: true
 
-    - name: Add the HashiCorp apt signing key
-      ansible.builtin.get_url:
-        url: https://apt.releases.hashicorp.com/gpg
-        dest: /usr/share/keyrings/hashicorp-archive-keyring.asc
-        mode: "0644"
-
-    - name: Add the HashiCorp apt repository
-      ansible.builtin.apt_repository:
-        repo: >-
-          deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.asc]
-          https://apt.releases.hashicorp.com {{ ansible_facts['distribution_release'] }} main
-        filename: hashicorp
-        state: present
+    # Key and source come from one role (PET-829) so Vault and the runners cannot drift apart.
+    - name: Declare the HashiCorp apt key and source
+      ansible.builtin.include_role:
+        name: hashicorp-apt
 
     - name: Install Vault
       ansible.builtin.apt:

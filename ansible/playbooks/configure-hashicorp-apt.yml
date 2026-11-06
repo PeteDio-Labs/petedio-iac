@@ -1,0 +1,11 @@
+---
+# configure-hashicorp-apt.yml (PET-829): apply the hashicorp-apt role to the hosts that install
+# HashiCorp packages, without the rest of their playbooks. configure-vault.yml and
+# configure-runner.yml include the same role.
+#
+#   ansible-playbook -i inventory/hosts.yml playbooks/configure-hashicorp-apt.yml --limit runner-233,vault-223
+- name: Declare the HashiCorp apt key and source
+  hosts: vault:runner
+  become: true
+  roles:
+    - hashicorp-apt

@@ -1,0 +1,35 @@
+---
+# Requires ca-certificates on the host (the key download uses TLS).
+- name: Fetch the HashiCorp apt signing key
+  ansible.builtin.get_url:
+    url: "{{ hashicorp_apt_key_url }}"
+    dest: "{{ hashicorp_apt_key_path }}"
+    checksum: "sha256:{{ hashicorp_apt_key_sha256 }}"
+    # force: get_url skips an existing file otherwise, which is how the stale key stayed.
+    force: true
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Write the HashiCorp apt source, signed by that key
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/hashicorp.list
+    content: >-
+      deb [signed-by={{ hashicorp_apt_key_path }}]
+      https://apt.releases.hashicorp.com {{ ansible_facts['distribution_release'] }} main
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Remove keyring files the source no longer uses
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ hashicorp_apt_stale_keyrings }}"
+
+# Proves the fix, because a source that does not verify is the failure this role exists for.
+# The apt module fails when any repository fails to update.
+- name: Prove apt update succeeds with the HashiCorp source
+  ansible.builtin.apt:
+    update_cache: true
+  changed_when: false

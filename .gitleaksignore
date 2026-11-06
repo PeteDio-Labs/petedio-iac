@@ -1,0 +1,2 @@
+# False positive: the SHA-256 of HashiCorp's public apt signing key, pinned in the hashicorp-apt role (PET-829).
+a8ddb8598c9ae6b23192231879e207973a5c8cae:ansible/roles/hashicorp-apt/defaults/main.yml:generic-api-key:20

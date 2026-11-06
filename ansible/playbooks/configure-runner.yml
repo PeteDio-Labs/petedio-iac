@@ -89,6 +89,12 @@
           @file extra-var. See this play's header.
         quiet: true
 
+    # The HashiCorp source and key (PET-829). runner-233 carried a hand-placed source whose key
+    # HashiCorp has since rotated, which broke `apt-get update` there.
+    - name: Declare the HashiCorp apt key and source
+      ansible.builtin.include_role:
+        name: hashicorp-apt
+
     # Tooling the WORKFLOWS assume but nothing installed. runner-232 has these from a manual
     # setup; runner-233 came off the debian-12 template without them, and nothing in IaC put
     # them there — the same un-IaC'd state this play's header exists to eliminate.
