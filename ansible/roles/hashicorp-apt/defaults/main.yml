@@ -1,0 +1,24 @@
+---
+# hashicorp-apt (PET-829): one signing key and one source for apt.releases.hashicorp.com.
+#
+# WHY THIS EXISTS. HashiCorp rotated its repository signing key. The InRelease for trixie is
+# now signed by D55C0D1AC78A8D8126CB631CFC9CA96ACA026560, and apt (sqv on Debian 13) reports
+# "Missing key D55C…" against the old key, 798AEC654E5C15428C8E42EEAA16FCBCA621E701, that
+# runner-233 and vault-223 still held. Two causes kept the old key in place:
+#   - configure-vault.yml fetched the key with get_url and no `force`, which skips a file that
+#     already exists, so the key never refreshed.
+#   - configure-runner.yml declared no HashiCorp source, so runner-233 kept a hand-placed one.
+# The two hosts also used different key files (.gpg and .asc). Both now use the armored .asc.
+
+hashicorp_apt_key_url: https://apt.releases.hashicorp.com/gpg
+hashicorp_apt_key_path: /usr/share/keyrings/hashicorp-archive-keyring.asc
+
+# SHA-256 of the armored key HashiCorp serves, which holds only
+# D55C0D1AC78A8D8126CB631CFC9CA96ACA026560. The pin makes the download fail rather than trust
+# whatever the URL returns. When HashiCorp rotates again, this task fails with a checksum
+# mismatch: read the new key with `gpg --show-keys`, then update this value.
+hashicorp_apt_key_sha256: 1df7d66b79352bab45388511079f74987568672a8ed6395053a050b61f6c5430
+
+# Keyring files an earlier run or a hand step left behind. Removing them leaves one path.
+hashicorp_apt_stale_keyrings:
+  - /usr/share/keyrings/hashicorp-archive-keyring.gpg
