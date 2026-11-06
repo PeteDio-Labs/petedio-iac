@@ -92,7 +92,9 @@ def main():
             out += [f"- `{a}`" for a in shown]
             if len(buckets[kind]) > len(shown):
                 out.append(f"- …and {len(buckets[kind]) - len(shown)} more")
-    if not any(buckets.values()):
+    if prior == 0 or not changes:
+        out.append("\n**The plan examined nothing, so this is not a clean plan.** The state read as empty or the plan held no resources.")
+    elif not any(buckets.values()):
         out.append("\nNo changes. The configuration matches the state.")
     elif buckets["import"] or buckets["move"] or buckets["other"]:
         out.append(f"\n{len(buckets['import'])} import(s), {len(buckets['move'])} move(s), "

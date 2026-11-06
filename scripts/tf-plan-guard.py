@@ -29,9 +29,9 @@ FILE_TOKENS = [
     (r'\bdata\b(?:\s|/\*.*?\*/)*"?(external|http|archive_file|dns_\w+|local_\w+|tls_\w+)\b',
      "data source of an execution or network provider"),
     (r'\bterraform_remote_state\b', "remote state read"),
-    (r'\bprovider\s*"|\brequired_providers\b', "provider configuration"),
-    (r'\bproviders\s*=', "provider passed to a module"),
-    (r'\bbackend\s*"', "backend block"),
+    (r'\bprovider(?:\s|/\*.*?\*/)*"|\brequired_providers\b', "provider configuration"),
+    (r'\bproviders?(?:\s|/\*.*?\*/)*=', "provider meta-argument"),
+    (r'\bbackend(?:\s|/\*.*?\*/)*"', "backend block"),
     (r'\\[uU][0-9a-fA-F]{4}', "unicode escape in a string"),
     # A function call may have comments between the name and "(" in HCL.
     (r'\b(file|fileexists|fileset|filebase64|filebase64sha256|filebase64sha512|filemd5|filesha1|filesha256|filesha512|templatefile|pathexpand|nonsensitive)\b'
@@ -44,7 +44,7 @@ ADDED_TOKENS = [
 ]
 # Every `source =` in a changed file must name one reviewed module. It is not anchored to a line
 # start, so `module "x" { source = "git::..." }` on one line is still caught.
-SOURCE = re.compile(r'\bsource\s*=\s*("([^"]*)")?')
+SOURCE = re.compile(r'\bsource(?:\s|/\*.*?\*/)*=(?:\s|/\*.*?\*/)*("([^"]*)")?', re.S)
 ALLOWED_SOURCE = re.compile(r'^\.\./\.\./modules/(proxmox-lxc|postgres-db|cloudflare-ingress)$')
 SAFE_NAME = re.compile(r'^[A-Za-z0-9._/@+=,-]+$')
 
@@ -115,10 +115,11 @@ def main():
     planned = [p for p in files if PLANNED.match(p)]
     reasons = []
     for mode, status, p in entries:
-        if not PLANNED.match(p):
-            continue  # Only paths the homelab root can load matter. vault-config has its own state.
+        # Anywhere in the repo: a symlink can stand in for a parent directory of a planned path.
         if mode in ("120000", "160000") and status != "D":
             reasons.append(f"{safe(p)}: symlink or submodule")
+        if not PLANNED.match(p):
+            continue  # Only paths the homelab root can load matter. vault-config has its own state.
         for pat, why in FORBIDDEN_PATH:
             if re.search(pat, p):
                 reasons.append(f"{safe(p)}: {why}")

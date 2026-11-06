@@ -89,10 +89,6 @@ def real_tree_case():
             if rc != 0:
                 bad.append(t)
     print("  refused real files:", bad if bad else "none", f"({len(targets)} candidates)")
-    if bad and os.environ.get("CI"):
-        # A file added since the guard was calibrated must not fail every unrelated PR.
-        print(f"::warning::tf-plan-guard refuses edits to {bad}; recalibrate scripts/tf-plan-guard.py")
-        return 0
     return len(bad)
 
 
@@ -142,6 +138,10 @@ results = [
           guard('module "x" { source = "git::https://evil.example/x.git" }\n'), 1),
     check("filebase64sha256 refused", guard('x = filebase64sha256("/a")\n'), 1),
     check("new vault data source refused", guard('data "vault_kv_secret_v2" "s" {}\n'), 1),
+    check("comment between source and = refused",
+          guard('module "x" { source /* c */ = "git::https://evil/x.git" }\n'), 1),
+    check("comment before provider label refused", guard('provider /* c */ "vault" {}\n'), 1),
+    check("provider meta-argument refused", guard('  provider = vault.e\n'), 1),
     check("unquoted vault label refused", guard('data vault_generic_secret leak {}\n'), 1),
     check("unquoted external label refused", guard('data external x {}\n'), 1),
     check(".terraform directory refused", guard2("environments/homelab/.terraform/modules/modules.json", "{}\n"), 1),
