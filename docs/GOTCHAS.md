@@ -542,7 +542,7 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   token — never repository-only (any branch/workflow). **For `petedio-iac` the
   `github-actions` role is now MAIN-PUSH ONLY (PET-104):** the PR job moved to a
   GitHub-hosted, no-Vault `fmt`/`validate` (PR-controlled code must not run on the
-  self-hosted LAN runner or mint creds), so there is no plan-on-PR to keep alive — do
+  self-hosted LAN runner or mint creds), so no `pull_request` run mints credentials. The PET-866 plan comment runs from `workflow_run` under its own role (`terraform-plan`), so do
   NOT re-add the `pull_request` sub here. The two-sub "bind BOTH" pattern still applies to
   roles whose repo genuinely runs a credentialed PR job (e.g. `media-ci`, `colatro-ci`
   until they get the same PET-104 treatment).

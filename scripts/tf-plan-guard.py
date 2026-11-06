@@ -26,7 +26,7 @@ FILE_TOKENS = [
     (r'\bprovisioner\b|\blocal-exec\b|\bremote-exec\b', "provisioner"),
     # Whitespace and /* */ comments may sit between tokens in HCL. The provider mirror in the
     # workflow is the real block on these providers; this is the second layer.
-    (r'\bdata\b(?:\s|/\*.*?\*/)*"(external|http|archive_file|dns_\w+|local_\w+|tls_\w+)"',
+    (r'\bdata\b(?:\s|/\*.*?\*/)*"?(external|http|archive_file|dns_\w+|local_\w+|tls_\w+)\b',
      "data source of an execution or network provider"),
     (r'\bterraform_remote_state\b', "remote state read"),
     (r'\bprovider\s*"|\brequired_providers\b', "provider configuration"),
@@ -38,7 +38,7 @@ FILE_TOKENS = [
 ]
 # Checked on a file's added lines only: existing Vault reads stay legal, new ones do not.
 ADDED_TOKENS = [
-    (r'\b(data|ephemeral|resource)\b(?:\s|/\*.*?\*/)*"vault_', "new Vault read or write"),
+    (r'\b(data|ephemeral|resource)\b(?:\s|/\*.*?\*/)*"?vault_', "new Vault read or write"),
 ]
 # Every `source =` in a changed file must name one reviewed module. It is not anchored to a line
 # start, so `module "x" { source = "git::..." }` on one line is still caught.
@@ -54,6 +54,7 @@ FORBIDDEN_PATH = [
     (r'(^|/)backend\.tf$', "backend configuration"),
     (r'^environments/homelab/(providers|variables|versions)\.tf$', "defines a provider destination"),
     (r'\.tfvars(\.json)?$|\.auto\.tfvars', "variable values file"),
+    (r'(^|/)\.terraform(/|$)|\.tfstate', "Terraform working directory or state"),
     (r'^modules/baremetal-host/', "module that holds a local-exec provisioner"),
 ]
 ALLOWED_ROOTS = re.compile(
@@ -93,7 +94,7 @@ def main():
         print(f"guard error: {base}..{head} changed 0 files, so nothing was examined")
         return 2
     files = [p for _, _, p in entries]
-    unsafe = [p for p in files if not SAFE_NAME.match(p)]
+    unsafe = [p for p in files if not SAFE_NAME.fullmatch(p)]
     if unsafe:
         # A name is attacker text. Print it escaped and never as a bare line, so it cannot forge
         # the PLANNED_PATHS or REFUSE lines the workflow parses.
@@ -130,6 +131,10 @@ def main():
         d = git(repo, "diff", "-U0", f"{base}..{head}", "--", p)
         added = "\n".join(l[1:] for l in d.stdout.decode(errors="replace").splitlines()
                           if l.startswith("+") and not l.startswith("+++"))
+        # An existing Vault block must keep reading the same secret.
+        if re.search(r'\b(data|ephemeral)\b\s*"?vault_', text) and \
+                re.search(r'\b(path|mount|name)\s*=|\bkv/', added):
+            reasons.append(f"{p}: added path, mount, name or kv/ line in a file that reads Vault")
         for pat, why in ADDED_TOKENS:
             if re.search(pat, added, re.S):
                 reasons.append(f"{p}: {why}")
