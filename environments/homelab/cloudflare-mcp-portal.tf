@@ -39,6 +39,10 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_portal" "pdlab" {
   description = "Plane and lab MCP servers behind one URL (PET-839)."
   hostname    = "mcp.pdlab.dev"
 
+  # Off on purpose. The beta runs remote code in Dynamic Workers, and the provider defaults
+  # it to true. Pedro turns it on in a later change if he wants it.
+  allow_code_mode = false
+
   servers = [
     { server_id = cloudflare_zero_trust_access_ai_controls_mcp_server.plane.id },
     { server_id = cloudflare_zero_trust_access_ai_controls_mcp_server.lab.id },
