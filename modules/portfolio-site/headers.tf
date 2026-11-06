@@ -1,5 +1,5 @@
 # Security headers for the portfolio (PET-820). The site ships no inline script and loads only
-# Google Fonts and the Cloudflare Web Analytics beacon, so the policy can stay tight: scripts
+# its own fonts and the Cloudflare Web Analytics beacon, so the policy can stay tight: scripts
 # from 'self' and the beacon host. Style attributes are inline in the pages, so style-src needs
 # 'unsafe-inline'. petedio-labs/pdlabs-portfolio has a test that fails when a page gains an
 # inline script, which is what keeps this policy valid.
@@ -8,8 +8,8 @@ locals {
   csp = join("; ", [
     "default-src 'self'",
     "script-src 'self' https://static.cloudflareinsights.com",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
     "img-src 'self' data:",
     "connect-src 'self' https://cloudflareinsights.com",
     "object-src 'none'",
