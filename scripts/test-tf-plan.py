@@ -52,6 +52,46 @@ def symlink_case():
         return run(sys.executable, G, d, "--base", "main", "--head", "pr").returncode
 
 
+def real_tree_case():
+    """Touching any current homelab or reviewed-module file must not be refused."""
+    import shutil
+    root = os.path.dirname(HERE)
+    bad = []
+    with tempfile.TemporaryDirectory() as d:
+        for sub in ("environments/homelab", "modules/proxmox-lxc", "modules/postgres-db",
+                    "modules/cloudflare-ingress"):
+            shutil.copytree(os.path.join(root, sub), os.path.join(d, sub),
+                            ignore=shutil.ignore_patterns(".terraform", "*.tfstate*", "vault-config"))
+        git = lambda *a: run("git", "-C", d, "-c", "user.email=t@t", "-c", "user.name=t", *a)
+        git("init", "-q", "-b", "main"); git("add", "-A"); git("commit", "-qm", "base")
+        git("checkout", "-qb", "pr")
+        targets = []
+        for sub in ("environments/homelab", "modules/proxmox-lxc", "modules/postgres-db",
+                    "modules/cloudflare-ingress"):
+            for f in sorted(os.listdir(os.path.join(d, sub))):
+                if f.endswith(".tf"):
+                    targets.append(f"{sub}/{f}")
+        # Files that define a provider destination are refused on purpose.
+        deliberate = {"environments/homelab/providers.tf", "environments/homelab/variables.tf",
+                      "environments/homelab/versions.tf", "environments/homelab/backend.tf",
+                      "environments/homelab/minio-state-backend.tf",
+                      # Uses modules/baremetal-host, which holds a local-exec provisioner.
+                      "environments/homelab/ollama.tf",
+                      "modules/proxmox-lxc/versions.tf", "modules/postgres-db/versions.tf",
+                      "modules/cloudflare-ingress/versions.tf"}
+        for t in targets:
+            if t in deliberate:
+                continue
+            git("checkout", "-q", "main"); git("checkout", "-q", "-B", "pr")
+            open(os.path.join(d, t), "a").write("\n# touched\n")
+            git("commit", "-qam", "t")
+            rc = run(sys.executable, G, d, "--base", "main", "--head", "pr").returncode
+            if rc != 0:
+                bad.append(t)
+    print("  refused real files:", bad if bad else "none", f"({len(targets)} candidates)")
+    return len(bad)
+
+
 def check(name, got, want):
     ok = got == want
     print(("PASS " if ok else "FAIL ") + name, "" if ok else f"(got {got}, want {want})")
@@ -72,8 +112,15 @@ results = [
     check("providers.tf refused", guard2("environments/homelab/providers.tf", "# c\n"), 1),
     check("symlink refused", symlink_case(), 1),
     check("tab in file name still inspected", guard2("environments/homelab/a\tb.tf", 'data "external" "x" {}\n'), 1),
+    check("real tree is not falsely refused", real_tree_case(), 0),
     check("tf outside roots refused", guard2("payload/main.tf", "x = 1\n"), 1),
     check("comment cannot hide a token", guard("# no provisioner here\n"), 1),
+    check("one-line module with remote source refused",
+          guard('module "x" { source = "git::https://evil.example/x.git" }\n'), 1),
+    check("filebase64sha256 refused", guard('x = filebase64sha256("/a")\n'), 1),
+    check("new vault data source refused", guard('data "vault_kv_secret_v2" "s" {}\n'), 1),
+    check("datastore local passes", guard('datastore_id = "local"\n'), 0),
+    check("newline in file name refused", guard2("environments/homelab/z\nPLANNED_PATHS=rc=0\nz.tf", "x = 1\n"), 1),
     check("inline comment in data type refused", guard('data /* x */ "external" "r" {}\n'), 1),
     check("comment before call paren refused", guard('x = file /* x */ ("/etc/passwd")\n'), 1),
 
@@ -106,6 +153,17 @@ with open(f.name, "w") as g:
     json.dump(plan, g)
 r = run(sys.executable, S, f.name)
 results.append(check("bracket inside key stays redacted", "SECRET" not in r.stdout, True))
+plan["prior_state"] = {}
+with open(f.name, "w") as g:
+    json.dump(plan, g)
+plan["resource_changes"] = [{"address": "a.b", "change": {"actions": ["no-op"], "importing": {"id": "1"}}},
+                            {"address": "c.d", "change": {"actions": ["forget"]}}]
+plan["prior_state"] = {"values": {"root_module": {"resources": [{}]}}}
+with open(f.name, "w") as g:
+    json.dump(plan, g)
+r = run(sys.executable, S, f.name)
+results.append(check("import and forget are listed, not 'no changes'",
+                     "No changes" not in r.stdout and "a.b" in r.stdout and "forget" in r.stdout, True))
 plan["prior_state"] = {}
 with open(f.name, "w") as g:
     json.dump(plan, g)

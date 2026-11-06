@@ -50,9 +50,15 @@ def main():
         return n
 
     prior = count(plan.get("prior_state", {}).get("values", {}).get("root_module", {}))
-    buckets = {"create": [], "update": [], "replace": [], "destroy": []}
+    buckets = {"create": [], "update": [], "replace": [], "destroy": [],
+               "import": [], "move": [], "other": []}
     for r in changes:
-        a = r.get("change", {}).get("actions", [])
+        ch = r.get("change", {})
+        a = ch.get("actions", [])
+        if ch.get("importing"):
+            buckets["import"].append(redact(r["address"]))
+        if r.get("previous_address") and r["previous_address"] != r["address"]:
+            buckets["move"].append(redact(r["address"]))
         if a == ["no-op"] or a == ["read"]:
             continue
         if "delete" in a and "create" in a:
@@ -63,6 +69,9 @@ def main():
             buckets["create"].append(redact(r["address"]))
         elif "update" in a:
             buckets["update"].append(redact(r["address"]))
+        else:
+            # forget, or an action this script does not know: list it, never call it "no changes".
+            buckets["other"].append(redact(r["address"]) + " (" + ",".join(a) + ")")
     out = []
     removes = buckets["replace"] + buckets["destroy"]
     if removes:
@@ -76,12 +85,15 @@ def main():
         f"**{len(buckets['create'])} to add, {len(buckets['update'])} to change, "
         f"{len(buckets['replace'])} to replace, {len(buckets['destroy'])} to destroy.** "
         f"Examined {len(changes)} planned resources against a state of {prior} resources.")
-    for kind in ("create", "update"):
+    for kind in ("create", "update", "import", "move", "other"):
         if buckets[kind]:
             out.append(f"\n{kind}:")
             out += [f"- `{a}`" for a in sorted(buckets[kind])]
     if not any(buckets.values()):
         out.append("\nNo changes. The configuration matches the state.")
+    elif buckets["import"] or buckets["move"] or buckets["other"]:
+        out.append(f"\n{len(buckets['import'])} import(s), {len(buckets['move'])} move(s), "
+                   f"{len(buckets['other'])} other action(s) are listed above.")
     print("\n".join(out))
     if prior == 0 or not changes:
         print("\nERROR: plan examined 0 resources", file=sys.stderr)

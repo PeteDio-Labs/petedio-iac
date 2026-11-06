@@ -24,17 +24,28 @@ import sys
 # Whole-file tokens, checked in every changed Terraform file.
 FILE_TOKENS = [
     (r'\bprovisioner\b|\blocal-exec\b|\bremote-exec\b', "provisioner"),
-    (r'"external"|"http"|"archive"|"local"|"dns"|"tls"', "data source of an execution or network provider"),
+    # Whitespace and /* */ comments may sit between tokens in HCL. The provider mirror in the
+    # workflow is the real block on these providers; this is the second layer.
+    (r'\bdata\b(?:\s|/\*.*?\*/)*"(external|http|archive_file|dns_\w+|local_\w+|tls_\w+)"',
+     "data source of an execution or network provider"),
     (r'\bterraform_remote_state\b', "remote state read"),
     (r'\bprovider\s*"|\brequired_providers\b', "provider configuration"),
     (r'\bproviders\s*=', "provider passed to a module"),
     (r'\bbackend\s*"', "backend block"),
     # A function call may have comments between the name and "(" in HCL.
-    (r'\b(file|templatefile|fileset|filebase64|filemd5|filesha1|filesha256|pathexpand|nonsensitive)\b'
+    (r'\b(file|fileexists|fileset|filebase64|filebase64sha256|filebase64sha512|filemd5|filesha1|filesha256|filesha512|templatefile|pathexpand|nonsensitive)\b'
      r'\s*(?:/\*.*?\*/\s*|(?:#|//)[^\n]*\n\s*)*\(', "file read or nonsensitive()"),
 ]
-# Added lines only: module sources that already exist stay legal.
-ADDED_SOURCE = re.compile(r'^\s*source\s*=\s*"(?!\.\./\.\./modules/(proxmox-lxc|postgres-db|cloudflare-ingress)")')
+# Checked on a file's added lines only: existing Vault reads stay legal, new ones do not.
+ADDED_TOKENS = [
+    (r'\b(data|ephemeral|resource)\b(?:\s|/\*.*?\*/)*"vault_', "new Vault read or write"),
+]
+# Every `source =` in a changed file must name one reviewed module. It is not anchored to a line
+# start, so `module "x" { source = "git::..." }` on one line is still caught.
+SOURCE = re.compile(r'\bsource\s*=\s*("([^"]*)")?')
+ALLOWED_SOURCE = re.compile(r'^\.\./\.\./modules/(proxmox-lxc|postgres-db|cloudflare-ingress)$')
+SAFE_NAME = re.compile(r'^[A-Za-z0-9._/@+=,-]+$')
+
 FORBIDDEN_PATH = [
     (r'(^|/)\.terraform\.lock\.hcl$', "provider lock file"),
     (r'(^|/)(override|.*_override)\.tf(\.json)?$', "override file"),
@@ -82,6 +93,15 @@ def main():
         print(f"guard error: {base}..{head} changed 0 files, so nothing was examined")
         return 2
     files = [p for _, _, p in entries]
+    unsafe = [p for p in files if not SAFE_NAME.match(p)]
+    if unsafe:
+        # A name is attacker text. Print it escaped and never as a bare line, so it cannot forge
+        # the PLANNED_PATHS or REFUSE lines the workflow parses.
+        print(f"guard examined {len(files)} changed files, 0 under planned paths")
+        print("PLANNED_PATHS=0")
+        for p in unsafe:
+            print("REFUSE file name with characters outside the safe set: " + ascii(p).replace("`", "?"))
+        return 1
     planned = [p for p in files if PLANNED.match(p)]
     reasons = []
     for mode, status, p in entries:
@@ -90,10 +110,11 @@ def main():
         for pat, why in FORBIDDEN_PATH:
             if re.search(pat, p):
                 reasons.append(f"{p}: {why}")
-        if planned and TERRAFORM_FILE.search(p) and not ALLOWED_ROOTS.match(p) \
-                and not p.startswith("environments/homelab/vault-config/"):
+        in_vault_config = p.startswith("environments/homelab/vault-config/")
+        if planned and TERRAFORM_FILE.search(p) and not ALLOWED_ROOTS.match(p) and not in_vault_config:
             reasons.append(f"{p}: Terraform file outside the planned roots")
-        if status == "D" or not TERRAFORM_FILE.search(p):
+        # vault-config has its own state and is never planned, so its content is not scanned.
+        if status == "D" or not TERRAFORM_FILE.search(p) or not ALLOWED_ROOTS.match(p):
             continue
         body = git(repo, "show", f"{head}:{p}")
         if body.returncode != 0:
@@ -103,15 +124,20 @@ def main():
         for pat, why in FILE_TOKENS:
             if re.search(pat, text, re.S):
                 reasons.append(f"{p}: {why}")
+        for m in SOURCE.finditer(text):
+            if m.group(2) is None or not ALLOWED_SOURCE.match(m.group(2)):
+                reasons.append(f"{p}: source other than the three reviewed modules")
         d = git(repo, "diff", "-U0", f"{base}..{head}", "--", p)
-        for line in d.stdout.decode(errors="replace").splitlines():
-            if line.startswith("+") and not line.startswith("+++") and ADDED_SOURCE.search(line[1:]):
-                reasons.append(f"{p}: added source other than the three reviewed modules")
+        added = "\n".join(l[1:] for l in d.stdout.decode(errors="replace").splitlines()
+                          if l.startswith("+") and not l.startswith("+++"))
+        for pat, why in ADDED_TOKENS:
+            if re.search(pat, added, re.S):
+                reasons.append(f"{p}: {why}")
     print(f"guard examined {len(files)} changed files, {len(planned)} under planned paths")
     print(f"PLANNED_PATHS={len(planned)}")
     if reasons:
         for r in sorted(set(reasons)):
-            print(f"REFUSE {r}")
+            print("REFUSE " + r.replace("`", "?"))
         return 1
     return 0
 

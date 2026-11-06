@@ -56,6 +56,7 @@ jobs:
     env:
       TF_IN_AUTOMATION: "1"
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      PAYLOAD_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
@@ -76,7 +77,13 @@ jobs:
           set -euo pipefail
           N=$(gh api "repos/${GH_REPO}/commits/${HEAD_SHA}/pulls" --jq '[.[] | select(.state=="open" and .base.ref=="main")][0].number // empty')
           if [ -z "$N" ]; then
-            echo "No open pull request into main has head $HEAD_SHA, so nothing was planned."
+            # The workflow_run payload names the PR when GitHub has indexed it. If it does, an
+            # empty lookup is a failure to find it, so fail instead of reporting green.
+            if [ -n "${PAYLOAD_PR}" ]; then
+              echo "::error::PR ${PAYLOAD_PR} was named by the trigger but the lookup for head $HEAD_SHA found no open PR into main"
+              exit 1
+            fi
+            echo "No open pull request into main has head $HEAD_SHA, so nothing was planned and nothing was examined."
             echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           echo "number=$N" >> "$GITHUB_OUTPUT"
@@ -119,6 +126,9 @@ jobs:
           echo "rc=$RC" >> "$GITHUB_OUTPUT"
           echo "planned=${PLANNED:-0}" >> "$GITHUB_OUTPUT"
           # rc 2 means the guard could not read the diff: fail the job, do not skip.
+          if [ "$RC" -eq 0 ] && [ "${PLANNED:-0}" = "0" ]; then
+            echo "Guard examined the changed files; none are under environments/homelab or modules, so no plan was needed." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
           [ "$RC" -le 1 ]
 
       - name: Say why no plan runs
@@ -208,7 +218,7 @@ jobs:
           umask 077
           terraform init -input=false -lockfile=readonly
           terraform plan -input=false -no-color -lock=false -out=tfplan > plan.log 2>&1 || {
-            tail -n 5 plan.log | sed 's/^/plan.log: /'
+            { grep -m1 '^Error' plan.log || true; } | cut -c1-100 | sed 's/^/plan.log: /'
             echo "::error::terraform plan failed (last lines above)"; exit 1; }
           terraform show -json tfplan > plan.json
           {
@@ -242,7 +252,7 @@ jobs:
           MARK='<!-- terraform-plan-comment -->'
           { echo "$MARK"; cat comment.md; } > body.md
           ID=$(gh api "repos/${GH_REPO}/issues/${PR}/comments" --paginate \
-                 --jq "[.[] | select(.body | startswith(\"$MARK\"))][0].id // empty")
+                 --jq "[.[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$MARK\")))][0].id // empty")
           if [ -n "$ID" ]; then
             gh api -X PATCH "repos/${GH_REPO}/issues/comments/${ID}" -F body=@body.md > /dev/null
           else
