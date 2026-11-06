@@ -11,6 +11,21 @@ import json
 import sys
 
 
+def redact(address):
+    """Drop for_each and count keys: an evaluated key can carry a secret into a public comment."""
+    out, depth = [], 0
+    for ch in address:
+        if ch == "[":
+            if depth == 0:
+                out.append("[…]")
+            depth += 1
+        elif ch == "]":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            out.append(ch)
+    return "".join(out)
+
+
 def main():
     plan = json.load(open(sys.argv[1]))
     changes = plan.get("resource_changes", [])
@@ -28,13 +43,13 @@ def main():
         if a == ["no-op"] or a == ["read"]:
             continue
         if "delete" in a and "create" in a:
-            buckets["replace"].append(r["address"])
+            buckets["replace"].append(redact(r["address"]))
         elif "delete" in a:
-            buckets["destroy"].append(r["address"])
+            buckets["destroy"].append(redact(r["address"]))
         elif "create" in a:
-            buckets["create"].append(r["address"])
+            buckets["create"].append(redact(r["address"]))
         elif "update" in a:
-            buckets["update"].append(r["address"])
+            buckets["update"].append(redact(r["address"]))
     out = []
     removes = buckets["replace"] + buckets["destroy"]
     if removes:

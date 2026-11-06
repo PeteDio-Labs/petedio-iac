@@ -23,7 +23,12 @@ FORBIDDEN_LINE = [
     (r'\bdata\s+"external"', 'data "external"'),
     (r'\bdata\s+"http"', 'data "http"'),
     (r'\bexternal\b\s*=\s*\{', "external provider"),
-    (r'^\s*source\s*=\s*"(?!\.\.?/)', "source outside this repo (provider or module)"),
+    (r'^\s*source\s*=\s*"(?!\.\./\.\./modules/(proxmox-lxc|postgres-db|cloudflare-ingress)")',
+     "source other than the three reviewed modules"),
+    (r'^\s*provider\s+"|\brequired_providers\b', "provider configuration"),
+    (r'\bterraform_remote_state\b', "remote state read"),
+    (r'\bnonsensitive\s*\(', "nonsensitive()"),
+    (r'\b(file|templatefile|fileset|filebase64|pathexpand)\s*\(', "local file read"),
     (r'\bprovider_installation\b|\bplugin_cache\b', "CLI config"),
     (r'\bbackend\s+"', "backend block"),
     (r'\bendpoints?\s*=', "backend or provider endpoint"),
@@ -35,8 +40,15 @@ FORBIDDEN_PATH = [
     (r'\.tf\.json$', "JSON configuration"),
     (r'(^|/)\.terraformrc$|\.tfrc$', "CLI config file"),
     (r'(^|/)backend\.tf$', "backend configuration"),
+    # These define where the provider sends the credentials (PET-866 review, P1).
+    (r'^environments/homelab/(providers|variables|versions)\.tf$', "defines a provider destination"),
+    (r'\.tfvars(\.json)?$|\.auto\.tfvars', "variable values file"),
     (r'^modules/baremetal-host/', "module that holds a local-exec provisioner"),
 ]
+# The only directories the homelab root may load. A Terraform file anywhere else in a PR that
+# also changes the planned roots is refused, because a root could point a module at it.
+ALLOWED_ROOTS = re.compile(
+    r'^(environments/homelab/[^/]+$|modules/(proxmox-lxc|postgres-db|cloudflare-ingress)/)')
 PLANNED = re.compile(r'^(environments/homelab/(?!vault-config/)|modules/)')
 TERRAFORM_FILE = re.compile(r'\.(tf|tfvars|hcl)$')
 
@@ -70,6 +82,11 @@ def main():
         for pat, why in FORBIDDEN_PATH:
             if re.search(pat, f):
                 reasons.append(f"{f}: {why}")
+    if planned:
+        for f in files:
+            if (TERRAFORM_FILE.search(f) or f.endswith(".tf.json")) and not ALLOWED_ROOTS.match(f) \
+                    and not f.startswith("environments/homelab/vault-config/"):
+                reasons.append(f"{f}: Terraform file outside the planned roots")
     for f in planned:
         if not TERRAFORM_FILE.search(f):
             continue

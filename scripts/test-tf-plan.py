@@ -32,6 +32,17 @@ def guard(content):
         return run(sys.executable, G, d, "--base", "main", "--head", "pr").returncode
 
 
+def guard2(path, content):
+    with tempfile.TemporaryDirectory() as d:
+        repo(d, "b = 2\n")
+        git = lambda *a: run("git", "-C", d, "-c", "user.email=t@t", "-c", "user.name=t", *a)
+        full = os.path.join(d, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        open(full, "a").write(content)
+        git("add", "-A"); git("commit", "-qm", "x")
+        return run(sys.executable, G, d, "--base", "main", "--head", "pr").returncode
+
+
 def check(name, got, want):
     ok = got == want
     print(("PASS " if ok else "FAIL ") + name, "" if ok else f"(got {got}, want {want})")
@@ -43,7 +54,14 @@ results = [
     check("local-exec refused", guard('provisioner "local-exec" {}\n'), 1),
     check("external data refused", guard('data "external" "x" {}\n'), 1),
     check("remote module refused", guard('  source = "git::https://x/y"\n'), 1),
-    check("local module passes", guard('  source = "../../modules/proxmox-lxc"\n'), 0),
+    check("reviewed module passes", guard('  source = "../../modules/proxmox-lxc"\n'), 0),
+    check("other local module refused", guard('  source = "../../payload"\n'), 1),
+    check("provider block refused", guard('provider "x" {}\n'), 1),
+    check("nonsensitive refused", guard('x = nonsensitive(var.t)\n'), 1),
+    check("file read refused", guard('x = file("/etc/passwd")\n'), 1),
+    check("tfvars refused", guard2("environments/homelab/r.auto.tfvars", 'proxmox_endpoint="x"\n'), 1),
+    check("providers.tf refused", guard2("environments/homelab/providers.tf", "# c\n"), 1),
+    check("tf outside roots refused", guard2("payload/main.tf", "x = 1\n"), 1),
     check("comment mentioning provisioner passes", guard("# no provisioner here\n"), 0),
 ]
 with tempfile.TemporaryDirectory() as d:
@@ -56,6 +74,15 @@ with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
     json.dump(plan, f)
 r = run(sys.executable, S, f.name)
 results.append(check("destroy is flagged", "removes 1" in r.stdout and r.returncode == 0, True))
+plan["prior_state"] = {}
+with open(f.name, "w") as g:
+    json.dump(plan, g)
+plan["resource_changes"] = [{"address": 'x.y["sekrit"]', "change": {"actions": ["create"]}}]
+plan["prior_state"] = {"values": {"root_module": {"resources": [{}]}}}
+with open(f.name, "w") as g:
+    json.dump(plan, g)
+r = run(sys.executable, S, f.name)
+results.append(check("instance keys redacted", "sekrit" not in r.stdout and "x.y[…]" in r.stdout, True))
 plan["prior_state"] = {}
 with open(f.name, "w") as g:
     json.dump(plan, g)
