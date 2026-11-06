@@ -39,7 +39,8 @@ resource "cloudflare_email_routing_dns" "pdlab" {
   count = var.email_routing_live ? 1 : 0
 
   zone_id = local.cloudflare_zone_id
-  name    = "pdlab.dev"
+  # Leave name unset. POST /email/routing/dns reads name as a subdomain and returns 422 (code 2007,
+  # "must be a subdomains of pdlab.dev") for the apex. With no name, Cloudflare enables routing on the zone itself.
 }
 
 resource "cloudflare_email_routing_address" "destination" {
