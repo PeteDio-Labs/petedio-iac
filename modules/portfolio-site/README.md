@@ -72,7 +72,10 @@ The account is `847547470418`. Put the module in its own root with its own state
 1. Apply with `attach_domain = false`. Set `AWS_ROLE_ARN`, `BUCKET` and `DISTRIBUTION_ID` as
    variables on the `portfolio` repo from the outputs. They are identifiers, not secrets.
 2. Run the portfolio deploy workflow. Open `cloudfront_domain` and check the pages.
-3. Create the `acm_validation_records` in Cloudflare with the proxy off.
-4. Apply with `attach_domain = true`. The apply waits for the certificate.
-5. Point the apex at `cloudfront_domain` with a proxied-off CNAME (Cloudflare flattens it).
-   This cutover moves `pdlab.dev` traffic. Check the existing apex records first.
+3. The ACM validation CNAME is declared in `environments/homelab/cloudflare-portfolio.tf`
+   (unproxied). It applies on merge to `main`.
+4. From `environments/portfolio`, apply with `-var attach_domain=true`. The apply waits for the certificate.
+   Set `attach_domain` default to `true` in the same change so later plans keep the alias.
+5. Set `portfolio_apex_live` to `true` in `cloudflare-portfolio.tf`. The apex CNAME points at
+   `cloudfront_domain`; the apply on merge needs `ALLOW_DESTROY` while the tunnel CNAME for
+   `pdlab.dev` is still in state. Rollback: set it back to `false` and restore a tunnel route.
