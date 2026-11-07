@@ -124,7 +124,10 @@
         {{ 'restart' if ssh_socket.stdout | trim == 'active' else 'reload' }} ssh.service
       changed_when: false
 
+    # A check run writes nothing (command tasks are skipped), so sshd -T cannot show the CA yet.
+    # Reading it back then would fail a correct plan, so the read-back runs on a real apply only.
     - name: Read back the effective sshd configuration
+      when: not ansible_check_mode
       ansible.builtin.shell: |
         set -o pipefail
         pct exec {{ guest_vmid }} -- /usr/sbin/sshd -T | grep -E '^(trustedusercakeys|authorizedprincipalsfile) '
@@ -133,6 +136,7 @@
       changed_when: false
 
     - name: Assert the CA and the principals file are the effective ones
+      when: not ansible_check_mode
       ansible.builtin.assert:
         that:
           - ('trustedusercakeys ' ~ ca_file) in effective.stdout_lines
@@ -155,8 +159,12 @@
     - name: Report what was examined
       ansible.builtin.debug:
         msg: >-
-          ollama-246 (vmid {{ guest_vmid }}) on {{ inventory_hostname }}: CA key {{ land_ca.stdout | default('not written in a check') | trim }},
-          root principals {{ guest_root_principals | join(', ') }} {{ land_principals.stdout | default('not written in a check') | trim }},
+          {{ 'CHECK RUN: nothing was written and the sshd read-back was skipped. ' if ansible_check_mode else '' }}
+          ollama-246 (vmid {{ guest_vmid }}) on {{ inventory_hostname }}:
+          CA key {{ land_ca.stdout | default('not written in a check') | trim }},
+          root principals {{ guest_root_principals | join(', ') }}
+          {{ land_principals.stdout | default('not written in a check') | trim }},
           drop-in {{ land_dropin.stdout | default('not written in a check') | trim }};
-          sshd -T names the CA and the principals file; {{ listeners.stdout | trim }} listener(s) on port 22.
+          {{ '' if ansible_check_mode else 'sshd -T names the CA and the principals file; ' }}
+          {{ listeners.stdout | trim }} listener(s) on port 22.
           Prove the daemon with a certificate login.
