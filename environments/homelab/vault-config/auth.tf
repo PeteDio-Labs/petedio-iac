@@ -413,6 +413,39 @@ resource "vault_jwt_auth_backend_role" "lab_action_read" {
   token_ttl      = 900
 }
 
+# terraform-plan role → ci-read policy (PET-866). terraform-plan.yml plans a same-repo pull
+# request on the homelab runner and comments the result, so a thread reads the plan and Pedro
+# does not run it by hand.
+#
+# ⚠ THIS ROLE HANDS A PULL REQUEST'S TERRAFORM THE SAME READ CREDENTIALS THE APPLY JOB HOLDS.
+# PET-104 removed the pull_request subject from github-actions for that reason, so the binding
+# below is not a pull_request subject. The workflow is triggered by `workflow_run`, which runs the
+# copy of terraform-plan.yml on main with ref=refs/heads/main, so a PR cannot edit the steps that
+# hold the token. workflow_ref pins that file and event_name pins workflow_run, so a push, a
+# schedule, a dispatch or a pull_request run mints nothing. The pull request's code is checked
+# out into a separate directory, and scripts/tf-plan-guard.py refuses to plan any change that
+# adds a provisioner, an external or http data source, a non-local source or a lock-file change.
+# It binds claims rather than sub because the id-based subject migration (PET-360) changes sub.
+#
+# APPLY THIS BEFORE THE FIRST PLAN. Until the role exists in Vault, the workflow's login fails
+# with a 403, the run is red, and the comment says the plan did not run.
+resource "vault_jwt_auth_backend_role" "terraform_plan" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "terraform-plan"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository   = var.github_repo
+    ref          = "refs/heads/main"
+    event_name   = "workflow_run"
+    workflow_ref = "${var.github_repo}/.github/workflows/terraform-plan.yml@refs/heads/main"
+  }
+  token_policies = [vault_policy.ci_read.name]
+  token_ttl      = 900
+}
+
 # claude-ops role → claude-ops policy (PET-531). The token backend's OWN role — not an
 # AppRole and not a JWT role — because the token it mints is delivered by hand, once, by
 # scripts/seed-claude-ops-vault-token.sh from an operator's Vault session onto claude-247 for

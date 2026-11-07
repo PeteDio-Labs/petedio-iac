@@ -7,6 +7,7 @@
 #   lab_verify      scripts/lab-verify.sh --quiet                  no approval
 #   lab_updates     scripts/lab-updates.sh                         no approval
 #   lab_probe       one read-only probe inside LXC 237             no approval
+#   repo_vars       the allowlisted repo variables, set or unset   no approval
 #   playbook_check  ansible-playbook --check on the nodes          no approval
 #   playbook_apply  a check, then the real run after Pedro's tap   lab-write environment
 #
@@ -37,10 +38,11 @@ on:
           - lab_verify
           - lab_updates
           - lab_probe
+          - repo_vars
           - playbook_check
           - playbook_apply
       target:
-        description: "playbook actions: a file name from scripts/lab-playbooks.txt. lab_probe: journal, mtrace, media_ask or guests"
+        description: "playbook actions: a file name from scripts/lab-playbooks.txt. lab_probe: journal, mtrace, media_ask, guests or health"
         required: false
         type: string
         default: ""
@@ -114,6 +116,8 @@ jobs:
           ACTION: ${{ inputs.action == 'playbook_apply' && 'playbook_check' || inputs.action }}
           TARGET: ${{ inputs.target }}
           PROBE_ARGS: ${{ inputs.args }}
+          # repo_vars prints only the names in scripts/lab-repo-vars.txt. Variables are not secrets.
+          REPO_VARS_JSON: ${{ toJSON(vars) }}
           # lab-verify.sh reads the org's runners with gh. This token can't list them, so that
           # check reports the refusal rather than a dead runner (PET-500).
           GH_TOKEN: ${{ github.token }}
