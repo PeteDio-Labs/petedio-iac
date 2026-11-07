@@ -17,7 +17,8 @@
 #   * A scratch VMID that already exists. The play never destroys a guest it did not create.
 #   * An archive whose guest config has a mount point, a device passthrough or a raw lxc.*
 #     line. A restore of those could name a host path, and a scratch guest has no business there.
-#   * Less free space on the target storage than the archive needs, with margin.
+#   * A leftover volume for the scratch VMID on the target storage. The play does not delete it.
+#   * Less free space on the target storage than the guest's rootfs size needs, plus headroom.
 # A check run (playbook_check) does the preflight and skips the restore.
 #
 # The final line says what was examined: archive, size, file count, and that the scratch guest
@@ -124,13 +125,43 @@
       changed_when: false
       check_mode: false  # lab-action: read-only
 
-    - name: Require free space on the target storage
+    # The compressed archive size does not bound the restore. The guest's rootfs size, which
+    # the stored config names, does: the restore allocates that volume on the target storage.
+    # A size the play cannot read as K, M, G or T fails the play.
+    - name: Read the rootfs size the restore will allocate
+      ansible.builtin.set_fact:
+        restore_test_rootfs_kib: >-
+          {%- set m = restore_test_conf.stdout_lines | select('match', '^rootfs:') | first
+              | regex_findall('size=([0-9]+)([KMGT])') -%}
+          {%- set unit = {'K': 1, 'M': 1024, 'G': 1048576, 'T': 1073741824} -%}
+          {{ (m[0][0] | int * unit[m[0][1]]) if m | length == 1 else 0 }}
+
+    - name: Require free space for the expanded filesystem plus headroom
       ansible.builtin.assert:
         that:
+          - restore_test_rootfs_kib | int > 0
           # pvesm status prints: Name Type Status Total Used Available %. Sizes are KiB.
-          - (restore_test_storage.stdout_lines[1].split()[5] | int) > (restore_test_min_free_gib * 1048576) + (restore_test_archive_bytes | int / 1024)
+          - (restore_test_storage.stdout_lines[1].split()[5] | int) > (restore_test_min_free_gib * 1048576) + (restore_test_rootfs_kib | int)
         fail_msg: >-
-          {{ restore_test_target_storage }} has too little free space: {{ restore_test_storage.stdout_lines[1] }}
+          {{ restore_test_target_storage }} lacks space for a {{ restore_test_rootfs_kib }} KiB rootfs plus
+          {{ restore_test_min_free_gib }} GiB headroom, or the rootfs size is unreadable:
+          {{ restore_test_storage.stdout_lines[1] }}
+
+    # A leftover volume for the scratch VMID would collide with the restore. The play refuses it
+    # instead of deleting it, because the play did not create it.
+    - name: List volumes already named for the scratch VMID
+      ansible.builtin.command:
+        argv: [pvesm, list, "{{ restore_test_target_storage }}", --vmid, "{{ restore_test_scratch_vmid }}"]
+      register: restore_test_leftovers
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Refuse a leftover volume
+      ansible.builtin.assert:
+        that: restore_test_leftovers.stdout_lines | length <= 1
+        fail_msg: >-
+          {{ restore_test_target_storage }} already holds a volume for VMID {{ restore_test_scratch_vmid }}.
+          Remove it by hand after checking it: {{ restore_test_leftovers.stdout_lines }}
 
     - name: Say what the preflight examined
       ansible.builtin.debug:
@@ -141,7 +172,9 @@
             {{ (restore_test_archive_bytes | int / 1048576) | round(0) | int }} MiB,
             {{ restore_test_archive_age_h }} h old, stream test passed"
           - "config lines read {{ restore_test_conf.stdout_lines | length }}; no mount point, device or lxc.* line"
-          - "target {{ restore_test_target_storage }}: {{ restore_test_storage.stdout_lines[1] }}"
+          - "target {{ restore_test_target_storage }}: {{ restore_test_storage.stdout_lines[1] }};
+            rootfs to allocate {{ restore_test_rootfs_kib }} KiB; leftover volumes for the scratch VMID:
+            {{ (restore_test_leftovers.stdout_lines | length) - 1 }}"
 
     - name: Restore, inspect and remove the scratch guest
       when: not ansible_check_mode
@@ -219,8 +252,6 @@
               - destroy
               - "{{ restore_test_scratch_vmid }}"
               - --purge
-              - "1"
-              - --destroy-unreferenced-disks
               - "1"
           when: restore_test_restore is defined
           failed_when: false
