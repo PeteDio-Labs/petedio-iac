@@ -281,6 +281,43 @@ uptime_kuma_monitors:
   # outside service, so an ipify outage also reads as DOWN. Kuma's DOWN message
   # quotes the body, which tells a new address apart from an ipify fault.
   # To accept a new address, change the keyword here and redeploy.
+  # -- public endpoints, certificate expiry and the Cloudflare tunnel (PET-710) ----
+  # These dial the public hostnames from the Pi, so they see what a visitor sees: DNS, the
+  # edge certificate and the origin behind it. `expiry_notification` makes Kuma alert 7, 14
+  # and 21 days before the certificate expires, which is the only warning a lapsed renewal gives.
+  # Each runs every five minutes, because three outside hosts do not need a 20 s probe.
+  #
+  # The tunnel has no monitor of its own. auth.pdlab.dev and seer.pdlab.dev both ride the
+  # Cloudflare tunnel (environments/homelab/cloudflare-routes.tf), and pdlab.dev does not
+  # (S3 and CloudFront). So the readings tell the cause apart:
+  #   - pdlab.dev DOWN alone: the portfolio or its CloudFront distribution.
+  #   - auth and seer DOWN together, pdlab.dev UP: the tunnel, cloudflared or Cloudflare.
+  #   - one of auth or seer DOWN alone: that origin.
+  # A cloudflared metrics monitor needs the metrics port PET-768 exposes. Add it there.
+  - name: public-portfolio
+    type: http
+    url: "https://pdlab.dev/"
+    interval: 300
+    retry_interval: 60
+    expiry_notification: true
+    description: "Public portfolio at pdlab.dev (S3 and CloudFront, not the tunnel). Also warns before its certificate expires."
+  - name: public-auth
+    type: http
+    url: "https://auth.pdlab.dev/"
+    accepted_statuscodes: ["200-299", "300-399"]   # 302 to the flow is healthy
+    interval: 300
+    retry_interval: 60
+    expiry_notification: true
+    description: "Authentik through the Cloudflare tunnel. With public-seer, tells a tunnel fault from an origin fault."
+  - name: public-seer
+    type: http
+    url: "https://seer.pdlab.dev/"
+    accepted_statuscodes: ["200-299", "300-399"]
+    interval: 300
+    retry_interval: 60
+    expiry_notification: true
+    description: "Seerr through the Cloudflare tunnel. With public-auth, tells a tunnel fault from an origin fault."
+
   - name: public-ip
     type: keyword
     url: "https://api.ipify.org"
