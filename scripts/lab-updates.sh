@@ -38,7 +38,7 @@ if command -v apk >/dev/null 2>&1; then
   sim=$(apk upgrade -s 2>&1) || { echo "ERR apk-simulation"; exit 1; }
   up=$(printf "%s\n" "$sim" | grep -c "Upgrading")
   sec=na
-  newest=$(stat -c %Y /var/cache/apk/APKINDEX*.tar.gz /lib/apk/db/installed 2>/dev/null | sort -n | tail -1)
+  newest=$(stat -c %Y /var/cache/apk/APKINDEX*.tar.gz 2>/dev/null | sort -n | tail -1)
   ua=no
 else
   sim=$(apt-get -s dist-upgrade 2>&1) || { echo "ERR apt-simulation"; exit 1; }

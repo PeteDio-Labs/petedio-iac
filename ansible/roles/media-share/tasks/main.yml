@@ -23,7 +23,6 @@
   ansible.builtin.command: findmnt --noheadings --first-only --output TARGET --target {{ item.path }}
   register: media_share_src
   changed_when: false
-  check_mode: false  # lab-action: read-only (findmnt reads the mount table; failed_when needs its output in a check)
   failed_when: media_share_src.rc != 0 or media_share_src.stdout | trim != item.path
   loop: "{{ media_share_exports }}"
   loop_control:
@@ -125,7 +124,6 @@
 - name: Assert each mount really is NFS and not an empty local directory
   ansible.builtin.command: findmnt --types nfs,nfs4 --target {{ item.path }}
   changed_when: false
-  check_mode: false  # lab-action: read-only (findmnt reads the mount table; a skipped read would hide an unmounted share)
   loop: "{{ media_share_exports }}"
   loop_control:
     label: "{{ item.path }}"
