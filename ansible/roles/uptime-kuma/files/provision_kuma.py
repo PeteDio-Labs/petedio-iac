@@ -44,6 +44,8 @@ FIELD_MAP = {
     "description": "description",
     "push_token": "pushToken",
     "keyword": "keyword",
+    # Kuma notifies at 7, 14 and 21 days before a certificate expires (PET-710).
+    "expiry_notification": "expiryNotification",
 }
 
 

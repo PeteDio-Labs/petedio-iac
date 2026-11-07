@@ -101,6 +101,7 @@ class T(unittest.TestCase):
             if claims: a["bound_claims"] = claims
             return run([rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["update" if before else "create"], a, before)])[0]
         self.assertEqual(r(["deploy-x"]), 0)
+        self.assertEqual(r(["deploy-tracker"]), 0)
         self.assertEqual(r(["media-ci"]), 1)             # an existing policy, not allowlisted
         self.assertEqual(r(["media-ci"], before={**ROLE, "token_policies": ["media-ci"]}), 0)  # unchanged on an existing role
         self.assertEqual(r(["plane-ci"], typ="glob"), 1)

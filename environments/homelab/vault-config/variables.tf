@@ -98,6 +98,12 @@ variable "github_repo_id_vault" {
   default     = "1312503638"
 }
 
+variable "github_repo_id_pm" {
+  description = "Numeric repo ID for petedio-pm, used in its immutable OIDC subject (deploy-tracker role)."
+  type        = string
+  default     = "1418397634"
+}
+
 # Life of a new secret_id for the `ansible` and `terraform-local` AppRoles, in seconds
 # (PET-687). 7776000 is 90 days. It applies only to secret_ids minted after the apply.
 variable "approle_secret_id_ttl" {
@@ -107,13 +113,15 @@ variable "approle_secret_id_ttl" {
 }
 
 # Source addresses allowed to log in as `ansible` or `terraform-local`, and to use the
-# tokens they mint (PET-687). Empty means no binding, which is today's behavior. Set it
-# to the Mac's and claude-247's /32 addresses in terraform.tfvars on the operator's
-# machine once both are known. A wrong value locks the deploy scripts out, so
-# scripts/rotate-approle-secret-id.sh proves a login from the Mac before it destroys the
-# old secret_id.
+# tokens they mint (PET-687, PET-885). The default is the LAN: the Mac and claude-247 both
+# arrive from it (ssh.tf records the same fact for the pedro certificate role), so a
+# secret_id copied off the LAN does not log in. Narrow it to the Mac's and 247's /32
+# addresses in terraform.tfvars once both are fixed; the Mac's address is not recorded in
+# the repo or the vault. An empty list removes the binding. A wrong value locks the deploy
+# scripts out, so scripts/rotate-approle-secret-id.sh proves a login from the Mac before it
+# destroys the old secret_id.
 variable "approle_operator_cidrs" {
   description = "secret_id_bound_cidrs and token_bound_cidrs for the ansible and terraform-local AppRoles."
   type        = list(string)
-  default     = []
+  default     = ["192.168.50.0/24"]
 }

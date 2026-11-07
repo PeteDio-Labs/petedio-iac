@@ -23,7 +23,7 @@ resource "vault_approle_auth_backend_role" "ansible" {
 
   # secret_id_ttl bounds a new secret_id's life (PET-687). It applies to secret_ids minted
   # after the apply; scripts/rotate-approle-secret-id.sh replaces the ones in use.
-  # The CIDR lists stay empty until var.approle_operator_cidrs names the Mac and 247.
+  # The CIDR lists come from var.approle_operator_cidrs (the LAN by default, PET-885).
   secret_id_ttl         = var.approle_secret_id_ttl
   secret_id_bound_cidrs = var.approle_operator_cidrs
   token_bound_cidrs     = var.approle_operator_cidrs
@@ -60,7 +60,7 @@ resource "vault_approle_auth_backend_role" "terraform_local" {
 
   # secret_id_ttl bounds a new secret_id's life (PET-687). It applies to secret_ids minted
   # after the apply; scripts/rotate-approle-secret-id.sh replaces the ones in use.
-  # The CIDR lists stay empty until var.approle_operator_cidrs names the Mac and 247.
+  # The CIDR lists come from var.approle_operator_cidrs (the LAN by default, PET-885).
   secret_id_ttl         = var.approle_secret_id_ttl
   secret_id_bound_cidrs = var.approle_operator_cidrs
   token_bound_cidrs     = var.approle_operator_cidrs
@@ -282,6 +282,27 @@ resource "vault_jwt_auth_backend_role" "plane_ci" {
     ]))
   }
   token_policies = [vault_policy.plane_ci.name]
+  token_ttl      = 300
+}
+
+# deploy-tracker role → deploy-tracker policy. The deploy- prefix lets the gated vault-config apply
+# create it (vault-config-apply.tf grants sys/policies/acl/deploy-*). petedio-pm's tracker job lists waiting lab-write taps and
+# open PRs across the org. MAIN ONLY, never a `pull_request` subject: it reads a GitHub App key.
+# Both subject forms, for the same reason as infra-reconcile below.
+resource "vault_jwt_auth_backend_role" "tracker_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "deploy-tracker"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = join(",", [
+      "repo:PeteDio-Labs/petedio-pm:ref:refs/heads/main",
+      "repo:PeteDio-Labs@${var.github_org_id}/petedio-pm@${var.github_repo_id_pm}:ref:refs/heads/main",
+    ])
+  }
+  token_policies = [vault_policy.tracker_ci.name]
   token_ttl      = 300
 }
 
