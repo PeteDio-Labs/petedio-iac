@@ -42,6 +42,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
+          terraform_version: 1.16.3 # same pin as terraform.yml (PET-362); bump all of them together
           terraform_wrapper: false
 
       - name: Encode Vault CA
@@ -52,6 +53,9 @@ jobs:
 
       # Neither key goes into AWS_ACCESS_KEY_ID: the S3 backend reads that name for MinIO and
       # the AWS provider would read it too. Each key gets its own variable and its own file.
+      # The MinIO key is a service account that reads tfstate/portfolio/* only, not the shared
+      # kv/iac/minio key. Terraform caches backend settings in the data directory, so TF_DATA_DIR
+      # sits in the temporary directory that the exit trap deletes.
       - name: Vault — portfolio-plan via OIDC
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
@@ -63,8 +67,8 @@ jobs:
           caCertificate: ${{ steps.vault_ca.outputs.b64 }}
           exportToken: false
           secrets: |
-            kv/data/iac/minio access_key | MINIO_KEY ;
-            kv/data/iac/minio secret_key | MINIO_SECRET ;
+            kv/data/services/aws-portfolio-plan minio_access_key | MINIO_KEY ;
+            kv/data/services/aws-portfolio-plan minio_secret_key | MINIO_SECRET ;
             kv/data/services/aws-portfolio-plan aws_access_key_id | PORTFOLIO_KEY ;
             kv/data/services/aws-portfolio-plan aws_secret_access_key | PORTFOLIO_SECRET
 
@@ -85,6 +89,9 @@ jobs:
           printf 'access_key = "%s"\nsecret_key = "%s"\n' "$MINIO_KEY" "$MINIO_SECRET" > "$T/backend.hcl"
           printf '[portfolio]\naws_access_key_id = %s\naws_secret_access_key = %s\n' "$PORTFOLIO_KEY" "$PORTFOLIO_SECRET" > "$T/aws-credentials"
           export AWS_SHARED_CREDENTIALS_FILE="$T/aws-credentials"
+          export TF_DATA_DIR="$T/tfdata"
+          export TF_PLUGIN_CACHE_DIR="${RUNNER_TOOL_CACHE:-$HOME/.cache}/tf-plugin-cache"
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
           unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
           echo "portfolio-plan: pet=${PET:-none} sha=$GITHUB_SHA"
           terraform init -input=false -backend-config="$T/backend.hcl" >"$T/init.log" 2>&1 \

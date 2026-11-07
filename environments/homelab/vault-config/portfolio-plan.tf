@@ -1,19 +1,15 @@
 # portfolio-plan: what portfolio-plan.yml may read (PET-884). The workflow plans
-# environments/portfolio on the homelab runner when a thread dispatches it. It needs the MinIO
-# keys for the state backend and one AWS key that can only read account 847547470418.
+# environments/portfolio on the homelab runner when a thread dispatches it.
 #
-# WHAT IT MAY READ. kv/iac/minio and kv/services/aws-portfolio-plan, both by exact path. The
-# AWS key belongs to an IAM user with a read-only inline policy
-# (scripts/seed-aws-portfolio-plan.sh), so a leaked token reads infrastructure and writes none.
-# It cannot read the deploy user's key at kv/services/portfolio-deploy.
+# WHAT IT MAY READ. One path, kv/services/aws-portfolio-plan. It holds an AWS key for an IAM user
+# with a read-only inline policy and a MinIO service account that reads tfstate/portfolio/* only
+# (scripts/seed-aws-portfolio-plan.sh), so a leaked token reads infrastructure and state and
+# writes neither. It cannot read the shared kv/iac/minio key, which can overwrite any root's state,
+# or the deploy user's key at kv/services/portfolio-deploy.
 resource "vault_policy" "portfolio_plan" {
   name = "portfolio-plan"
 
   policy = <<-EOT
-    path "kv/data/iac/minio" {
-      capabilities = ["read"]
-    }
-
     path "kv/data/services/aws-portfolio-plan" {
       capabilities = ["read"]
     }
