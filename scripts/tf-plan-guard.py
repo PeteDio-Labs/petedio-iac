@@ -23,6 +23,8 @@ import sys
 
 # Gap between two tokens. HCL treats whitespace, /* */, // and # comments alike here.
 W = r'(?:\s|/\*.*?\*/|(?://|#)[^\n]*(?:\n|\Z))*'
+# A block header cannot span lines in HCL, so unquoted labels need only spaces and /* */ gaps.
+H = r'(?:[ \t]|/\*.*?\*/)*'
 
 # Whole-file tokens, checked in every changed Terraform file.
 FILE_TOKENS = [
@@ -32,9 +34,9 @@ FILE_TOKENS = [
     (r'\bdata\b' + W + r'"?(external|http|archive_file|dns_\w+|local_\w+|tls_\w+)\b',
      "data source of an execution or network provider"),
     (r'\bterraform_remote_state\b', "remote state read"),
-    (r'\bprovider' + W + r'"|\brequired_providers\b', "provider configuration"),
+    (r'\bprovider' + W + r'"|\bprovider\b' + H + r'\w+' + H + r'\{|\brequired_providers\b', "provider configuration"),
     (r'\bproviders?' + W + r'=', "provider meta-argument"),
-    (r'\b(backend|cloud)' + W + r'["{]', "backend block"),
+    (r'\bbackend' + W + r'"|\bbackend\b' + H + r'\w+' + H + r'\{|\bcloud\b' + H + r'\{', "backend block"),
     (r'\\[uU][0-9a-fA-F]{4}', "unicode escape in a string"),
     # A function call may have comments between the name and "(" in HCL.
     (r'\b(file|fileexists|fileset|filebase64|filebase64sha256|filebase64sha512|filemd5|filesha1|filesha256|filesha512|templatefile|pathexpand|nonsensitive)\b'
@@ -118,6 +120,8 @@ def main():
     planned = [p for p in files if PLANNED.match(p)]
     reasons = []
     for mode, status, p in entries:
+        if re.search(r'(^|/)\.gitattributes$|(^|/)\.gitmodules$', p):
+            reasons.append(f"{safe(p)}: git attributes can change how the guard reads a diff")
         # Anywhere in the repo: a symlink can stand in for a parent directory of a planned path.
         if mode in ("120000", "160000") and status != "D":
             reasons.append(f"{safe(p)}: symlink or submodule")
@@ -139,8 +143,13 @@ def main():
         for m in SOURCE.finditer(text):
             if m.group(2) is None or not ALLOWED_SOURCE.match(m.group(2)):
                 reasons.append(f"{safe(p)}: source other than the three reviewed modules")
-        d = git(repo, "diff", "-U0", f"{base}..{head}", "--", p)
-        added = "\n".join(l[1:] for l in d.stdout.decode(errors="replace").splitlines()
+        # --text overrides a `-diff` attribute. An unreadable diff is a guard error, not a pass.
+        d = git(repo, "diff", "--text", "--no-textconv", "--no-ext-diff", "-U0", f"{base}..{head}", "--", p)
+        dtext = d.stdout.decode(errors="replace")
+        if d.returncode != 0 or dtext.startswith("Binary files") or "\nBinary files" in dtext:
+            print(f"guard error: no readable diff for {safe(p)}")
+            return 2
+        added = "\n".join(l[1:] for l in dtext.splitlines()
                           if l.startswith("+") and not l.startswith("+++"))
         # A Vault block already in the file must keep reading the same secret.
         if re.search(r'\b(data|ephemeral)\b' + W + r'"?vault_', text, re.S) and \

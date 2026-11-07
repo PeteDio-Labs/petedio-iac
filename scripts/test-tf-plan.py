@@ -107,6 +107,20 @@ def module_symlink_case():
         return run(sys.executable, G, d, "--base", "pr", "--head", "pr2").returncode
 
 
+def attr_case():
+    """.gitattributes already on the base marks .tf as -diff; the guard must still read the lines."""
+    with tempfile.TemporaryDirectory() as d:
+        repo(d, "")
+        git = lambda *a: run("git", "-C", d, "-c", "user.email=t@t", "-c", "user.name=t", *a)
+        git("checkout", "-q", "main")
+        open(os.path.join(d, ".gitattributes"), "w").write("*.tf -diff\n")
+        git("add", "-A"); git("commit", "-qm", "attr")
+        git("checkout", "-qB", "pr")
+        open(os.path.join(d, "environments/homelab/a.tf"), "a").write('data "vault_kv_secret_v2" "x" {}\n')
+        git("commit", "-qam", "v")
+        return run(sys.executable, G, d, "--base", "main", "--head", "pr").returncode
+
+
 def check(name, got, want):
     ok = got == want
     print(("PASS " if ok else "FAIL ") + name, "" if ok else f"(got {got}, want {want})")
@@ -147,6 +161,10 @@ results = [
     check("// comment in data label refused", guard('data //x\n"vault_kv_secret_v2" "s" {}\n'), 1),
     check("// comment in source refused", guard('module "m" { source //x\n= "git::https://evil/x" }\n'), 1),
     check("// comment in backend refused", guard('terraform { backend //x\n"s3" {} }\n'), 1),
+    check("unquoted provider label refused", guard2("modules/proxmox-lxc/extra.tf", "provider proxmox {\n}\n"), 1),
+    check("unquoted backend label refused", guard('terraform { backend s3 {} }\n'), 1),
+    check("gitattributes change refused", guard2(".gitattributes", "environments/homelab/*.tf -diff\n"), 1),
+    check("-diff attribute cannot hide a vault read", attr_case(), 1),
     check("cloud block refused", guard('terraform { cloud { hostname = "evil.example" } }\n'), 1),
     check("# comment in provider refused", guard('provider #x\n"vault" {}\n'), 1),
     check("homelab subdirectory scanned", guard2("environments/homelab/sub/x.tf", 'provisioner "local-exec" {}\n'), 1),
