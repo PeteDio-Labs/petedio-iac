@@ -21,14 +21,20 @@ fmt=""
 if [ "${FAIL_ID:-}" = "$id" ]; then echo "inspect failed" >&2; exit 1; fi
 case "$fmt" in
   CONTAINER*) echo "CONTAINER /cf-$id|image=cloudflare/cloudflared:2026.1.0|restart=always|network=host|state=running" ;;
-  *Entrypoint*) printf '%s\n' cloudflared tunnel --no-autoupdate run --token SHORTpw1 --token=abc.def eyJhIjoiTOKENVALUE ;;
-  *Env*) printf '%s\n' 'TUNNEL_TOKEN=eyJhIjoiTOKENVALUE' 'PASSWORD=first"tail' 'TZ=UTC' ;;
+  *Entrypoint*)
+    [ "${FAIL_PART:-}" = args ] && { echo "inspect failed" >&2; exit 1; }
+    # json output: a newline inside a value is the two characters \n, as Docker's json func emits it
+    printf '%s\n' '"cloudflared"' '"tunnel"' '"--no-autoupdate"' '"run"' '"--token"' '"SHORTpw1"' '"--token=abc.def"' \
+      '"eyJhIjoiTOKENVALUE"' '"--x=first\n-multiline-secret"' ;;
+  *Env*)
+    [ "${FAIL_PART:-}" = env ] && { echo "inspect failed" >&2; exit 1; }
+    printf '%s\n' '"TUNNEL_TOKEN=eyJhIjoiTOKENVALUE"' '"PASSWORD=first\"tail"' '"MULTI=first\nshort-secret"' '"TZ=UTC"' ;;
 esac
 D
 chmod +x "$tmp/bin/docker"
 
 out=$(PATH="$tmp/bin:$PATH" sh "$script")
-for secret in SHORTpw1 abc.def TOKENVALUE 'first' 'tail'; do
+for secret in SHORTpw1 abc.def TOKENVALUE first tail short-secret multiline-secret; do
   if grep -q "$secret" <<<"$out"; then echo "FAIL: '$secret' leaked:"; echo "$out"; exit 1; fi
 done
 grep -q '^  ENV TUNNEL_TOKEN$' <<<"$out" || { echo "FAIL: env name missing"; exit 1; }
@@ -38,4 +44,9 @@ grep -q '^AUDIT listed=2 inspected=2$' <<<"$out" || { echo "FAIL: summary wrong:
 if FAIL_ID=bbb PATH="$tmp/bin:$PATH" sh "$script" >/dev/null 2>&1; then
   echo "FAIL: a failed inspect exited zero"; exit 1
 fi
+for part in args env; do
+  if FAIL_PART=$part PATH="$tmp/bin:$PATH" sh "$script" >/dev/null 2>&1; then
+    echo "FAIL: a failed $part inspect exited zero"; exit 1
+  fi
+done
 echo "ok: no secret leaked, partial read fails, summary counts match"
