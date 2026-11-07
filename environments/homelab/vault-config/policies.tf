@@ -334,6 +334,13 @@ resource "vault_policy" "pete_bot_cd" {
       capabilities = ["read"]
     }
 
+    # lab-agent's mtrace caller token and Bazarr key, for the media assistant (PET-869). Optional:
+    # an absent path leaves the assistant off. A copy of one caller token, so pete-bot-cd never
+    # reads kv/services/media/dashboard itself.
+    path "kv/data/services/lab-agent-media" {
+      capabilities = ["read"]
+    }
+
     # The read-only petedio-workspace-mirror App, for lab-agent's petedio-vault fetches.
     # Deploy keys are disabled org-wide; petedio-search reads the vault the same way (PET-542).
     path "kv/data/services/claude-workspace-mirror" {

@@ -597,6 +597,48 @@
               search_lab. Deploy with scripts/deploy-pete-bot.sh, which reads
               kv/services/lab-agent-search.
 
+        # Same rule for the media assistant's two credentials (PET-869): never render either away.
+        # A deploy that cannot read kv/services/lab-agent-media would turn the media assistant off
+        # under a green health check, and the owner's DMs would then be refused without a word.
+        - name: Look for an installed mtrace token
+          ansible.builtin.command: grep -q '^LAB_MTRACE_TOKEN=.' {{ lab_agent_env_file | quote }}
+          register: lab_agent_mtrace_installed
+          changed_when: false
+          failed_when: lab_agent_mtrace_installed.rc > 1
+          check_mode: false
+          no_log: true
+          when: lab_agent_env_stat.stat.exists
+
+        - name: Refuse a deploy that would drop the installed mtrace token
+          ansible.builtin.assert:
+            that:
+              - (lab_agent_mtrace_token | default('') | length > 0) or (lab_agent_mtrace_installed.rc | default(1)) != 0
+            fail_msg: >-
+              lab-agent's env file holds LAB_MTRACE_TOKEN, but this deploy passed no
+              lab_agent_mtrace_token, so the render would remove it and the media assistant
+              would turn off. Deploy with scripts/deploy-pete-bot.sh, which reads
+              kv/services/lab-agent-media. A deploy-on-merge run needs pete-bot's deploy.yml
+              to read that path too.
+
+        - name: Look for an installed Bazarr key
+          ansible.builtin.command: grep -q '^LAB_BAZARR_KEY=.' {{ lab_agent_env_file | quote }}
+          register: lab_agent_bazarr_installed
+          changed_when: false
+          failed_when: lab_agent_bazarr_installed.rc > 1
+          check_mode: false
+          no_log: true
+          when: lab_agent_env_stat.stat.exists
+
+        - name: Refuse a deploy that would drop the installed Bazarr key
+          ansible.builtin.assert:
+            that:
+              - (lab_agent_bazarr_key | default('') | length > 0) or (lab_agent_bazarr_installed.rc | default(1)) != 0
+            fail_msg: >-
+              lab-agent's env file holds LAB_BAZARR_KEY, but this deploy passed no
+              lab_agent_bazarr_key, so the render would remove it and the media assistant
+              would lose its subtitle tools. Deploy with scripts/deploy-pete-bot.sh, which
+              reads kv/services/lab-agent-media.
+
         # Read by systemd, as root, before it drops to the service account. So 0600 root.
         - name: Install lab-agent's environment file
           ansible.builtin.template:
