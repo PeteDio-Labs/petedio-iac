@@ -14,6 +14,11 @@ The gate is deny by default:
   * Never a protected address, such as the apply role itself or the break-glass policy.
   * A policy may not touch sys/, auth/ or identity/, grant sudo, or open a whole mount.
   * A JWT role may not attach a privileged policy, and must bind a repository, sub or workflow_ref.
+  * A policy may grant only read and list on kv/(services|db)/<name>, plus ssh signing for deploy-*.
+    kv/admin, kv/iac and any other mount stay with scripts/apply-vault-config.sh.
+  * A JWT role binds the allowlisted repository, main only, and a token_ttl of 900 seconds or less.
+  * An SSH role pins source-address to the two runners, a ttl of 1800 seconds or less, and no
+    caller override of critical options or extensions.
 A refused change stays a Mac step (scripts/apply-vault-config.sh).
 """
 import hashlib
@@ -38,6 +43,14 @@ PRIVILEGED_POLICIES = {
 FORBIDDEN_POLICY_PATH = re.compile(r"^(sys|auth|identity)(/|$)|^(\*|\+|kv/\*|kv/data/\*|kv/data/\+)$")
 PATH_BLOCK = re.compile(r'path\s+"([^"]+)"\s*\{(.*?)\}', re.S)
 ROLE_BIND_KEYS = ("repository", "sub", "workflow_ref")
+# A policy this path may write can grant only these. Everything else (kv/admin, kv/iac, any other
+# mount) is a path the guard cannot call safe, so it goes through scripts/apply-vault-config.sh.
+KV_GRANT = re.compile(r"^kv/(data|metadata)/(services|db)/[a-z0-9][a-z0-9_-]*(/[a-z0-9][a-z0-9_-]*)*$")
+SAFE_CAPS = {"read", "list"}
+ALLOWED_REPOS = {"PeteDio-Labs/petedio-iac"}
+SUB_OK = re.compile(r"^repo:PeteDio-Labs(@\d+)?/[a-z0-9-]+(@\d+)?:(ref:refs/heads/main|pull_request)$")
+MAX_TTL = 900
+SSH_SOURCES = "192.168.50.232/32,192.168.50.233/32"
 
 
 def policy_problems(text):
@@ -63,6 +76,14 @@ def policy_problems(text):
             p.append(f'policy path "{raw}": only ssh-client-signer/sign/deploy-<name> may be granted')
         if FORBIDDEN_POLICY_PATH.search(path):
             p.append(f'policy path "{raw}" is outside what the gated apply may grant')
+        elif path.startswith("kv/"):
+            if not KV_GRANT.match(path):
+                p.append(f'policy path "{raw}": only kv/data|metadata/(services|db)/<name> may be granted')
+            caps = set(re.findall(r'"([a-z]+)"', body))
+            if not caps or caps - SAFE_CAPS:
+                p.append(f'policy path "{raw}": only read and list may be granted on kv')
+        elif not path.startswith("ssh-client-signer/"):
+            p.append(f'policy path "{raw}" is on a mount the gated apply may not grant')
         if re.search(r'"sudo"', body):
             p.append(f'policy path "{raw}" grants sudo')
     return p
@@ -88,6 +109,25 @@ def role_problems(after, before=None):
         p.append("role binds none of repository, sub or workflow_ref")
     if not after.get("bound_audiences"):
         p.append("role has no bound_audiences")
+    repo = claims.get("repository")
+    if repo is not None and str(repo) not in ALLOWED_REPOS:
+        p.append(f"bound_claims.repository {repo} is not an allowlisted repository")
+    if "ref" in claims and str(claims["ref"]) != "refs/heads/main":
+        p.append("bound_claims.ref must be refs/heads/main")
+    if "sub" in claims:
+        bad = [x for x in str(claims["sub"]).split(",") if not SUB_OK.match(x)]
+        if bad:
+            p.append(f"bound_claims.sub has entries outside repo:PeteDio-Labs/<name>:(ref:refs/heads/main|pull_request): {bad[:3]}")
+    elif "ref" not in claims:
+        p.append("role binds no ref or sub, so a branch other than main could mint it")
+    if "sub" not in claims and "workflow_ref" not in claims:
+        p.append("role binds no workflow_ref, so any workflow on main could mint it")
+    for k in ("token_ttl", "token_max_ttl"):
+        v = after.get(k)
+        if k == "token_ttl" and not v:
+            p.append("token_ttl must be set (the Vault default is 32 days)")
+        if v and int(v) > MAX_TTL:
+            p.append(f"{k} {v} exceeds {MAX_TTL} seconds")
     return p
 
 
@@ -98,6 +138,23 @@ def ssh_role_problems(after):
         p.append("ssh role name must match deploy-<name>")
     if users != name or users != str(after.get("default_user") or ""):
         p.append("ssh role allowed_users and default_user must both equal the role name (no list, no glob)")
+    if after.get("key_type") != "ca" or not after.get("allow_user_certificates"):
+        p.append("ssh role must be key_type ca with allow_user_certificates")
+    if after.get("allow_user_key_ids"):
+        p.append("ssh role must not allow user key ids")
+    if (after.get("default_critical_options") or {}) != {"source-address": SSH_SOURCES}:
+        p.append(f"ssh role default_critical_options must be exactly source-address={SSH_SOURCES}")
+    if str(after.get("allowed_critical_options") or "") != "petedio-no-overrides":
+        p.append("ssh role allowed_critical_options must be petedio-no-overrides (no caller override)")
+    if str(after.get("allowed_extensions") or ""):
+        p.append("ssh role allowed_extensions must be empty")
+    for k in ("ttl", "max_ttl"):
+        try:
+            ok = 0 < int(str(after.get(k) or "0")) <= 1800
+        except ValueError:
+            ok = False
+        if not ok:
+            p.append(f"ssh role {k} must be 1..1800 seconds")
     return p
 
 
@@ -105,8 +162,10 @@ def ssh_role_problems(after):
 # cannot judge it, and a hash of an unresolved value approves nothing.
 CHECKED = {
     "vault_policy": ("name", "policy"),
-    "vault_jwt_auth_backend_role": ("token_policies", "bound_claims", "bound_claims_type", "bound_audiences"),
-    "vault_ssh_secret_backend_role": ("name", "allowed_users", "default_user"),
+    "vault_jwt_auth_backend_role": ("token_policies", "bound_claims", "bound_claims_type", "bound_audiences", "token_ttl", "token_max_ttl"),
+    "vault_ssh_secret_backend_role": ("name", "allowed_users", "default_user", "key_type", "allow_user_certificates",
+                                      "default_critical_options", "allowed_critical_options", "allowed_extensions",
+                                      "ttl", "max_ttl"),
 }
 
 
