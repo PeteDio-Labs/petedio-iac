@@ -6,7 +6,7 @@
 #
 # A gate turns on only after its prerequisite is met; the variable's description in
 # variables.tf names it.
-manage_resource_pool   = true
-manage_backup_job      = false
-email_routing_live     = true
-email_routing_forward  = true
+manage_resource_pool  = true
+manage_backup_job     = false
+email_routing_live    = true
+email_routing_forward = true
