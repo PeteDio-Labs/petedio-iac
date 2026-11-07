@@ -8,11 +8,12 @@
 # Only Pedro's servers are listed. mcp-tom and mcp-sonia stay direct, because a portal's
 # access policy is per portal and each of those servers acts as one other person.
 #
-# Open questions the first plan or apply answers, not this file:
-#   - Whether the Free plan accepts the create call.
-#   - Whether the portal hostname needs a DNS record beside this resource.
-#   - Whether the portal reaches an upstream that is itself behind Access managed OAuth
-#     with auth_type "oauth", or needs a different auth_type.
+# What the first apply showed (PET-839 comments e5b8cbd1 and f6f40c22):
+#   - The API creates no DNS record for the portal hostname, so this file declares one.
+#   - The portal and the servers carry no policy attribute. A policy attaches through an Access
+#     application of type mcp_portal (the portal) or mcp (each server), so this file declares both.
+#   - A server shows "Waiting" until an admin runs "Save and connect server" in the Zero Trust
+#     dashboard. That signs in as Pedro, so Terraform cannot do it.
 
 resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "plane" {
   account_id  = local.cloudflare_account_id
@@ -46,5 +47,53 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_portal" "pdlab" {
   servers = [
     { server_id = cloudflare_zero_trust_access_ai_controls_mcp_server.plane.id },
     { server_id = cloudflare_zero_trust_access_ai_controls_mcp_server.lab.id },
+  ]
+}
+
+# Who may use the portal and see each server: Pedro alone, like mcp-plane and mcp-lab in
+# cloudflare-routes.tf. The include list is the whole authorization boundary.
+resource "cloudflare_zero_trust_access_policy" "mcp_portal" {
+  account_id = local.cloudflare_account_id
+  name       = "mcp.pdlab.dev - allow Pedro"
+  decision   = "allow"
+  include    = [{ email = { email = "pedelgadillo@gmail.com" } }]
+}
+
+resource "cloudflare_zero_trust_access_application" "mcp_server" {
+  for_each = {
+    plane = cloudflare_zero_trust_access_ai_controls_mcp_server.plane.id
+    lab   = cloudflare_zero_trust_access_ai_controls_mcp_server.lab.id
+  }
+
+  account_id   = local.cloudflare_account_id
+  name         = "mcp server ${each.key}"
+  type         = "mcp"
+  destinations = [{ mcp_server_id = each.value }]
+  policies     = [{ id = cloudflare_zero_trust_access_policy.mcp_portal.id }]
+}
+
+resource "cloudflare_zero_trust_access_application" "mcp_portal" {
+  account_id = local.cloudflare_account_id
+  name       = "mcp.pdlab.dev"
+  type       = "mcp_portal"
+  domain     = "mcp.pdlab.dev"
+  policies   = [{ id = cloudflare_zero_trust_access_policy.mcp_portal.id }]
+}
+
+# The portal hostname resolves to Cloudflare's MCP gateway, proxied. It waits for the Access
+# applications, so the name never resolves before its gate exists (the fail-closed rule in
+# modules/cloudflare-ingress).
+resource "cloudflare_dns_record" "mcp_portal" {
+  zone_id = local.cloudflare_zone_id
+  name    = "mcp.pdlab.dev"
+  type    = "CNAME"
+  content = "gateway.agents.cloudflare.com"
+  ttl     = 1 # automatic, required when proxied
+  proxied = true
+  comment = "MCP server portal (PET-839). Gated by the mcp_portal Access application."
+
+  depends_on = [
+    cloudflare_zero_trust_access_application.mcp_portal,
+    cloudflare_zero_trust_access_application.mcp_server,
   ]
 }
