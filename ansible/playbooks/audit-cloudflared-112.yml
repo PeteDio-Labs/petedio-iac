@@ -1,0 +1,89 @@
+---
+# audit-cloudflared-112.yml — read how cloudflared runs on LXC 112 before any IaC changes it (PET-768, PET-718).
+#
+#   scripts/lab-action.sh playbook_check audit-cloudflared-112.yml     # read-only; runs with no approval
+#
+# LXC 112 (cloud-flare-main) is the tunnel origin behind every public hostname, and no repo
+# manages it. The vault note says "cloudflared in Docker" but records no image, tag, command
+# line or restart policy. This play reads those facts so a later play can converge them,
+# instead of a change written from the note alone.
+#
+# It changes nothing. Every command task carries check_mode: false so a check reads the live
+# state, and each carries the lab-action marker. The play prints a masked view: a
+# `--token` value or a TUNNEL_TOKEN value never reaches the log, which is public. The final
+# task fails when it read no container, and prints how many it read, so a pass cannot mean
+# "found nothing to look at".
+
+- name: Read how cloudflared runs on LXC 112
+  hosts: pve03
+  gather_facts: false
+  vars:
+    cf_audit_vmid: 112
+
+  tasks:
+    - name: Read the guest state of 112
+      ansible.builtin.command:
+        argv: [pct, status, "{{ cf_audit_vmid }}"]
+      register: cf_audit_status
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: List the containers on 112
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ cf_audit_vmid }}", --, docker, ps, -a, --format, "{% raw %}{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}{% endraw %}"]
+      register: cf_audit_ps
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Read the version the running cloudflared reports
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ cf_audit_vmid }}", --, sh, -c, "docker ps -q | head -n 5 | while read id; do docker exec $id cloudflared --version 2>&1 | head -n 1; done"]
+      register: cf_audit_version
+      changed_when: false
+      failed_when: false
+      check_mode: false  # lab-action: read-only
+
+    # The sh -c string runs inside the guest, which does not inherit this task's environment, so the
+    # Go template sits in the string itself. Config.Cmd and Config.Env can hold the tunnel token.
+    # The report below masks every eyJ... value and drops each Env value, so the token never prints.
+    - name: Read each container's image, policy, network, command and variable names
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ cf_audit_vmid }}", --, sh, -c, "docker ps -aq | while read id; do docker inspect --format '{% raw %}{{.Name}}|{{.Config.Image}}|{{.HostConfig.RestartPolicy.Name}}|{{.HostConfig.NetworkMode}}|{{.State.Status}}|{{json .Config.Entrypoint}}|{{json .Config.Cmd}}|{{json .Config.Env}}{% endraw %}' $id; done"]
+      register: cf_audit_inspect
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Find compose files and the unit that starts docker on boot
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ cf_audit_vmid }}", --, sh, -c, "ls -la /opt /root /srv 2>/dev/null | head -n 40; rc-status -a 2>/dev/null | grep -i -E 'docker|cloudflared'; find / -xdev -name 'docker-compose*.y*ml' -o -xdev -name 'compose.y*ml' 2>/dev/null | head -n 10"]
+      register: cf_audit_files
+      changed_when: false
+      failed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Read whether a metrics port answers on the guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ cf_audit_vmid }}", --, sh, -c, "netstat -ltn 2>/dev/null | grep LISTEN"]
+      register: cf_audit_listen
+      changed_when: false
+      failed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Report what the play read
+      ansible.builtin.debug:
+        msg:
+          - "guest: {{ cf_audit_status.stdout }}"
+          - "containers listed: {{ cf_audit_ps.stdout_lines | length }}"
+          - "{{ cf_audit_ps.stdout_lines }}"
+          - "cloudflared --version: {{ cf_audit_version.stdout_lines }}"
+          - "inspect (token masked, Env values dropped): {{ cf_audit_inspect.stdout_lines | map('regex_replace', 'eyJ[A-Za-z0-9_=+/.-]+', '<token>') | map('regex_replace', '=[^\"]*\"', '=<dropped>\"') | list }}"
+          - "files and services: {{ cf_audit_files.stdout_lines }}"
+          - "listening sockets: {{ cf_audit_listen.stdout_lines }}"
+
+    - name: Fail when the play read no container
+      ansible.builtin.assert:
+        that:
+          - cf_audit_ps.stdout_lines | length > 0
+          - cf_audit_inspect.stdout_lines | length > 0
+        fail_msg: "Read 0 containers on {{ cf_audit_vmid }}; the audit examined nothing."
+        success_msg: "Read {{ cf_audit_ps.stdout_lines | length }} container(s) on {{ cf_audit_vmid }}."
