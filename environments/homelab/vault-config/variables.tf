@@ -102,7 +102,7 @@ variable "github_repo_id_vault" {
 }
 
 variable "github_repo_id_pm" {
-  description = "Numeric repo ID for petedio-pm, used in its immutable OIDC subject (tracker-ci role)."
+  description = "Numeric repo ID for petedio-pm, used in its immutable OIDC subject (deploy-tracker role)."
   type        = string
   default     = "1418397634"
 }

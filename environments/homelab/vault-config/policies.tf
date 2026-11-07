@@ -544,12 +544,12 @@ resource "vault_policy" "infra_reconcile" {
   EOT
 }
 
-# tracker-ci: reads the petedio-tracker-read GitHub App identity so petedio-pm's tracker job can
+# deploy-tracker: reads the petedio-tracker-read GitHub App identity so petedio-pm's tracker job can
 # mint an installation token. That App holds read permissions only (actions, checks, pull_requests,
 # statuses, metadata), so a compromised job cannot write to GitHub. MAIN-ONLY role: see
 # vault_jwt_auth_backend_role.tracker_ci.
 resource "vault_policy" "tracker_ci" {
-  name = "tracker-ci"
+  name = "deploy-tracker"
 
   policy = <<-EOT
     path "kv/data/services/tracker-app" {

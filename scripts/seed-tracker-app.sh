@@ -13,7 +13,7 @@
 # WHY IT CHECKS THE OTHER APPS. This App's id must match none of the other Apps seeded in Vault.
 #
 # WHAT THIS DOES NOT DO. It does not create the App, generate its key or install it. Those
-# are browser steps. No deploy step: the petedio-pm tracker job reads the path through the tracker-ci role.
+# are browser steps. No deploy step: the petedio-pm tracker job reads the path through the deploy-tracker role.
 #
 #   Vault token: $VAULT_TOKEN, else the macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM.
 #   This script never prompts for it.
@@ -204,7 +204,7 @@ fi
 
 step "Next"
 cat <<TXT
-  Nothing else to deploy: the petedio-pm tracker job reads this path through the tracker-ci role.
+  Nothing else to deploy: the petedio-pm tracker job reads this path through the deploy-tracker role.
 
   To rotate the key, generate a new one on the App's page, run this script with it, then delete the old key on the App's page.
 TXT

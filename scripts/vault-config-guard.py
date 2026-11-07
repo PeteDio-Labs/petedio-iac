@@ -33,7 +33,7 @@ PROTECTED_ADDR = re.compile(
 )
 # A JWT role may attach only these policies, or the policies it already had. The set is an
 # allowlist: a policy added to vault-config later is not attachable until a reviewed PR lists it.
-ROLE_POLICY_ALLOW = re.compile(r"^(plane-ci|tracker-ci|secrets-register|deploy-[a-z0-9-]+)$")
+ROLE_POLICY_ALLOW = re.compile(r"^(plane-ci|secrets-register|deploy-[a-z0-9-]+)$")
 SSH_ROLE_NAME = re.compile(r"^deploy-[a-z0-9-]+$")
 SSH_SIGN_PATH = re.compile(r"^ssh-client-signer/sign/deploy-[a-z0-9-]+$")
 PRIVILEGED_POLICIES = {

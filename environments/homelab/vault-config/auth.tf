@@ -285,12 +285,13 @@ resource "vault_jwt_auth_backend_role" "plane_ci" {
   token_ttl      = 300
 }
 
-# tracker-ci role → tracker-ci policy. petedio-pm's tracker job lists waiting lab-write taps and
+# deploy-tracker role → deploy-tracker policy. The deploy- prefix lets the gated vault-config apply
+# create it (vault-config-apply.tf grants sys/policies/acl/deploy-*). petedio-pm's tracker job lists waiting lab-write taps and
 # open PRs across the org. MAIN ONLY, never a `pull_request` subject: it reads a GitHub App key.
 # Both subject forms, for the same reason as infra-reconcile below.
 resource "vault_jwt_auth_backend_role" "tracker_ci" {
   backend           = vault_jwt_auth_backend.github.path
-  role_name         = "tracker-ci"
+  role_name         = "deploy-tracker"
   role_type         = "jwt"
   user_claim        = "actor"
   bound_audiences   = [var.github_oidc_audience]
