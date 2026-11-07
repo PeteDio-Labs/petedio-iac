@@ -44,18 +44,15 @@ variable "github_oidc_audience" {
 #
 # To add a repo: `gh api repos/PeteDio-Labs/<name> --jq .id`. IDs are immutable, which
 # is the whole reason GitHub is moving to them, so they do not rot.
+# Co-latro (PET-465), resume-builder (PET-307) and water-fast (PET-306) are not bound: they run
+# nothing, and a pull request in a bound repo mints plane-ci from its `pull_request` subject.
 variable "plane_repos" {
   description = "Repo name → numeric GitHub id, for every repo bound to the plane-ci JWT role. Both OIDC subject forms are emitted for each."
   type        = map(string)
   default = {
     "petedio-iac"            = "1257211720"
     "petedio-media-iac"      = "1259824681"
-    "co-latro-backend"       = "1257111349"
-    "co-latro-frontend"      = "1257111463"
-    "co-latro-admin"         = "1263295666"
-    "petedio-resume-builder" = "1308151391" # migrated to the id form
     "petedio-palworld-panel" = "1296187459"
-    "petedio-water-fast"     = "1313093957" # migrated to the id form
     "petedio-vault"          = "1312503638" # migrated to the id form
     "petedio-workspace"      = "1257293543" # added in PET-360; had no binding at all (PET-290)
     "petedio-media-control"  = "1358823831" # migrated to the id form; new in PET-355
