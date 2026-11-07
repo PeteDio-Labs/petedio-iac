@@ -49,7 +49,7 @@ search_manage_ufw: false
 # CURRENT server process thinks is loaded) before trusting a spill/fit measurement.
 # 16384 ctx was NOT re-verified after finding this — 8192 is what's proven; if a future
 # session wants more context, re-test from a confirmed-clean baseline first.
-ollama_coder_model: "qwen3:8b"   # pulled, not resident (PET-525); verified 100% GPU on :11434 @ ctx 8192 (2026-07-21)
+ollama_coder_model: "qwen3:8b"   # resident on :11434 for lab-agent; verified 100% GPU on :11434 @ ctx 8192 (2026-07-21)
 ollama_embed_model: "qwen3-embedding:0.6b"   # embeddings on :11435
 
 # GPU pins — CUDA_VISIBLE_DEVICES values. MUST be the stable per-card UUIDs (indices can
@@ -113,8 +113,13 @@ ollama_extra_instances:
 # ⚠ THIS LIST IS THE WHOLE RESIDENT SET. OLLAMA_KEEP_ALIVE=-1 keeps any loaded model in
 # VRAM forever, so dropping an entry here unloads nothing by itself. The ollama-models
 # role unloads every model an instance holds that this list does not declare for that
-# port, and lab-verify.sh reports one as BAD. qwen3:8b left this list in PET-525.
+# port, and lab-verify.sh reports one as BAD. qwen3:8b left this list in PET-525 and rejoined it when lab-agent moved to it on :11434.
 ollama_resident_models:
+  # lab-agent on 237 calls this model on :11434 (LAB_MODEL default and lab_agent_ollama_model),
+  # so it stays loaded. Undeclared, lab-verify reported it as drift and the ollama-models role
+  # would have unloaded it.
+  - model: "{{ ollama_coder_model }}"
+    port: 11434
   - model: "{{ ollama_embed_model }}"
     port: 11435
     kind: embed
