@@ -23,7 +23,12 @@ The Console limit is the hard cap. A guard in code is a second check and cannot 
 To confirm nothing calls the API, run this from the repo root of `pete-bot`:
 
 ```bash
-grep -rIn "api.anthropic.com\|ANTHROPIC_API_KEY" src/ && echo "a lane exists: set the cap" || echo "no lane"
+grep -rIn "api.anthropic.com\|ANTHROPIC_API_KEY" src/; rc=$?
+case $rc in
+  0) echo "a lane exists: set the cap" ;;
+  1) echo "no lane: grep read src/ and found no match" ;;
+  *) echo "grep failed (status $rc): nothing was examined" >&2; exit "$rc" ;;
+esac
 ```
 
 The command reads `src/` only. A caller outside it, such as a script, is not covered.
