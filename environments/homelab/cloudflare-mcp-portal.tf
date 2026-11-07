@@ -78,7 +78,7 @@ resource "cloudflare_zero_trust_access_application" "mcp_server" {
   account_id   = local.cloudflare_account_id
   name         = "mcp server ${each.key}"
   type         = "mcp"
-  destinations = [{ mcp_server_id = each.value }]
+  destinations = [{ type = "via_mcp_server_portal", mcp_server_id = each.value }]
   policies     = [{ id = cloudflare_zero_trust_access_policy.mcp_portal.id }]
 }
 
