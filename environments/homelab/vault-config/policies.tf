@@ -544,15 +544,15 @@ resource "vault_policy" "infra_reconcile" {
   EOT
 }
 
-# tracker-ci: reads the codex-review GitHub App's identity so petedio-pm's tracker job can mint a
-# READ-ONLY installation token. The job requests actions:read, pull_requests:read,
-# checks:read and contents:read at mint time, so the token it holds cannot write even though the
-# App also holds pull_requests:write. MAIN-ONLY role: see vault_jwt_auth_backend_role.tracker_ci.
+# tracker-ci: reads the petedio-tracker-read GitHub App identity so petedio-pm's tracker job can
+# mint an installation token. That App holds read permissions only (actions, checks, pull_requests,
+# statuses, metadata), so a compromised job cannot write to GitHub. MAIN-ONLY role: see
+# vault_jwt_auth_backend_role.tracker_ci.
 resource "vault_policy" "tracker_ci" {
   name = "tracker-ci"
 
   policy = <<-EOT
-    path "kv/data/services/codex-review-app" {
+    path "kv/data/services/tracker-app" {
       capabilities = ["read"]
     }
   EOT
