@@ -1,0 +1,21 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# The weekly dashboard's LAN allowlist (PET-868). Only the tunnel host may reach pete-bot's
+# dashboard port.
+#
+# ⚠ ITS OWN TABLE, as the lab MCP's allowlist on this host is: `table inet weekly_dash_allow` and
+# nothing else. It never touches /etc/nftables.conf, whose default content flushes the whole
+# ruleset. `delete table` at the top makes the file idempotent.
+#
+# pete-bot also verifies the Access JWT on every route but /health. This table holds even when
+# that check is wrong.
+table inet weekly_dash_allow
+delete table inet weekly_dash_allow
+
+table inet weekly_dash_allow {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    tcp dport {{ pete_bot_weekly_port }} ip saddr {{ pete_bot_weekly_peer }} accept
+    tcp dport {{ pete_bot_weekly_port }} reject with tcp reset
+  }
+}
