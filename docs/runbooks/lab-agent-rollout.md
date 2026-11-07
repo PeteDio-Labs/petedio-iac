@@ -125,7 +125,7 @@ Expect `HTTP/2 401`. Then add the connector `https://mcp-lab.pdlab.dev/mcp/lab` 
 
 ## Patch report (`PET-679`)
 
-`scripts/lab-updates.sh` reads OS patch state for each node and running guest. It runs no `apt update` and changes nothing. Run it on 247 and post the raw output, the exit code and the last line:
+`scripts/lab-updates.sh` reads OS patch state for each node, running LXC and pi1. It runs no `apt update` and changes nothing. Run it on 247 and post the raw output, the exit code and the last line:
 
 ```bash
 ./scripts/lab-updates.sh; echo "exit=$?"
