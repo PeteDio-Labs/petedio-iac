@@ -207,10 +207,6 @@ jobs:
       PR: ${{ needs.inspect.outputs.number }}
       MERGE_SHA: ${{ needs.inspect.outputs.merge_sha }}
       GH_REPO: ${{ github.repository }}
-      TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
-      TF_VAR_manage_backup_job: ${{ vars.MANAGE_BACKUP_JOB || 'false' }}
-      TF_VAR_email_routing_live: ${{ vars.EMAIL_ROUTING_LIVE || 'false' }}
-      TF_VAR_email_routing_forward: ${{ vars.EMAIL_ROUTING_FORWARD || 'false' }}
       TF_VAR_postgres_db_password_versions: ${{ vars.POSTGRES_DB_PASSWORD_VERSIONS || '{}' }}
       # A placeholder, not the key. modules/proxmox-lxc ignores changes to initialization[0].user_account,
       # so the plan is the same, and this job no longer reads kv/iac/lxc-ssh (root on every LXC).
