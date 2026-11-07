@@ -14,3 +14,4 @@
 # the result of a command or uri task that check mode skips, so a check fails before it reports.
 apt-hygiene.yml
 configure-timezone.yml
+configure-ssh-ca-ollama-246.yml
