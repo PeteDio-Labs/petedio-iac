@@ -71,6 +71,17 @@ class T(unittest.TestCase):
         ok = 'path "ssh-client-signer/sign/deploy-x" {\n capabilities=["update"]\n}'
         self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "n", "policy": ok})])[0], 0)
 
+    def test_policy_glob_and_format_bypasses(self):
+        def pol(text):
+            return run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "n", "policy": text})])[0]
+        for path in ("ssh-*/sign/lab-runner", "s*/sign/lab-runner", "+/sign/lab-runner", "/ssh-client-signer/sign/lab-runner",
+                     "ssh-client-signer/+/lab-runner", "kv/+/x", "*/sign/x"):
+            self.assertEqual(pol('path "%s" {\n capabilities=["update"]\n}' % path), 1, path)
+        self.assertEqual(pol('{"path": {"ssh-client-signer/sign/lab-runner": {"capabilities": ["update"]}}}'), 1)
+        self.assertEqual(pol(' \n{"path": {}}'), 1)
+        self.assertEqual(pol('path \'ssh-client-signer/sign/lab-runner\' {\n capabilities=["update"]\n}'), 1)
+        self.assertEqual(pol('path "kv/data/services/plane" {\n capabilities=["read"]\n}\n# path "sys/x" {}'), 0)
+
     def test_role_policy_allowlist_and_claims(self):
         def r(pols, claims=None, typ="string", before=None):
             a = {**ROLE, "token_policies": pols, "bound_claims_type": typ}

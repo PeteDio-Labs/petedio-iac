@@ -41,14 +41,27 @@ ROLE_BIND_KEYS = ("repository", "sub", "workflow_ref")
 
 
 def policy_problems(text):
+    text = text or ""
     p = []
-    for path, body in PATH_BLOCK.findall(text or ""):
+    if text.lstrip().startswith("{"):
+        return ["JSON-format policy: the guard reads HCL only"]
+    body_text = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith(("#", "//")))
+    blocks = PATH_BLOCK.findall(body_text)
+    if len(blocks) != len(re.findall(r'\bpath\s*"', body_text)) or re.search(r"\bpath\s*'", body_text):
+        p.append("policy has a path stanza the guard cannot parse")
+    for raw, body in blocks:
+        path = raw.lstrip("/")
+        first = path.split("/", 1)[0]
+        if re.search(r"[*+]", first):
+            p.append(f'policy path "{raw}" has a wildcard in its first segment')
+        if "+" in path:
+            p.append(f'policy path "{raw}" uses a + segment')
         if path.startswith("ssh-client-signer") and not SSH_SIGN_PATH.match(path):
-            p.append(f'policy path "{path}": only ssh-client-signer/sign/deploy-<name> may be granted')
+            p.append(f'policy path "{raw}": only ssh-client-signer/sign/deploy-<name> may be granted')
         if FORBIDDEN_POLICY_PATH.search(path):
-            p.append(f'policy path "{path}" is outside what the gated apply may grant')
+            p.append(f'policy path "{raw}" is outside what the gated apply may grant')
         if re.search(r'"sudo"', body):
-            p.append(f'policy path "{path}" grants sudo')
+            p.append(f'policy path "{raw}" grants sudo')
     return p
 
 
