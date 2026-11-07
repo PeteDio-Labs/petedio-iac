@@ -290,7 +290,7 @@ def run_ansible(spec: dict, workdir: pathlib.Path) -> None:
     script = (
         "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && "
         f"pip install -q 'ansible-core=={ANSIBLE_CORE}' && "
-        "ansible-galaxy collection install -q -r requirements.yml && "
+        "ansible-galaxy collection install -r requirements.yml && "
         f"echo '--- targets ---' && ansible-playbook -i inventory/ {play} --list-hosts && echo '--- targets end ---' && "
         f"exec ansible-playbook -i inventory/ {play} -e @/ci/extra.json "
         "-e ansible_user=root -e ansible_ssh_private_key_file=/ci/key"
