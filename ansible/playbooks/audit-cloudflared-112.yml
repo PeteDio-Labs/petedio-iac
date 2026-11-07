@@ -9,10 +9,10 @@
 # instead of a change written from the note alone.
 #
 # It changes nothing. Every command task carries check_mode: false so a check reads the live
-# state, and each carries the lab-action marker. The play prints a masked view: a
-# `--token` value or a TUNNEL_TOKEN value never reaches the log, which is public. The final
-# task fails when it read no container, and prints how many it read, so a pass cannot mean
-# "found nothing to look at".
+# state, and each carries the lab-action marker. The tunnel token never reaches the log, which is
+# public: files/cloudflared-audit.sh strips it on the guest and prints only flag and variable names.
+# The final task fails unless every listed container was inspected, and prints how many, so a pass
+# cannot mean "found nothing to look at" or "read some of them".
 
 - name: Read how cloudflared runs on LXC 112
   hosts: pve03
@@ -53,31 +53,15 @@
       failed_when: false
       check_mode: false  # lab-action: read-only
 
-    # The sh -c string runs inside the guest, which does not inherit this task's environment, so the
-    # Go template sits in the string itself. Config.Cmd and Config.Env can hold the tunnel token.
-    # The report below masks every eyJ... value and drops each Env value, so the token never prints.
-    - name: Read each container's image, policy, network, command and variable names
+    # files/cloudflared-audit.sh runs inside the guest and prints no secret: the tunnel token can sit
+    # in Config.Cmd or Config.Env, so the script keeps only flag names and variable names. Nothing
+    # secret reaches this result, and no_log would only hide a failure's reason. The script exits
+    # non-zero when an inspect fails and ends with `AUDIT listed=N inspected=M`.
+    # Tested by scripts/test-cloudflared-audit.sh.
+    - name: Read each container's image, policy, network, argument flags and variable names
       ansible.builtin.command:
-        argv:
-          - pct
-          - exec
-          - "{{ cf_audit_vmid }}"
-          - --
-          - sh
-          - -c
-          - >-
-            docker ps -aq | while read id;
-            do docker inspect --format '{% raw %}
-            {{.Name}}|
-            {{.Config.Image}}|
-            {{.HostConfig.RestartPolicy.Name}}|
-            {{.HostConfig.NetworkMode}}|
-            {{.State.Status}}|
-            {{json .Config.Entrypoint}}|
-            {{json .Config.Cmd}}|
-            {{json .Config.Env}}
-            {% endraw %}' $id;
-            done
+        argv: [pct, exec, "{{ cf_audit_vmid }}", --, sh, -s]
+        stdin: "{{ lookup('ansible.builtin.file', 'cloudflared-audit.sh') }}"
       register: cf_audit_inspect
       changed_when: false
       check_mode: false  # lab-action: read-only
@@ -123,18 +107,21 @@
           - "containers listed: {{ cf_audit_ps.stdout_lines | length }}"
           - "{{ cf_audit_ps.stdout_lines }}"
           - "cloudflared --version: {{ cf_audit_version.stdout_lines }}"
-          - >-
-            inspect (token masked, Env values dropped):
-            {{ cf_audit_inspect.stdout_lines
-            | map('regex_replace', 'eyJ[A-Za-z0-9_=+/.-]+', '<token>')
-            | map('regex_replace', '=[^"]*"', '=<dropped>"') | list }}
+          - "inspect (secrets stripped on the guest): {{ cf_audit_inspect.stdout_lines }}"
           - "files and services: {{ cf_audit_files.stdout_lines }}"
           - "listening sockets: {{ cf_audit_listen.stdout_lines }}"
 
-    - name: Fail when the play read no container
+    - name: Fail unless every listed container was inspected
+      vars:
+        cf_audit_summary: "{{ cf_audit_inspect.stdout_lines | select('match', '^AUDIT listed=') | list }}"
+        cf_audit_inspected: "{{ cf_audit_inspect.stdout_lines | select('match', '^CONTAINER ') | list | length }}"
       ansible.builtin.assert:
         that:
           - cf_audit_ps.stdout_lines | length > 0
-          - cf_audit_inspect.stdout_lines | length > 0
-        fail_msg: "Read 0 containers on {{ cf_audit_vmid }}; the audit examined nothing."
-        success_msg: "Read {{ cf_audit_ps.stdout_lines | length }} container(s) on {{ cf_audit_vmid }}."
+          - cf_audit_summary | length == 1
+          - cf_audit_summary[0] == 'AUDIT listed=' ~ cf_audit_ps.stdout_lines | length ~ ' inspected=' ~ cf_audit_ps.stdout_lines | length
+          - cf_audit_inspected | int == cf_audit_ps.stdout_lines | length
+        fail_msg: >-
+          Listed {{ cf_audit_ps.stdout_lines | length }} container(s) on {{ cf_audit_vmid }} but the
+          inspect run reports {{ cf_audit_summary }} and {{ cf_audit_inspected }} CONTAINER line(s).
+        success_msg: "Listed and inspected {{ cf_audit_ps.stdout_lines | length }} container(s) on {{ cf_audit_vmid }}."
