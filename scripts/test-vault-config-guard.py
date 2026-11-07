@@ -18,7 +18,7 @@ def run(changes, extra=()):
     return code, buf.getvalue()
 
 
-ROLE = {"bound_audiences": ["a"], "bound_claims": {"sub": "repo:x"}, "token_policies": ["plane-ci"]}
+ROLE = {"bound_audiences": ["a"], "bound_claims": {"sub": "repo:x"}, "token_policies": ["plane-ci"], "bound_claims_type": "string"}
 
 
 class T(unittest.TestCase):
@@ -55,9 +55,41 @@ class T(unittest.TestCase):
         r = {"bound_audiences": ["a"], "bound_claims": {"actor": "x"}, "token_policies": ["p"]}
         self.assertEqual(run([rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], r)])[0], 1)
 
-    def test_ssh_role_root_refused(self):
-        self.assertEqual(run([rc("vault_ssh_secret_backend_role.n", "vault_ssh_secret_backend_role", ["create"], {"allowed_users": "root", "default_user": "root"})])[0], 1)
-        self.assertEqual(run([rc("vault_ssh_secret_backend_role.n", "vault_ssh_secret_backend_role", ["create"], {"allowed_users": "deploy-x", "default_user": "deploy-x"})])[0], 0)
+    def test_ssh_role_allowlist(self):
+        def r(name, users, default=None):
+            return run([rc("vault_ssh_secret_backend_role.n", "vault_ssh_secret_backend_role", ["create"],
+                           {"name": name, "allowed_users": users, "default_user": default or users})])[0]
+        self.assertEqual(r("deploy-x", "deploy-x"), 0)
+        for name, users in (("deploy-x", "root"), ("lab-runner", "lab-runner"), ("deploy-x", "deploy-*"),
+                            ("deploy-x", "deploy-x,root"), ("x", "x")):
+            self.assertEqual(r(name, users), 1, (name, users))
+
+    def test_policy_may_not_grant_other_ssh_signing(self):
+        for path in ("ssh-client-signer/sign/lab-runner", "ssh-client-signer/sign/*", "ssh-client-signer/roles/x"):
+            pol = 'path "%s" {\n capabilities=["update"]\n}' % path
+            self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "n", "policy": pol})])[0], 1, path)
+        ok = 'path "ssh-client-signer/sign/deploy-x" {\n capabilities=["update"]\n}'
+        self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "n", "policy": ok})])[0], 0)
+
+    def test_role_policy_allowlist_and_claims(self):
+        def r(pols, claims=None, typ="string", before=None):
+            a = {**ROLE, "token_policies": pols, "bound_claims_type": typ}
+            if claims: a["bound_claims"] = claims
+            return run([rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["update" if before else "create"], a, before)])[0]
+        self.assertEqual(r(["deploy-x"]), 0)
+        self.assertEqual(r(["media-ci"]), 1)             # an existing policy, not allowlisted
+        self.assertEqual(r(["media-ci"], before={**ROLE, "token_policies": ["media-ci"]}), 0)  # unchanged on an existing role
+        self.assertEqual(r(["plane-ci"], typ="glob"), 1)
+        self.assertEqual(r(["plane-ci"], claims={"sub": "repo:PeteDio-Labs/*"}), 1)
+
+    def test_privileged_policy_update_refused(self):
+        self.assertEqual(run([rc("vault_policy.ci_read", "vault_policy", ["update"], {"name": "ci-read", "policy": ""})])[0], 1)
+
+    def test_role_privileged_policy_refused(self):
+        r = {**ROLE, "token_policies": ["ci-read"]}
+        self.assertEqual(run([rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], r)])[0], 1)
+        r = {"bound_audiences": ["a"], "bound_claims": {"actor": "x"}, "token_policies": ["p"]}
+        self.assertEqual(run([rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], r)])[0], 1)
 
     def test_digest_pins_the_plan(self):
         ch = [rc("vault_jwt_auth_backend_role.plane_ci", "vault_jwt_auth_backend_role", ["update"], ROLE, ROLE)]

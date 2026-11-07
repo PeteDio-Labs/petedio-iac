@@ -26,11 +26,16 @@ PROTECTED_ADDR = re.compile(
     r"^(vault_policy|vault_jwt_auth_backend_role)\.(vault_config_\w+|breakglass\w*|claude_ops\w*)(\[.*\])?$"
     r"|^vault_ssh_secret_backend_role\.(lab_runner|pedro)(\[.*\])?$"
 )
+# A JWT role may attach only these policies, or the policies it already had. The set is an
+# allowlist: a policy added to vault-config later is not attachable until a reviewed PR lists it.
+ROLE_POLICY_ALLOW = re.compile(r"^(plane-ci|secrets-register|deploy-[a-z0-9-]+)$")
+SSH_ROLE_NAME = re.compile(r"^deploy-[a-z0-9-]+$")
+SSH_SIGN_PATH = re.compile(r"^ssh-client-signer/sign/deploy-[a-z0-9-]+$")
 PRIVILEGED_POLICIES = {
     "vault-config-apply", "vault-config-plan", "breakglass-247", "terraform", "ansible", "ansible-247",
     "ci-read", "claude-ops", "claude-247-deploy", "lab-action-read", "root",
 }
-FORBIDDEN_POLICY_PATH = re.compile(r"^(sys|auth|identity|ssh-client-signer/(config|roles))(/|$)|^(\*|\+|kv/\*|kv/data/\*|kv/data/\+)$")
+FORBIDDEN_POLICY_PATH = re.compile(r"^(sys|auth|identity)(/|$)|^(\*|\+|kv/\*|kv/data/\*|kv/data/\+)$")
 PATH_BLOCK = re.compile(r'path\s+"([^"]+)"\s*\{(.*?)\}', re.S)
 ROLE_BIND_KEYS = ("repository", "sub", "workflow_ref")
 
@@ -38,6 +43,8 @@ ROLE_BIND_KEYS = ("repository", "sub", "workflow_ref")
 def policy_problems(text):
     p = []
     for path, body in PATH_BLOCK.findall(text or ""):
+        if path.startswith("ssh-client-signer") and not SSH_SIGN_PATH.match(path):
+            p.append(f'policy path "{path}": only ssh-client-signer/sign/deploy-<name> may be granted')
         if FORBIDDEN_POLICY_PATH.search(path):
             p.append(f'policy path "{path}" is outside what the gated apply may grant')
         if re.search(r'"sudo"', body):
@@ -45,11 +52,21 @@ def policy_problems(text):
     return p
 
 
-def role_problems(after):
+def role_problems(after, before=None):
     p = []
-    bad = sorted(set(after.get("token_policies") or []) & PRIVILEGED_POLICIES)
+    pols = after.get("token_policies")
+    if pols is None:
+        p.append("token_policies is not known at plan time")
+    had = set((before or {}).get("token_policies") or [])
+    bad = sorted(x for x in (pols or []) if x not in had and not ROLE_POLICY_ALLOW.match(x))
+    bad += sorted(set(pols or []) & PRIVILEGED_POLICIES - had)
     if bad:
-        p.append(f"role attaches privileged policies {bad}")
+        p.append(f"role attaches policies outside the allowlist: {sorted(set(bad))}")
+    if after.get("bound_claims_type", "string") != "string":
+        p.append("bound_claims_type must be string (no glob matching)")
+    for k, v in (after.get("bound_claims") or {}).items():
+        if re.search(r"[*?]", str(v)):
+            p.append(f"bound_claims.{k} contains a wildcard")
     claims = after.get("bound_claims") or {}
     if not any(k in claims for k in ROLE_BIND_KEYS):
         p.append("role binds none of repository, sub or workflow_ref")
@@ -59,8 +76,13 @@ def role_problems(after):
 
 
 def ssh_role_problems(after):
-    users = {u.strip() for u in str(after.get("allowed_users") or "").split(",")}
-    return ["ssh role can sign for root or any user"] if users & {"root", "*", ""} or "root" in str(after.get("default_user")) else []
+    name, users = str(after.get("name") or ""), str(after.get("allowed_users") or "")
+    p = []
+    if not SSH_ROLE_NAME.match(name):
+        p.append("ssh role name must match deploy-<name>")
+    if users != name or users != str(after.get("default_user") or ""):
+        p.append("ssh role allowed_users and default_user must both equal the role name (no list, no glob)")
+    return p
 
 
 def examine(plan):
@@ -84,7 +106,7 @@ def examine(plan):
                 why.append(f"policy {after.get('name')} is privileged; change it with scripts/apply-vault-config.sh")
             why += policy_problems(after.get("policy"))
         if not why and typ == "vault_jwt_auth_backend_role":
-            why += role_problems(after)
+            why += role_problems(after, rc["change"].get("before"))
         if not why and typ == "vault_ssh_secret_backend_role":
             why += ssh_role_problems(after)
         (refused if why else allowed).append((rc, why))
@@ -97,6 +119,10 @@ def digest(allowed):
         for rc, _ in allowed
     )
     return hashlib.sha256(json.dumps(rows, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _caps(body):
+    return ",".join(sorted(re.findall(r'"([a-z]+)"', body)))
 
 
 def show_diff(rc):
@@ -114,8 +140,14 @@ def show_diff(rc):
                     print(f"      + bound_claims.{ck}: {v}")
                 for v in sorted(bs - as_):
                     print(f"      - bound_claims.{ck}: {v}")
-        elif k in ("token_policies", "policy"):
-            print(f"      ~ {k} changed" if k == "policy" else f"      ~ {k}: {before.get(k)} -> {after.get(k)}")
+        elif k == "policy":
+            bp = {m[0]: _caps(m[1]) for m in PATH_BLOCK.findall(before.get(k) or "")}
+            ap = {m[0]: _caps(m[1]) for m in PATH_BLOCK.findall(after.get(k) or "")}
+            for path in sorted(set(ap) | set(bp)):
+                if bp.get(path) != ap.get(path):
+                    print(f"      policy path {path}: {bp.get(path, '-')} -> {ap.get(path, '-')}")
+        elif k == "token_policies":
+            print(f"      ~ {k}: {before.get(k)} -> {after.get(k)}")
         else:
             print(f"      ~ {k} changed")
 
