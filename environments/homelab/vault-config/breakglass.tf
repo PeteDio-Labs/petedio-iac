@@ -101,6 +101,29 @@ resource "vault_policy" "breakglass_247" {
       capabilities = ["update"]
     }
 
+    # No self-edit (PET-886). This token applies the policy, the MFA method and enforcement, and
+    # the userpass user, so without these stanzas it could rewrite its own policy, drop the TOTP
+    # enforcement or reset its own password and then act as an unrestricted admin. An exact path
+    # outranks the globs above, so each stanza leaves read for `terraform plan` and removes every
+    # write. To change one of these, use a root token that Pedro generates for the change. The
+    # first apply of this file can still run from this token, because the update lands before
+    # the new policy takes effect.
+    path "sys/policies/acl/breakglass-247" {
+      capabilities = ["read", "list"]
+    }
+    path "sys/policy/breakglass-247" {
+      capabilities = ["read"]
+    }
+    path "identity/mfa/*" {
+      capabilities = ["read", "list"]
+    }
+    path "auth/userpass/users/*" {
+      capabilities = ["read", "list"]
+    }
+    path "auth/userpass/mfa*" {
+      capabilities = ["read", "list"]
+    }
+
     # Never, even here: the prefix that documents the root token and the unseal material
     # (PET-702), and the operations that mint a root token or change the seal.
     path "kv/data/admin/*" {
