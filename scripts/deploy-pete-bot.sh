@@ -143,6 +143,10 @@ LAB_PLANE_TOKEN="$(field token 2>/dev/null || true)"
 # Optional (PET-745): the petedio-search bearer for search_lab. Absent leaves the tool off.
 SNAPSHOT="$(read_optional kv/services/lab-agent-search)"
 LAB_SEARCH_TOKEN="$(field token 2>/dev/null || true)"
+# Optional (PET-869): the media assistant's mtrace caller token and Bazarr key. Absent leaves it off.
+SNAPSHOT="$(read_optional kv/services/lab-agent-media)"
+LAB_MTRACE_TOKEN="$(field mtrace_token 2>/dev/null || true)"
+LAB_BAZARR_KEY="$(field bazarr_key 2>/dev/null || true)"
 unset SNAPSHOT
 echo "  resolved the 5 required values"
 if [ -n "$PB_DESK_APP_ID" ] && [ -n "$PB_DESK_INSTALLATION_ID" ] && [ -n "$PB_DESK_APP_PEM" ]; then
@@ -164,6 +168,16 @@ if [ -n "$LAB_SEARCH_TOKEN" ]; then
   echo "  lab-agent: search token present, so search_lab is offered"
 else
   echo "  lab-agent: kv/services/lab-agent-search is not seeded, so search_lab is off"
+fi
+if [ -n "$LAB_MTRACE_TOKEN" ]; then
+  echo "  media assistant: mtrace token present, so POST /v1/media/ask and the DM handler are on"
+else
+  echo "  media assistant: kv/services/lab-agent-media has no mtrace_token, so it is off (run scripts/seed-lab-agent-media.sh)"
+fi
+if [ -n "$LAB_BAZARR_KEY" ]; then
+  echo "  media assistant: Bazarr key present, so the subtitle tools are offered"
+else
+  echo "  media assistant: no bazarr_key, so there are no subtitle tools"
 fi
 if [ -n "$PB_UPDATES_TOKEN" ]; then
   echo "  /update: token present"
@@ -242,6 +256,8 @@ json.dump({
     "pete_bot_cd_public_key":        os.environ.get("PB_CD_PUBLIC_KEY", ""),
     "lab_agent_plane_token":         os.environ.get("LAB_PLANE_TOKEN", ""),
     "lab_agent_search_token":        os.environ.get("LAB_SEARCH_TOKEN", ""),
+    "lab_agent_mtrace_token":        os.environ.get("LAB_MTRACE_TOKEN", ""),
+    "lab_agent_bazarr_key":          os.environ.get("LAB_BAZARR_KEY", ""),
 }, open(os.environ["OUT"], "w"))
 '
 
