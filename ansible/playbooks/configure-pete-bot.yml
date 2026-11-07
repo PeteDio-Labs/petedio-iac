@@ -103,7 +103,7 @@
     pete_bot_weekly_dir: /var/lib/pete-bot/weekly
     pete_bot_weekly_access_team_domain: petedillo-labs.cloudflareaccess.com
     pete_bot_weekly_access_emails: [pedelgadillo@gmail.com]
-    pete_bot_weekly_access_aud: afad22e93a3b7bca79a6a8ce72d815a15de34143ea2b7f7afbc66a85e99c7b52
+    pete_bot_weekly_access_aud: "afad22e93a3b7bca79a6a8ce72d815a15de34143ea2b7f7afbc66a85e99c7b52"
     pete_bot_weekly_ollama_url: http://192.168.50.246:11434
     pete_bot_weekly_ready: >-
       {{ (pete_bot_reports_ready | bool) and (pete_bot_weekly_access_aud | length > 0) }}
