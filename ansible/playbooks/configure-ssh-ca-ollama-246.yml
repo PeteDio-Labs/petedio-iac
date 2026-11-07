@@ -145,7 +145,10 @@
 
     # A reload or a bad config can leave sshd down, and a green play over a dead sshd locks you
     # out. Read the listener back from the guest.
+    # Skipped in a check run: Ansible reports a shell task as failed there ("would have run"), and
+    # the retry loop below would turn that into ten failed attempts.
     - name: Prove sshd still listens on port 22
+      when: not ansible_check_mode
       ansible.builtin.shell: |
         set -o pipefail
         pct exec {{ guest_vmid }} -- ss -H -ltn 'sport = :22' | grep -c LISTEN
@@ -166,5 +169,5 @@
           {{ land_principals.stdout | default('not written in a check') | trim }},
           drop-in {{ land_dropin.stdout | default('not written in a check') | trim }};
           {{ '' if ansible_check_mode else 'sshd -T names the CA and the principals file; ' }}
-          {{ listeners.stdout | trim }} listener(s) on port 22.
+          {{ (listeners.stdout | trim ~ ' listener(s) on port 22.') if not ansible_check_mode else 'The port-22 listener probe was skipped.' }}
           Prove the daemon with a certificate login.
