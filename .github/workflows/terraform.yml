@@ -149,9 +149,11 @@ jobs:
           echo "zizmor examined ${DONE} of ${WORKFLOWS} workflow files: 0 unpinned actions."
 
       # PET-866: the plan-on-PR guard and summary decide what a runner with credentials will plan.
-      - name: Test the plan guard and summary
+      - name: Test the plan guards and summary
         working-directory: .
-        run: python3 scripts/test-tf-plan.py
+        run: |
+          pip install --quiet python-hcl2==8.1.4 lark==1.3.1
+          python3 scripts/test-tf-plan.py
 
       - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
         run: terraform init -input=false -backend=false

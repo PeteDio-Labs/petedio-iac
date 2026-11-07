@@ -220,6 +220,84 @@ plan["prior_state"] = {}
 with open(f.name, "w") as g:
     json.dump(plan, g)
 results.append(check("empty state fails", run(sys.executable, S, f.name).returncode, 1))
+INSPECT = os.path.join(HERE, "tf-plan-inspect.py")
+
+
+def inspect_case(mutate):
+    """Copy the real tree as base and head, mutate head, return the inspector's exit code."""
+    import shutil
+    root = os.path.dirname(HERE)
+    with tempfile.TemporaryDirectory() as d:
+        for side in ("base", "head"):
+            for sub in ("environments/homelab", "modules"):
+                shutil.copytree(os.path.join(root, sub), os.path.join(d, side, sub),
+                                ignore=shutil.ignore_patterns(".terraform", "vault-config"))
+        mutate(os.path.join(d, "head"))
+        return run(sys.executable, INSPECT, "--base", os.path.join(d, "base"),
+                   "--head", os.path.join(d, "head")).returncode
+
+
+def append_to(rel, text):
+    def m(head):
+        with open(os.path.join(head, rel), "a") as f:
+            f.write(text)
+    return m
+
+
+def replace_in(rel, old, new):
+    def m(head):
+        p = os.path.join(head, rel)
+        t = open(p).read()
+        assert old in t, (rel, old)
+        open(p, "w").write(t.replace(old, new, 1))
+    return m
+
+
+try:
+    import hcl2  # noqa: F401
+    HAVE_HCL2 = True
+except ImportError:
+    HAVE_HCL2 = False
+if not HAVE_HCL2 and not os.environ.get("ALLOW_NO_HCL2"):
+    print("FAIL python-hcl2 is not installed, so the inspector tests did not run")
+    sys.exit(1)
+
+H = "environments/homelab/"
+if HAVE_HCL2:
+    results += [
+        check("inspect: unchanged tree passes", inspect_case(lambda h: None), 0),
+        check("inspect: plain comment passes", inspect_case(append_to(H + "plane.tf", "# c\n")), 0),
+        check("inspect: new resource of a locked provider passes",
+              inspect_case(append_to(H + "plane.tf", 'resource "cloudflare_record" "x" {}\n')), 0),
+        check("inspect: new provider block refused",
+              inspect_case(append_to(H + "plane.tf", 'provider "vault" { alias = "e" }\n')), 1),
+        check("inspect: unquoted child provider refused",
+              inspect_case(append_to("modules/proxmox-lxc/extra.tf", "provider proxmox {\n}\n")), 1),
+        check("inspect: terraform cloud block refused",
+              inspect_case(append_to(H + "plane.tf", 'terraform { cloud { hostname = "evil" } }\n')), 1),
+        check("inspect: provisioner refused",
+              inspect_case(append_to(H + "plane.tf", 'resource "terraform_data" "x" {\n  provisioner "local-exec" {}\n}\n')), 1),
+        check("inspect: remote module source refused",
+              inspect_case(append_to(H + "plane.tf", 'module "x" { source = "git::https://evil/x" }\n')), 1),
+        check("inspect: unreviewed local module refused",
+              inspect_case(append_to(H + "plane.tf", 'module "x" { source = "../../payload" }\n')), 1),
+        check("inspect: external data source refused",
+              inspect_case(append_to(H + "plane.tf", 'data "external" "x" {}\n')), 1),
+        check("inspect: new vault read refused",
+              inspect_case(append_to(H + "plane.tf", 'data "vault_kv_secret_v2" "x" { mount = "kv" name = "iac/minio" }\n')), 1),
+        check("inspect: edit to an existing vault read refused",
+              inspect_case(replace_in(H + "databases.tf", 'mount = "kv"', 'mount = "kv2"')), 1),
+        check("inspect: file() added refused",
+              inspect_case(append_to(H + "plane.tf", 'locals { f = file("/etc/passwd") }\n')), 1),
+        check("inspect: provider meta-argument refused",
+              inspect_case(append_to(H + "plane.tf", 'resource "terraform_data" "x" {\n  provider = vault.e\n}\n')), 1),
+        check("inspect: unparseable file refused",
+              inspect_case(append_to(H + "plane.tf", 'resource "x" {{{\n')), 1),
+        check("inspect: comment-split provider refused (parse error or block)",
+              inspect_case(append_to(H + "plane.tf", 'provider /* c */ "vault" {}\n')), 1),
+    ]
+
+
 def gh_case():
     """The comment upsert must not edit a comment that another user wrote."""
     import importlib.util
