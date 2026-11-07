@@ -131,6 +131,8 @@
     lab_agent_ollama_url: http://192.168.50.246:11434
     lab_agent_search_url: http://192.168.50.246:8526
     lab_agent_ollama_model: qwen3:8b
+    # The template reads this. lab-agent refuses gateway at startup (PET-744), so the assert below stops it first.
+    lab_agent_provider: ollama
     lab_agent_user: lab-agent
     lab_agent_dir: /opt/lab-agent
     lab_agent_bin: /opt/lab-agent/lab-agent
@@ -227,6 +229,14 @@
           kv/services/lab-agent-pve with playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
           and kv/services/lab-agent with scripts/seed-lab-agent.sh, then deploy again.
           kv/services/claude-workspace-mirror comes from scripts/seed-workspace-mirror-vault.sh.
+
+    - name: Assert lab-agent's provider is one it starts with
+      ansible.builtin.assert:
+        that:
+          - lab_agent_provider == 'ollama'
+        fail_msg: >-
+          lab_agent_provider is '{{ lab_agent_provider }}'. lab-agent starts with 'ollama' only: the
+          Anthropic gateway is retired (PET-744) and lab-agent refuses LAB_PROVIDER=gateway.
 
     - name: Assert the lab MCP's audience tag is empty or well formed
       ansible.builtin.assert:
