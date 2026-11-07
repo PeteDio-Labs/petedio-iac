@@ -23,10 +23,15 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "plane" {
   hostname    = "https://mcp-plane.pdlab.dev/mcp"
   auth_type   = "oauth"
 
-  # Set explicitly. The API returns false and the provider reads it back as null when the
-  # attribute is unset, so the plan shows `false -> null` and the PUT sends null, which the
-  # API rejects with 400 "Expected boolean, received null" (PET-839).
-  is_shared_oauth_callback_enabled = false
+  # Set explicitly, never unset. An unset value plans as `false -> null`, the PUT sends null,
+  # and the API rejects it with 400 "Expected boolean, received null" (PET-839, #630).
+  # true makes portal users sign in to the upstream through one fixed Cloudflare-hosted
+  # callback, in place of the per-user portal callback. It does not change the administrator
+  # sign-in: "Authenticate server" in the dashboard still redirects to the per-server dashboard
+  # callback (.../ai-controls/mcp-server/oauth-callback/<id>). The upstream's
+  # managed_oauth.allowed_redirect_uris in cloudflare-routes.tf needs both the hosted URL and
+  # the two per-server dashboard URLs (per Cloudflare's MCP portal docs; unverified here).
+  is_shared_oauth_callback_enabled = true
 }
 
 resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "lab" {
@@ -37,10 +42,15 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "lab" {
   hostname    = "https://mcp-lab.pdlab.dev/mcp/lab"
   auth_type   = "oauth"
 
-  # Set explicitly. The API returns false and the provider reads it back as null when the
-  # attribute is unset, so the plan shows `false -> null` and the PUT sends null, which the
-  # API rejects with 400 "Expected boolean, received null" (PET-839).
-  is_shared_oauth_callback_enabled = false
+  # Set explicitly, never unset. An unset value plans as `false -> null`, the PUT sends null,
+  # and the API rejects it with 400 "Expected boolean, received null" (PET-839, #630).
+  # true makes portal users sign in to the upstream through one fixed Cloudflare-hosted
+  # callback, in place of the per-user portal callback. It does not change the administrator
+  # sign-in: "Authenticate server" in the dashboard still redirects to the per-server dashboard
+  # callback (.../ai-controls/mcp-server/oauth-callback/<id>). The upstream's
+  # managed_oauth.allowed_redirect_uris in cloudflare-routes.tf needs both the hosted URL and
+  # the two per-server dashboard URLs (per Cloudflare's MCP portal docs; unverified here).
+  is_shared_oauth_callback_enabled = true
 }
 
 resource "cloudflare_zero_trust_access_ai_controls_mcp_portal" "pdlab" {
