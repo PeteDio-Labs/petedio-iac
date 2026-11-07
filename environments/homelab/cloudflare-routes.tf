@@ -31,10 +31,10 @@ module "cloudflare_ingress" {
     # gone, replaced by zot on the same LXC. The registry is deliberately no
     # longer reachable from the internet: its only consumers (runner-232/233,
     # faasd on 241) are all on the LAN, so routing them out to Cloudflare and
-    # back in was pure latency and pure attack surface. docker.pdlab.dev is now
-    # a plain A record straight to the box — see cloudflare_dns_record.registry
-    # below. registry.pdlab.dev is retired outright: it fronted Nexus's web UI,
-    # which zot replaces with its own, LAN-only.
+    # back in was pure latency and pure attack surface. docker.pdlab.dev had
+    # a plain A record straight to the box until PET-778 removed it with the dead host.
+    # registry.pdlab.dev is retired outright: it fronted Nexus's web UI, which zot
+    # replaces with its own, LAN-only.
 
     # Co-latro and its admin portal are GONE (PET-366). Both were served from VM-230,
     # which is destroyed; leaving either hostname here would point the tunnel at nothing.
@@ -181,39 +181,6 @@ import {
 import {
   to = module.cloudflare_ingress.cloudflare_dns_record.route["seer.pdlab.dev"]
   id = "${local.cloudflare_zone_id}/553f672178651906b01c66cdca2c9de7"
-}
-
-# ============================================================================================
-# Registry DNS — docker.pdlab.dev straight to the box, no tunnel
-# ============================================================================================
-#
-# zot (which replaced Nexus on CT106) serves the OCI API on :443 with a real
-# Let's Encrypt cert obtained by DNS-01. So the hostname needs to resolve, but
-# nothing needs to PROXY it — hence a plain A record with proxied = false.
-#
-# WHY KEEP THE HOSTNAME AT ALL instead of using the IP: `docker.pdlab.dev` is
-# baked into both co-latro CI workflows, the frontend e2e compose file,
-# deploy-lab-graph.sh, lab-graph's stack.yml, and faasd's
-# /var/lib/faasd/.docker/config.json. Keeping the name means the registry swap
-# touches none of them.
-#
-# This publishes a private RFC1918 address in public DNS. That is intentional
-# and is the normal trade for LAN-only services that still want a real cert: the
-# record is only useful to something already on the LAN, and the alternative
-# (internal-CA certs) means distributing a CA to every client forever.
-resource "cloudflare_dns_record" "registry" {
-  zone_id = local.cloudflare_zone_id
-  name    = "docker.pdlab.dev"
-  type    = "A"
-  content = "192.168.50.111"
-  ttl     = 300
-  proxied = false # MUST stay false — proxying an RFC1918 origin cannot work.
-  comment = "zot OCI registry on CT106. LAN-only; no tunnel (PET-122 follow-up)."
-
-  # The old CNAME (tunnel) for this name is destroyed when it leaves the
-  # cloudflare_ingress routes map. Cloudflare rejects two records on one name,
-  # so the destroy must land first.
-  depends_on = [module.cloudflare_ingress]
 }
 
 # The Access application audience tag for mcp-lab.pdlab.dev (PET-824). lab-agent checks it
