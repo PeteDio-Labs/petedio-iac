@@ -1,0 +1,99 @@
+# Plan and apply environments/homelab/vault-config from CI, after Pedro approves.
+#
+#   plan   runs on dispatch with no approval. It prints what the guard examined and a digest.
+#   apply  waits on the `lab-write` environment (Pedro's approval), re-plans, and applies only
+#          when the guard passes and the digest equals the plan job's.
+#
+# Only main may run this file, and the Vault roles refuse any other ref. Logs are public: the
+# guard prints addresses, attribute names and claim values, never a secret. Layers and limits:
+# environments/homelab/vault-config/vault-config-apply.tf. Anything the guard refuses stays a
+# Mac step (scripts/apply-vault-config.sh).
+name: vault-config-apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      pet:
+        description: "The PET item this run answers, for example PET-861"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, homelab]
+    timeout-minutes: 15
+    outputs:
+      digest: ${{ steps.plan.outputs.digest }}
+      changes: ${{ steps.plan.outputs.changes }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.3 # same pin as terraform.yml; bump together
+          terraform_wrapper: false
+      - name: Encode Vault CA
+        id: vault_ca
+        run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
+      - name: Vault, mint vault-config-plan via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: vault-config-plan
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: true
+          secrets: |
+            kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;
+            kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY
+      - name: Plan and run the guard
+        id: plan
+        run: scripts/vault-config-ci.sh plan
+
+  apply:
+    needs: plan
+    # Pedro approves here. A plan with no changes skips the job instead of asking for a tap.
+    if: github.ref == 'refs/heads/main' && needs.plan.outputs.changes != '0'
+    environment: lab-write
+    concurrency:
+      group: lab-write
+      cancel-in-progress: false
+    runs-on: [self-hosted, linux, x64, homelab]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.3
+          terraform_wrapper: false
+      - name: Encode Vault CA
+        id: vault_ca
+        run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
+      - name: Vault, mint vault-config-apply via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: vault-config-apply
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: true
+          secrets: |
+            kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;
+            kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY
+      - name: Re-plan, check the digest and apply
+        env:
+          EXPECT_DIGEST: ${{ needs.plan.outputs.digest }}
+        run: scripts/vault-config-ci.sh apply
