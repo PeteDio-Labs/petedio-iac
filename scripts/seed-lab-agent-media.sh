@@ -25,6 +25,8 @@
 # environment of one python3 process and reach Vault on stdin. What prints is each field's
 # length and the secret's version.
 set -euo pipefail
+# A caller can run `bash -x`; tracing would print the credentials read below.
+set +x
 umask 077
 
 ROTATE=0
