@@ -70,6 +70,8 @@ module "cloudflare_ingress" {
         allowed_redirect_uris = [
           "https://claude.ai/api/mcp/auth_callback",
           "https://dash.cloudflare.com/${local.cloudflare_account_id}/one/access-controls/ai-controls/mcp-server/oauth-callback/plane",
+          # Cloudflare's shared outbound callback, sent when a portal user signs in to the upstream (PET-839).
+          "https://oauth-callbacks.cloudflareaccess.com/cdn-cgi/access/outbound-oauth-callback",
         ]
         access_token_lifetime = "15m"
         session_duration      = "168h"
@@ -91,6 +93,8 @@ module "cloudflare_ingress" {
         allowed_redirect_uris = [
           "https://claude.ai/api/mcp/auth_callback",
           "https://dash.cloudflare.com/${local.cloudflare_account_id}/one/access-controls/ai-controls/mcp-server/oauth-callback/lab",
+          # Cloudflare's shared outbound callback, sent when a portal user signs in to the upstream (PET-839).
+          "https://oauth-callbacks.cloudflareaccess.com/cdn-cgi/access/outbound-oauth-callback",
         ]
         access_token_lifetime = "15m"
         session_duration      = "168h"
