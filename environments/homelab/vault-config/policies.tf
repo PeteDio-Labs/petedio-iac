@@ -19,10 +19,10 @@
 # all carried the grant until PET-702. Add one named path with its own comment if a read
 # ever needs it, never the prefix.
 #
-# ⚠ THE kv/poker/* GRANTS BELOW STAY, THOUGH CO-LATRO IS GONE (PET-366). They do not
-# serve the poker app any more — they serve the postgresql PROVIDER, whose server-wide
-# admin credential still lives at kv/poker/db under that historical name. Revoking them
-# as teardown tidying would leave CI unable to plan against postgres-231 at all.
+# NO kv/poker/* GRANT (security audit, 2026-11-07). The postgresql provider reads its server-wide admin
+# credential from kv/admin/postgres since PET-691, and no Terraform in environments/homelab
+# reads kv/poker/* any more. The copy at kv/poker/db is still in Vault; delete it after this
+# applies. This policy and `terraform` carried the grant until then.
 resource "vault_policy" "ci_read" {
   name = "ci-read"
 
@@ -65,13 +65,8 @@ resource "vault_policy" "ci_read" {
     }
 
     # The postgresql provider's server-wide admin credential (PET-691). One named path
-    # under kv/admin, never the prefix (PET-702). The kv/poker/* grants below stay until
-    # the follow-up that retires them, which runs after the provider reads this path.
+    # under kv/admin, never the prefix (PET-702).
     path "kv/data/admin/postgres" {
-      capabilities = ["read"]
-    }
-
-    path "kv/data/poker/*" {
       capabilities = ["read"]
     }
 
@@ -80,10 +75,6 @@ resource "vault_policy" "ci_read" {
     }
 
     path "kv/metadata/db/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/poker/*" {
       capabilities = ["list"]
     }
   EOT
@@ -99,21 +90,12 @@ resource "vault_policy" "terraform" {
     }
 
     # The postgresql provider's server-wide admin credential (PET-691). One named path
-    # under kv/admin, never the prefix (PET-702). The kv/poker/* grants below stay until
-    # the follow-up that retires them, which runs after the provider reads this path.
+    # under kv/admin, never the prefix (PET-702).
     path "kv/data/admin/postgres" {
       capabilities = ["read"]
     }
 
-    path "kv/data/poker/*" {
-      capabilities = ["read"]
-    }
-
     path "kv/metadata/iac/*" {
-      capabilities = ["list"]
-    }
-
-    path "kv/metadata/poker/*" {
       capabilities = ["list"]
     }
   EOT
