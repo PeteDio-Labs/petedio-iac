@@ -6,8 +6,15 @@
 # /v1/alert over loopback from the same host.
 [Unit]
 Description=pete-bot — Discord surface for the homelab (PET-375)
-After=network-online.target mtrace.service
+After=network-online.target mtrace.service{{ ' weekly-dash-allowlist.service' if (pete_bot_weekly_ready | bool) else '' }}
 Wants=network-online.target
+{% if pete_bot_weekly_ready | bool %}
+# The weekly dashboard (PET-868) binds 0.0.0.0 and relies on weekly-dash-allowlist to admit only
+# the tunnel host. Before= only orders units: without Requires=, a failed `nft -f` would still start
+# pete-bot with port 3018 open to the LAN. This trades alert delivery for that boundary, so a
+# failed load fails the deploy check, where someone reads it.
+Requires=weekly-dash-allowlist.service
+{% endif %}
 
 # ⚠ THESE BELONG IN [Unit], NOT [Service]. systemd parses them here; put them under
 # [Service] and it logs "Unknown key ... ignoring" and carries on with no limit at all —

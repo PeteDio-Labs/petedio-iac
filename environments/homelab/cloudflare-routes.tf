@@ -89,6 +89,19 @@ module "cloudflare_ingress" {
       }
     }
 
+    # The weekly PR dashboard (PET-868), served by pete-bot on 237. A browser-gated route, so
+    # Access shows its login page and pete-bot verifies the Cf-Access-Jwt-Assertion JWT (its
+    # audience tag and email) as lab-agent does. Port 3018 is separate from the bot's 3015, so the
+    # alert intake is never reachable through the tunnel. The origin is a LAN address because
+    # cloudflared runs on LXC 112; weekly-dash-allowlist on 237 admits only 112.
+    # access_emails is the whole boundary: keep it to Pedro alone.
+    "reports.pdlab.dev" = {
+      service       = "http://192.168.50.237:3018"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+    }
+
     # Tom's Plane MCP (PET-610), a copy of mcp-plane.pdlab.dev with a different origin port and email.
     # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
     # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same
@@ -198,4 +211,13 @@ resource "cloudflare_dns_record" "registry" {
 output "lab_mcp_subdomain_access_aud" {
   description = "Access application audience tag for mcp-lab.pdlab.dev (PET-824). lab-agent checks it on the Cf-Access-Jwt-Assertion JWT. Set it as lab_agent_access_aud. It is not a secret."
   value       = module.cloudflare_ingress.access_application_auds["mcp-lab.pdlab.dev"]
+}
+
+# The Access application audience tag for reports.pdlab.dev (PET-868). pete-bot checks it against
+# the `aud` claim of the Cf-Access-Jwt-Assertion JWT. It is an identifier, not a secret.
+# configure-pete-bot.yml carries it as pete_bot_weekly_access_aud, and the dashboard stays off
+# until it does.
+output "weekly_dashboard_access_aud" {
+  description = "Access application audience tag for reports.pdlab.dev (PET-868). pete-bot checks it on the Cf-Access-Jwt-Assertion JWT. Set it as pete_bot_weekly_access_aud. It is not a secret."
+  value       = module.cloudflare_ingress.access_application_auds["reports.pdlab.dev"]
 }
