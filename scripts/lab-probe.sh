@@ -6,6 +6,7 @@
 #   scripts/lab-probe.sh journal <args>   # unit=lab-agent since=... until=... mode=callers|lines|count
 #   scripts/lab-probe.sh mtrace  <args>   # title=<text>   -> mtrace trace_request, as caller lab-agent
 #   scripts/lab-probe.sh media_ask <args> # question=<text> -> lab-agent POST /v1/media/ask
+#   scripts/lab-probe.sh guests           # {"data":{"guests":[{vmid,node,status}]}} for scripts/check-staleness.py
 #
 # WHAT RUNS. Each probe is a fixed command. The caller supplies values, never commands: every value
 # must match a strict pattern below, and the remote text carries only base64 or an allowlisted
@@ -51,6 +52,23 @@ parse() {
 parse
 need() { [ -n "${KV[$1]:-}" ] || die "$PROBE needs $1=..."; }
 only() { local k; for k in "${!KV[@]}"; do [[ " $* " == *" $k "* ]] || die "$PROBE takes no '$k'"; done; }
+
+# guests needs no 237: it asks the first node that answers for the cluster's guest list and prints
+# vmid, node and status only (no names, no addresses), as the vault staleness check reads it.
+if [ "$PROBE" = guests ]; then
+  [ -z "$ARGS" ] || die "guests takes no args"
+  for n in 192.168.50.10 192.168.50.11 192.168.50.12; do
+    if J="$(ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$n" 'pvesh get /cluster/resources --type vm --output-format json' 2>/dev/null)" && [ -n "$J" ]; then
+      OUT="$(printf '%s' "$J" | python3 -c 'import json,sys; g=[{"vmid":r["vmid"],"node":r["node"],"status":r["status"]} for r in json.load(sys.stdin) if "vmid" in r]; print(json.dumps({"data":{"guests":g}}, separators=(",",":")))' 2>/dev/null)" || continue
+      N="$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]["guests"]))')"
+      [ "$N" -gt 0 ] || continue
+      echo "$OUT"
+      echo "probe guests: $N guests read from $n"
+      exit 0
+    fi
+  done
+  echo "FAILED: no node answered pvesh, so no guest was read." >&2; exit 1
+fi
 
 # Find the node that holds 237 now; guests move (PET-334).
 NODE=""

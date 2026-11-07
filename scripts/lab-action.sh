@@ -60,9 +60,9 @@ case "$ACTION" in
   # A read-only probe inside LXC 237 (PET-878, PET-879). scripts/lab-probe.sh validates each value against a
   # strict pattern and reads lab-agent's own token inside 237; nothing is placed.
   lab_probe)
-    [[ "$TARGET" =~ ^(journal|mtrace|media_ask)$ ]] || { echo "REFUSED: '$TARGET' is not a probe (journal, mtrace, media_ask)." >&2; exit 2; }
+    [[ "$TARGET" =~ ^(journal|mtrace|media_ask|guests)$ ]] || { echo "REFUSED: '$TARGET' is not a probe (journal, mtrace, media_ask, guests)." >&2; exit 2; }
     CMD=("$REPO_ROOT/scripts/lab-probe.sh" "$TARGET" "$PROBE_ARGS")
-    SUMMARY='^probe (journal|mtrace|media_ask):' ;;
+    SUMMARY='^probe (journal|mtrace|media_ask|guests):' ;;
   *) echo "REFUSED: '$ACTION' is not an allowlisted action (lab_verify, lab_updates, lab_probe, playbook_check, playbook_apply)." >&2; exit 2 ;;
 esac
 
