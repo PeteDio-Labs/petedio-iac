@@ -2,8 +2,11 @@
 # the tracker must not be restarted to change anything here.
 services:
   plane-mcp:
-    image: makeplane/plane-mcp-server:v0.3.0 # pinned: an unpinned re-resolve is a
-    container_name: plane-mcp                # silent upstream change to the tracker
+    # Built from ./Dockerfile: v0.3.0 plus a key-validation cache (PET-882). The base image
+    # is pinned: an unpinned re-resolve is a silent upstream change to the tracker.
+    build: .
+    image: plane-mcp-server:v0.3.0-pet882
+    container_name: plane-mcp
     restart: unless-stopped
     env_file: [./plane-mcp.env]
     expose: ["8211"] # loopback-only via caddy; never published to the LAN
