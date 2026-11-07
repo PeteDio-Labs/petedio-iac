@@ -181,6 +181,15 @@ CHECKED = {
 }
 
 
+def has_unknown(v):
+    """after_unknown marks a list as [false] when every element is known. Only a true counts."""
+    if isinstance(v, dict):
+        return any(has_unknown(x) for x in v.values())
+    if isinstance(v, list):
+        return any(has_unknown(x) for x in v)
+    return v is True
+
+
 def examine(plan):
     allowed, refused, noop = [], [], 0
     for rc in plan.get("resource_changes", []):
@@ -199,7 +208,7 @@ def examine(plan):
         after = rc["change"].get("after") or {}
         unknown = rc["change"].get("after_unknown") or {}
         for attr in CHECKED.get(typ, ()):
-            if unknown.get(attr):
+            if has_unknown(unknown.get(attr)):
                 why.append(f"{attr} is unknown until apply, so the guard cannot read it")
         if not why and typ == "vault_policy":
             if after.get("name") in PRIVILEGED_POLICIES:

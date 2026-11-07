@@ -143,6 +143,14 @@ class T(unittest.TestCase):
         self.assertEqual(pol("deploy-other", *ok), 1)                                      # only the pinned name
         self.assertEqual(pol("deploy-terraform-plan", KV + "data/admin/*"), 1)
 
+    def test_known_list_is_not_unknown(self):
+        # Terraform writes after_unknown as [false] for a list whose elements are all known.
+        r = rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], {**ROLE, "token_policies": ["deploy-x"]})
+        r["change"]["after_unknown"] = {"token_policies": [False], "bound_audiences": [False], "bound_claims": {}}
+        self.assertEqual(run([r])[0], 0)
+        r["change"]["after_unknown"] = {"token_policies": [True]}
+        self.assertEqual(run([r])[0], 1)
+
     def test_ssh_role_pins_options(self):
         def r(**kw):
             return run([rc("vault_ssh_secret_backend_role.n", "vault_ssh_secret_backend_role", ["create"],
