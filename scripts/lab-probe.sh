@@ -78,6 +78,27 @@ done
 [ -n "$NODE" ] || { echo "FAILED: no node reports LXC 237 running, so nothing was examined." >&2; exit 1; }
 in237() { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$NODE" "pct exec 237 -- sh -c '$1'"; }
 
+# 237 has no curl, so an HTTP call goes through bash's /dev/tcp. The script travels on stdin and
+# takes the base64 body and the kind (mtrace or ask) as arguments, so no value is shell source.
+# It reads the token from lab-agent.env as root, sends it only to its own socket, and prints the
+# response body and a final "HTTP <code>" line.
+REMOTE_POST='set -u
+B="$1"; KIND="$2"; ENVF=/etc/lab-agent/lab-agent.env
+get() { sed -n "s/^$1=//p" "$ENVF" | head -1; }
+if [ "$KIND" = mtrace ]; then T=$(get LAB_MTRACE_TOKEN); U=$(get LAB_MTRACE_URL); U=${U:-http://192.168.50.237:8237}; P=/api/tool/trace_request
+else T=$(get LAB_ASK_TOKEN); U=http://127.0.0.1:$(get LAB_PORT); U=${U%:}; P=/v1/media/ask; fi
+case "$U" in http://127.0.0.1) U=http://127.0.0.1:3016 ;; esac
+[ -n "$T" ] || { echo NO_TOKEN; exit 3; }
+HP=${U#http://}; H=${HP%%:*}; PT=${HP##*:}
+BODY=$(printf %s "$B" | base64 -d)
+exec 3<>/dev/tcp/"$H"/"$PT" || exit 4
+printf "POST %s HTTP/1.0\r\nHost: %s\r\nAuthorization: Bearer %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" "$P" "$H" "$T" "${#BODY}" "$BODY" >&3
+RESP=$(timeout 120 cat <&3)
+CODE=$(printf "%s" "$RESP" | head -1 | cut -d" " -f2)
+printf "%s\n" "${RESP#*$'"'"'\r\n\r\n'"'"'}"
+echo "HTTP $CODE"'
+post237() { ssh -o ConnectTimeout=8 -o BatchMode=yes "$NODE" "pct exec 237 -- bash -s -- $1 $2" <<<"$REMOTE_POST"; }
+
 TS='^20[0-9]{2}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]$'
 
 case "$PROBE" in
@@ -112,7 +133,7 @@ case "$PROBE" in
     need title
     [[ "${KV[title]}" =~ ^[A-Za-z0-9\ :.,\&-]{1,80}$ ]] || die "title may hold letters, digits, space and : . , & - only, up to 80 characters"
     B64="$(printf '{"title":"%s"}' "${KV[title]}" | base64 -w0)"
-    OUT="$(in237 "T=\$(sed -n \"s/^LAB_MTRACE_TOKEN=//p\" /etc/lab-agent/lab-agent.env); U=\$(sed -n \"s/^LAB_MTRACE_URL=//p\" /etc/lab-agent/lab-agent.env); [ -n \"\$T\" ] || { echo NO_TOKEN; exit 3; }; echo $B64 | base64 -d | curl -sS -m 30 -w \"\\nHTTP %{http_code}\\n\" -H \"Authorization: Bearer \$T\" -H \"Content-Type: application/json\" --data @- \"\${U:-http://192.168.50.237:8237}/api/tool/trace_request\"")" \
+    OUT="$(post237 "$B64" mtrace)" \
       || { echo "FAILED: the mtrace call failed or lab-agent holds no mtrace token." >&2; exit 1; }
     printf '%s\n' "$OUT" | cut -c1-2000
     CODE="$(printf '%s\n' "$OUT" | sed -n 's/^HTTP //p' | tail -1)"
@@ -124,7 +145,7 @@ case "$PROBE" in
     need question
     [[ "${KV[question]}" =~ ^[A-Za-z0-9\ :.,\&?\'-]{2,300}$ ]] || die "question may hold letters, digits, space and : . , & ? ' - only, 2 to 300 characters"
     B64="$(python3 -c 'import json,sys; print(json.dumps({"question": sys.argv[1]}))' "${KV[question]}" | base64 -w0)"
-    OUT="$(in237 "T=\$(sed -n \"s/^LAB_ASK_TOKEN=//p\" /etc/lab-agent/lab-agent.env); P=\$(sed -n \"s/^LAB_PORT=//p\" /etc/lab-agent/lab-agent.env); [ -n \"\$T\" ] || { echo NO_TOKEN; exit 3; }; echo $B64 | base64 -d | curl -sS -m 120 -w \"\\nHTTP %{http_code}\\n\" -H \"Authorization: Bearer \$T\" -H \"Content-Type: application/json\" --data @- \"http://127.0.0.1:\${P:-3016}/v1/media/ask\"")" \
+    OUT="$(post237 "$B64" ask)" \
       || { echo "FAILED: the media ask failed or lab-agent holds no ask token." >&2; exit 1; }
     printf '%s\n' "$OUT" | cut -c1-2000
     CODE="$(printf '%s\n' "$OUT" | sed -n 's/^HTTP //p' | tail -1)"
