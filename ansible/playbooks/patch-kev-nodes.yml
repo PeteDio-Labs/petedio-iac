@@ -1,0 +1,59 @@
+---
+# patch-kev-nodes.yml — upgrade libbrotli1 and inetutils-telnet on the Proxmox nodes. (PET-815)
+#
+# The 2026-11-03 CVE check named CVE-2026-111497 (libbrotli1) and CVE-2026-24061
+# (inetutils-telnet) as known-exploited. The nodes run Debian 13, so the fixed versions are
+# libbrotli1 1.1.0-2+deb13u1 and inetutils-telnet 2:2.6-3+deb13u1.
+#
+#   scripts/lab-playbook.sh check patch-kev-nodes.yml   # inside lab-action.yml
+#   ansible-playbook playbooks/patch-kev-nodes.yml --check
+#
+# Scope: the nodes only. The guests (seerr, claude-247, the media hosts) are not reachable by
+# lab-action, which opens root on the nodes and nothing else; PET-898 adds that path.
+#
+# `only_upgrade` acts only with `state: latest`. A package that is absent stays absent, so the
+# play never installs telnet. It upgrades nothing else, reboots nothing and never runs
+# `apt autoremove` (on a Proxmox node that lists a pve kernel as removable).
+#
+# ⚠ A HOST PATTERN THAT MATCHES NOTHING EXITS 0. lab-playbook.sh fails on an empty target list.
+# ⚠ `serial: 1` upgrades one node at a time. libbrotli1 is a library: a service that already
+#   loaded the old copy keeps it until restart, and this play restarts nothing.
+
+- name: Upgrade the KEV-listed packages on the nodes
+  hosts: proxmox:pve_new:pve_gpu
+  become: true
+  gather_facts: false
+  serial: 1
+  vars:
+    patch_kev_fixed:
+      libbrotli1: 1.1.0-2+deb13u1
+      inetutils-telnet: 2:2.6-3+deb13u1
+  tasks:
+    - name: Upgrade each package where it is installed
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: latest # noqa: package-latest
+        only_upgrade: true
+        update_cache: true
+        cache_valid_time: 0
+      loop: "{{ patch_kev_fixed | list }}"
+      register: patch_kev_result
+
+    - name: Read each installed version
+      ansible.builtin.command: dpkg-query -W -f='${Version}' {{ item }}
+      loop: "{{ patch_kev_fixed | list }}"
+      register: patch_kev_version
+      changed_when: false
+      failed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Fail below the fixed version
+      ansible.builtin.command: dpkg --compare-versions {{ item.stdout }} ge {{ patch_kev_fixed[item.item] }}
+      loop: "{{ patch_kev_version.results }}"
+      loop_control:
+        label: "{{ item.item }} {{ item.stdout }}"
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+      when:
+        - item.rc == 0
+        - not ansible_check_mode
