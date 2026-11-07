@@ -7,6 +7,7 @@
 #   scripts/lab-probe.sh mtrace  <args>   # title=<text>   -> mtrace trace_request, as caller lab-agent
 #   scripts/lab-probe.sh media_ask <args> # question=<text> -> lab-agent POST /v1/media/ask
 #   scripts/lab-probe.sh guests           # {"data":{"guests":[{vmid,node,status}]}} for scripts/check-staleness.py
+#   scripts/lab-probe.sh backup_jobs      # the cluster's vzdump jobs: id, schedule, storage, mode, enabled (PET-884)
 #   scripts/lab-probe.sh health [service=pete-bot|lab-agent]   # GET /health on 237; both when none is named
 #
 # WHAT RUNS. Each probe is a fixed command. The caller supplies values, never commands: every value
@@ -69,6 +70,31 @@ if [ "$PROBE" = guests ]; then
     fi
   done
   echo "FAILED: no node answered pvesh, so no guest was read." >&2; exit 1
+fi
+
+# backup_jobs asks the first node that answers for the cluster's vzdump jobs and prints, per job, the id,
+# schedule, storage, mode, whether it is enabled and what it covers (a count of guests, or "all"). It prints
+# no comment text and no mail address. A cluster that holds 0 jobs is a valid answer and says so.
+if [ "$PROBE" = backup_jobs ]; then
+  [ -z "$ARGS" ] || die "backup_jobs takes no args"
+  for n in 192.168.50.10 192.168.50.11 192.168.50.12; do
+    if J="$(ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$n" 'pvesh get /cluster/backup --output-format json' 2>/dev/null)" && [ -n "$J" ]; then
+      printf '%s' "$J" | python3 -c '
+import json, sys
+jobs = json.load(sys.stdin)
+if not isinstance(jobs, list):
+    sys.exit("not a list")
+for j in jobs:
+    cover = "all" if j.get("all") else str(len([v for v in str(j.get("vmid", "")).split(",") if v])) + " guests"
+    print("job %s: schedule=%s storage=%s mode=%s enabled=%s covers=%s" % (
+        j.get("id", "?"), j.get("schedule", j.get("starttime", "?")), j.get("storage", "?"),
+        j.get("mode", "?"), "no" if str(j.get("enabled", 1)) == "0" else "yes", cover))
+print("probe backup_jobs: %d job(s) read from /cluster/backup" % len(jobs))
+' || continue
+      exit 0
+    fi
+  done
+  echo "FAILED: no node answered pvesh for /cluster/backup, so no job was read." >&2; exit 1
 fi
 
 # Find the node that holds 237 now; guests move (PET-334).
@@ -182,5 +208,5 @@ case "$PROBE" in
     echo "probe media_ask: one question answered HTTP ${CODE:-none}, ${#OUT} characters read"
     [ "${CODE:-}" = 200 ] || exit 1 ;;
 
-  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, health)" ;;
+  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, health, backup_jobs)" ;;
 esac
