@@ -101,6 +101,16 @@ NEW_SK="$(printf '%s' "$SVC_JSON" | python3 -c 'import sys,json;d=json.load(sys.
 unset SVC_JSON
 [ -n "$NEW_AK" ] && [ -n "$NEW_SK" ] || die "failed to mint/parse the service account."
 echo "Minted svcacct scoped to $BUCKET (access key len ${#NEW_AK})."
+# Until the key is in Vault, a failure leaves a service account nobody holds. Remove it then.
+SAVED=0
+cleanup(){
+  if [ "$SAVED" -eq 0 ] && [ -n "${NEW_AK:-}" ]; then
+    mc --config-dir "$MCCFG" admin user svcacct rm adm "$NEW_AK" >/dev/null 2>&1 \
+      || echo "WARNING: the unsaved service account $NEW_AK is still on the host; remove it with: mc admin user svcacct rm adm $NEW_AK" >&2
+  fi
+  rm -rf "$MCCFG"
+}
+trap cleanup EXIT
 
 step "Verifying the new svcacct: can use $BUCKET, cannot see anything else"
 mc --config-dir "$MCCFG" alias set chk "$MINIO_ENDPOINT" "$NEW_AK" "$NEW_SK" >/dev/null 2>&1 \
@@ -118,7 +128,9 @@ mc --config-dir "$MCCFG" cp "$PROBE" "chk/$BUCKET/.write-probe" >/dev/null 2>&1 
 if mc --config-dir "$MCCFG" rm "chk/$BUCKET/.write-probe" >/dev/null 2>&1; then
   die "the new key can delete from $BUCKET, so the policy is wider than intended."
 fi
-mc --config-dir "$MCCFG" rm "adm/$BUCKET/.write-probe" >/dev/null 2>&1 || true
+# The bucket keeps versions, so a plain rm only adds a delete marker. Remove every version.
+mc --config-dir "$MCCFG" rm --versions --force "adm/$BUCKET/.write-probe" >/dev/null 2>&1 \
+  || echo "WARNING: could not remove the probe object .write-probe from $BUCKET; remove it with mc rm --versions --force."
 echo "Write works; delete is refused."
 
 step "Writing $DEST_PATH"
@@ -130,6 +142,7 @@ import json, os
 print(json.dumps({"access_key": os.environ["MO_AK"], "secret_key": os.environ["MO_SK"],
                   "endpoint": os.environ["MO_EP"], "bucket": os.environ["MO_BK"]}))
 ' | vault kv put "$DEST_PATH" - >/dev/null
+SAVED=1
 unset NEW_SK
 echo "$DEST_PATH updated (pete-bot-cd reads it, from vault-config/policies.tf)."
 
