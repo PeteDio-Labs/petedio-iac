@@ -17,7 +17,7 @@
 #     `/metrics` and anything can read `/ready`.
 #
 # The change is not a restart. files/cloudflared-converge.sh starts the new connector beside the old
-# one, waits for `/ready`, and only then stops the old one, which stays as `cloudflared-prev` for a
+# one, waits for `/ready` on it, hands the stable metrics port to a final connector, and keeps the old one as `cloudflared-prev` for a
 # rollback. When the new connector never reports ready, the old one keeps running and the play fails.
 #
 # The play places no credential from outside the host: when the env file is missing, the script
