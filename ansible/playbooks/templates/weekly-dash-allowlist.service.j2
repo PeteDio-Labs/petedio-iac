@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+# Loads the weekly dashboard's LAN allowlist (PET-868) before pete-bot starts.
+#
+# ⚠ NO ExecStop, as lab-mcp-allowlist.service has none: stopping this unit must never open the
+# dashboard port to the LAN while pete-bot keeps running.
+[Unit]
+Description=weekly dashboard LAN allowlist (nftables)
+Before=pete-bot.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ pete_bot_conf_dir }}/weekly-dash-allowlist.nft
+
+[Install]
+WantedBy=multi-user.target

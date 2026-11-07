@@ -16,9 +16,24 @@ shared `kv/iac/lxc-ssh` root key one consumer at a time (audit H6).
 |---|---|---|---|---|
 | `inventory-read` | `inventory`, no sudo | 30 min | the `PET-770` collector on 237 | `source-address` 237, no pty, no forwarding |
 | `pedro` | `root` | 1 h | the break-glass token on 247 | pty only, `source-address` LAN, .86 mesh and tailnet |
+| `lab-runner` | `root` on the nodes | 30 min | `lab-action.yml` on runner 232 or 233 | `source-address` 232 and 233, no pty |
+| `search-deploy` | `root` on `ollama-246` only | 30 min | `petedio-search` `deploy.yml` on runner 232 or 233 | `source-address` 232 and 233, no pty; only `ollama-246` lists the principal |
+| `deploy-plane`, `deploy-minio-data`, `deploy-metrics`, `deploy-lab-watchdog`, `deploy-codex-248` | `root` on one host each |
+| `deploy-backup-store` | `root` on the nodes | 30 min | `deploy-backup-store.yml` on runner 232 or 233 | `source-address` 232 and 233, no pty; the three nodes list the principal | 30 min | the `deploy-<name>.yml` workflow on runner 232 or 233 | `source-address` 232 and 233, no pty; only that host lists the principal. See `host-deploys.md` |
 
 To add a role, add a `vault_ssh_secret_backend_role` and its signing policy in `ssh.tf`, and a
 user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host).
+
+## Trust the CA on `ollama-246` (`search-deploy`, PET-526)
+
+`ollama-246` trusts no CA until this step, and the `configure-ssh-ca.yml` play cannot reach it
+without the shared `lxc-ssh` key. To trust the CA without that key, dispatch `lab-action.yml` with
+`action=playbook_apply` and `target=configure-ssh-ca-ollama-246.yml`. The play logs in to `pve01`
+with the `lab-runner` certificate and runs `pct exec 246`. It waits for your tap on the
+`lab-write` environment. Its last line names the counts it examined. After it, the
+`petedio-search` deploy signs a `search-deploy` certificate and connects to the guest directly.
+
+Apply `vault-config` first, because the `search-deploy` role must exist before a deploy can sign.
 
 ## Phase 1: turn on the CA and canary one host
 

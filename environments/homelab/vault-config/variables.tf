@@ -60,6 +60,7 @@ variable "plane_repos" {
     "petedio-workspace"      = "1257293543" # added in PET-360; had no binding at all (PET-290)
     "petedio-media-control"  = "1358823831" # migrated to the id form; new in PET-355
     "petedio-search"         = "1390098254" # PET-526
+    "petedio-pm"             = "1418397634" # the Plane desk drain mints its key here
   }
 }
 
@@ -67,6 +68,12 @@ variable "media_control_repo" {
   description = "owner/name of the petedio-media-control repo bound to the media-dash-cd JWT role."
   type        = string
   default     = "PeteDio-Labs/petedio-media-control"
+}
+
+variable "search_repo" {
+  description = "owner/repo whose CD mints the search-cd JWT role (PET-526)."
+  type        = string
+  default     = "PeteDio-Labs/petedio-search"
 }
 
 variable "pete_bot_repo" {

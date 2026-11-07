@@ -37,6 +37,14 @@ minio_buckets:
   - name: plane
     quota_bytes: 21474836480 # 20 GiB
 
+  # pete-bot — the daily copy of pete-bot's reports database (reports.sqlite), written by the bot
+  # on 237 with the bucket-scoped key that scripts/reseed-minio-pete-bot-reports.sh mints
+  # (PET-868). Versioning (enabled by the role for every bucket) keeps each day's copy, so a bad
+  # write is undone from an older version. The database is under 10 MB a year at today's volume:
+  # the quota bounds a runaway loop and nothing else.
+  - name: pete-bot
+    quota_bytes: 2147483648 # 2 GiB
+
   # usaa-statements — REMOVED FROM THIS LIST (PET-590). The tracker is retired, and Pedro chose
   # to export the bucket and then delete it. Dropping the entry does not delete the bucket:
   # `scripts/export-remove-usaa-statements.sh --dest DIR --remove` exports, verifies by

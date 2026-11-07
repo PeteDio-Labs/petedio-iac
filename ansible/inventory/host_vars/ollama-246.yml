@@ -118,3 +118,8 @@ ollama_resident_models:
   - model: "{{ ollama_embed_model }}"
     port: 11435
     kind: embed
+
+# roles/ssh-ca writes these into root's principals file beside `pedro` (PET-771). search-deploy is
+# the Vault SSH role the petedio-search deploy job signs per run (vault-config/ssh.tf), so that
+# job opens this one host as root and no other.
+ssh_ca_root_extra_principals: [search-deploy]

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# lab-updates — read-only report of OS patch state for every Proxmox node and LXC.
+# lab-updates — read-only report of OS patch state for every Proxmox node, LXC and the Pi.
 #
-#   ./scripts/lab-updates.sh          # run from claude-247 or the Mac (needs ssh to pve02 and pve03)
+#   ./scripts/lab-updates.sh          # run from claude-247 or the Mac (needs ssh to pve01, pve02, pve03 and pi1)
 #
 # Changes nothing: it runs no `apt-get update`, no upgrade and no reboot. It reads the apt
 # lists each host already holds, so it prints each list's age. A count from a stale list
@@ -12,11 +12,14 @@
 # script exits non-zero when any node or guest could not be read.
 set -uo pipefail
 
+PVE01=root@192.168.50.12   # the former ollama-host, a node since PET-528; reached by address, like lab-verify.sh
 PVE02=pve02
 PVE03=pve03
-EXAMINED=0; UNREADABLE=0; PENDING=0; REBOOT=0
+PI=pi1
+EXAMINED=0; SKIPPED=0; UNREADABLE=0; PENDING=0; REBOOT=0
 
-on() { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$1" "$2" 2>/dev/null; }
+on() { local o=(); [ "$1" = "$PVE01" ] && o=(-i "$HOME/.ssh/id_ed25519_ansible")
+       ssh -n -o ConnectTimeout=8 -o BatchMode=yes ${o[@]+"${o[@]}"} "$1" "$2" 2>/dev/null; }
 # pve03 is an unprivileged login, so pct needs sudo there (lab-verify.sh does the same).
 pct_on() {  # node, args...
   local n=$1; shift
@@ -52,7 +55,7 @@ report() {  # label, raw probe output
     "$([ "$up" -gt 0 ] && echo '!' || echo '✓')" "$label" "$os" "$up" "$sec" "$age" "$rb" "$ua"
 }
 
-for n in $PVE02 $PVE03; do
+for n in $PVE01 $PVE02 $PVE03; do
   printf "\n%s\n" "== node $n"
   pv=$(on "$n" "pveversion" | head -1)
   run=$(on "$n" "uname -r"); inst=$(on "$n" "$KERNEL_Q")
@@ -74,7 +77,14 @@ for n in $PVE02 $PVE03; do
   done
 done
 
-printf "\n== bare metal (ollama-host, pi1) not covered here: no pct; run the same probe over ssh\n"
-printf "\nexamined %d hosts or guests; %d unreadable; %d packages upgradable; %d need a reboot\n" \
-  "$EXAMINED" "$UNREADABLE" "$PENDING" "$REBOOT"
+printf "\n== bare metal %s\n" "$PI"
+# lab-action runs on runner 232, which holds no key for the Pi (lab-verify.sh skips it for the
+# same reason). Count the skip, so the last line never looks like full coverage.
+if [ "${LAB_ACTION:-}" = 1 ]; then
+  SKIPPED=$((SKIPPED+1)); echo "  - $PI (host)                   skipped: no key on the lab-action runner (PET-849)"
+else
+  report "$PI (host)" "$(on "$PI" "$PROBE")"
+fi
+printf "\nexamined %d hosts or guests; %d unreadable; %d skipped; %d packages upgradable; %d need a reboot\n" \
+  "$EXAMINED" "$UNREADABLE" "$SKIPPED" "$PENDING" "$REBOOT"
 [ "$UNREADABLE" -eq 0 ] && [ "$EXAMINED" -gt 0 ]

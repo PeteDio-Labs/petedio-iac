@@ -124,3 +124,8 @@ claude_operator_ssh_keys:
 # PET-763: claude-vault, a Remote Control session started inside the break-glass Vault login.
 # tasks/claude-vault.yml and templates/claude-vault.j2 carry the design.
 claude_operator_claude_vault_enable: true
+
+# roles/ssh-ca writes this into root's principals file beside `pedro` (PET-771). Keep it equal to
+# playbooks/configure-ssh-ca-deploy-hosts.yml. deploy-lab-watchdog is the Vault SSH role that
+# deploy-lab-watchdog.yml signs per run (vault-config/deploy-hosts.tf).
+ssh_ca_root_extra_principals: [deploy-lab-watchdog]

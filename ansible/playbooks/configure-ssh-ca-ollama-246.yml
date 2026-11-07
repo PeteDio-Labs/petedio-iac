@@ -1,0 +1,173 @@
+---
+# configure-ssh-ca-ollama-246.yml — make ollama-246 trust the Vault SSH CA, through its node. (PET-526)
+#
+#   scripts/lab-action.sh playbook_apply configure-ssh-ca-ollama-246.yml   (lab-action.yml, lab-write tap)
+#
+# WHY NOT roles/ssh-ca. That role connects to the guest over SSH, and ollama-246 trusts no CA
+# yet, so only the shared kv/iac/lxc-ssh key opens it. This play reaches the guest the way the
+# lab-runner certificate already reaches pve01: it logs in to the node as root and runs
+# `pct exec 246`. It writes the same three files roles/ssh-ca writes, with the same content, so a
+# later run of configure-ssh-ca.yml (ssh_ca_targets=ollama-246) finds nothing to change except
+# what host_vars/ollama-246.yml adds. After this play, the petedio-search deploy job signs a
+# `search-deploy` certificate and connects to the guest directly.
+#
+# WHAT IT CHANGES on ollama-246: /etc/ssh/trusted-user-ca-keys.pem, /etc/ssh/auth_principals/root
+# and /etc/ssh/sshd_config.d/10-ssh-ca.conf, then a reload of sshd. It never edits
+# authorized_keys, so every key that logs in before the run still logs in after it.
+#
+# WHAT IT PRINTS. Counts and status only, never file contents beyond the public CA key's presence.
+# The last task says what was examined. sshd -t gates the drop-in, and a rejected drop-in is removed.
+
+- name: Trust the Vault SSH CA on ollama-246 through pve01
+  hosts: pve01
+  gather_facts: false
+  become: false
+  vars:
+    guest_vmid: 246
+    guest_root_principals: [pedro, search-deploy]
+    ca_file: /etc/ssh/trusted-user-ca-keys.pem
+    principals_dir: /etc/ssh/auth_principals
+    dropin: /etc/ssh/sshd_config.d/10-ssh-ca.conf
+    # Writes stdin to $1 if it differs, and prints `changed` or `unchanged`. The path arrives as
+    # a positional argument, never as shell source.
+    land: >-
+      f="$1"; cat > "$f.new"; if cmp -s "$f.new" "$f"; then rm -f "$f.new"; echo unchanged;
+      else chmod 0644 "$f.new"; mv "$f.new" "$f"; echo changed; fi
+  tasks:
+    - name: Fail unless this node holds a running ollama-246
+      ansible.builtin.command: "pct status {{ guest_vmid }}"
+      register: guest_status
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+      failed_when: "'status: running' not in guest_status.stdout"
+
+    - name: Read the CA public key from Vault
+      ansible.builtin.uri:
+        url: "https://192.168.50.223:8200/v1/ssh-client-signer/public_key"
+        ca_path: "{{ playbook_dir }}/../../environments/homelab/vault-ca.crt"
+        return_content: true
+        status_code: 200
+      register: ca_public_key
+      delegate_to: localhost
+      become: false
+      check_mode: false  # lab-action: read-only
+
+    # A sealed Vault answers 503 and fails the task above. An empty or HTML body must fail too, or
+    # the guest would trust nothing and the play would still read as a success.
+    - name: Check the CA public key is one SSH key
+      ansible.builtin.assert:
+        that:
+          - ca_public_key.content | trim is match('^ssh-ed25519 [A-Za-z0-9+/=]+( [^ ]+)?$')
+        fail_msg: "Vault returned no usable CA key."
+
+    - name: Make the principals directory
+      ansible.builtin.command: "pct exec {{ guest_vmid }} -- mkdir -p {{ principals_dir }}"
+      changed_when: false
+
+    - name: Land the CA public key
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ guest_vmid }}", --, sh, -c, "{{ land }}", sh, "{{ ca_file }}"]
+        stdin: "{{ ca_public_key.content | trim }}\n"
+      register: land_ca
+      changed_when: land_ca.stdout | trim == 'changed'
+
+    - name: Land root's principals file
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ guest_vmid }}", --, sh, -c, "{{ land }}", sh, "{{ principals_dir }}/root"]
+        stdin: "{{ guest_root_principals | join('\n') }}\n"
+      register: land_principals
+      changed_when: land_principals.stdout | trim == 'changed'
+
+    # The drop-in goes live only with a config sshd accepts. A bad file left in place would stop the
+    # next sshd start.
+    - name: Land the sshd drop-in, and take it out again if sshd rejects the config
+      block:
+        - name: Land the sshd drop-in
+          ansible.builtin.command:
+            argv: [pct, exec, "{{ guest_vmid }}", --, sh, -c, "{{ land }}", sh, "{{ dropin }}"]
+            stdin: |
+              # Managed by petedio-iac roles/ssh-ca (PET-771).
+              TrustedUserCAKeys {{ ca_file }}
+              AuthorizedPrincipalsFile {{ principals_dir }}/%u
+          register: land_dropin
+          changed_when: land_dropin.stdout | trim == 'changed'
+
+        - name: Test the sshd configuration
+          ansible.builtin.command: "pct exec {{ guest_vmid }} -- /usr/sbin/sshd -t"
+          changed_when: false
+      rescue:
+        - name: Remove the rejected drop-in
+          ansible.builtin.command: "pct exec {{ guest_vmid }} -- rm -f {{ dropin }}"
+          changed_when: true
+
+        - name: Prove sshd accepts the config without it
+          ansible.builtin.command: "pct exec {{ guest_vmid }} -- /usr/sbin/sshd -t"
+          changed_when: false
+
+        - name: Fail the play
+          ansible.builtin.fail:
+            msg: "ollama-246: sshd -t rejected {{ dropin }}; removed it, so sshd runs as before."
+
+    # Debian runs sshd as ssh.service, socket-activated as ssh.socket on some images. A SIGHUP to a
+    # socket-activated ssh.service makes it re-exec and fail to rebind the port (PET-794), so
+    # restart it there. A reload keeps open sessions; a restart keeps them too (KillMode=process).
+    - name: Read whether sshd is socket-activated
+      ansible.builtin.command: "pct exec {{ guest_vmid }} -- systemctl is-active ssh.socket"
+      register: ssh_socket
+      changed_when: false
+      failed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Reload or restart sshd on the guest
+      ansible.builtin.command: >-
+        pct exec {{ guest_vmid }} -- systemctl
+        {{ 'restart' if ssh_socket.stdout | trim == 'active' else 'reload' }} ssh.service
+      changed_when: false
+
+    # A check run writes nothing (command tasks are skipped), so sshd -T cannot show the CA yet.
+    # Reading it back then would fail a correct plan, so the read-back runs on a real apply only.
+    - name: Read back the effective sshd configuration
+      when: not ansible_check_mode
+      ansible.builtin.shell: |
+        set -o pipefail
+        pct exec {{ guest_vmid }} -- /usr/sbin/sshd -T | grep -E '^(trustedusercakeys|authorizedprincipalsfile) '
+      args: { executable: /bin/bash }
+      register: effective
+      changed_when: false
+
+    - name: Assert the CA and the principals file are the effective ones
+      when: not ansible_check_mode
+      ansible.builtin.assert:
+        that:
+          - ('trustedusercakeys ' ~ ca_file) in effective.stdout_lines
+          - ('authorizedprincipalsfile ' ~ principals_dir ~ '/%u') in effective.stdout_lines
+        fail_msg: "ollama-246: sshd -T reports {{ effective.stdout_lines }}"
+
+    # A reload or a bad config can leave sshd down, and a green play over a dead sshd locks you
+    # out. Read the listener back from the guest.
+    # Skipped in a check run: Ansible reports a shell task as failed there ("would have run"), and
+    # the retry loop below would turn that into ten failed attempts.
+    - name: Prove sshd still listens on port 22
+      when: not ansible_check_mode
+      ansible.builtin.shell: |
+        set -o pipefail
+        pct exec {{ guest_vmid }} -- ss -H -ltn 'sport = :22' | grep -c LISTEN
+      args: { executable: /bin/bash }
+      register: listeners
+      changed_when: false
+      retries: 10
+      delay: 2
+      until: listeners.stdout | trim | int > 0
+
+    - name: Report what was examined
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'CHECK RUN: nothing was written and the sshd read-back was skipped. ' if ansible_check_mode else '' }}
+          ollama-246 (vmid {{ guest_vmid }}) on {{ inventory_hostname }}:
+          CA key {{ land_ca.stdout | default('not written in a check') | trim }},
+          root principals {{ guest_root_principals | join(', ') }}
+          {{ land_principals.stdout | default('not written in a check') | trim }},
+          drop-in {{ land_dropin.stdout | default('not written in a check') | trim }};
+          {{ '' if ansible_check_mode else 'sshd -T names the CA and the principals file; ' }}
+          {{ (listeners.stdout | trim ~ ' listener(s) on port 22.') if not ansible_check_mode else 'The port-22 listener probe was skipped.' }}
+          Prove the daemon with a certificate login.

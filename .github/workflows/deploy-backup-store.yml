@@ -1,0 +1,75 @@
+# deploy-backup-store — configure-backup-store.yml against the Proxmox nodes (the backup-health checks).
+#
+# Replaces scripts/deploy-backup-store.sh as the way to run it. The script stays as the operator's
+# fallback, for a sealed or unreachable CI path. Both read the same Vault records. This one
+# stages them through scripts/ci-deploy.py, signs a 30-minute SSH certificate for root on the nodes, as the lab-runner principal, and
+# fails unless Ansible reports exactly the hosts it expects with failed=0 and unreachable=0.
+#
+#   gh workflow run deploy-backup-store.yml --ref main
+#
+# ⚠ DISPATCH ONLY, AND MAIN ONLY. The deploy-backup-store Vault role binds event_name = workflow_dispatch,
+# ref = main and this file's workflow_ref (vault-config/deploy-hosts.tf), so a push, a schedule, a
+# pull request or another workflow cannot mint its token. A person or a thread decides when the
+# host converges, as ansible-claude-247 does.
+#
+# ⚠ NO pull_request TRIGGER, EVER (PET-407). The job runs on a self-hosted runner on the LAN and
+# this repository is public. ansible-stack.yml explains the exposure in full.
+#
+# Needs: vault-config applied (deploy-hosts.tf), and the host trusting the Vault SSH CA
+# (docs/runbooks/host-deploys.md). Without the role the login answers 403. Without the trust the
+# connection is refused. Both fail the run in the first minute.
+name: deploy-backup-store
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # mint the GitHub OIDC token vault-action exchanges for a Vault token
+
+concurrency:
+  group: deploy-backup-store # serialize deploys against one host
+  cancel-in-progress: false
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+
+jobs:
+  deploy:
+    # ⚠ PIN x64. [self-hosted, homelab] also matches pete-pi-1, which is arm64 and has no route to
+    # the Docker socket this job needs.
+    runs-on: [self-hosted, linux, x64, homelab]
+    timeout-minutes: 30
+    steps:
+      # A dispatch from another ref must fail, not skip: a skipped job reads as a green deploy that
+      # never ran. Vault would refuse the login anyway (ref is bound to main).
+      - name: Refuse any ref but main
+        shell: bash
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error title=deploy::this workflow deploys main only, not $GITHUB_REF"; exit 1; }
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      # ⚠ The mount is jwt-github, not the default jwt, and the audience must be set. Either
+      # mistake answers a bare 403 that reads like a missing policy.
+      - name: Vault — deploy-backup-store via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: deploy-backup-store
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: true
+
+      - name: Deploy backup-store
+        shell: bash
+        run: python3 scripts/ci-deploy.py backup-store

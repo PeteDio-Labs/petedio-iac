@@ -23,7 +23,7 @@
 #   MinIO admin: resolved from Vault kv/iac/minio-data-root (seed-minio-data-root.sh)
 #
 # Requires the tailnet to be up (the endpoint is a 192.168.50.x address reached via the
-# tailscale-244 subnet router) and configure-minio-data.yml to have run.
+# pete-pi-1 subnet router) and configure-minio-data.yml to have run.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

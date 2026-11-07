@@ -214,6 +214,28 @@ resource "vault_jwt_auth_backend_role" "media_dash_cd" {
   token_ttl      = 900
 }
 
+# search-cd role → search-cd policy. petedio-search's deploy.yml compiles the binary on the
+# runner and runs configure-search.yml against ollama-246 on every push to main, so a deploy no
+# longer waits on an operator running scripts/deploy-search.sh. workflow_ref pins deploy.yml, the
+# only workflow in that repo that mints this role. event_name admits the two triggers deploy.yml
+# has, push and workflow_dispatch, and nothing else.
+resource "vault_jwt_auth_backend_role" "search_cd" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "search-cd"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository   = var.search_repo
+    ref          = "refs/heads/main"
+    event_name   = "push,workflow_dispatch"
+    workflow_ref = "${var.search_repo}/.github/workflows/deploy.yml@refs/heads/main"
+  }
+  token_policies = [vault_policy.search_cd.name]
+  token_ttl      = 900
+}
+
 # vault-snapshot role → vault-snapshot policy (PET-109). The raft-snapshot systemd timer
 # on .223 (Ansible role vault-snapshot) logs in with this AppRole to take + upload a
 # snapshot. Short token TTL — the job runs in seconds and re-auths each run; the secret_id

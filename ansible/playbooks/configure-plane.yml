@@ -310,6 +310,16 @@
         group: root
         mode: "0644"
 
+    # plane-mcp builds from these two files (PET-882); compose rebuilds when either changes.
+    - name: Install the plane-mcp Dockerfile and key-validation patch
+      ansible.builtin.copy:
+        src: "files/plane-mcp/{{ item }}"
+        dest: "{{ plane_mcp_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [Dockerfile, plane_header_auth_provider.py]
+
     - name: Install the Caddyfile that swaps the Access token for the Plane PAT
       ansible.builtin.template:
         src: templates/plane-mcp-Caddyfile.j2
@@ -332,7 +342,7 @@
     # a change to the bind-mounted Caddyfile, which the next task handles.
     - name: Bring the MCP stack up
       ansible.builtin.command:
-        cmd: docker compose up -d
+        cmd: docker compose up -d --build
         chdir: "{{ plane_mcp_dir }}"
       register: plane_mcp_up
       changed_when: >-

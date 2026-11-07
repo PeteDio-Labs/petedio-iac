@@ -311,6 +311,12 @@ resource "vault_policy" "pete_bot_cd" {
       capabilities = ["list"]
     }
 
+    # The MinIO key for the daily copy of the reports database (PET-868), scoped to the `pete-bot`
+    # bucket on 245. Optional: an absent path leaves the copy off, and /health says so.
+    path "kv/data/services/pete-bot-reports-backup" {
+      capabilities = ["read"]
+    }
+
     # lab-agent shares 237 and this play (PET-670): its ask bearer, its Vault token and its
     # read-only Proxmox token.
     path "kv/data/services/lab-agent" {
@@ -331,6 +337,13 @@ resource "vault_policy" "pete_bot_cd" {
     # absent path leaves the tool off. A copy of one caller token, so pete-bot-cd never reads
     # kv/services/search itself.
     path "kv/data/services/lab-agent-search" {
+      capabilities = ["read"]
+    }
+
+    # lab-agent's mtrace caller token and Bazarr key, for the media assistant (PET-869). Optional:
+    # an absent path leaves the assistant off. A copy of one caller token, so pete-bot-cd never
+    # reads kv/services/media/dashboard itself.
+    path "kv/data/services/lab-agent-media" {
       capabilities = ["read"]
     }
 
@@ -388,6 +401,28 @@ resource "vault_policy" "media_dash_cd" {
   policy = <<-EOT
     path "kv/data/services/media/dashboard" {
       capabilities = ["read"]
+    }
+  EOT
+}
+
+# search-cd: petedio-search's deploy (PET-526). The two reads scripts/deploy-search.sh makes by
+# hand, the service's own tokens and the workspace-mirror GitHub App it reads the vault with
+# (PET-542), and the right to sign one SSH certificate for ollama-246. It no longer reads the shared
+# kv/iac/lxc-ssh key (PET-771).
+resource "vault_policy" "search_cd" {
+  name = "search-cd"
+
+  policy = <<-EOT
+    path "kv/data/services/search" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/claude-workspace-mirror" {
+      capabilities = ["read"]
+    }
+
+    path "${vault_mount.ssh_client_signer.path}/sign/${vault_ssh_secret_backend_role.search_deploy.name}" {
+      capabilities = ["update"]
     }
   EOT
 }
