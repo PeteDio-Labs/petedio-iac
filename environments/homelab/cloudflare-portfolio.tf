@@ -34,7 +34,7 @@ resource "cloudflare_dns_record" "portfolio_acm_validation" {
 # The apex. Cloudflare flattens an apex CNAME. It stays unproxied so CloudFront terminates TLS with
 # the ACM certificate and Cloudflare adds no second layer. The tunnel CNAME for this name leaves
 # module.cloudflare_ingress with the path routes (PET-827). Cloudflare rejects two records on one
-# name, so the destroy must land first; depends_on orders it, as for docker.pdlab.dev above.
+# name, so the destroy must land first; depends_on orders it.
 resource "cloudflare_dns_record" "portfolio_apex" {
   count = var.portfolio_apex_live ? 1 : 0
 
