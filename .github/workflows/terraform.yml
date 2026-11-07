@@ -157,6 +157,7 @@ jobs:
           scripts/test-flags-tfvars.sh
           scripts/test-lab-repo-vars.sh
           scripts/test-portfolio-plan.sh
+          scripts/test-seed-aws-portfolio-plan.sh
 
       - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
         run: terraform init -input=false -backend=false

@@ -76,14 +76,20 @@ trap 'rm -rf "$TMP"' EXIT
 step "MinIO admin (used here only, never written to Vault)"
 MROOT_U="${MINIO_ROOT_USER:-}"; MROOT_P="${MINIO_ROOT_PASSWORD:-}"
 if { [ -z "$MROOT_U" ] || [ -z "$MROOT_P" ]; } && [ -f "$MINIO_CREDS_FILE" ]; then
-  MROOT_U="$(grep -iE 'ROOT_USER'     "$MINIO_CREDS_FILE" | head -1 | sed 's/.*[=:][[:space:]]*//' | tr -d ' "'\''')"
-  MROOT_P="$(grep -iE 'ROOT_PASSWORD' "$MINIO_CREDS_FILE" | head -1 | sed 's/.*[=:][[:space:]]*//' | tr -d ' "'\''')"
+  # scripts/minio-cred.py keeps a password that contains = or : and strips one pair of quotes.
+  cred(){ python3 "$SCRIPT_DIR/minio-cred.py" "$MINIO_CREDS_FILE" "$1" || true; }
+  [ -n "$MROOT_U" ] || MROOT_U="$(cred ROOT_USER)"
+  [ -n "$MROOT_P" ] || MROOT_P="$(cred ROOT_PASSWORD)"
 fi
-[ -n "$MROOT_U" ] || read -rp  "  MinIO admin user: " MROOT_U
+[ -n "$MROOT_U" ] || read -rp "  MinIO admin user: " MROOT_U
 [ -n "$MROOT_P" ] || { read -rsp "  MinIO admin password (hidden): " MROOT_P; echo; }
-mc --config-dir "$TMP/mc" alias set adm "$MINIO_ENDPOINT" "$MROOT_U" "$MROOT_P" >/dev/null 2>&1 \
-  || die "MinIO admin credentials rejected by $MINIO_ENDPOINT."
-echo "  authenticated"
+mkdir -p "$TMP/mc"
+m(){ mc --config-dir "$TMP/mc" "$@"; }
+# `mc alias set` reads both keys from stdin, and printf is a builtin, so neither key reaches argv.
+printf '%s\n%s\n' "$MROOT_U" "$MROOT_P" | m alias set adm "$MINIO_ENDPOINT" --api s3v4 --path auto >/dev/null 2>&1 \
+  && m ls adm >/dev/null 2>&1 \
+  || die "$MINIO_ENDPOINT rejected the admin credential, or it is unreachable (is this machine on the .50 LAN?)."
+echo "  authenticated (user length ${#MROOT_U})"
 
 step "IAM user $USER_NAME"
 if aws_ iam get-user --user-name "$USER_NAME" >/dev/null 2>&1; then
@@ -111,7 +117,7 @@ cat > "$TMP/minio-policy.json" <<'JSON'
   {"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::tfstate/portfolio/*"]}
 ]}
 JSON
-mc --config-dir "$TMP/mc" admin user svcacct add --policy "$TMP/minio-policy.json" --json adm "$MROOT_U" > "$TMP/minio-key.json"
+m admin user svcacct add --policy "$TMP/minio-policy.json" --json adm "$MROOT_U" > "$TMP/minio-key.json"
 M_AK="$(jq -r '.accessKey // empty' "$TMP/minio-key.json")"
 [ -n "$M_AK" ] && [ -n "$(jq -r '.secretKey // empty' "$TMP/minio-key.json")" ] || die "could not mint or parse the MinIO service account. Old credentials are unchanged."
 echo "  created"
@@ -130,7 +136,7 @@ for k in $OLD_KEYS; do
   [ "$k" = "$NEW_AK" ] || aws_ iam delete-access-key --user-name "$USER_NAME" --access-key-id "$k"
 done
 if [ -n "$OLD_MINIO_AK" ] && [ "$OLD_MINIO_AK" != "$M_AK" ]; then
-  mc --config-dir "$TMP/mc" admin user svcacct rm adm "$OLD_MINIO_AK" >/dev/null 2>&1 || echo "  could not remove the old MinIO service account $OLD_MINIO_AK; remove it by hand"
+  m admin user svcacct rm adm "$OLD_MINIO_AK" >/dev/null 2>&1 || echo "  could not remove the old MinIO service account $OLD_MINIO_AK; remove it by hand"
 fi
 echo "  done"
 
