@@ -347,7 +347,7 @@
       register: plane_mcp_up
       changed_when: >-
         'Started' in plane_mcp_up.stderr or 'Created' in plane_mcp_up.stderr
-        or 'Recreated' in plane_mcp_up.stderr or 'Built' in plane_mcp_up.stderr
+        or 'Recreated' in plane_mcp_up.stderr
 
     # The Caddyfile sets `admin off`, so Caddy cannot reload in place. A restart re-binds the
     # file, which the copy above replaced with a new inode. A task, not a handler: the

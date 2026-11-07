@@ -9,7 +9,7 @@ call into a 401 that makes the client discard its authorization. This version:
 * collapses concurrent validations of one key into one call;
 * reads X-Ratelimit-Remaining / X-Ratelimit-Reset from Plane and stops validating while the
   budget is under PLANE_KEY_RATE_FLOOR (default 10) or after a 429, trusting a key that
-  validated before for PLANE_KEY_STALE_GRACE seconds (default 3600);
+  validated before for PLANE_KEY_STALE_GRACE seconds (default 600);
 * returns None (a 401) only when Plane answers 401 or 403, never for a 429, a 5xx or a timeout
   on a key that validated before.
 
@@ -44,7 +44,7 @@ class PlaneHeaderAuthProvider(TokenVerifier):
         super().__init__(required_scopes=required_scopes)
         self.timeout_seconds = timeout_seconds
         self.cache_ttl = _int_env("PLANE_KEY_CACHE_TTL", 300)
-        self.stale_grace = _int_env("PLANE_KEY_STALE_GRACE", 3600)
+        self.stale_grace = _int_env("PLANE_KEY_STALE_GRACE", 600)
         self.rate_floor = _int_env("PLANE_KEY_RATE_FLOOR", 10)
         self._last_ok: dict[str, float] = {}  # key hash -> time.time() of last validation
         self._locks: dict[str, asyncio.Lock] = {}
@@ -60,12 +60,20 @@ class PlaneHeaderAuthProvider(TokenVerifier):
 
     def _note_budget(self, response: httpx.Response) -> None:
         """Pause validation when Plane reports an exhausted or nearly exhausted budget."""
+        now = time.time()
         try:
             remaining = int(response.headers.get("x-ratelimit-remaining", ""))
+        except ValueError:
+            remaining = None
+        try:
             reset = float(response.headers.get("x-ratelimit-reset", ""))
         except ValueError:
-            return
-        if response.status_code == 429 or remaining < self.rate_floor:
+            reset = None
+        # X-Ratelimit-Reset is an epoch; a value in the past or far future is not trusted.
+        if reset is None or not now <= reset <= now + 120:
+            reset = now + 30 if response.status_code == 429 else None
+        low = remaining is not None and remaining < self.rate_floor
+        if reset is not None and (response.status_code == 429 or low):
             self._paused_until = max(self._paused_until, reset)
             logger.warning("Plane API budget low (remaining=%s); pausing key validation until %s", remaining, reset)
 
@@ -96,6 +104,10 @@ class PlaneHeaderAuthProvider(TokenVerifier):
         digest = self._digest(token)
         if self._known_good(digest, self.cache_ttl):
             return True
+        if len(self._last_ok) > 1024:  # bound memory: drop entries past the grace period
+            cutoff = time.time() - self.stale_grace
+            self._last_ok = {d: t for d, t in self._last_ok.items() if t > cutoff}
+            self._locks = {d: lk for d, lk in self._locks.items() if d in self._last_ok or lk.locked()}
         lock = self._locks.setdefault(digest, asyncio.Lock())
         async with lock:
             if self._known_good(digest, self.cache_ttl):  # another request validated it
@@ -105,6 +117,7 @@ class PlaneHeaderAuthProvider(TokenVerifier):
             result = await self._validate_api_key(token)
             if result is None and not self._known_good(digest, self.stale_grace):
                 # A key never seen valid, and Plane is limiting us: wait out a short window once.
+                # Wait out the pause Plane reported (at most 5 s), then try once more.
                 wait = min(max(self._paused_until - time.time(), 1.0), 5.0)
                 await asyncio.sleep(wait)
                 result = await self._validate_api_key(token)
