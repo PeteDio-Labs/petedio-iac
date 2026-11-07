@@ -66,7 +66,11 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com"]
 
       managed_oauth = {
-        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        # The Zero Trust dashboard's admin sign-in ("Authenticate server") redirects here (PET-839).
+        allowed_redirect_uris = [
+          "https://claude.ai/api/mcp/auth_callback",
+          "https://dash.cloudflare.com/${local.cloudflare_account_id}/one/access-controls/ai-controls/mcp-server/oauth-callback/plane",
+        ]
         access_token_lifetime = "15m"
         session_duration      = "168h"
       }
@@ -83,7 +87,11 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com"]
 
       managed_oauth = {
-        allowed_redirect_uris = ["https://claude.ai/api/mcp/auth_callback"]
+        # The Zero Trust dashboard's admin sign-in ("Authenticate server") redirects here (PET-839).
+        allowed_redirect_uris = [
+          "https://claude.ai/api/mcp/auth_callback",
+          "https://dash.cloudflare.com/${local.cloudflare_account_id}/one/access-controls/ai-controls/mcp-server/oauth-callback/lab",
+        ]
         access_token_lifetime = "15m"
         session_duration      = "168h"
       }
