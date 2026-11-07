@@ -542,7 +542,7 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   token — never repository-only (any branch/workflow). **For `petedio-iac` the
   `github-actions` role is now MAIN-PUSH ONLY (PET-104):** the PR job moved to a
   GitHub-hosted, no-Vault `fmt`/`validate` (PR-controlled code must not run on the
-  self-hosted LAN runner or mint creds), so there is no plan-on-PR to keep alive — do
+  self-hosted LAN runner or mint creds), so no `pull_request` run mints credentials. The PET-866 plan comment runs from `workflow_run` under its own role (`terraform-plan`), so do
   NOT re-add the `pull_request` sub here. The two-sub "bind BOTH" pattern still applies to
   roles whose repo genuinely runs a credentialed PR job (e.g. `media-ci`, `colatro-ci`
   until they get the same PET-104 treatment).
@@ -1578,3 +1578,17 @@ ctx.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
 The chain still verifies against the pinned CA, and the hostname check still runs. Never
 reach for `CERT_NONE` or `check_hostname = False` instead. `roles/claude-code`'s `pve-get`
 does this, and it was tested against pve02: a wrong CA and a wrong hostname are both refused.
+
+## The PR plan comment runs PR-authored Terraform with read credentials (PET-866)
+
+`terraform-plan.yml` plans a same-repo PR into `main` on the runner and comments addresses and counts. It is a deliberate reversal of the PET-104 rule that no PR code reaches credentials, and it holds only because of these layers. Keep all of them.
+
+- **Trigger:** `workflow_run`, so GitHub runs `main`'s copy of the file. A PR cannot edit the steps that hold the token. Vault role `terraform-plan` binds `workflow_run`, `main` and that file.
+- **Providers:** installed from a mirror of `main`'s lock, with `direct` installs excluded and the lock read-only. A PR cannot add `external`, `archive`, `http` or `local`, whatever its HCL says.
+- **Two jobs:** `inspect` runs on a GitHub-hosted runner with no credentials and no `id-token`. It reads the PR's Terraform with two guards and posts the refusal comments. `plan` runs on the homelab runner only when `inspect` passes, and checks out the exact merge commit `inspect` examined.
+- **Guards:** `scripts/tf-plan-guard.py` is a text allowlist. Reviews found bypasses in HCL syntax one after another (comments between tokens, unquoted labels, `\u` escapes, symlinks, `.gitattributes`). `scripts/tf-plan-inspect.py` parses the merged tree with python-hcl2 and compares it with main's: provider and terraform blocks, Vault blocks, provisioner counts, module sources and resource types. A file the parser rejects is refused. The residual gap is a file python-hcl2 reads differently from Terraform. Expect further bypasses, and never let one guard stand alone.
+- **Comment:** addresses only, with every `[instance key]` redacted, because a `for_each` key can carry an evaluated value.
+- **Files:** the runner persists between jobs. The plan JSON holds sensitive inputs, so the job writes it owner-only and removes the checkout at the end.
+- **No `gh`:** the runner has none. `scripts/tf-plan-gh.py` uses python3 and urllib.
+
+Residual risk: a collaborator's branch can still read any secret `ci-read` allows. A narrower plan-only Vault policy would shrink it.

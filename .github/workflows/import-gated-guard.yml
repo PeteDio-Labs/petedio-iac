@@ -2,8 +2,8 @@
 # `import-gated` label — a human `terraform import` must happen BEFORE merge, or
 # apply-on-merge tries to CREATE the already-live resource (the PR #57 / PET-123 hazard).
 #
-# Post-PET-104 there is no plan-on-PR to inspect (PR runs are hosted, creds-less
-# `validate` only — terraform.yml), so this is a PROCESS gate, not a plan check: it
+# Post-PET-104 no PR run of terraform.yml plans (it is hosted, creds-less
+# `validate` only; terraform-plan.yml comments a plan afterward, PET-866), so this is a PROCESS gate, not a plan check: it
 # enforces "a human cleared the import gate" by requiring the `import-gated` label to be
 # removed before merge. Hosted, no creds, no LAN — safe against PR-controlled code.
 #

@@ -23,8 +23,9 @@ scripts/                # operational helpers, lab-verify.sh among them
 
 1. File the `PET-<n>` work item in Plane, then branch `pet-<n>-<slug>` off fresh `main`.
 2. **On PR:** `init` · `fmt -check` · `validate`, on a **GitHub-hosted** runner with no
-   Vault, no LAN and no state. **There is no plan on PR** — a real plan needs the LAN
-   backend and provider creds that PR runs deliberately withhold (PET-104/163).
+   Vault, no LAN and no state. **A plan comment comes from a separate workflow** (`terraform-plan.yml`, PET-866)
+   that runs main's copy on the runner after a guard and a provider mirror; the PR's own
+   workflow run still holds no credentials (PET-104/163).
 3. **On merge to `main` (squash):** `terraform plan`, then `apply`, on the self-hosted
    runner. The apply log is the authoritative plan; the other one is your local run.
 4. `plane-sync` moves the Plane item on PR events — draft → In Progress, ready → In Review, merged → Done. It is advisory: open the item and look.
