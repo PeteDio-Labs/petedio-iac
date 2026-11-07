@@ -74,7 +74,8 @@ if [ "$PROBE" = guests ]; then
 fi
 
 # backup_jobs asks the first node that answers for the cluster's vzdump jobs and prints, per job, the id,
-# schedule, storage, mode, whether it is enabled and what it covers (a count of guests, or "all"). It prints
+# schedule, storage, mode, whether it is enabled, what it covers (a count of guests, or "all"), the node it
+# is pinned to ("any" when none) and its excluded guests. It prints
 # no comment text and no mail address. A cluster that holds 0 jobs is a valid answer and says so.
 if [ "$PROBE" = backup_jobs ]; then
   [ -z "$ARGS" ] || die "backup_jobs takes no args"
@@ -87,9 +88,12 @@ if not isinstance(jobs, list):
     sys.exit("not a list")
 for j in jobs:
     cover = "all" if j.get("all") else str(len([v for v in str(j.get("vmid", "")).split(",") if v])) + " guests"
-    print("job %s: schedule=%s storage=%s mode=%s enabled=%s covers=%s" % (
+    # A job with no node runs on every node, so a stop-mode job with covers=all and node=any stops
+    # every guest in the cluster (PET-635).
+    print("job %s: schedule=%s storage=%s mode=%s enabled=%s covers=%s node=%s exclude=%s" % (
         j.get("id", "?"), j.get("schedule", j.get("starttime", "?")), j.get("storage", "?"),
-        j.get("mode", "?"), "no" if str(j.get("enabled", 1)) == "0" else "yes", cover))
+        j.get("mode", "?"), "no" if str(j.get("enabled", 1)) == "0" else "yes", cover,
+        j.get("node") or "any", j.get("exclude") or "none"))
 print("probe backup_jobs: %d job(s) read from /cluster/backup" % len(jobs))
 ' || continue
       exit 0
