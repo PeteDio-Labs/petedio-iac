@@ -1,0 +1,250 @@
+---
+# restore-test-backup.yml — prove that one nightly archive restores, on a scratch guest (PET-834).
+#
+#   scripts/lab-action.sh playbook_check restore-test-backup.yml   # preflight only, no approval
+#   scripts/lab-action.sh playbook_apply restore-test-backup.yml   # restores, after Pedro's tap
+#
+# A backup that has never been restored is a hope. backup-audit.yml shows that archives exist
+# and are young. This play shows that one opens, unpacks and boots no guest in the process.
+#
+# WHAT IT TOUCHES. It restores the newest archive of one source guest to a scratch VMID on
+# pve02's local-lvm, with --start 0, a different hostname and a fresh MAC (--unique). The scratch
+# guest never starts, so it holds no address and joins no network. Then it mounts the root
+# filesystem read-only in effect (it only reads), counts files, unmounts and destroys the guest.
+# It writes nothing to the share or to any production guest.
+#
+# WHAT IT REFUSES.
+#   * A scratch VMID that already exists. The play never destroys a guest it did not create.
+#   * An archive whose guest config has a mount point, a device passthrough or a raw lxc.*
+#     line. A restore of those could name a host path, and a scratch guest has no business there.
+#   * Less free space on the target storage than the archive needs, with margin.
+# A check run (playbook_check) does the preflight and skips the restore.
+#
+# The final line says what was examined: archive, size, file count, and that the scratch guest
+# is gone. Reading "restored" without a file count must not look like reading "restored, 31204 files".
+
+- name: Restore one archive to a scratch guest and remove it
+  hosts: pve02
+  gather_facts: false
+  vars:
+    restore_test_source_vmid: 109        # prowlarr: small, no mount points, last run on pve03
+    restore_test_scratch_vmid: 9990
+    restore_test_target_storage: local-lvm
+    restore_test_dump_dir: /mnt/ollama-backups/dump
+    restore_test_max_archive_age_h: 30
+    restore_test_min_free_gib: 10
+    restore_test_min_files: 1000
+
+  tasks:
+    - name: Read every guest in the cluster
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      register: restore_test_guests_before
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Refuse a scratch VMID that is in use
+      ansible.builtin.assert:
+        that:
+          - restore_test_guests_before.stdout | from_json | selectattr('vmid', 'equalto', restore_test_scratch_vmid) | list | length == 0
+          - restore_test_guests_before.stdout | from_json | selectattr('vmid', 'equalto', restore_test_source_vmid) | list | length == 1
+        fail_msg: >-
+          VMID {{ restore_test_scratch_vmid }} is in use, or source guest {{ restore_test_source_vmid }}
+          does not exist. The play never destroys a guest it did not create.
+
+    - name: Find the source guest's archives
+      ansible.builtin.command:
+        argv:
+          - find
+          - "{{ restore_test_dump_dir }}"
+          - -maxdepth
+          - "1"
+          - -type
+          - f
+          - -name
+          - "vzdump-lxc-{{ restore_test_source_vmid }}-*.tar.zst"
+          - -printf
+          - "%T@ %s %p\\n"
+      register: restore_test_archives
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Read the clock
+      ansible.builtin.command:
+        argv: [date, +%s]
+      register: restore_test_now
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Pick the newest archive and require it to be young
+      ansible.builtin.set_fact:
+        restore_test_archive: >-
+          {{ (restore_test_archives.stdout_lines | sort | last).split(' ', 2)[2] }}
+        restore_test_archive_bytes: >-
+          {{ (restore_test_archives.stdout_lines | sort | last).split(' ', 2)[1] | int }}
+        restore_test_archive_age_h: >-
+          {{ (((restore_test_now.stdout | int) -
+               ((restore_test_archives.stdout_lines | sort | last).split(' ', 2)[0] | float)) / 3600)
+             | round(1) }}
+      failed_when: restore_test_archives.stdout_lines | length == 0
+
+    - name: Require the archive to be younger than the limit
+      ansible.builtin.assert:
+        that: restore_test_archive_age_h | float < restore_test_max_archive_age_h
+        fail_msg: >-
+          The newest archive of guest {{ restore_test_source_vmid }} is {{ restore_test_archive_age_h }} h old.
+          A restore test of a stale archive says nothing about last night.
+
+    - name: Test the archive's compression stream
+      ansible.builtin.command:
+        argv: [zstd, -t, -q, "{{ restore_test_archive }}"]
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Read the guest config stored inside the archive
+      ansible.builtin.command:
+        argv: [tar, --zstd, -xOf, "{{ restore_test_archive }}", ./etc/vzdump/pct.conf]
+      register: restore_test_conf
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Refuse an archive whose config names a host path or a device
+      ansible.builtin.assert:
+        that:
+          - restore_test_conf.stdout_lines | select('match', '^(mp[0-9]+|dev[0-9]+|lxc\\.)') | list | length == 0
+          - restore_test_conf.stdout_lines | select('match', '^rootfs:') | list | length == 1
+        fail_msg: >-
+          The archive's config has a mount point, device or raw lxc line. Pick a source guest
+          without one: {{ restore_test_conf.stdout_lines | select('match', '^(mp[0-9]+|dev[0-9]+|lxc\\.)') | list }}
+
+    - name: Read the target storage
+      ansible.builtin.command:
+        argv: [pvesm, status, --storage, "{{ restore_test_target_storage }}"]
+      register: restore_test_storage
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Require free space on the target storage
+      ansible.builtin.assert:
+        that:
+          # pvesm status prints: Name Type Status Total Used Available %. Sizes are KiB.
+          - (restore_test_storage.stdout_lines[1].split()[5] | int) > (restore_test_min_free_gib * 1048576) + (restore_test_archive_bytes | int / 1024)
+        fail_msg: >-
+          {{ restore_test_target_storage }} has too little free space: {{ restore_test_storage.stdout_lines[1] }}
+
+    - name: Say what the preflight examined
+      ansible.builtin.debug:
+        msg:
+          - "preflight: guests read {{ restore_test_guests_before.stdout | from_json | length }},
+            archives of guest {{ restore_test_source_vmid }} found {{ restore_test_archives.stdout_lines | length }}"
+          - "newest: {{ restore_test_archive | basename }},
+            {{ (restore_test_archive_bytes | int / 1048576) | round(0) | int }} MiB,
+            {{ restore_test_archive_age_h }} h old, stream test passed"
+          - "config lines read {{ restore_test_conf.stdout_lines | length }}; no mount point, device or lxc.* line"
+          - "target {{ restore_test_target_storage }}: {{ restore_test_storage.stdout_lines[1] }}"
+
+    - name: Restore, inspect and remove the scratch guest
+      when: not ansible_check_mode
+      block:
+        - name: Restore the archive to the scratch VMID
+          ansible.builtin.command:
+            argv:
+              - pct
+              - restore
+              - "{{ restore_test_scratch_vmid }}"
+              - "{{ restore_test_archive }}"
+              - --storage
+              - "{{ restore_test_target_storage }}"
+              - --unique
+              - "1"
+              - --start
+              - "0"
+              - --onboot
+              - "0"
+              - --hostname
+              - "restore-test-{{ restore_test_source_vmid }}"
+              - --tags
+              - restore-test
+          register: restore_test_restore
+          changed_when: true
+
+        - name: Mount the restored root filesystem
+          ansible.builtin.command:
+            argv: [pct, mount, "{{ restore_test_scratch_vmid }}"]
+          changed_when: true
+
+        - name: Check the release file and count the files
+          ansible.builtin.command:
+            argv:
+              - find
+              - "/var/lib/lxc/{{ restore_test_scratch_vmid }}/rootfs"
+              - -xdev
+              - -type
+              - f
+              - -printf
+              - "."
+          register: restore_test_files
+          changed_when: false
+          check_mode: false  # lab-action: read-only
+
+        - name: Read the restored release file
+          ansible.builtin.command:
+            argv: [cat, "/var/lib/lxc/{{ restore_test_scratch_vmid }}/rootfs/etc/os-release"]
+          register: restore_test_release
+          changed_when: false
+          check_mode: false  # lab-action: read-only
+
+        - name: Require a plausible restore
+          ansible.builtin.assert:
+            that:
+              - restore_test_files.stdout | length >= restore_test_min_files
+              - restore_test_release.stdout is search('^PRETTY_NAME=', multiline=True)
+            fail_msg: >-
+              The restore produced {{ restore_test_files.stdout | length }} files, below the
+              {{ restore_test_min_files }} floor, or no release file.
+
+      always:
+        - name: Unmount the scratch guest
+          ansible.builtin.command:
+            argv: [pct, unmount, "{{ restore_test_scratch_vmid }}"]
+          failed_when: false
+          changed_when: true
+
+        # Runs only when the restore task ran in this play, so a scratch guest that existed before
+        # the play is never touched. The VMID assert above already refused that case.
+        - name: Destroy the scratch guest
+          ansible.builtin.command:
+            argv:
+              - pct
+              - destroy
+              - "{{ restore_test_scratch_vmid }}"
+              - --purge
+              - "1"
+              - --destroy-unreferenced-disks
+              - "1"
+          when: restore_test_restore is defined
+          failed_when: false
+          changed_when: true
+
+        - name: Read every guest again
+          ansible.builtin.command:
+            argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+          register: restore_test_guests_after
+          changed_when: false
+          check_mode: false  # lab-action: read-only
+
+        - name: Require the scratch guest to be gone, and the guest count unchanged
+          ansible.builtin.assert:
+            that:
+              - restore_test_guests_after.stdout | from_json | selectattr('vmid', 'equalto', restore_test_scratch_vmid) | list | length == 0
+              - (restore_test_guests_after.stdout | from_json | length) == (restore_test_guests_before.stdout | from_json | length)
+            fail_msg: Scratch guest {{ restore_test_scratch_vmid }} still exists, or the guest count changed. Remove it by hand.
+
+    - name: Say what the restore examined
+      ansible.builtin.debug:
+        msg: >-
+          restore ok: {{ restore_test_archive | basename }} ({{ (restore_test_archive_bytes | int / 1048576) | round(0) | int }} MiB)
+          restored to VMID {{ restore_test_scratch_vmid }} on {{ restore_test_target_storage }},
+          {{ restore_test_files.stdout | length }} files, release file read, scratch guest destroyed,
+          guests before and after {{ restore_test_guests_after.stdout | from_json | length }}
+      when: not ansible_check_mode
