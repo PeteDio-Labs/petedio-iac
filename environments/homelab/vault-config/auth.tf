@@ -23,7 +23,7 @@ resource "vault_approle_auth_backend_role" "ansible" {
 
   # secret_id_ttl bounds a new secret_id's life (PET-687). It applies to secret_ids minted
   # after the apply; scripts/rotate-approle-secret-id.sh replaces the ones in use.
-  # The CIDR lists stay empty until var.approle_operator_cidrs names the Mac and 247.
+  # The CIDR lists come from var.approle_operator_cidrs (the LAN by default, PET-885).
   secret_id_ttl         = var.approle_secret_id_ttl
   secret_id_bound_cidrs = var.approle_operator_cidrs
   token_bound_cidrs     = var.approle_operator_cidrs
@@ -60,7 +60,7 @@ resource "vault_approle_auth_backend_role" "terraform_local" {
 
   # secret_id_ttl bounds a new secret_id's life (PET-687). It applies to secret_ids minted
   # after the apply; scripts/rotate-approle-secret-id.sh replaces the ones in use.
-  # The CIDR lists stay empty until var.approle_operator_cidrs names the Mac and 247.
+  # The CIDR lists come from var.approle_operator_cidrs (the LAN by default, PET-885).
   secret_id_ttl         = var.approle_secret_id_ttl
   secret_id_bound_cidrs = var.approle_operator_cidrs
   token_bound_cidrs     = var.approle_operator_cidrs
