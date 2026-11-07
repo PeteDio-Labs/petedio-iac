@@ -111,6 +111,19 @@ python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["signed_
   "$WORK/signed.json" > "$HOME/.ssh/lab_runner-cert.pub"
 ssh-keygen -L -f "$HOME/.ssh/lab_runner-cert.pub" | grep -q '^ *lab-runner$' \
   || { echo "ABORT: the signed certificate does not name the lab-runner principal." >&2; exit 1; }
+# lab_verify compares the policy and role names Vault holds with the names vault-config declares
+# (PET-894). Read them now, while the token lives. A refused or failed listing is written as null,
+# which the check reports as unread, never as an empty list.
+vault_names() {  # path -> a JSON array of names, or null
+  curl -sS --fail --cacert "$VAULT_CACERT" -m 10 -H @"$WORK/vault.hdr" "$VAULT_ADDR/v1/$1?list=true" 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["data"]["keys"]))' 2>/dev/null || echo null
+}
+if [ "$ACTION" = lab_verify ]; then
+  printf '{"policies":%s,"jwt_roles":%s,"approle_roles":%s}\n' \
+    "$(vault_names sys/policies/acl)" "$(vault_names auth/jwt-github/role)" "$(vault_names auth/approle/role)" \
+    > "$WORK/vault-live.json"
+  export LAB_VAULT_LIVE="$WORK/vault-live.json"
+fi
 # The scripts need no Vault access. Revoke the token now, so it dies with the signing and not at
 # the end of its TTL, and never hand it to them.
 curl -sS --fail --cacert "$VAULT_CACERT" -m 10 -o /dev/null -H @"$WORK/vault.hdr" \

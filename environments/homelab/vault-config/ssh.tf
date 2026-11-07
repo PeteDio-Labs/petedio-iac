@@ -210,13 +210,27 @@ resource "vault_policy" "ssh_sign_inventory_read" {
   EOT
 }
 
-# Signs lab-runner and reads nothing else. The lab-action-read JWT role (auth.tf) carries it.
+# Signs lab-runner, and lists policy and role NAMES for the drift check in lab-verify.sh (PET-894).
+# The lists return names only: reading a policy body or a role needs a separate grant this policy
+# lacks. The lab-action-read JWT role (auth.tf) carries it.
 resource "vault_policy" "lab_action_read" {
   name = "lab-action-read"
 
   policy = <<-EOT
     path "${vault_mount.ssh_client_signer.path}/sign/${vault_ssh_secret_backend_role.lab_runner.name}" {
       capabilities = ["update"]
+    }
+
+    path "sys/policies/acl" {
+      capabilities = ["list"]
+    }
+
+    path "auth/jwt-github/role" {
+      capabilities = ["list"]
+    }
+
+    path "auth/approle/role" {
+      capabilities = ["list"]
     }
   EOT
 }
