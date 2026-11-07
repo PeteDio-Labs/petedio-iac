@@ -23,7 +23,7 @@ zero archives read is a failure, not a pass.
 ## Restore test: does an archive open?
 
 To run the preflight, dispatch `action=playbook_check` with `target=restore-test-backup.yml`. The
-preflight finds the newest archive of guest 109, tests its compression stream, reads the guest
+preflight finds the newest archive of guest 102, tests its compression stream, reads the guest
 config inside it and refuses a config with a mount point, device or `lxc.*` line.
 
 To restore, dispatch `action=playbook_apply` with the same target. The run waits for the
