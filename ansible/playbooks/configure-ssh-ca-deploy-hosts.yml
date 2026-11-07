@@ -3,7 +3,7 @@
 #
 #   scripts/lab-action.sh playbook_apply configure-ssh-ca-deploy-hosts.yml   (lab-action.yml, lab-write tap)
 #
-# One run covers every host that a deploy-<name>.yml workflow connects to, so one tap replaces one
+# One run covers every host that a deploy-<name>.yml workflow connects to, and the three nodes' principals, so one tap replaces one
 # per host. Each guest gets the Vault CA public key, root's principals file, and the sshd drop-in
 # that points at both. The workflows then sign a certificate for their own principal and log in
 # to one guest directly. See docs/runbooks/host-deploys.md.
@@ -11,9 +11,9 @@
 # WHY NOT roles/ssh-ca. That role connects to the guest over SSH, which only the shared
 # kv/iac/lxc-ssh key opens. This play reaches each guest the way the lab-runner certificate
 # already reaches its node: root on the node, then `pct exec`. It writes the files roles/ssh-ca
-# writes, with the same content. The principals here must equal `pedro` plus the host's
-# `ssh_ca_root_extra_principals` in inventory/host_vars, or a later roles/ssh-ca run rewrites the
-# file. Keep the two lists equal.
+# writes, with the same content. The principals come from the host's `ssh_ca_root_extra_principals`
+# (inventory/host_vars, group_vars for the nodes), the lists roles/ssh-ca reads, so a later
+# roles/ssh-ca run finds nothing to change.
 #
 # WHAT IT CHANGES per guest: /etc/ssh/trusted-user-ca-keys.pem, /etc/ssh/auth_principals/root and
 # /etc/ssh/sshd_config.d/10-ssh-ca.conf, then a reload (or a restart when sshd is socket-activated,
@@ -25,21 +25,21 @@
 # examined and fails when any guest is missing from the result.
 
 - name: Trust the Vault SSH CA on the deploy hosts through their nodes
-  hosts: pve02:pve03
+  hosts: pve01:pve02:pve03
   gather_facts: false
   become: false
   vars:
     ca_file: /etc/ssh/trusted-user-ca-keys.pem
     principals_dir: /etc/ssh/auth_principals
     dropin: /etc/ssh/sshd_config.d/10-ssh-ca.conf
-    # Guests by node. `principals` is root's whole principals file. Keep it equal to `pedro` plus
-    # the host's ssh_ca_root_extra_principals (inventory/host_vars/<host>.yml).
+    # Guests by node. Root's principals file is `pedro` plus the host's ssh_ca_root_extra_principals
+    # (inventory/host_vars/<host>.yml), read below, so roles/ssh-ca and this play cannot disagree.
     trust_guests:
-      - { vmid: 235, name: plane-235, node: pve03, principals: [pedro, deploy-plane] }
-      - { vmid: 245, name: minio-data-245, node: pve03, principals: [pedro, deploy-minio-data] }
-      - { vmid: 247, name: claude-247, node: pve03, principals: [pedro, deploy-lab-watchdog] }
-      - { vmid: 248, name: codex-248, node: pve03, principals: [pedro, deploy-codex-248] }
-      - { vmid: 240, name: metrics-240, node: pve02, principals: [pedro, deploy-metrics] }
+      - { vmid: 235, name: plane-235, node: pve03 }
+      - { vmid: 245, name: minio-data-245, node: pve03 }
+      - { vmid: 247, name: claude-247, node: pve03 }
+      - { vmid: 248, name: codex-248, node: pve03 }
+      - { vmid: 240, name: metrics-240, node: pve02 }
     my_guests: "{{ trust_guests | selectattr('node', 'equalto', inventory_hostname) | list }}"
     # $1 CA public key, $2 root's principals one per line, $3 CA path, $4 principals dir, $5 drop-in.
     # Prints one result line and exits non-zero when sshd rejects the drop-in or stops listening.
@@ -75,6 +75,17 @@
       echo "ca=$r_ca principals=$r_pr dropin=$r_dr sshd_effective=$eff/2 listeners=$n"
       [ "$eff" -eq 2 ] && [ "$n" -gt 0 ]
   tasks:
+    # The nodes already trust the CA. This lands root's principals file there from the same lists
+    # roles/ssh-ca uses (group_vars), which adds deploy-backup-store beside lab-runner. A mistake
+    # here would cut off pedro and lab-runner, so the list is never typed twice.
+    - name: Land root's principals file on the node
+      ansible.builtin.copy:
+        content: "{{ (['pedro'] + ssh_ca_root_extra_principals) | join('\n') }}\n"
+        dest: "{{ principals_dir }}/root"
+        owner: root
+        group: root
+        mode: "0644"
+
     - name: Fail unless every guest listed for this node is running here
       ansible.builtin.command: "pct status {{ item.vmid }}"
       loop: "{{ my_guests }}"
@@ -115,20 +126,20 @@
           - "{{ trust_script }}"
           - sh
           - "{{ ca_public_key.content | trim }}"
-          - "{{ item.principals | join('\n') }}"
+          - "{{ (['pedro'] + hostvars[item.name].ssh_ca_root_extra_principals) | join('\n') }}"
           - "{{ ca_file }}"
           - "{{ principals_dir }}"
           - "{{ dropin }}"
       loop: "{{ my_guests }}"
       loop_control: { label: "{{ item.name }} ({{ item.vmid }})" }
       register: trusted
-      changed_when: "'changed' in trusted.stdout"
+      changed_when: "'=changed' in trusted.stdout"
 
     - name: Report what was examined
       ansible.builtin.debug:
         msg: >-
           {{ 'CHECK RUN: nothing was written and the sshd read-back was skipped. ' if ansible_check_mode else '' }}
-          {{ inventory_hostname }}: {{ my_guests | length }} guest(s):
+          {{ inventory_hostname }}: {{ my_guests | length }} guest(s) (node principals: {{ (['pedro'] + ssh_ca_root_extra_principals) | join(', ') }}):
           {% for r in (trusted.results | default([])) %}{{ r.item.name }} [{{ r.stdout | default('not run in a check') | trim }}]; {% endfor %}
           Prove each host with a certificate login from its deploy workflow.
 

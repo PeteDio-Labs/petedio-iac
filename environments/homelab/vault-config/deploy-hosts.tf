@@ -1,6 +1,6 @@
 # Host deploys from GitHub Actions: one Vault identity and one SSH certificate role per deploy.
 #
-# WHY. Nine host configurations ran by hand: an operator started a script that read Vault and
+# WHY. Six host configurations ran by hand: an operator started a script that read Vault and
 # opened SSH with the shared kv/iac/lxc-ssh key, which is root on every Terraform LXC (audit H6).
 # Each `deploy-<name>.yml` workflow in this repo replaces one script. It logs in to Vault through
 # GitHub OIDC, reads only that deploy's secrets, signs a 30-minute SSH certificate for one
@@ -17,8 +17,10 @@
 
 locals {
   # name: the workflow file deploy-<name>.yml, the kv paths its script read, and the SSH role the
-  # job signs. backup-store reuses lab-runner: it deploys to the nodes, which already list that
-  # principal, so it needs no new role and no trust play.
+  # job signs. Every deploy has its own role and principal. backup-store does not reuse
+  # lab-runner: that principal is root on the nodes and lab-action.yml gates every write behind
+  # the lab-write tap, so a dispatch-only deploy must not sign it. The nodes list
+  # deploy-backup-store in group_vars, written by configure-ssh-ca-deploy-hosts.yml.
   host_deploys = {
     plane = {
       kv = [
@@ -52,12 +54,12 @@ locals {
     }
     "backup-store" = {
       kv   = ["services/backup-health"]
-      sign = "lab-runner"
+      sign = "deploy-backup-store"
     }
   }
 
-  # The signing roles to create: every `sign` except lab-runner, which ssh.tf owns.
-  host_deploy_ssh_roles = toset([for d in values(local.host_deploys) : d.sign if d.sign != "lab-runner"])
+  # The signing roles to create, one per deploy.
+  host_deploy_ssh_roles = toset([for d in values(local.host_deploys) : d.sign])
 }
 
 # One signing role per deploy host. Same shape as search-deploy in ssh.tf: the principal is the

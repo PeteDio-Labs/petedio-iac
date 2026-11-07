@@ -3,4 +3,5 @@
 # certificate (PET-861), for lab-verify.sh and lab-updates.sh. The certificate works only from
 # those two runners, for 30 minutes. roles/ssh-ca writes the principal; configure-ssh-ca.yml
 # applies it.
-ssh_ca_root_extra_principals: [lab-runner]
+# deploy-backup-store is the Vault SSH role that deploy-backup-store.yml signs per run (PET-771).
+ssh_ca_root_extra_principals: [lab-runner, deploy-backup-store]

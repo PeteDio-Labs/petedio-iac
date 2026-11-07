@@ -3,7 +3,7 @@
 Six host configurations deploy from a `deploy-<name>.yml` workflow instead of a script that an
 operator runs. Each workflow logs in to Vault through GitHub OIDC, reads only that deploy's
 records, signs a 30-minute SSH certificate for one principal, and connects to one host with it.
-No deploy reads the shared `kv/iac/lxc-ssh` key. The pattern is the `petedio-search` deploy
+None of these six deploys reads the shared `kv/iac/lxc-ssh` key. `deploy-claude-247.sh`, `deploy-pete-bot.sh`, `deploy-media-dash.sh`, `deploy-search.sh` and `ansible-claude-247.yml` still do. The pattern is the `petedio-search` deploy
 (`search-cd`, `search-deploy`, PET-526, PET-771).
 
 | Workflow | Playbook | Host | Vault role (OIDC) | SSH principal |
@@ -13,7 +13,7 @@ No deploy reads the shared `kv/iac/lxc-ssh` key. The pattern is the `petedio-sea
 | `deploy-metrics.yml` | `configure-metrics.yml` | `metrics-240` | `deploy-metrics` | `deploy-metrics` |
 | `deploy-lab-watchdog.yml` | `configure-lab-watchdog.yml` | `claude-247` | `deploy-lab-watchdog` | `deploy-lab-watchdog` |
 | `deploy-codex-248.yml` | `configure-codex.yml` | `codex-248` | `deploy-codex-248` | `deploy-codex-248` |
-| `deploy-backup-store.yml` | `configure-backup-store.yml` | `pve01`, `pve02`, `pve03` | `deploy-backup-store` | `lab-runner` |
+| `deploy-backup-store.yml` | `configure-backup-store.yml` | `pve01`, `pve02`, `pve03` | `deploy-backup-store` | `deploy-backup-store` |
 
 `ansible-claude-247.yml` already deploys `claude-247`'s identities. It still reads the shared
 key. Moving it to a `deploy-claude-247` principal is a separate change.
@@ -31,7 +31,7 @@ reports every expected host with `failed=0` and `unreachable=0`. The last log li
 hosts the play matched, the hosts the recap reported, and the changed, failed and unreachable
 counts.
 
-A dispatch needs no approval. It deploys code that is already on `main`, which a review
+A dispatch from any ref but `main` fails in its first step. A dispatch needs no approval. It deploys code that is already on `main`, which a review
 approved, the same as the `petedio-search` and `petedio-media-control` deploys on merge.
 
 ## One-time setup
@@ -46,15 +46,15 @@ Do these in order, once.
    ./scripts/apply-vault-config.sh
    ./scripts/vault-verify.sh
    ```
-   The plan adds 5 `vault_ssh_secret_backend_role.host_deploy`, 6 `vault_policy.host_deploy` and
-   6 `vault_jwt_auth_backend_role.host_deploy`, and destroys nothing.
-2. **Trust the CA on the five guests.** Dispatch `lab-action.yml` with `action=playbook_apply`
+   The plan adds 6 `vault_ssh_secret_backend_role.host_deploy`, 6 `vault_policy.host_deploy` and
+   6 `vault_jwt_auth_backend_role.host_deploy` (18 to add), and destroys nothing.
+2. **Trust the CA on the five guests, and list the new principal on the nodes.** Dispatch `lab-action.yml` with `action=playbook_apply`
    and `target=configure-ssh-ca-deploy-hosts.yml`. The check runs first with no approval. Approve
    the `lab-write` environment on the run page in a browser: the GitHub iOS app doesn't show the
-   button. One tap covers all five guests.
+   button. One tap covers the five guests and the three nodes' principals files.
 3. **Dispatch any deploy.** The first run is the first certificate login to that host.
 
-`backup-store` needs only step 1. The nodes already trust the CA and list `lab-runner`.
+`backup-store` signs its own `deploy-backup-store` principal, not `lab-runner`, so a dispatch never gets the principal that `lab-action.yml` gates behind the `lab-write` tap. Step 2 lists it on the nodes.
 
 ## What a deploy writes
 

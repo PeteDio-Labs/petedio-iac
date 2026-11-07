@@ -40,9 +40,15 @@ jobs:
     # ⚠ PIN x64. [self-hosted, homelab] also matches pete-pi-1, which is arm64 and has no route to
     # the Docker socket this job needs.
     runs-on: [self-hosted, linux, x64, homelab]
-    if: github.ref == 'refs/heads/main'
     timeout-minutes: 30
     steps:
+      # A dispatch from another ref must fail, not skip: a skipped job reads as a green deploy that
+      # never ran. Vault would refuse the login anyway (ref is bound to main).
+      - name: Refuse any ref but main
+        shell: bash
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error title=deploy::this workflow deploys main only, not $GITHUB_REF"; exit 1; }
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Encode Vault CA

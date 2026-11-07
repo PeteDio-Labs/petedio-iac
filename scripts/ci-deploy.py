@@ -9,7 +9,8 @@ this deploy's SSH role (vault-config/deploy-hosts.tf). This script then:
 
   1. reads the deploy's Vault records and masks every value in the log,
   2. stages them as an extra-vars JSON file, never as arguments,
-  3. signs a fresh 30-minute SSH certificate for the deploy's own principal,
+  3. signs a fresh 30-minute SSH certificate for the deploy's own principal (the token is revoked
+     in a `finally`, so an abort in step 1 or 2 does not leave it live),
   4. runs the playbook in Docker, after proving the play matches exactly the hosts it should,
   5. exits non-zero unless Ansible reports every expected host with failed=0 and unreachable=0.
 
@@ -72,6 +73,21 @@ def vault(method: str, path: str, body: dict | None = None) -> dict | None:
         raise Abort(f"Vault answered {err.code} for {method} {path}: {err.read(300).decode(errors='replace')}")
     except (urllib.error.URLError, OSError) as err:
         raise Abort(f"cannot reach Vault for {method} {path}: {err}")
+
+
+_revoked = False
+
+
+def revoke_token(name: str) -> None:
+    """Revoke the run's Vault token once. A failed revoke leaves it to expire at its own TTL."""
+    global _revoked
+    if _revoked or not os.environ.get("VAULT_TOKEN"):
+        return
+    _revoked = True
+    try:
+        vault("POST", "auth/token/revoke-self")
+    except Abort as err:
+        print(f"::warning title=deploy-{name}::could not revoke the Vault token: {err}")
 
 
 def mask(value: object) -> None:
@@ -223,11 +239,12 @@ DEPLOYS = {
         "hosts": {"codex-248"},
         "stage": stage_codex,
     },
-    # The nodes already list the lab-runner principal, so this deploy needs no host trust play.
-    # The node host keys are pinned on the runner, so it checks them strictly.
+    # The nodes list the deploy-backup-store principal (group_vars, written by
+    # configure-ssh-ca-deploy-hosts.yml). The node host keys are pinned on the runner, so it checks
+    # them strictly.
     "backup-store": {
         "playbook": "configure-backup-store.yml",
-        "ssh_role": "lab-runner",
+        "ssh_role": "deploy-backup-store",
         "hosts": {"pve01", "pve02", "pve03"},
         "stage": stage_backup_store,
         "pinned_known_hosts": NODE_KNOWN_HOSTS,
@@ -249,11 +266,8 @@ def sign_certificate(role: str, workdir: pathlib.Path) -> pathlib.Path:
     if not re.search(rf"^\s*{re.escape(role)}$", described, re.M):
         raise Abort(f"the certificate does not name the {role} principal.")
     print("signed: " + next((ln.strip() for ln in described.splitlines() if "Valid:" in ln), "validity not shown"))
-    # The Vault token has done its work. A failed revoke leaves it to expire at its own TTL.
-    try:
-        vault("POST", "auth/token/revoke-self")
-    except Abort as err:
-        print(f"::warning title=deploy::could not revoke the Vault token: {err}")
+    # The token has done its work. Revoke it now, not after the play.
+    revoke_token(role)
     return cert
 
 
@@ -355,6 +369,9 @@ def main(argv: list[str]) -> int:
         print(f"::error title=deploy-{name}::{err}")
         return 1
     finally:
+        # Revoke on every path, so an abort in staging does not leave the 900 s token live. The
+        # signing step already revoked it on the success path.
+        revoke_token(name)
         shutil.rmtree(workdir, ignore_errors=True)
     return 0
 
