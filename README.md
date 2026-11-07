@@ -23,7 +23,7 @@ scripts/                # operational helpers, lab-verify.sh among them
 
 1. File the `PET-<n>` work item in Plane, then branch `pet-<n>-<slug>` off fresh `main`.
 2. **On PR:** `init` · `fmt -check` · `validate`, on a **GitHub-hosted** runner with no
-   Vault, no LAN and no state. **A plan comment comes from a separate workflow** (`terraform-plan.yml`, PET-866)
+   Vault, no LAN and no state. **A plan comment comes from a separate workflow** (`terraform-plan-pr.yml`, PET-866)
    that runs main's copy on the runner after a guard and a provider mirror; the PR's own
    workflow run still holds no credentials (PET-104/163).
 3. **On merge to `main` (squash):** `terraform plan`, then `apply`, on the self-hosted

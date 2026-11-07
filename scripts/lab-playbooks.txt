@@ -10,6 +10,7 @@
 # A check cannot see what command and shell tasks would do, because Ansible skips them in check
 # mode. Most guest steps here run through `pct exec`, so read a check's skipped count, not only
 # its changed count, before you approve an apply.
+# configure-media-share.yml stays off: it is superseded ("DO NOT RUN") and would mount pve03's own address on the nodes (PET-893).
 # configure-journald.yml and configure-node-exporter.yml stay off this list: their roles read
 # the result of a command or uri task that check mode skips, so a check fails before it reports.
 apt-hygiene.yml
@@ -20,3 +21,4 @@ backup-audit.yml
 restore-test-backup.yml
 grant-iac-backup-storage.yml
 audit-cloudflared-112.yml
+patch-kev-nodes.yml

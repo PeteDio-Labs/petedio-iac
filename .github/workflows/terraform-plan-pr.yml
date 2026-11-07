@@ -8,7 +8,7 @@
 # HOW IT STAYS SAFE (PET-104 still holds). This repo is public and the runner can reach Proxmox,
 # MinIO and Vault. A `pull_request` run would execute the PR's own workflow there, so this file
 # triggers on `workflow_run` instead: GitHub runs main's copy of it, whoever opened the PR.
-#   1. Vault binds role terraform-plan to this file on main and event workflow_run
+#   1. Vault binds role deploy-terraform-plan to this file on main and event workflow_run
 #      (vault-config/auth.tf), so no other trigger or file mints the credentials.
 #   2. Only same-repo pull requests are planned; a fork never is. The `terraform` run's success is
 #      not a gate: a PR controls that workflow and could make it pass. The guard and the mirror are.
@@ -261,14 +261,14 @@ jobs:
         run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
 
       # The CA is read from main's copy above, never from pr/.
-      - name: Vault — terraform-plan via OIDC
+      - name: Vault — deploy-terraform-plan via OIDC
         id: vault
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
           method: jwt
           path: jwt-github
-          role: terraform-plan
+          role: deploy-terraform-plan
           jwtGithubAudience: https://github.com/PeteDio-Labs
           caCertificate: ${{ steps.vault_ca.outputs.b64 }}
           exportToken: true

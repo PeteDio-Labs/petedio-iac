@@ -28,7 +28,7 @@
   hosts: pve02
   gather_facts: false
   vars:
-    restore_test_source_vmid: 109        # prowlarr: small, no mount points, last run on pve03
+    restore_test_source_vmid: 102        # flaresolverr: small, no mount points. 109 (prowlarr) has two and is refused.
     restore_test_scratch_vmid: 9990
     restore_test_target_storage: local-lvm
     restore_test_dump_dir: /mnt/ollama-backups/dump
