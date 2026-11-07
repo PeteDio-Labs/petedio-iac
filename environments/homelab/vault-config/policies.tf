@@ -89,15 +89,19 @@ resource "vault_policy" "ci_read" {
   EOT
 }
 
-# terraform-plan: what terraform-plan.yml may read (security audit, 2026-11-07). That workflow runs
+# deploy-terraform-plan: what terraform-plan.yml may read (security audit, 2026-11-07). That workflow runs
 # a same-repo pull request's HCL on the homelab runner, so it gets the least that a plan needs.
 # It is ci-read without kv/iac/lxc-ssh, which holds the root key of every LXC: the workflow does
 # not read it, because the proxmox provider logs in over the SSH agent and the public key that
 # feeds `initialization[0].user_account` is in ignore_changes (modules/proxmox-lxc), so a
 # placeholder gives the same plan. Add a path here only with a comment naming the plan step that
 # reads it.
+#
+# The name starts with `deploy-` so the gated apply (vault-config-apply.tf) may create it, and
+# scripts/vault-config-guard.py pins it to this exact path set (PINNED_POLICIES): a change that
+# adds a path is refused there. Keep the two lists equal.
 resource "vault_policy" "terraform_plan" {
-  name = "terraform-plan"
+  name = "deploy-terraform-plan"
 
   policy = <<-EOT
     path "kv/data/iac/minio" {

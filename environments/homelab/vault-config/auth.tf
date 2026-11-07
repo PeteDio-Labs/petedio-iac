@@ -413,7 +413,7 @@ resource "vault_jwt_auth_backend_role" "lab_action_read" {
   token_ttl      = 900
 }
 
-# terraform-plan role → terraform-plan policy (PET-866; narrowed from ci-read in the 2026-11-07 audit). terraform-plan.yml plans a same-repo pull
+# terraform-plan role → ci-read policy (PET-866). terraform-plan.yml plans a same-repo pull
 # request on the homelab runner and comments the result, so a thread reads the plan and Pedro
 # does not run it by hand.
 #
@@ -442,7 +442,7 @@ resource "vault_jwt_auth_backend_role" "terraform_plan" {
     event_name   = "workflow_run"
     workflow_ref = "${var.github_repo}/.github/workflows/terraform-plan.yml@refs/heads/main"
   }
-  token_policies = [vault_policy.terraform_plan.name]
+  token_policies = [vault_policy.ci_read.name]
   token_ttl      = 900
 }
 
@@ -473,4 +473,27 @@ resource "vault_token_auth_backend_role" "claude_ops" {
   renewable              = true
   token_period           = 604800
   token_explicit_max_ttl = 7776000
+}
+
+# deploy-terraform-plan: terraform-plan.yml's narrow role (2026-11-07 audit). The same claims as
+# the terraform-plan role above, with the deploy-terraform-plan policy, which has no read of
+# kv/iac/lxc-ssh. The name starts with `deploy-` so the gated apply may create it. After
+# terraform-plan.yml switches to this role, delete the terraform-plan role above: the gated
+# apply cannot delete, so that removal is the one step left for scripts/apply-vault-config.sh.
+resource "vault_jwt_auth_backend_role" "deploy_terraform_plan" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "deploy-terraform-plan"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository   = var.github_repo
+    ref          = "refs/heads/main"
+    event_name   = "workflow_run"
+    workflow_ref = "${var.github_repo}/.github/workflows/terraform-plan.yml@refs/heads/main"
+  }
+  token_policies = [vault_policy.terraform_plan.name]
+  token_ttl      = 900
+  token_max_ttl  = 900
 }
