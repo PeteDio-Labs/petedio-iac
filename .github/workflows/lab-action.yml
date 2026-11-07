@@ -6,6 +6,7 @@
 #
 #   lab_verify      scripts/lab-verify.sh --quiet                  no approval
 #   lab_updates     scripts/lab-updates.sh                         no approval
+#   lab_probe       one read-only probe inside LXC 237             no approval
 #   playbook_check  ansible-playbook --check on the nodes          no approval
 #   playbook_apply  a check, then the real run after Pedro's tap   lab-write environment
 #
@@ -35,10 +36,16 @@ on:
         options:
           - lab_verify
           - lab_updates
+          - lab_probe
           - playbook_check
           - playbook_apply
       target:
-        description: "For playbook actions: a file name from scripts/lab-playbooks.txt"
+        description: "playbook actions: a file name from scripts/lab-playbooks.txt. lab_probe: journal, mtrace, media_ask or guests"
+        required: false
+        type: string
+        default: ""
+      args:
+        description: "lab_probe only: key=value pairs, for example: unit=lab-agent since=2026-11-07T08:12:00 until=2026-11-07T08:16:00 mode=callers"
         required: false
         type: string
         default: ""
@@ -106,10 +113,11 @@ jobs:
           # playbook_apply checks here first; the apply job runs only after this job passes.
           ACTION: ${{ inputs.action == 'playbook_apply' && 'playbook_check' || inputs.action }}
           TARGET: ${{ inputs.target }}
+          PROBE_ARGS: ${{ inputs.args }}
           # lab-verify.sh reads the org's runners with gh. This token can't list them, so that
           # check reports the refusal rather than a dead runner (PET-500).
           GH_TOKEN: ${{ github.token }}
-        run: scripts/lab-action.sh "$ACTION" "$TARGET"
+        run: scripts/lab-action.sh "$ACTION" "$TARGET" "$PROBE_ARGS"
 
   apply:
     # The Vault binding is the gate. This line only stops a run of main's copy on another ref. A
