@@ -37,7 +37,7 @@
 # should not be. Cloudflare Access authenticates a browser (redirect + session) or a caller
 # that can set CF-Access-Client-Id/Secret headers; an S3 client such as the Obsidian sync
 # plugin does neither, so a CF route to :9000 would have to be UNGATED and public — strictly
-# worse than what already exists. tailscale-244 already advertises 192.168.50.0/24 into the
+# worse than what already exists. pete-pi-1 already advertises 192.168.50.0/24 into the
 # tailnet, so every client reaches this host by its LAN IP inside WireGuard with zero public
 # ingress. Client setup: docs/runbooks/obsidian-vault-sync.md.
 #

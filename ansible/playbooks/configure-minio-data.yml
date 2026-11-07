@@ -12,7 +12,7 @@
 # there.
 #
 # First tenant: `obsidian-fs-mcs`, backing Obsidian vault sync for the FS MCS coursework
-# vault across Pedro's devices, reached over the tailnet (tailscale-244 advertises
+# vault across Pedro's devices, reached over the tailnet (pete-pi-1 advertises
 # 192.168.50.0/24) with NO public ingress. Client setup, credential rotation and the
 # reason there is deliberately no Cloudflare route: docs/runbooks/obsidian-vault-sync.md.
 #
