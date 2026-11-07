@@ -93,6 +93,21 @@
       {{ (pete_bot_desk_ready | bool)
          and (pete_bot_plane_api_key | default('') | length > 0) }}
 
+    # The weekly PR report and its dashboard (PET-868). Port 3018 answers only the tunnel host
+    # (LXC 112) through reports.pdlab.dev, and pete-bot verifies the Access JWT as well. The
+    # audience tag comes from `terraform output -raw weekly_dashboard_access_aud` in
+    # environments/homelab after the route applies. Empty keeps the dashboard and the weekly
+    # report off, so this deploy changes nothing until the tag is set in a later PR.
+    pete_bot_weekly_port: 3018
+    pete_bot_weekly_peer: 192.168.50.112
+    pete_bot_weekly_dir: /var/lib/pete-bot/weekly
+    pete_bot_weekly_access_team_domain: petedillo-labs.cloudflareaccess.com
+    pete_bot_weekly_access_emails: [pedelgadillo@gmail.com]
+    pete_bot_weekly_access_aud: "afad22e93a3b7bca79a6a8ce72d815a15de34143ea2b7f7afbc66a85e99c7b52"
+    pete_bot_weekly_ollama_url: http://192.168.50.246:11434
+    pete_bot_weekly_ready: >-
+      {{ (pete_bot_reports_ready | bool) and (pete_bot_weekly_access_aud | length > 0) }}
+
     # ── lab-agent (PET-670) ──
     # Optional, all together or not at all, from scripts/deploy-pete-bot.sh or deploy.yml:
     #   lab_agent_binary_src, and from kv/services/lab-agent: lab_agent_ask_token,
@@ -617,6 +632,29 @@
         path: "{{ pete_bot_cve_snapshot }}"
       register: pete_bot_cve_snapshot_stat
 
+    - name: Install the weekly dashboard's allowlist
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - { src: weekly-dash-allowlist.nft.j2, dest: "{{ pete_bot_conf_dir }}/weekly-dash-allowlist.nft" }
+        - { src: weekly-dash-allowlist.service.j2, dest: /etc/systemd/system/weekly-dash-allowlist.service }
+      register: weekly_dash_allowlist_files
+      when: pete_bot_weekly_ready | bool
+
+    # restarted, not started, when the table changed: a oneshot with RemainAfterExit stays
+    # "active" and would not reload a changed file on `started`.
+    - name: Load the weekly dashboard's allowlist
+      ansible.builtin.systemd_service:
+        name: weekly-dash-allowlist
+        enabled: true
+        state: "{{ 'restarted' if weekly_dash_allowlist_files is changed else 'started' }}"
+        daemon_reload: true
+      when: pete_bot_weekly_ready | bool
+
     - name: Install the environment file
       ansible.builtin.template:
         src: pete-bot.env.j2
@@ -798,6 +836,33 @@
         - (pete_bot_reports_health.json.reports.state | default('')) == 'misconfigured'
           or ((pete_bot_reports_ready | bool)
               and (pete_bot_reports_health.json.reports.state | default('')) != 'running')
+
+    # The weekly dashboard starts after the reports, so it can still read `starting` here.
+    - name: Read the weekly report's state
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ pete_bot_port }}/health"
+        return_content: true
+      register: pete_bot_weekly_health
+      retries: 10
+      delay: 2
+      # A binary from before PET-868 reports no `weekly`. That is acceptable only while the
+      # feature is off.
+      until: >-
+        pete_bot_weekly_health.json is defined
+        and (pete_bot_weekly_health.json.weekly is not defined
+             or pete_bot_weekly_health.json.weekly.state != 'starting')
+      when: pete_bot_weekly_ready | bool
+
+    - name: Fail when the weekly report is misconfigured, missing or did not start
+      ansible.builtin.fail:
+        msg: >-
+          The weekly report reports
+          {{ pete_bot_weekly_health.json.weekly.state | default('nothing: this binary predates it') }}:
+          {{ pete_bot_weekly_health.json.weekly.reason | default('it was switched on but did not start') }}
+      when:
+        - pete_bot_weekly_ready | bool
+        - not ansible_check_mode
+        - (pete_bot_weekly_health.json.weekly.state | default('')) != 'running'
 
     - name: Read the Codex queue key's public half
       ansible.builtin.slurp:
