@@ -311,6 +311,12 @@ resource "vault_policy" "pete_bot_cd" {
       capabilities = ["list"]
     }
 
+    # The MinIO key for the daily copy of the reports database (PET-868), scoped to the `pete-bot`
+    # bucket on 245. Optional: an absent path leaves the copy off, and /health says so.
+    path "kv/data/services/pete-bot-reports-backup" {
+      capabilities = ["read"]
+    }
+
     # lab-agent shares 237 and this play (PET-670): its ask bearer, its Vault token and its
     # read-only Proxmox token.
     path "kv/data/services/lab-agent" {

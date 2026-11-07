@@ -105,6 +105,12 @@
     pete_bot_weekly_access_emails: [pedelgadillo@gmail.com]
     pete_bot_weekly_access_aud: "afad22e93a3b7bca79a6a8ce72d815a15de34143ea2b7f7afbc66a85e99c7b52"
     pete_bot_weekly_ollama_url: http://192.168.50.246:11434
+    # The daily copy of the reports database (PET-868). The endpoint and bucket are not secret;
+    # the key pair comes from kv/services/pete-bot-reports-backup through pete-bot's deploy.yml,
+    # which passes pete_bot_report_backup_access_key and _secret_key. Without both, no REPORT_BACKUP_*
+    # line is rendered and the bot's /health reports the copy as off.
+    pete_bot_report_backup_endpoint: http://192.168.50.245:9000
+    pete_bot_report_backup_bucket: pete-bot
     pete_bot_weekly_ready: >-
       {{ (pete_bot_reports_ready | bool) and (pete_bot_weekly_access_aud | length > 0) }}
 
