@@ -544,6 +544,20 @@ resource "vault_policy" "infra_reconcile" {
   EOT
 }
 
+# tracker-ci: reads the petedio-tracker-read GitHub App identity so petedio-pm's tracker job can
+# mint an installation token. That App holds read permissions only (actions, checks, pull_requests,
+# statuses, metadata), so a compromised job cannot write to GitHub. MAIN-ONLY role: see
+# vault_jwt_auth_backend_role.tracker_ci.
+resource "vault_policy" "tracker_ci" {
+  name = "tracker-ci"
+
+  policy = <<-EOT
+    path "kv/data/services/tracker-app" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 # openfaas-ci — ⚠ THE NAME IS STALE, THE ROLE IS LIVE (PET-423).
 #
 # openfaas-241 was destroyed on 2026-09-12 (PET-403/404) and nothing declares it any more.

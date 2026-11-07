@@ -285,6 +285,26 @@ resource "vault_jwt_auth_backend_role" "plane_ci" {
   token_ttl      = 300
 }
 
+# tracker-ci role → tracker-ci policy. petedio-pm's tracker job lists waiting lab-write taps and
+# open PRs across the org. MAIN ONLY, never a `pull_request` subject: it reads a GitHub App key.
+# Both subject forms, for the same reason as infra-reconcile below.
+resource "vault_jwt_auth_backend_role" "tracker_ci" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "tracker-ci"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    sub = join(",", [
+      "repo:PeteDio-Labs/petedio-pm:ref:refs/heads/main",
+      "repo:PeteDio-Labs@${var.github_org_id}/petedio-pm@${var.github_repo_id_pm}:ref:refs/heads/main",
+    ])
+  }
+  token_policies = [vault_policy.tracker_ci.name]
+  token_ttl      = 300
+}
+
 # infra-reconcile role → infra-reconcile policy (PET-294). The nightly job in
 # petedio-vault diffs `pct list` against the vault's own host notes and files drift
 # as Plane work items.
