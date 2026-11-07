@@ -21,6 +21,11 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "plane" {
   description = "PeteDio Plane work items (PET-839)."
   hostname    = "https://mcp-plane.pdlab.dev/mcp"
   auth_type   = "oauth"
+
+  # Set explicitly. The API returns false and the provider reads it back as null when the
+  # attribute is unset, so the plan shows `false -> null` and the PUT sends null, which the
+  # API rejects with 400 "Expected boolean, received null" (PET-839).
+  is_shared_oauth_callback_enabled = false
 }
 
 resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "lab" {
@@ -30,6 +35,11 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "lab" {
   description = "Read-only homelab state (PET-839)."
   hostname    = "https://mcp-lab.pdlab.dev/mcp/lab"
   auth_type   = "oauth"
+
+  # Set explicitly. The API returns false and the provider reads it back as null when the
+  # attribute is unset, so the plan shows `false -> null` and the PUT sends null, which the
+  # API rejects with 400 "Expected boolean, received null" (PET-839).
+  is_shared_oauth_callback_enabled = false
 }
 
 resource "cloudflare_zero_trust_access_ai_controls_mcp_portal" "pdlab" {
