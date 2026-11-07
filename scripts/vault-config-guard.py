@@ -47,14 +47,24 @@ ROLE_BIND_KEYS = ("repository", "sub", "workflow_ref")
 # mount) is a path the guard cannot call safe, so it goes through scripts/apply-vault-config.sh.
 KV_GRANT = re.compile(r"^kv/(data|metadata)/(services|db)/[a-z0-9][a-z0-9_-]*(/[a-z0-9][a-z0-9_-]*)*$")
 SAFE_CAPS = {"read", "list"}
+# A policy the gated apply may create with paths outside KV_GRANT. The guard pins each one to an
+# exact path set: the policy may drop a path but never add one, and grants read only. A change to
+# this table is a change to this file, which a reviewer reads.
+PINNED_POLICIES = {
+    "deploy-terraform-plan": {
+        "kv/data/iac/minio", "kv/data/iac/proxmox", "kv/data/iac/cloudflare", "kv/data/iac/authentik",
+        "kv/data/admin/postgres", "kv/data/db/plane", "kv/data/services/water-fast",
+    },
+}
 ALLOWED_REPOS = {"PeteDio-Labs/petedio-iac"}
 SUB_OK = re.compile(r"^repo:PeteDio-Labs(@\d+)?/[a-z0-9-]+(@\d+)?:(ref:refs/heads/main|pull_request)$")
 MAX_TTL = 900
 SSH_SOURCES = "192.168.50.232/32,192.168.50.233/32"
 
 
-def policy_problems(text):
+def policy_problems(text, name=None):
     text = text or ""
+    pinned = PINNED_POLICIES.get(name)
     p = []
     if text.lstrip().startswith("{"):
         return ["JSON-format policy: the guard reads HCL only"]
@@ -77,7 +87,9 @@ def policy_problems(text):
         if FORBIDDEN_POLICY_PATH.search(path):
             p.append(f'policy path "{raw}" is outside what the gated apply may grant')
         elif path.startswith("kv/"):
-            if not KV_GRANT.match(path):
+            if pinned is not None and path in pinned:
+                pass
+            elif not KV_GRANT.match(path):
                 p.append(f'policy path "{raw}": only kv/data|metadata/(services|db)/<name> may be granted')
             caps = set(re.findall(r'"([a-z]+)"', body))
             if not caps or caps - SAFE_CAPS:
@@ -192,7 +204,7 @@ def examine(plan):
         if not why and typ == "vault_policy":
             if after.get("name") in PRIVILEGED_POLICIES:
                 why.append(f"policy {after.get('name')} is privileged; change it with scripts/apply-vault-config.sh")
-            why += policy_problems(after.get("policy"))
+            why += policy_problems(after.get("policy"), after.get("name"))
         if not why and typ == "vault_jwt_auth_backend_role":
             why += role_problems(after, rc["change"].get("before"))
         if not why and typ == "vault_ssh_secret_backend_role":

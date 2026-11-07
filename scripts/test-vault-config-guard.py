@@ -133,6 +133,16 @@ class T(unittest.TestCase):
         self.assertEqual(pol("kv/data/services/plane", '"read","update"'), 1)
         self.assertEqual(pol("kv/data/services/plane", '"delete"'), 1)
 
+    def test_pinned_policy_may_not_widen(self):
+        def pol(name, *paths):
+            body = "\n".join('path "%s" {\n capabilities=["read"]\n}' % p for p in paths)
+            return run([rc("vault_policy.n", "vault_policy", ["create"], {"name": name, "policy": body})])[0]
+        ok = [KV + "data/iac/minio", KV + "data/admin/postgres"]
+        self.assertEqual(pol("deploy-terraform-plan", *ok), 0)
+        self.assertEqual(pol("deploy-terraform-plan", *ok, KV + "data/iac/lxc-ssh"), 1)   # not in the pinned set
+        self.assertEqual(pol("deploy-other", *ok), 1)                                      # only the pinned name
+        self.assertEqual(pol("deploy-terraform-plan", KV + "data/admin/*"), 1)
+
     def test_ssh_role_pins_options(self):
         def r(**kw):
             return run([rc("vault_ssh_secret_backend_role.n", "vault_ssh_secret_backend_role", ["create"],
