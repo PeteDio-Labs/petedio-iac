@@ -67,3 +67,5 @@ output "authentik_id" {
   description = "VMID of the Authentik SSO container."
   value       = module.authentik.vm_id
 }
+
+# PET-866 plan-comment smoke test; remove.
