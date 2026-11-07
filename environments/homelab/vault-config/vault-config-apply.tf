@@ -11,10 +11,11 @@
 #     addresses and anything that widens access (policies on sys/, auth/ or identity/, privileged
 #     policies on a role, ssh roles for root). The apply job re-plans and applies only if the plan
 #     digest matches the one the plan job printed.
-#  3. This policy. The apply token can create and update policies, JWT roles and ssh roles. It
-#     cannot delete anything, and it is denied its own policy and role, the break-glass policy, the
-#     userpass and MFA setup, the audit device and the root-principal ssh roles. A Vault `deny`
-#     wins over every grant, so the guard does not carry the whole load.
+#  3. This policy. Writes are an explicit allowlist, so everything else is default deny: the
+#     apply token can create and update only `deploy-*` policies and JWT and SSH roles, plus the
+#     `plane-ci` and `secrets-register` roles and policies. It has no delete, and no write on its
+#     own policy or role, break-glass, userpass, MFA, the audit device or the SSH CA. It keeps read
+#     on all of them, because a full refresh of this root reads every resource it manages.
 #
 # ⚠ THE FIRST APPLY OF THIS FILE IS A MAC STEP. The guard protects these resources, so the gated
 # path can never change them; edit them only through scripts/apply-vault-config.sh.
@@ -43,8 +44,9 @@ locals {
     path "sys/mounts/*" {
       capabilities = ["read"]
     }
+    # Refreshing the audit device needs sudo on its read. No write is granted on sys/audit.
     path "sys/audit" {
-      capabilities = ["read"]
+      capabilities = ["read", "sudo"]
     }
     path "auth/*" {
       capabilities = ["read", "list"]
@@ -69,53 +71,28 @@ resource "vault_policy" "vault_config_apply" {
   policy = <<-EOT
     ${local.vc_read_paths}
 
-    # Create and update only. No delete, so a bug in the guard still cannot remove a live resource.
-    path "sys/policies/acl/*" {
+    # Create and update only, on named paths. No delete, so a bug in the guard still cannot remove
+    # a live resource. Any path not listed here is default deny for writes.
+    path "sys/policies/acl/deploy-*" {
       capabilities = ["create", "update", "read", "list"]
     }
-    path "auth/jwt-github/role/*" {
+    path "sys/policies/acl/plane-ci" {
+      capabilities = ["update", "read"]
+    }
+    path "sys/policies/acl/secrets-register" {
+      capabilities = ["update", "read"]
+    }
+    path "auth/jwt-github/role/deploy-*" {
       capabilities = ["create", "update", "read", "list"]
     }
-    path "ssh-client-signer/roles/*" {
+    path "auth/jwt-github/role/plane-ci" {
+      capabilities = ["update", "read"]
+    }
+    path "auth/jwt-github/role/secrets-register" {
+      capabilities = ["update", "read"]
+    }
+    path "ssh-client-signer/roles/deploy-*" {
       capabilities = ["create", "update", "read", "list"]
-    }
-
-    # Denied, and a deny wins over every grant above.
-    path "sys/policies/acl/vault-config-apply" {
-      capabilities = ["deny"]
-    }
-    path "sys/policies/acl/vault-config-plan" {
-      capabilities = ["deny"]
-    }
-    path "sys/policies/acl/breakglass-247" {
-      capabilities = ["deny"]
-    }
-    path "auth/jwt-github/role/vault-config-apply" {
-      capabilities = ["deny"]
-    }
-    path "auth/jwt-github/role/vault-config-plan" {
-      capabilities = ["deny"]
-    }
-    path "auth/jwt-github/config" {
-      capabilities = ["deny"]
-    }
-    path "auth/userpass/*" {
-      capabilities = ["deny"]
-    }
-    path "identity/mfa/*" {
-      capabilities = ["deny"]
-    }
-    path "sys/audit/*" {
-      capabilities = ["deny"]
-    }
-    path "ssh-client-signer/config/*" {
-      capabilities = ["deny"]
-    }
-    path "ssh-client-signer/roles/lab-runner" {
-      capabilities = ["deny"]
-    }
-    path "ssh-client-signer/roles/pedro" {
-      capabilities = ["deny"]
     }
   EOT
 }

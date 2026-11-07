@@ -50,6 +50,9 @@ def policy_problems(text):
     if len(blocks) != len(re.findall(r'\bpath\s*"', body_text)) or re.search(r"\bpath\s*'", body_text):
         p.append("policy has a path stanza the guard cannot parse")
     for raw, body in blocks:
+        if "\\" in raw or "${" in raw or "%{" in raw or not raw.isascii():
+            p.append(f'policy path "{raw}" uses an escape or interpolation the guard cannot decode')
+            continue
         path = raw.lstrip("/")
         first = path.split("/", 1)[0]
         if re.search(r"[*+]", first):
@@ -98,6 +101,15 @@ def ssh_role_problems(after):
     return p
 
 
+# Attributes whose value the guard reads. If Terraform cannot know one at plan time, the guard
+# cannot judge it, and a hash of an unresolved value approves nothing.
+CHECKED = {
+    "vault_policy": ("name", "policy"),
+    "vault_jwt_auth_backend_role": ("token_policies", "bound_claims", "bound_claims_type", "bound_audiences"),
+    "vault_ssh_secret_backend_role": ("name", "allowed_users", "default_user"),
+}
+
+
 def examine(plan):
     allowed, refused, noop = [], [], 0
     for rc in plan.get("resource_changes", []):
@@ -114,6 +126,10 @@ def examine(plan):
         if PROTECTED_ADDR.match(addr):
             why.append("protected address")
         after = rc["change"].get("after") or {}
+        unknown = rc["change"].get("after_unknown") or {}
+        for attr in CHECKED.get(typ, ()):
+            if unknown.get(attr):
+                why.append(f"{attr} is unknown until apply, so the guard cannot read it")
         if not why and typ == "vault_policy":
             if after.get("name") in PRIVILEGED_POLICIES:
                 why.append(f"policy {after.get('name')} is privileged; change it with scripts/apply-vault-config.sh")

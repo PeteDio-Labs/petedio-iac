@@ -19,8 +19,8 @@ on `main`:
 - Attach a policy to a JWT role unless it is `plane-ci`, `secrets-register`, `deploy-*` or already on the role. Use a glob claim or `bound_claims_type`.
 - Create an SSH role that is not `deploy-<name>` signing only for itself, or grant signing on any other role.
 
-`scripts/vault-config-guard.py` enforces the list, and the `vault-config-apply` Vault policy denies the
-same paths. `python3 scripts/test-vault-config-guard.py` runs the guard's tests.
+`scripts/vault-config-guard.py` enforces the list, and the `vault-config-apply` Vault policy grants writes only to `deploy-*` policies and
+roles, plus `plane-ci` and `secrets-register`. Everything else is default deny. `python3 scripts/test-vault-config-guard.py` runs the guard's tests.
 
 ## First use
 

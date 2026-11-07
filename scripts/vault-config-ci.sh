@@ -6,6 +6,8 @@
 #         more, which must report no changes. Every failure exits non-zero.
 set -euo pipefail
 umask 077
+# The OIDC token is already short-lived. The provider would otherwise mint a child token, which the policies do not allow.
+export TERRAFORM_VAULT_SKIP_CHILD_TOKEN=true
 trap 'rm -f /tmp/vc-init.log /tmp/vc-plan.txt /tmp/vc-plan.json /tmp/vc-digest /tmp/vc-guard.txt /tmp/vc-verify.txt "$PWD"/tfplan 2>/dev/null' EXIT
 MODE="${1:-}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

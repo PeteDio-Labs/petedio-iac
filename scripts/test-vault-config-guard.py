@@ -82,6 +82,19 @@ class T(unittest.TestCase):
         self.assertEqual(pol('path \'ssh-client-signer/sign/lab-runner\' {\n capabilities=["update"]\n}'), 1)
         self.assertEqual(pol('path "kv/data/services/plane" {\n capabilities=["read"]\n}\n# path "sys/x" {}'), 0)
 
+    def test_escapes_interpolation_and_unknowns_refused(self):
+        def pol(text):
+            return run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "n", "policy": text})])[0]
+        self.assertEqual(pol('path "\\u0073ys/policies/acl/x" {\n capabilities=["update"]\n}'), 1)
+        self.assertEqual(pol('path "kv/' + 'data/${x}" {\n capabilities=["read"]\n}'), 1)
+        self.assertEqual(pol('path "sy\u0455/x" {\n capabilities=["read"]\n}'), 1)
+        c = rc("vault_policy.n", "vault_policy", ["create"], {"name": "n"})
+        c["change"]["after_unknown"] = {"policy": True}
+        self.assertEqual(run([c])[0], 1)
+        r = rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], ROLE)
+        r["change"]["after_unknown"] = {"bound_claims": {"sub": True}}
+        self.assertEqual(run([r])[0], 1)
+
     def test_role_policy_allowlist_and_claims(self):
         def r(pols, claims=None, typ="string", before=None):
             a = {**ROLE, "token_policies": pols, "bound_claims_type": typ}
