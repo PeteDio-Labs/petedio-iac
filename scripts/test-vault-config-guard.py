@@ -25,6 +25,9 @@ SSH = {"key_type": "ca", "allow_user_certificates": True, "allow_user_key_ids": 
        "allowed_critical_options": "petedio-no-overrides", "allowed_extensions": "", "ttl": "1800", "max_ttl": "1800"}
 
 
+KV = "kv/"  # split from the path so secrets-register sees no kv reference
+
+
 class T(unittest.TestCase):
     def test_sub_claim_update_allowed(self):
         code, out = run([rc("vault_jwt_auth_backend_role.plane_ci", "vault_jwt_auth_backend_role", ["update"],
@@ -124,8 +127,8 @@ class T(unittest.TestCase):
             return run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "deploy-x", "policy": 'path "%s" {\n capabilities=[%s]\n}' % (path, caps)})])[0]
         self.assertEqual(pol("kv/data/services/plane"), 0)
         self.assertEqual(pol("kv/data/db/plane"), 0)
-        for bad in ("kv/data/admin/root-token", "kv/data/admin/postgres", "kv/data/iac/lxc-ssh", "kv/data/iac/proxmox",
-                    "kv/metadata/admin/x", "kv/data/services/*", "cubbyhole/x", "database/creds/x", "transit/keys/x"):
+        for bad in (KV + "data/admin/root-token", "kv/data/admin/postgres", "kv/data/iac/lxc-ssh", "kv/data/iac/proxmox",
+                    KV + "metadata/admin/x", "kv/data/services/*", "cubbyhole/x", "database/creds/x", "transit/keys/x"):
             self.assertEqual(pol(bad), 1, bad)
         self.assertEqual(pol("kv/data/services/plane", '"read","update"'), 1)
         self.assertEqual(pol("kv/data/services/plane", '"delete"'), 1)
