@@ -1,5 +1,5 @@
 # postgres-rds (LXC 231) — the RDS-equivalent Postgres host. Built for Co-latro,
-# which is gone (PET-366); it now serves waterfast and plane.
+# which is gone (PET-366); it now serves plane (waterfast was dropped in PET-778).
 # VMID 231 = apps block (.231), VMID = last IP octet. Second consumer of the
 # reusable modules/proxmox-lxc module.
 #
@@ -17,7 +17,7 @@
 #   PHASE 2  (postgres_ready = true — CURRENT default, PET-32):
 #     Postgres is LIVE on 231. The `poker` db/owner role/ALL-grant that this phase
 #     was written to import were DESTROYED in PET-366 with the rest of Co-latro;
-#     the databases TF manages here now are `waterfast` and `plane`, both created
+#     the database TF manages here now is `plane`, created
 #     by TF rather than imported. Kept for the import procedure itself, which still
 #     applies to any brownfield database: see docs/runbooks/postgres-import.md.
 #
@@ -41,7 +41,7 @@ module "postgres_host" {
 
 # The postgresql PROVIDER's admin credential: field `admin_password` at kv/admin/postgres
 # (PET-691). It is the SERVER-WIDE admin credential the provider authenticates with, so it
-# must resolve for Terraform to manage postgres-231 at all, `plane` and `waterfast`
+# must resolve for Terraform to manage postgres-231 at all, `plane`
 # included. The per-database owner passwords resolve separately in databases.tf.
 #
 # It lived at kv/poker/db until PET-691. That name outlived Co-latro (PET-366) because the
