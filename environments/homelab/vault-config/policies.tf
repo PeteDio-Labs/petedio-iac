@@ -399,6 +399,28 @@ resource "vault_policy" "media_dash_cd" {
   EOT
 }
 
+# search-cd: petedio-search's deploy (PET-526). The three reads scripts/deploy-search.sh makes by
+# hand, and nothing else: the service's own tokens, the workspace-mirror GitHub App it reads the
+# vault with (PET-542), and the shared LXC key the play connects with, as every sibling CD role
+# reads it until the SSH CA rollout (PET-771) retires lxc-ssh.
+resource "vault_policy" "search_cd" {
+  name = "search-cd"
+
+  policy = <<-EOT
+    path "kv/data/services/search" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/services/claude-workspace-mirror" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/lxc-ssh" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 # vault-snapshot: the policy the automated raft-snapshot timer on .223 uses (PET-109).
 # Exactly two narrow reads — take a raft snapshot, and read the MinIO svcacct creds it
 # uploads with. Nothing else: a leaked snapshot token can back Vault up and read the

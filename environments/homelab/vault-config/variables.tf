@@ -69,6 +69,12 @@ variable "media_control_repo" {
   default     = "PeteDio-Labs/petedio-media-control"
 }
 
+variable "search_repo" {
+  description = "owner/repo whose CD mints the search-cd JWT role (PET-526)."
+  type        = string
+  default     = "PeteDio-Labs/petedio-search"
+}
+
 variable "pete_bot_repo" {
   description = "owner/repo whose CD mints the pete-bot-cd role."
   type        = string
