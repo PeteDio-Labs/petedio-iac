@@ -1,0 +1,123 @@
+# portfolio-plan — plan environments/portfolio on the homelab runner (PET-884).
+#
+# WHY. The portfolio root (S3, CloudFront, ACM, a deploy IAM user in AWS account 847547470418)
+# had no CI path, so a plan meant a Mac session with `aws login`. A thread dispatches this
+# workflow instead and reads the run log.
+#
+# PLAN ONLY. The AWS key in Vault belongs to a read-only IAM user (scripts/seed-aws-portfolio-plan.sh),
+# so this workflow cannot change AWS. An apply needs a write credential, and storing one in Vault
+# would widen what a leaked runner token can do. Apply through the AWS connector or the Mac.
+#
+# SECURITY. Only `main` runs here: the Vault role binds ref, event and this file
+# (vault-config/portfolio-plan.tf), so a fork, a pull request, a push or a schedule mints nothing.
+# The run log is public, so it prints counts and resource addresses with every [instance key]
+# removed, never the plan's attribute values.
+name: portfolio-plan
+
+on:
+  workflow_dispatch:
+    inputs:
+      pet:
+        description: "The PET item this run answers, for example PET-884"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+
+jobs:
+  plan:
+    # The Vault binding is the gate. This line only stops a run of main's copy on another ref.
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, homelab]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.3 # same pin as terraform.yml (PET-362); bump all of them together
+          terraform_wrapper: false
+
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      # Neither key goes into AWS_ACCESS_KEY_ID: the S3 backend reads that name for MinIO and
+      # the AWS provider would read it too. Each key gets its own variable and its own file.
+      # The MinIO key is a service account that reads tfstate/portfolio/* only, not the shared
+      # kv/iac/minio key. Terraform caches backend settings in the data directory, so TF_DATA_DIR
+      # sits in the temporary directory that the exit trap deletes.
+      - name: Vault — portfolio-plan via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: portfolio-plan
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: false
+          secrets: |
+            kv/data/services/aws-portfolio-plan minio_access_key | MINIO_KEY ;
+            kv/data/services/aws-portfolio-plan minio_secret_key | MINIO_SECRET ;
+            kv/data/services/aws-portfolio-plan aws_access_key_id | PORTFOLIO_KEY ;
+            kv/data/services/aws-portfolio-plan aws_secret_access_key | PORTFOLIO_SECRET
+
+      - name: Plan environments/portfolio
+        working-directory: environments/portfolio
+        shell: bash
+        env:
+          PET: ${{ inputs.pet }}
+        run: |
+          set -euo pipefail
+          umask 077
+          T="$RUNNER_TEMP/portfolio-plan"
+          rm -rf "$T"; mkdir -p "$T"
+          trap 'rm -rf "$T"' EXIT
+          for v in MINIO_KEY MINIO_SECRET PORTFOLIO_KEY PORTFOLIO_SECRET; do
+            [ -n "${!v:-}" ] || { echo "ABORT: Vault returned no value for $v. Run scripts/seed-aws-portfolio-plan.sh."; exit 1; }
+          done
+          printf 'access_key = "%s"\nsecret_key = "%s"\n' "$MINIO_KEY" "$MINIO_SECRET" > "$T/backend.hcl"
+          printf '[portfolio]\naws_access_key_id = %s\naws_secret_access_key = %s\n' "$PORTFOLIO_KEY" "$PORTFOLIO_SECRET" > "$T/aws-credentials"
+          export AWS_SHARED_CREDENTIALS_FILE="$T/aws-credentials"
+          export TF_DATA_DIR="$T/tfdata"
+          export TF_PLUGIN_CACHE_DIR="${RUNNER_TOOL_CACHE:-$HOME/.cache}/tf-plugin-cache"
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+          echo "portfolio-plan: pet=${PET:-none} sha=$GITHUB_SHA"
+          terraform init -input=false -backend-config="$T/backend.hcl" >"$T/init.log" 2>&1 \
+            || { sed -E 's/(key|secret)[^ ]*/[redacted]/Ig' "$T/init.log" | tail -n 20; echo "ABORT: terraform init failed."; exit 1; }
+          set +e
+          terraform plan -input=false -lock=false -detailed-exitcode -var aws_profile=portfolio -out="$T/plan" >"$T/plan.log" 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+            sed -E 's/(key|secret)[^ ]*/[redacted]/Ig' "$T/plan.log" | tail -n 25
+            echo "ABORT: terraform plan failed (exit $rc). Nothing was examined."
+            exit 1
+          fi
+          terraform show -json "$T/plan" > "$T/plan.json"
+          jq -r '(.resource_changes // [])[] | select(.change.actions != ["no-op"] and .change.actions != ["read"]) | "\(.change.actions | join("+")) \(.address | gsub("\\[[^]]*\\]"; "[]"))"' "$T/plan.json" | sort | head -n 60
+          total="$(jq '[(.resource_changes // [])[]] | length' "$T/plan.json")"
+          add="$(jq '[(.resource_changes // [])[] | select(.change.actions | index("create"))] | length' "$T/plan.json")"
+          chg="$(jq '[(.resource_changes // [])[] | select(.change.actions | index("update"))] | length' "$T/plan.json")"
+          del="$(jq '[(.resource_changes // [])[] | select(.change.actions | index("delete"))] | length' "$T/plan.json")"
+          [ "$total" -gt 0 ] || { echo "ABORT: the plan lists 0 resources, so it examined nothing."; exit 1; }
+          # A missing state object reads as empty state, so every resource would plan as a create and
+          # this run would look healthy. This root was applied before it came to CI, so empty prior
+          # state means the backend read the wrong key or bucket.
+          prior="$(jq '[(.prior_state.values.root_module // {}) | .. | objects | select(has("address") and has("mode")) | .address] | length' "$T/plan.json")"
+          [ "$prior" -gt 0 ] || { echo "ABORT: the plan read 0 resources from state, so it compared nothing. Check the backend key portfolio/terraform.tfstate."; exit 1; }
+          echo "portfolio plan: read $prior resource(s) from state"
+          echo "portfolio plan: $total resource(s) examined, $add to add, $chg to change, $del to destroy (terraform exit $rc)"

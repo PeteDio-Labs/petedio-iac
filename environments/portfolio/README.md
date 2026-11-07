@@ -1,7 +1,12 @@
 # portfolio
 
 Root for `modules/portfolio-site` (PET-816). It has its own state key, `portfolio/terraform.tfstate`,
-and nothing in CI applies it. Run it by hand, in the order in `modules/portfolio-site/README.md`.
+and nothing in CI applies it. Run an apply by hand, in the order in `modules/portfolio-site/README.md`.
+
+To read a plan without a Mac session, dispatch the `portfolio-plan` workflow. It plans with a read-only
+IAM user whose key sits in `kv/services/aws-portfolio-plan`, and it prints counts and resource addresses
+only. Run `scripts/seed-aws-portfolio-plan.sh --profile <profile>` once to create that user and store the
+key (PET-884).
 
 ```bash
 cd environments/portfolio
