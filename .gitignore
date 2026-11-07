@@ -28,5 +28,3 @@ __pycache__/
 # ansible-lint and ansible-playbook write a working-directory lock here (PET-643).
 ansible/.ansible/
 environments/offsite-watchdog/.build/
-# Feature gates carry no secrets and are reviewed in a PR (PET-884).
-!environments/homelab/flags.auto.tfvars

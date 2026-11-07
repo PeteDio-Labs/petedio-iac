@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GitHub calls for terraform-plan-pr.yml (PET-866), using python3 and urllib.
+"""GitHub calls for terraform-plan.yml (PET-866), using python3 and urllib.
 
 The homelab runner has no `gh` (plane-reconcile.yml records the exit-127 failure), and python3 is
 already required by lab-action.yml. Reads GH_TOKEN and GH_REPO from the environment.

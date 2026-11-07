@@ -22,7 +22,6 @@ REPO_VARS_JSON='{}' python3 scripts/lab-repo-vars.py "$AL" >/dev/null 2>&1; chec
 OUT="$(REPO_VARS_JSON='{"ALLOW_DESTROY":"true"}' scripts/lab-action.sh repo_vars 2>&1)"; check "lab-action.sh routes repo_vars with no Vault" "$(grep -c '^ALLOW_DESTROY = true$' <<<"$OUT")" 1
 scripts/lab-action.sh lab_probe bogus "" >/dev/null 2>&1; check "unknown probe refused" "$?" 2
 check "health is an allowlisted probe" "$(grep -c 'media_ask|guests|health' scripts/lab-action.sh | awk '{print ($1>0)}')" 1
-check "backup_jobs is an allowlisted probe" "$(grep -cF 'backup_jobs)$' scripts/lab-action.sh | awk '{print ($1>0)}')" 1
 bash -n scripts/lab-probe.sh; check "lab-probe.sh parses" "$?" 0
 
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"; [ "$FAIL" = 0 ]

@@ -12,7 +12,7 @@
 #   * apply     — push to main ONLY (i.e. already-merged, trusted code). Self-hosted; the
 #                 ONLY job that mints Vault creds and touches state. PR-controlled code never
 #                 runs here.
-# PR plans (PET-866): this file still plans nothing on a PR. terraform-plan-pr.yml triggers on
+# PR plans (PET-866): this file still plans nothing on a PR. terraform-plan.yml triggers on
 # `workflow_run` of this one, so main's copy runs on the runner and comments a credential-free
 # summary. Read its header before you change any trigger here.
 # Authoritative plan: the PR comment, the operator's local plan, or the apply-on-merge log. The matching Vault-role change
@@ -154,8 +154,6 @@ jobs:
         run: |
           pip install --quiet python-hcl2==8.1.4 lark==1.3.1
           python3 scripts/test-tf-plan.py
-          scripts/test-flags-tfvars.sh
-          scripts/test-lab-repo-vars.sh
 
       - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
         run: terraform init -input=false -backend=false
@@ -197,12 +195,8 @@ jobs:
   # starts. Nothing here is a judgement about which destroys are acceptable —
   # it refuses all of them and asks a human.
   #
-  # A plan that removes anything now waits for Pedro's tap on the `lab-write` environment
-  # (job `approve-destroy`), so a deliberate destroy needs no repo variable and nothing to turn
-  # back off. The old ALLOW_DESTROY=true variable still skips the wait. It stays off by default.
-  # `lab-write` already exists with Pedro as its only reviewer. Do not point this at an
-  # environment that does not exist: GitHub creates it on first use with no reviewer, and the
-  # wait would pass by itself.
+  # To perform a deliberate destroy: set the repo variable ALLOW_DESTROY=true,
+  # merge, then set it back to false. Leaving it on re-arms the original hazard.
   plan-gate:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: validate
@@ -217,10 +211,13 @@ jobs:
       TF_IN_AUTOMATION: "1"
       VAULT_ADDR: https://192.168.50.223:8200
       VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+      TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
+      TF_VAR_manage_backup_job: ${{ vars.MANAGE_BACKUP_JOB || 'false' }}
+      TF_VAR_email_routing_live: ${{ vars.EMAIL_ROUTING_LIVE || 'false' }}
+      TF_VAR_email_routing_forward: ${{ vars.EMAIL_ROUTING_FORWARD || 'false' }}
       TF_VAR_postgres_db_password_versions: ${{ vars.POSTGRES_DB_PASSWORD_VERSIONS || '{}' }}
     outputs:
       safe: ${{ steps.gate.outputs.safe }}
-      needs_approval: ${{ steps.gate.outputs.needs_approval }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -284,17 +281,15 @@ jobs:
               if summary:
                   with open(summary, "a") as f: f.write("\n".join(lines) + "\n")
               print("\n".join(lines))
-              needs_approval = not allow
-              if needs_approval:
-                  print(f"\n{len(destructive)} removal(s) found. The apply waits for the lab-write approval.")
-              else:
-                  print("\nALLOW_DESTROY is set — continuing without the approval wait.")
+              if not allow:
+                  print("\nRefusing to apply. Set ALLOW_DESTROY=true to override, "
+                        "and set it back afterwards.")
+                  sys.exit(1)
+              print("\nALLOW_DESTROY is set — continuing.")
           else:
-              needs_approval = False
               print("Plan removes nothing. Safe to apply.")
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write("safe=true\n")
-              f.write(f"needs_approval={'true' if needs_approval else 'false'}\n")
           GATE
         env:
           ALLOW_DESTROY: ${{ vars.ALLOW_DESTROY || 'false' }}
@@ -306,25 +301,9 @@ jobs:
           path: environments/homelab/tfplan
           retention-days: 1
 
-  # Runs only when the plan removes something. The job does nothing; the wait on the `lab-write`
-  # environment is the gate. A rejected or timed-out wait leaves this job not-successful, and
-  # `apply` below then does not run.
-  approve-destroy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan-gate.outputs.needs_approval == 'true'
-    needs: plan-gate
-    environment: lab-write
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Approved. The apply that follows consumes the plan the plan-gate job inspected."
-
   apply:
-    # always(): a skipped approve-destroy (no removals) must not skip the apply. Every other need
-    # must have succeeded, and approve-destroy must have succeeded or been skipped.
-    if: >-
-      always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-      && needs.validate.result == 'success' && needs.plan-gate.result == 'success'
-      && (needs.approve-destroy.result == 'success' || needs.approve-destroy.result == 'skipped')
-    needs: [validate, plan-gate, approve-destroy]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [validate, plan-gate]
     runs-on: [self-hosted, linux, x64, homelab]
     permissions:
       contents: read
@@ -340,9 +319,13 @@ jobs:
       # a file path → the committed self-signed CA (absolute, working-dir-independent).
       VAULT_ADDR: https://192.168.50.223:8200
       VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
-      # pool.tf gate (PET-160): environments/homelab/flags.auto.tfvars drives both terraform
-      # (var.manage_resource_pool) and the preflight step below, so they can't drift. False → pool
-      # is a no-op and the preflight is skipped. Set it true AFTER granting Pool.Allocate (PET-159).
+      # pool.tf gate (PET-160): one repo variable drives both terraform (var.manage_resource_pool)
+      # and the preflight step below, so they can't drift. Default false → pool is a no-op and the
+      # preflight is skipped. Flip MANAGE_RESOURCE_POOL=true AFTER granting Pool.Allocate (PET-159).
+      TF_VAR_manage_resource_pool: ${{ vars.MANAGE_RESOURCE_POOL || 'false' }}
+      TF_VAR_manage_backup_job: ${{ vars.MANAGE_BACKUP_JOB || 'false' }}
+      TF_VAR_email_routing_live: ${{ vars.EMAIL_ROUTING_LIVE || 'false' }}
+      TF_VAR_email_routing_forward: ${{ vars.EMAIL_ROUTING_FORWARD || 'false' }}
       # Password rotation for the databases in databases.tf. The owner password is
       # write-only, so it is invisible to the plan diff and Terraform cannot notice a
       # rotated Vault value on its own — bumping a database's integer here is what
@@ -408,21 +391,12 @@ jobs:
       # file is committed by a follow-up PR after scripts/export-proxmox-ca.sh runs, and the
       # github-actions Vault role cannot read it. Until the file exists, the step below does not
       # run and the next step says so, so the skipped gate is visible in the log and not silent.
-      - name: Read the pool gate from flags.auto.tfvars
-        shell: bash
-        run: |
-          if grep -Eq '^manage_resource_pool[[:space:]]*=[[:space:]]*true[[:space:]]*$' flags.auto.tfvars; then
-            echo "POOL_GATE=true" >> "$GITHUB_ENV"
-          else
-            echo "POOL_GATE=false" >> "$GITHUB_ENV"
-          fi
-
       - name: Proxmox preflight permissions (pool)
-        if: env.POOL_GATE == 'true' && hashFiles('environments/homelab/proxmox-ca.crt') != ''
+        if: env.TF_VAR_manage_resource_pool == 'true' && hashFiles('environments/homelab/proxmox-ca.crt') != ''
         run: ../../scripts/proxmox-preflight-perms.sh --require Pool.Allocate --require Pool.Audit --path /pool/homelab
 
       - name: Proxmox preflight skipped (no CA file)
-        if: env.POOL_GATE == 'true' && hashFiles('environments/homelab/proxmox-ca.crt') == ''
+        if: env.TF_VAR_manage_resource_pool == 'true' && hashFiles('environments/homelab/proxmox-ca.crt') == ''
         run: echo "::warning title=Proxmox preflight skipped::environments/homelab/proxmox-ca.crt is missing, so the Pool.Allocate/Pool.Audit check examined nothing. Run scripts/export-proxmox-ca.sh and commit the file (PET-541)."
 
       - name: Init

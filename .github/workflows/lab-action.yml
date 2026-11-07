@@ -42,7 +42,7 @@ on:
           - playbook_check
           - playbook_apply
       target:
-        description: "playbook actions: a file name from scripts/lab-playbooks.txt. lab_probe: journal, mtrace, media_ask, guests, health or backup_jobs"
+        description: "playbook actions: a file name from scripts/lab-playbooks.txt. lab_probe: journal, mtrace, media_ask, guests or health"
         required: false
         type: string
         default: ""

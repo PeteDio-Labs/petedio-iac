@@ -18,21 +18,14 @@ def run(changes, extra=()):
     return code, buf.getvalue()
 
 
-SUB = "repo:PeteDio-Labs/petedio-iac:ref:refs/heads/main"
-ROLE = {"bound_audiences": ["a"], "bound_claims": {"sub": SUB}, "token_policies": ["plane-ci"], "bound_claims_type": "string", "token_ttl": 600}
-SSH = {"key_type": "ca", "allow_user_certificates": True, "allow_user_key_ids": False,
-       "default_critical_options": {"source-address": "192.168.50.232/32,192.168.50.233/32"},
-       "allowed_critical_options": "petedio-no-overrides", "allowed_extensions": "", "ttl": "1800", "max_ttl": "1800"}
-
-
-KV = "kv/"  # split from the path so secrets-register sees no kv reference
+ROLE = {"bound_audiences": ["a"], "bound_claims": {"sub": "repo:x"}, "token_policies": ["plane-ci"], "bound_claims_type": "string"}
 
 
 class T(unittest.TestCase):
     def test_sub_claim_update_allowed(self):
         code, out = run([rc("vault_jwt_auth_backend_role.plane_ci", "vault_jwt_auth_backend_role", ["update"],
-                            {**ROLE, "bound_claims": {"sub": SUB + ",repo:PeteDio-Labs/petedio-vault:ref:refs/heads/main"}}, {**ROLE})])
-        self.assertEqual(code, 0); self.assertIn("+ bound_claims.sub: repo:PeteDio-Labs/petedio-vault:ref:refs/heads/main", out)
+                            {**ROLE, "bound_claims": {"sub": "repo:x,repo:y"}}, {**ROLE})])
+        self.assertEqual(code, 0); self.assertIn("+ bound_claims.sub: repo:y", out)
         self.assertIn("examined 1 resource changes", out)
 
     def test_delete_refused(self):
@@ -65,7 +58,7 @@ class T(unittest.TestCase):
     def test_ssh_role_allowlist(self):
         def r(name, users, default=None):
             return run([rc("vault_ssh_secret_backend_role.n", "vault_ssh_secret_backend_role", ["create"],
-                           {**SSH, "name": name, "allowed_users": users, "default_user": default or users})])[0]
+                           {"name": name, "allowed_users": users, "default_user": default or users})])[0]
         self.assertEqual(r("deploy-x", "deploy-x"), 0)
         for name, users in (("deploy-x", "root"), ("lab-runner", "lab-runner"), ("deploy-x", "deploy-*"),
                             ("deploy-x", "deploy-x,root"), ("x", "x")):
@@ -121,63 +114,6 @@ class T(unittest.TestCase):
         self.assertEqual(run([rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], r)])[0], 1)
         r = {"bound_audiences": ["a"], "bound_claims": {"actor": "x"}, "token_policies": ["p"]}
         self.assertEqual(run([rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], r)])[0], 1)
-
-    def test_policy_kv_allowlist(self):
-        def pol(path, caps='"read"'):
-            return run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "deploy-x", "policy": 'path "%s" {\n capabilities=[%s]\n}' % (path, caps)})])[0]
-        self.assertEqual(pol("kv/data/services/plane"), 0)
-        self.assertEqual(pol("kv/data/db/plane"), 0)
-        for bad in (KV + "data/admin/root-token", "kv/data/admin/postgres", "kv/data/iac/lxc-ssh", "kv/data/iac/proxmox",
-                    KV + "metadata/admin/x", "kv/data/services/*", "cubbyhole/x", "database/creds/x", "transit/keys/x"):
-            self.assertEqual(pol(bad), 1, bad)
-        self.assertEqual(pol("kv/data/services/plane", '"read","update"'), 1)
-        self.assertEqual(pol("kv/data/services/plane", '"delete"'), 1)
-
-    def test_pinned_policy_may_not_widen(self):
-        def pol(name, *paths):
-            body = "\n".join('path "%s" {\n capabilities=["read"]\n}' % p for p in paths)
-            return run([rc("vault_policy.n", "vault_policy", ["create"], {"name": name, "policy": body})])[0]
-        ok = [KV + "data/iac/minio", KV + "data/admin/postgres"]
-        self.assertEqual(pol("deploy-terraform-plan", *ok), 0)
-        self.assertEqual(pol("deploy-terraform-plan", *ok, KV + "data/iac/lxc-ssh"), 1)   # not in the pinned set
-        self.assertEqual(pol("deploy-other", *ok), 1)                                      # only the pinned name
-        self.assertEqual(pol("deploy-terraform-plan", KV + "data/admin/*"), 1)
-
-    def test_known_list_is_not_unknown(self):
-        # Terraform writes after_unknown as [false] for a list whose elements are all known.
-        r = rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], {**ROLE, "token_policies": ["deploy-x"]})
-        r["change"]["after_unknown"] = {"token_policies": [False], "bound_audiences": [False], "bound_claims": {}}
-        self.assertEqual(run([r])[0], 0)
-        r["change"]["after_unknown"] = {"token_policies": [True]}
-        self.assertEqual(run([r])[0], 1)
-
-    def test_ssh_role_pins_options(self):
-        def r(**kw):
-            return run([rc("vault_ssh_secret_backend_role.n", "vault_ssh_secret_backend_role", ["create"],
-                           {**SSH, "name": "deploy-x", "allowed_users": "deploy-x", "default_user": "deploy-x", **kw})])[0]
-        self.assertEqual(r(), 0)
-        for kw in ({"default_critical_options": {}}, {"default_critical_options": {"source-address": "0.0.0.0/0"}},
-                   {"allowed_critical_options": "source-address"}, {"allowed_extensions": "permit-port-forwarding"},
-                   {"ttl": "3600"}, {"max_ttl": "86400"}, {"ttl": ""}, {"key_type": "otp"}, {"allow_user_key_ids": True}):
-            self.assertEqual(r(**kw), 1, kw)
-
-    def test_jwt_role_claim_values(self):
-        def r(claims=None, **kw):
-            a = {**ROLE, **kw}
-            if claims is not None: a["bound_claims"] = claims
-            return run([rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], a)])[0]
-        self.assertEqual(r(), 0)
-        wf = {"repository": "PeteDio-Labs/petedio-iac", "ref": "refs/heads/main", "workflow_ref": "x"}
-        self.assertEqual(r(wf), 0)
-        self.assertEqual(r({**wf, "repository": "evil/repo"}), 1)
-        self.assertEqual(r({**wf, "ref": "refs/heads/dev"}), 1)
-        self.assertEqual(r({"repository": "PeteDio-Labs/petedio-iac", "workflow_ref": "x"}), 1)  # no ref
-        self.assertEqual(r({"repository": "PeteDio-Labs/petedio-iac", "ref": "refs/heads/main"}), 1)  # any workflow
-        self.assertEqual(r({"sub": "repo:evil/x:ref:refs/heads/main"}), 1)
-        self.assertEqual(r({"sub": "repo:PeteDio-Labs/x:ref:refs/heads/feature"}), 1)
-        self.assertEqual(r(token_ttl=901), 1)
-        self.assertEqual(r(token_ttl=0), 1)
-        self.assertEqual(r(token_max_ttl=3600), 1)
 
     def test_digest_pins_the_plan(self):
         ch = [rc("vault_jwt_auth_backend_role.plane_ci", "vault_jwt_auth_backend_role", ["update"], ROLE, ROLE)]

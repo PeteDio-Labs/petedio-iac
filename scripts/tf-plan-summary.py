@@ -76,7 +76,7 @@ def main():
     removes = buckets["replace"] + buckets["destroy"]
     if removes:
         out.append(f"### ⚠ This plan removes {len(removes)} resource(s)")
-        out.append("The merge's apply waits for a tap on the `lab-write` environment.\n")
+        out.append("The merge would stop at `plan-gate` unless `ALLOW_DESTROY=true`.\n")
         for kind in ("destroy", "replace"):
             for a in sorted(buckets[kind]):
                 out.append(f"- **{kind}** `{a}`")
