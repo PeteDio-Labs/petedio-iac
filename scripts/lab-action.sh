@@ -5,7 +5,8 @@
 #   scripts/lab-action.sh lab_updates   # scripts/lab-updates.sh
 #   scripts/lab-action.sh playbook_check <playbook.yml>   # scripts/lab-playbook.sh check
 #   scripts/lab-action.sh playbook_apply <playbook.yml>   # only in the lab-write job
-#   scripts/lab-action.sh lab_probe <journal|mtrace|media_ask> "<key=value ...>"   # read-only, on 237
+#   scripts/lab-action.sh lab_probe <journal|mtrace|media_ask|guests|health> "<key=value ...>"   # read-only, on 237
+#   scripts/lab-action.sh repo_vars     # prints the allowlisted repo variables from $REPO_VARS_JSON; reaches no node
 #
 # .github/workflows/lab-action.yml calls this on a homelab runner when a thread dispatches it, so
 # a read-back no longer needs a paste-in prompt on 247 or the Mac. Both actions are checks, so
@@ -38,6 +39,13 @@ TARGET="${2:-}"
 PROBE_ARGS="${3:-}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# repo_vars (PET-884) reads the repository variables the workflow passes in. It reaches no node and
+# signs nothing, so it runs before the Vault and SSH setup. The allowlist is a file of names, and
+# a name that is not in it is never printed. Variables are not secrets, but the log is public.
+if [ "$ACTION" = repo_vars ]; then
+  exec python3 "$REPO_ROOT/scripts/lab-repo-vars.py" "$REPO_ROOT/scripts/lab-repo-vars.txt"
+fi
+
 # The allowlist. An action not named here is refused before anything is signed.
 case "$ACTION" in
   lab_verify)  CMD=("$REPO_ROOT/scripts/lab-verify.sh" --quiet); SUMMARY='^[0-9]+ passed, [0-9]+ failed, [0-9]+ skipped' ;;
@@ -60,10 +68,10 @@ case "$ACTION" in
   # A read-only probe inside LXC 237 (PET-878, PET-879). scripts/lab-probe.sh validates each value against a
   # strict pattern and reads lab-agent's own token inside 237; nothing is placed.
   lab_probe)
-    [[ "$TARGET" =~ ^(journal|mtrace|media_ask|guests)$ ]] || { echo "REFUSED: '$TARGET' is not a probe (journal, mtrace, media_ask, guests)." >&2; exit 2; }
+    [[ "$TARGET" =~ ^(journal|mtrace|media_ask|guests|health)$ ]] || { echo "REFUSED: '$TARGET' is not a probe (journal, mtrace, media_ask, guests, health)." >&2; exit 2; }
     CMD=("$REPO_ROOT/scripts/lab-probe.sh" "$TARGET" "$PROBE_ARGS")
-    SUMMARY='^probe (journal|mtrace|media_ask|guests):' ;;
-  *) echo "REFUSED: '$ACTION' is not an allowlisted action (lab_verify, lab_updates, lab_probe, playbook_check, playbook_apply)." >&2; exit 2 ;;
+    SUMMARY='^probe (journal|mtrace|media_ask|guests|health):' ;;
+  *) echo "REFUSED: '$ACTION' is not an allowlisted action (lab_verify, lab_updates, lab_probe, repo_vars, playbook_check, playbook_apply)." >&2; exit 2 ;;
 esac
 
 for v in VAULT_ADDR VAULT_CACERT VAULT_TOKEN; do

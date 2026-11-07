@@ -7,6 +7,7 @@
 #   scripts/lab-probe.sh mtrace  <args>   # title=<text>   -> mtrace trace_request, as caller lab-agent
 #   scripts/lab-probe.sh media_ask <args> # question=<text> -> lab-agent POST /v1/media/ask
 #   scripts/lab-probe.sh guests           # {"data":{"guests":[{vmid,node,status}]}} for scripts/check-staleness.py
+#   scripts/lab-probe.sh health [service=pete-bot|lab-agent]   # GET /health on 237; both when none is named
 #
 # WHAT RUNS. Each probe is a fixed command. The caller supplies values, never commands: every value
 # must match a strict pattern below, and the remote text carries only base64 or an allowlisted
@@ -99,6 +100,16 @@ printf "%s\n" "${RESP#*$'"'"'\r\n\r\n'"'"'}"
 echo "HTTP $CODE"'
 post237() { ssh -o ConnectTimeout=8 -o BatchMode=yes "$NODE" "pct exec 237 -- bash -s -- $1 $2" <<<"$REMOTE_POST"; }
 
+# GET /health on a port of 237 itself. The script travels on stdin and takes only the port, which
+# the caller never chooses. Prints the body, then a final "HTTP <code>" line.
+REMOTE_GET='set -u
+exec 3<>/dev/tcp/127.0.0.1/"$1" || { echo "HTTP none"; exit 4; }
+printf "GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" >&3
+RESP=$(timeout 20 cat <&3)
+CODE=$(printf "%s" "$RESP" | head -1 | cut -d" " -f2)
+printf "%s\n" "${RESP#*$'"'"'\r\n\r\n'"'"'}"
+echo "HTTP $CODE"'
+
 TS='^20[0-9]{2}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]$'
 
 case "$PROBE" in
@@ -128,6 +139,25 @@ case "$PROBE" in
     esac
     [ "$N" -gt 0 ] || { echo "FAILED: the window held 0 lines, so nothing was examined." >&2; exit 1; } ;;
 
+  health)
+    only service
+    SVC="${KV[service]:-all}"
+    [[ "$SVC" =~ ^(all|pete-bot|lab-agent)$ ]] || die "service must be pete-bot or lab-agent"
+    # A fixed table: the caller names a service, never a port or a path.
+    declare -A HPORT=([pete-bot]=3015 [lab-agent]=3016)
+    TARGETS=(pete-bot lab-agent); [ "$SVC" = all ] || TARGETS=("$SVC")
+    BAD=0
+    for t in "${TARGETS[@]}"; do
+      OUT="$(ssh -o ConnectTimeout=8 -o BatchMode=yes "$NODE" "pct exec 237 -- bash -s -- ${HPORT[$t]}" <<<"$REMOTE_GET")" \
+        || OUT="HTTP none"
+      CODE="$(printf '%s\n' "$OUT" | sed -n 's/^HTTP //p' | tail -1)"
+      echo "--- $t /health: HTTP ${CODE:-none}"
+      printf '%s\n' "$OUT" | grep -v '^HTTP ' | cut -c1-600
+      [ "${CODE:-}" = 200 ] || BAD=$((BAD+1))
+    done
+    echo "probe health: read ${#TARGETS[@]} service(s) on 237, $BAD not HTTP 200"
+    [ "$BAD" = 0 ] || exit 1 ;;
+
   mtrace)
     only title
     need title
@@ -152,5 +182,5 @@ case "$PROBE" in
     echo "probe media_ask: one question answered HTTP ${CODE:-none}, ${#OUT} characters read"
     [ "${CODE:-}" = 200 ] || exit 1 ;;
 
-  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask)" ;;
+  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, health)" ;;
 esac

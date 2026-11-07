@@ -1,0 +1,7 @@
+# Repository variables that repo_vars (scripts/lab-repo-vars.py) may print (PET-884).
+# One name per line. A name not listed here is never printed, even when the repo holds it.
+ALLOW_DESTROY
+MANAGE_BACKUP_JOB
+MANAGE_RESOURCE_POOL
+EMAIL_ROUTING_LIVE
+EMAIL_ROUTING_FORWARD
