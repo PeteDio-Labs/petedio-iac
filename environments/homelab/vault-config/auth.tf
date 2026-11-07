@@ -474,3 +474,30 @@ resource "vault_token_auth_backend_role" "claude_ops" {
   token_period           = 604800
   token_explicit_max_ttl = 7776000
 }
+
+# deploy-terraform-plan: terraform-plan.yml's narrow role (2026-11-07 audit), with the
+# deploy-terraform-plan policy, which has no read of kv/iac/lxc-ssh. The name starts with `deploy-`
+# so the gated apply may create it.
+#
+# ⚠ IT BINDS A DIFFERENT WORKFLOW FILE, terraform-plan-pr.yml, on purpose. The gated apply cannot
+# delete the terraform-plan role above, which still carries ci-read. Once the workflow is renamed
+# to terraform-plan-pr.yml and uses this role, no token a run mints can match the old role's
+# workflow_ref, so the old role is unreachable without a reviewed merge that recreates a file
+# named terraform-plan.yml. Delete the old role the next time a Mac apply runs for another reason.
+resource "vault_jwt_auth_backend_role" "deploy_terraform_plan" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "deploy-terraform-plan"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository   = var.github_repo
+    ref          = "refs/heads/main"
+    event_name   = "workflow_run"
+    workflow_ref = "${var.github_repo}/.github/workflows/terraform-plan-pr.yml@refs/heads/main"
+  }
+  token_policies = [vault_policy.terraform_plan.name]
+  token_ttl      = 900
+  token_max_ttl  = 900
+}

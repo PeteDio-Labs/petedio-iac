@@ -212,6 +212,9 @@ jobs:
       TF_VAR_email_routing_live: ${{ vars.EMAIL_ROUTING_LIVE || 'false' }}
       TF_VAR_email_routing_forward: ${{ vars.EMAIL_ROUTING_FORWARD || 'false' }}
       TF_VAR_postgres_db_password_versions: ${{ vars.POSTGRES_DB_PASSWORD_VERSIONS || '{}' }}
+      # A placeholder, not the key. modules/proxmox-lxc ignores changes to initialization[0].user_account,
+      # so the plan is the same, and this job no longer reads kv/iac/lxc-ssh (root on every LXC).
+      TF_VAR_ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlanPlaceholderPlanPlaceholderPlanPlacehold plan-placeholder"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -278,7 +281,6 @@ jobs:
             kv/data/iac/minio access_key | AWS_ACCESS_KEY_ID ;
             kv/data/iac/minio secret_key | AWS_SECRET_ACCESS_KEY ;
             kv/data/iac/proxmox api_token | TF_VAR_proxmox_api_token ;
-            kv/data/iac/lxc-ssh public_key | TF_VAR_ssh_public_key ;
             kv/data/iac/cloudflare api_token | TF_VAR_cloudflare_api_token ;
             kv/data/iac/cloudflare account_id | TF_VAR_cloudflare_account_id ;
             kv/data/iac/cloudflare zone_id | TF_VAR_cloudflare_zone_id ;
