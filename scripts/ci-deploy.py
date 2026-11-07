@@ -81,8 +81,8 @@ def mask(value: object) -> None:
 
 
 def kv(path: str, required: bool) -> dict:
-    """Read kv/data/<path>. Returns {} for an absent optional record, aborts for a required one."""
-    out = vault("GET", f"kv/data/{path}")
+    """Read one record from the kv mount. Returns {} for an absent optional record, aborts for a required one."""
+    out = vault("GET", "kv/data/" + path)
     if out is None:
         if required:
             raise Abort(f"kv/{path} does not exist. Seed it first (the seed script is named in the deploy's old script).")
