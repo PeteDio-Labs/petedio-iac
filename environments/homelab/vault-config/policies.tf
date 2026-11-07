@@ -399,10 +399,10 @@ resource "vault_policy" "media_dash_cd" {
   EOT
 }
 
-# search-cd: petedio-search's deploy (PET-526). The three reads scripts/deploy-search.sh makes by
-# hand, and nothing else: the service's own tokens, the workspace-mirror GitHub App it reads the
-# vault with (PET-542), and the shared LXC key the play connects with, as every sibling CD role
-# reads it until the SSH CA rollout (PET-771) retires lxc-ssh.
+# search-cd: petedio-search's deploy (PET-526). The two reads scripts/deploy-search.sh makes by
+# hand, the service's own tokens and the workspace-mirror GitHub App it reads the vault with
+# (PET-542), and the right to sign one SSH certificate for ollama-246. It no longer reads the shared
+# kv/iac/lxc-ssh key (PET-771).
 resource "vault_policy" "search_cd" {
   name = "search-cd"
 
@@ -415,8 +415,8 @@ resource "vault_policy" "search_cd" {
       capabilities = ["read"]
     }
 
-    path "kv/data/iac/lxc-ssh" {
-      capabilities = ["read"]
+    path "${vault_mount.ssh_client_signer.path}/sign/${vault_ssh_secret_backend_role.search_deploy.name}" {
+      capabilities = ["update"]
     }
   EOT
 }

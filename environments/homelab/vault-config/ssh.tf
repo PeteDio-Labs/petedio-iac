@@ -162,6 +162,42 @@ resource "vault_ssh_secret_backend_role" "lab_runner" {
   }
 }
 
+# search-deploy (PET-526): the petedio-search deploy.yml job on runner 232 or 233 signs a fresh key per
+# run and connects to ollama-246 as root with it, so the deploy no longer reads the shared
+# kv/iac/lxc-ssh key that opens root on every Terraform LXC (audit H6). Only ollama-246 lists this
+# principal in root's principals file (host_vars/ollama-246.yml), so the certificate opens that one
+# host. source-address pins it to the two runners, as lab-runner does. The TTL outlives one deploy
+# only. No pty and no forwarding: the play runs commands and never opens a shell.
+resource "vault_ssh_secret_backend_role" "search_deploy" {
+  backend  = vault_mount.ssh_client_signer.path
+  name     = "search-deploy"
+  key_type = "ca"
+
+  depends_on = [vault_policy.breakglass_247]
+
+  allow_user_certificates = true
+  allowed_users           = "search-deploy"
+  default_user            = "search-deploy"
+  allow_user_key_ids      = false
+
+  allowed_extensions = ""
+  default_extensions = {}
+
+  # The same sentinel as inventory-read, for the same reason: no request can drop the default.
+  allowed_critical_options = "petedio-no-overrides"
+  default_critical_options = {
+    "source-address" = "192.168.50.232/32,192.168.50.233/32"
+  }
+
+  ttl     = "1800"
+  max_ttl = "1800"
+
+  allowed_user_key_config {
+    type    = "ed25519"
+    lengths = [0]
+  }
+}
+
 # Signs one role and reads nothing else. Attach it to the login that a role's caller uses. The
 # collector's AppRole on 237 lands with PET-770, bound to 237's /32 like ansible-247.
 resource "vault_policy" "ssh_sign_inventory_read" {
