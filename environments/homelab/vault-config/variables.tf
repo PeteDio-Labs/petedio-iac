@@ -101,6 +101,12 @@ variable "github_repo_id_vault" {
   default     = "1312503638"
 }
 
+variable "github_repo_id_pm" {
+  description = "Numeric repo ID for petedio-pm, used in its immutable OIDC subject (tracker-ci role)."
+  type        = string
+  default     = "1418397634"
+}
+
 # Life of a new secret_id for the `ansible` and `terraform-local` AppRoles, in seconds
 # (PET-687). 7776000 is 90 days. It applies only to secret_ids minted after the apply.
 variable "approle_secret_id_ttl" {

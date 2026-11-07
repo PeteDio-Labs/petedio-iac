@@ -544,6 +544,20 @@ resource "vault_policy" "infra_reconcile" {
   EOT
 }
 
+# tracker-ci: reads the codex-review GitHub App's identity so petedio-pm's tracker job can mint a
+# READ-ONLY installation token. The job requests actions:read, pull_requests:read,
+# checks:read and contents:read at mint time, so the token it holds cannot write even though the
+# App also holds pull_requests:write. MAIN-ONLY role: see vault_jwt_auth_backend_role.tracker_ci.
+resource "vault_policy" "tracker_ci" {
+  name = "tracker-ci"
+
+  policy = <<-EOT
+    path "kv/data/services/codex-review-app" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 # openfaas-ci — ⚠ THE NAME IS STALE, THE ROLE IS LIVE (PET-423).
 #
 # openfaas-241 was destroyed on 2026-09-12 (PET-403/404) and nothing declares it any more.

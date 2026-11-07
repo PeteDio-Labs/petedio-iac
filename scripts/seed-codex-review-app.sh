@@ -14,6 +14,10 @@
 # `codex-gh pr checks` also reads each check's workflow run, which needs actions:read, so
 # the reviewer doesn't use it.
 #
+# WHY IT ALSO READS ACTIONS. petedio-pm's tracker job lists runs that wait on the lab-write
+# environment, which needs actions:read. The tracker mints a token scoped down to read at
+# mint time, so it holds no write permission. The reviewer itself does not use actions:read.
+#
 # ⚠ READ, NEVER WRITE, ON CHECKS. checks:write would let the App post its own passing result
 # on a pull request.
 #
@@ -54,7 +58,7 @@ VAULT_PATH="kv/services/codex-review-app"
 ORG="PeteDio-Labs"
 APP_SLUG="${APP_SLUG:-petedio-codex-review}"
 # The whole permission set, as GitHub reports it: sorted key=value pairs, comma-joined.
-WANT_PERMS="checks=read,contents=read,metadata=read,pull_requests=write"
+WANT_PERMS="actions=read,checks=read,contents=read,metadata=read,pull_requests=write"
 # The four claude-247 Apps. This App must be none of them.
 OTHER_APPS=(
   "kv/services/claude-workspace-mirror|the workspace mirror"
@@ -71,7 +75,7 @@ PEM_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --shred) SHRED=1 ;;
-    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
     *) PEM_FILE="$1" ;;
   esac
   shift
