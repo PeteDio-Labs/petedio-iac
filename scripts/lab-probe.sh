@@ -8,6 +8,7 @@
 #   scripts/lab-probe.sh media_ask <args> # question=<text> -> lab-agent POST /v1/media/ask
 #   scripts/lab-probe.sh guests           # {"data":{"guests":[{vmid,node,status}]}} for scripts/check-staleness.py
 #   scripts/lab-probe.sh backup_jobs      # the cluster's vzdump jobs: id, schedule, storage, mode, enabled (PET-884)
+#   scripts/lab-probe.sh ollama_ps        # models loaded in Ollama on CT 246: name, size, VRAM share, expiry
 #   scripts/lab-probe.sh health [service=pete-bot|lab-agent]   # GET /health on 237; both when none is named
 #
 # WHAT RUNS. Each probe is a fixed command. The caller supplies values, never commands: every value
@@ -95,6 +96,29 @@ print("probe backup_jobs: %d job(s) read from /cluster/backup" % len(jobs))
     fi
   done
   echo "FAILED: no node answered pvesh for /cluster/backup, so no job was read." >&2; exit 1
+fi
+
+# ollama_ps asks Ollama on CT 246 which models it holds in memory (GET /api/ps) and prints, per model,
+# the name, total size, the share in VRAM and when it unloads. It reaches the LAN directly from the
+# runner, so it needs no 237 and no node. An empty list is a valid answer ("0 model(s) loaded"); an
+# unreachable server or a body that is not the expected JSON fails.
+if [ "$PROBE" = ollama_ps ]; then
+  [ -z "$ARGS" ] || die "ollama_ps takes no args"
+  J="$(curl -sS --fail -m 10 http://192.168.50.246:11434/api/ps 2>/dev/null)" \
+    || { echo "FAILED: Ollama on 192.168.50.246:11434 did not answer /api/ps, so no model was read." >&2; exit 1; }
+  printf '%s' "$J" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+m = d.get("models")
+if not isinstance(m, list):
+    sys.exit("FAILED: /api/ps returned no models list")
+for x in m:
+    size, vram = int(x.get("size", 0)), int(x.get("size_vram", 0))
+    pct = "%d%%" % (100 * vram // size) if size else "?"
+    print("model %s: size=%.1fGiB vram=%s expires=%s" % (str(x.get("name", "?"))[:80], size / 2**30, pct, str(x.get("expires_at", "?"))[:25]))
+print("probe ollama_ps: %d model(s) loaded on CT 246" % len(m))
+' || { echo "FAILED: /api/ps did not return the expected JSON." >&2; exit 1; }
+  exit 0
 fi
 
 # Find the node that holds 237 now; guests move (PET-334).
@@ -208,5 +232,5 @@ case "$PROBE" in
     echo "probe media_ask: one question answered HTTP ${CODE:-none}, ${#OUT} characters read"
     [ "${CODE:-}" = 200 ] || exit 1 ;;
 
-  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, health, backup_jobs)" ;;
+  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps)" ;;
 esac

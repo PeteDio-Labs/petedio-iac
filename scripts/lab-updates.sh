@@ -3,6 +3,9 @@
 #
 #   ./scripts/lab-updates.sh          # run from claude-247 or the Mac (needs ssh to pve01, pve02, pve03 and pi1)
 #
+# Alpine guests (112) have no apt, so the probe branches on `apk` and reports security as `na`: apk
+# marks no update as a security fix. An apk simulation reads the cached index, so check the list age.
+#
 # Changes nothing: it runs no `apt-get update`, no upgrade and no reboot. It reads the apt
 # lists each host already holds, so it prints each list's age. A count from a stale list
 # undercounts, and the age line is how you tell.
@@ -31,21 +34,29 @@ pct_on() {  # node, args...
 # apt simulation never turns into a "0 upgradable" row.
 PROBE='
 . /etc/os-release
-sim=$(apt-get -s dist-upgrade 2>&1) || { echo "ERR apt-simulation"; exit 1; }
-up=$(printf "%s\n" "$sim" | grep -c "^Inst ")
-sec=$(printf "%s\n" "$sim" | grep "^Inst " | grep -ci "security")
-newest=$(stat -c %Y /var/lib/apt/periodic/update-success-stamp /var/lib/apt/lists 2>/dev/null | sort -n | tail -1)
-[ -n "$newest" ] || { echo "ERR apt-list-age"; exit 1; }
+if command -v apk >/dev/null 2>&1; then
+  sim=$(apk upgrade -s 2>&1) || { echo "ERR apk-simulation"; exit 1; }
+  up=$(printf "%s\n" "$sim" | grep -c "Upgrading")
+  sec=na
+  newest=$(stat -c %Y /var/cache/apk/APKINDEX*.tar.gz /lib/apk/db/installed 2>/dev/null | sort -n | tail -1)
+  ua=no
+else
+  sim=$(apt-get -s dist-upgrade 2>&1) || { echo "ERR apt-simulation"; exit 1; }
+  up=$(printf "%s\n" "$sim" | grep -c "^Inst ")
+  sec=$(printf "%s\n" "$sim" | grep "^Inst " | grep -ci "security")
+  newest=$(stat -c %Y /var/lib/apt/periodic/update-success-stamp /var/lib/apt/lists 2>/dev/null | sort -n | tail -1)
+  ua=no; dpkg -s unattended-upgrades >/dev/null 2>&1 && ua=yes
+fi
+[ -n "$newest" ] || { echo "ERR package-list-age"; exit 1; }
 age=$(( ( $(date +%s) - newest ) / 86400 ))
 rb=no; [ -e /var/run/reboot-required ] && rb=yes
-ua=no; dpkg -s unattended-upgrades >/dev/null 2>&1 && ua=yes
 echo "$PRETTY_NAME|$up|$sec|$age|$rb|$ua"
 '
 KERNEL_Q="dpkg-query -W -f '\${Package}\n' 'proxmox-kernel-*-pve-signed' 2>/dev/null | sort -V | tail -1"
 
 report() {  # label, raw probe output
   local label=$1 raw=$2
-  if ! printf '%s' "$raw" | tail -1 | grep -Eq '^[^|]+\|[0-9]+\|[0-9]+\|[0-9]+\|(yes|no)\|(yes|no)$'; then
+  if ! printf '%s' "$raw" | tail -1 | grep -Eq '^[^|]+\|[0-9]+\|([0-9]+|na)\|[0-9]+\|(yes|no)\|(yes|no)$'; then
     UNREADABLE=$((UNREADABLE+1)); printf "  ✗ %-28s unreadable\n" "$label"; return
   fi
   IFS='|' read -r os up sec age rb ua <<<"$(printf '%s' "$raw" | tail -1)"
