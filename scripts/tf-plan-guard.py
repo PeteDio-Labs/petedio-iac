@@ -21,30 +21,33 @@ import re
 import subprocess
 import sys
 
+# Gap between two tokens. HCL treats whitespace, /* */, // and # comments alike here.
+W = r'(?:\s|/\*.*?\*/|(?://|#)[^\n]*(?:\n|\Z))*'
+
 # Whole-file tokens, checked in every changed Terraform file.
 FILE_TOKENS = [
     (r'\bprovisioner\b|\blocal-exec\b|\bremote-exec\b', "provisioner"),
     # Whitespace and /* */ comments may sit between tokens in HCL. The provider mirror in the
     # workflow is the real block on these providers; this is the second layer.
-    (r'\bdata\b(?:\s|/\*.*?\*/)*"?(external|http|archive_file|dns_\w+|local_\w+|tls_\w+)\b',
+    (r'\bdata\b' + W + r'"?(external|http|archive_file|dns_\w+|local_\w+|tls_\w+)\b',
      "data source of an execution or network provider"),
     (r'\bterraform_remote_state\b', "remote state read"),
-    (r'\bprovider(?:\s|/\*.*?\*/)*"|\brequired_providers\b', "provider configuration"),
-    (r'\bproviders?(?:\s|/\*.*?\*/)*=', "provider meta-argument"),
-    (r'\bbackend(?:\s|/\*.*?\*/)*"', "backend block"),
+    (r'\bprovider' + W + r'"|\brequired_providers\b', "provider configuration"),
+    (r'\bproviders?' + W + r'=', "provider meta-argument"),
+    (r'\bbackend' + W + r'"', "backend block"),
     (r'\\[uU][0-9a-fA-F]{4}', "unicode escape in a string"),
     # A function call may have comments between the name and "(" in HCL.
     (r'\b(file|fileexists|fileset|filebase64|filebase64sha256|filebase64sha512|filemd5|filesha1|filesha256|filesha512|templatefile|pathexpand|nonsensitive)\b'
-     r'\s*(?:/\*.*?\*/\s*|(?:#|//)[^\n]*\n\s*)*\(', "file read or nonsensitive()"),
+     + W + r'\(', "file read or nonsensitive()"),
 ]
 # Checked on a file's added lines only: Vault reads already in the file stay legal, and a
 # Vault read added by the diff is refused.
 ADDED_TOKENS = [
-    (r'\b(data|ephemeral|resource)\b(?:\s|/\*.*?\*/)*"?vault_', "new Vault read or write"),
+    (r'\b(data|ephemeral|resource)\b' + W + r'"?vault_', "new Vault read or write"),
 ]
 # Every `source =` in a changed file must name one reviewed module. It is not anchored to a line
 # start, so `module "x" { source = "git::..." }` on one line is still caught.
-SOURCE = re.compile(r'\bsource(?:\s|/\*.*?\*/)*=(?:\s|/\*.*?\*/)*("([^"]*)")?', re.S)
+SOURCE = re.compile(r'\bsource' + W + r'=' + W + r'("([^"]*)")?', re.S)
 ALLOWED_SOURCE = re.compile(r'^\.\./\.\./modules/(proxmox-lxc|postgres-db|cloudflare-ingress)$')
 SAFE_NAME = re.compile(r'^[A-Za-z0-9._/@+=,-]+$')
 
@@ -123,7 +126,7 @@ def main():
         for pat, why in FORBIDDEN_PATH:
             if re.search(pat, p):
                 reasons.append(f"{safe(p)}: {why}")
-        if status == "D" or not TERRAFORM_FILE.search(p) or not ALLOWED_ROOTS.match(p):
+        if status == "D" or not TERRAFORM_FILE.search(p):
             continue
         body = git(repo, "show", f"{head}:{p}")
         if body.returncode != 0:
@@ -140,7 +143,7 @@ def main():
         added = "\n".join(l[1:] for l in d.stdout.decode(errors="replace").splitlines()
                           if l.startswith("+") and not l.startswith("+++"))
         # A Vault block already in the file must keep reading the same secret.
-        if re.search(r'\b(data|ephemeral)\b\s*"?vault_', text) and \
+        if re.search(r'\b(data|ephemeral)\b' + W + r'"?vault_', text, re.S) and \
                 re.search(r'(path|mount|name|vault\w*)\s*=|\bkv/', added):
             reasons.append(f"{safe(p)}: added path, mount, name or kv/ line in a file that reads Vault")
         for pat, why in ADDED_TOKENS:
