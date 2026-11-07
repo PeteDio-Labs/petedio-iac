@@ -237,14 +237,17 @@
               {{ restore_test_min_files }} floor, or no release file.
 
       always:
+        # Ownership: the play created VMID 9990 only when its own pct restore task succeeded. A
+        # failed restore leaves cleanup to an operator, because a guest created by someone else
+        # after the preflight would make that restore fail and look the same as ours.
         - name: Unmount the scratch guest
           ansible.builtin.command:
             argv: [pct, unmount, "{{ restore_test_scratch_vmid }}"]
+          when: restore_test_restore is succeeded
           failed_when: false
           changed_when: true
 
-        # Runs only when the restore task ran in this play, so a scratch guest that existed before
-        # the play is never touched. The VMID assert above already refused that case.
+        # Runs only when this play's restore succeeded, so a guest it did not create is never touched.
         - name: Destroy the scratch guest
           ansible.builtin.command:
             argv:
@@ -253,7 +256,7 @@
               - "{{ restore_test_scratch_vmid }}"
               - --purge
               - "1"
-          when: restore_test_restore is defined
+          when: restore_test_restore is succeeded
           failed_when: false
           changed_when: true
 
@@ -269,7 +272,9 @@
             that:
               - restore_test_guests_after.stdout | from_json | selectattr('vmid', 'equalto', restore_test_scratch_vmid) | list | length == 0
               - (restore_test_guests_after.stdout | from_json | length) == (restore_test_guests_before.stdout | from_json | length)
-            fail_msg: Scratch guest {{ restore_test_scratch_vmid }} still exists, or the guest count changed. Remove it by hand.
+            fail_msg: >-
+              Guest {{ restore_test_scratch_vmid }} still exists, or the guest count changed. If the restore
+              failed, find out who created it before removing it.
 
     - name: Say what the restore examined
       ansible.builtin.debug:
