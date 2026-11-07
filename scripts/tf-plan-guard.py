@@ -64,8 +64,6 @@ FORBIDDEN_PATH = [
     (r'(^|/)\.terraform(/|$)|\.tfstate', "Terraform working directory or state"),
     (r'^modules/baremetal-host/', "module that holds a local-exec provisioner"),
 ]
-ALLOWED_ROOTS = re.compile(
-    r'^(environments/homelab/[^/]+$|modules/(proxmox-lxc|postgres-db|cloudflare-ingress)/)')
 PLANNED = re.compile(
     r'^(environments/homelab/(?!vault-config/)|modules/(proxmox-lxc|postgres-db|cloudflare-ingress|baremetal-host)(/|$))')
 TERRAFORM_FILE = re.compile(r'\.(tf|tfvars|hcl)$|\.tf\.json$')
@@ -104,8 +102,10 @@ def main():
         entries.append((meta[1], meta[4], parts[i + 1]))
         i += 2
     if not entries:
-        print(f"guard error: {base}..{head} changed 0 files, so nothing was examined")
-        return 2
+        # The merge adds nothing to main, so there is nothing to plan. Say so; do not call it a pass.
+        print(f"guard examined 0 changed files between {base} and {head}: nothing to plan")
+        print("PLANNED_PATHS=0")
+        return 0
     files = [p for _, _, p in entries]
     unsafe = [p for p in files
               if (PLANNED.match(p) or TERRAFORM_FILE.search(p)) and not SAFE_NAME.fullmatch(p)]

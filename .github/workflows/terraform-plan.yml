@@ -117,8 +117,9 @@ jobs:
           # rc 2 means the guard could not read the diff: fail the job, do not skip.
           [ "$RC" -le 1 ]
 
-      # Pinned, with its parser dependency, so the parser that gates credentials does not move.
-      - name: Install the HCL parser
+      # The parser reads main's tree as the base: the PR's own first merge parent, so both guards
+      # compare the same pair even if main has moved since the merge ref was built.
+      - name: Install the HCL parser (pinned, with its dependency, so it does not move)
         if: steps.pr.outputs.skip == 'false' && steps.guard.outputs.rc == '0' && steps.guard.outputs.planned != '0'
         shell: bash
         run: pip install --quiet python-hcl2==8.1.4 lark==1.3.1
@@ -129,7 +130,10 @@ jobs:
         shell: bash
         run: |
           set +e
-          python3 -I scripts/tf-plan-inspect.py --base . --head pr | tee inspect.txt
+          # No -I: pip installs into the user site, which -I ignores. The script and its imports
+          # come from main's checkout; nothing from pr/ is on the path.
+          mkdir base-tree && git -C pr archive 'HEAD^1' | tar -x -C base-tree
+          python3 scripts/tf-plan-inspect.py --base base-tree --head pr | tee inspect.txt
           RC=${PIPESTATUS[0]}
           echo "rc=$RC" >> "$GITHUB_OUTPUT"
           [ "$RC" -le 1 ]
@@ -151,7 +155,7 @@ jobs:
               refused)
                 echo "### Terraform plan not run"
                 echo "This pull request changes something Terraform runs, fetches or points credentials at, so a runner with credentials does not plan it (head \`${HEAD_SHA:0:7}\`). Run \`terraform plan\` locally."
-                echo; echo '```'; cat guard.txt inspect.txt 2>/dev/null | grep '^REFUSE'; echo '```' ;;
+                echo; echo '```'; grep -h '^REFUSE' guard.txt inspect.txt 2>/dev/null || true; echo '```' ;;
               noplan)
                 echo "### No Terraform plan for this commit"
                 echo "The changed files at \`${HEAD_SHA:0:7}\` are outside the planned Terraform roots (the homelab root and its modules; vault-config has its own state), so there is nothing to plan." ;;
@@ -213,7 +217,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # The exact commit job 1 examined, not whatever the merge ref points to now.
+      # The exact commit job 1 examined, not whatever the merge ref points to when the plan runs.
       - name: Check out the examined merge commit
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -309,10 +313,14 @@ jobs:
       - name: Say the plan did not run
         if: failure() && hashFiles('comment.md') == ''
         shell: bash
+        env:
+          MIRROR: ${{ steps.mirror.outcome }}
+          VAULT: ${{ steps.vault.outcome }}
+          PLAN: ${{ steps.plan.outcome }}
         run: |
           {
             echo "### Terraform plan did not run"
-            echo "A step failed before a plan existed, so this pull request was examined by nothing. Read the [run log](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
+            echo "A step failed before a plan existed (mirror: ${MIRROR}, Vault login: ${VAULT}, plan: ${PLAN}), so this pull request was examined by nothing. Read the [run log](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
           } > comment.md
 
       - name: Post the comment

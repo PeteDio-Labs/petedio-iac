@@ -29,6 +29,8 @@ import sys
 
 ROOTS = ["environments/homelab", "modules/proxmox-lxc", "modules/postgres-db",
          "modules/cloudflare-ingress", "modules/baremetal-host"]
+# The text guard allows the first three only, so an edit to a file that calls baremetal-host
+# (ollama.tf) is refused there. This list lets main's own unchanged calls pass this guard.
 ALLOWED_SOURCES = {"../../modules/proxmox-lxc", "../../modules/postgres-db",
                    "../../modules/cloudflare-ingress", "../../modules/baremetal-host"}
 KNOWN_TOP = {"resource", "data", "ephemeral", "module", "variable", "locals", "output", "moved",
@@ -66,10 +68,14 @@ def canon(x):
 
 def facts(base):
     f = {"provider": [], "terraform": [], "vault": [], "provisioner": 0, "meta": 0,
-         "funcs": 0, "types": set(), "sources": [], "unknown": []}
+         "funcs": 0, "types": set(), "sources": [], "unknown": [], "files": 0, "check": 0}
     for root in ROOTS:
         for rel, doc in load_dir(base, root):
+            f["files"] += 1
             for top, blocks in doc.items():
+                if top == "check":
+                    # A check block can hold a scoped data source, so any change is refused.
+                    f["check"] += len(blocks)
                 if top not in KNOWN_TOP:
                     f["unknown"].append(f"{rel}:{top}")
                 if top in ("provider", "terraform"):
@@ -131,11 +137,14 @@ def main():
     except Exception as e:
         print("REFUSE a Terraform file could not be parsed: " + type(e).__name__)
         return 1
+    if fh["files"] == 0:
+        print("inspect error: parsed 0 files")
+        return 2
     pre = prefixes(lock)
     for k in ("provider", "terraform", "vault"):
         if fh[k] != fb[k]:
             reasons.append(f"{k} blocks differ from main's")
-    for k, why in (("provisioner", "provisioner blocks"), ("meta", "provider or providers arguments"),
+    for k, why in (("check", "check blocks"), ("provisioner", "provisioner blocks"), ("meta", "provider or providers arguments"),
                    ("funcs", "file-reading functions or nonsensitive()")):
         if fh[k] != fb[k]:
             reasons.append(f"count of {why} differs from main's ({fb[k]} to {fh[k]})")
@@ -147,7 +156,7 @@ def main():
             reasons.append(f"resource type {t} is not from a provider in main's lock")
     for u in fh["unknown"]:
         reasons.append(f"unknown top-level block {u}")
-    n_files = sum(len(load_dir(head, r)) for r in ROOTS)
+    n_files = fh["files"]
     print(f"inspect parsed {n_files} files in {len(ROOTS)} roots; "
           f"{len(fh['types'])} resource types, {len(fh['sources'])} module calls")
     if n_files == 0:
