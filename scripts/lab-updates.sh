@@ -16,7 +16,7 @@ PVE01=root@192.168.50.12   # the former ollama-host, a node since PET-528; reach
 PVE02=pve02
 PVE03=pve03
 PI=pi1
-EXAMINED=0; UNREADABLE=0; PENDING=0; REBOOT=0
+EXAMINED=0; SKIPPED=0; UNREADABLE=0; PENDING=0; REBOOT=0
 
 on() { local o=(); [ "$1" = "$PVE01" ] && o=(-i "$HOME/.ssh/id_ed25519_ansible")
        ssh -n -o ConnectTimeout=8 -o BatchMode=yes ${o[@]+"${o[@]}"} "$1" "$2" 2>/dev/null; }
@@ -78,7 +78,13 @@ for n in $PVE01 $PVE02 $PVE03; do
 done
 
 printf "\n== bare metal %s\n" "$PI"
-report "$PI (host)" "$(on "$PI" "$PROBE")"
-printf "\nexamined %d hosts or guests; %d unreadable; %d packages upgradable; %d need a reboot\n" \
-  "$EXAMINED" "$UNREADABLE" "$PENDING" "$REBOOT"
+# lab-action runs on runner 232, which holds no key for the Pi (lab-verify.sh skips it for the
+# same reason). Count the skip, so the last line never looks like full coverage.
+if [ "${LAB_ACTION:-}" = 1 ]; then
+  SKIPPED=$((SKIPPED+1)); echo "  - $PI (host)                   skipped: no key on the lab-action runner (PET-849)"
+else
+  report "$PI (host)" "$(on "$PI" "$PROBE")"
+fi
+printf "\nexamined %d hosts or guests; %d unreadable; %d skipped; %d packages upgradable; %d need a reboot\n" \
+  "$EXAMINED" "$UNREADABLE" "$SKIPPED" "$PENDING" "$REBOOT"
 [ "$UNREADABLE" -eq 0 ] && [ "$EXAMINED" -gt 0 ]
