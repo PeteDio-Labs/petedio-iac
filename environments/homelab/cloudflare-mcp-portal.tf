@@ -23,10 +23,12 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "plane" {
   hostname    = "https://mcp-plane.pdlab.dev/mcp"
   auth_type   = "oauth"
 
-  # Set explicitly. The API returns false and the provider reads it back as null when the
-  # attribute is unset, so the plan shows `false -> null` and the PUT sends null, which the
-  # API rejects with 400 "Expected boolean, received null" (PET-839).
-  is_shared_oauth_callback_enabled = false
+  # Set explicitly, never unset. An unset value plans as `false -> null`, the PUT sends null,
+  # and the API rejects it with 400 "Expected boolean, received null" (PET-839, #630).
+  # true uses Cloudflare's hosted callback, one fixed URL instead of the per-server dashboard
+  # URL that the upstream Access app rejected. That URL must be on the upstream's
+  # managed_oauth.allowed_redirect_uris in cloudflare-routes.tf.
+  is_shared_oauth_callback_enabled = true
 }
 
 resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "lab" {
@@ -37,10 +39,12 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "lab" {
   hostname    = "https://mcp-lab.pdlab.dev/mcp/lab"
   auth_type   = "oauth"
 
-  # Set explicitly. The API returns false and the provider reads it back as null when the
-  # attribute is unset, so the plan shows `false -> null` and the PUT sends null, which the
-  # API rejects with 400 "Expected boolean, received null" (PET-839).
-  is_shared_oauth_callback_enabled = false
+  # Set explicitly, never unset. An unset value plans as `false -> null`, the PUT sends null,
+  # and the API rejects it with 400 "Expected boolean, received null" (PET-839, #630).
+  # true uses Cloudflare's hosted callback, one fixed URL instead of the per-server dashboard
+  # URL that the upstream Access app rejected. That URL must be on the upstream's
+  # managed_oauth.allowed_redirect_uris in cloudflare-routes.tf.
+  is_shared_oauth_callback_enabled = true
 }
 
 resource "cloudflare_zero_trust_access_ai_controls_mcp_portal" "pdlab" {
