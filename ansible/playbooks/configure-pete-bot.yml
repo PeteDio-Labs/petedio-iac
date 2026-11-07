@@ -69,6 +69,10 @@
     # petedio-iac joined on 2026-10-19 (Pedro, PET-645). It runs PR CI, so it stays off the
     # no-CI list below, and its tier-2 paths (Terraform, workflows, guards) wait for a tap.
     pete_bot_desk_repos: petedio-workspace,petedio-vault,petedio-pm,petedio-iac
+    # The Codex-out fallback (PET-751, Pedro 2026-11-07). When the Codex queue fails or stays
+    # silent for two hours, tier 0 merges on CI and tier 1 on CI plus a clean Qwen review from
+    # this Ollama. A Qwen answer can only hold a PR. Tier 2 never falls back. Empty turns it off.
+    pete_bot_desk_qwen_url: http://192.168.50.246:11434
     # Repos that run no PR validation, by decision. Only there may a head with no check merge
     # without a tap; anywhere else an empty check list may be CI that never started.
     pete_bot_desk_no_ci_repos: petedio-workspace,petedio-vault,petedio-pm
