@@ -141,6 +141,11 @@
     # story.
     mtrace_bind: "192.168.50.237"
     mtrace_allow_sources: ["192.168.50.4"]
+    # Callers that may use mtrace's write tools (search_missing, blocklist_release,
+    # refresh_plex). Every caller not listed stays read-only. Each name must also be a
+    # token_<name> field in kv/services/media/dashboard: mtrace stops at startup on one
+    # that is not. lab-agent is deliberately absent.
+    mtrace_write_callers: ["bobbert"]
 
   pre_tasks:
     - name: Assert the LAN bind and allowlist are sane
@@ -171,6 +176,16 @@
           whitespace or newline — those would corrupt MEDIA_CONTROL_TOKENS's own field
           and pair separators). \A/\Z, not ^/$: Python's $ matches before a trailing
           newline too, which is exactly the byte this assert exists to catch.
+      no_log: true
+
+    - name: Assert every write caller holds a token
+      ansible.builtin.assert:
+        that:
+          - mtrace_write_callers | difference(mtrace_caller_tokens.keys() | list) | length == 0
+        fail_msg: >-
+          mtrace_write_callers names a caller with no token_<name> field in
+          kv/services/media/dashboard. mtrace would stop at startup. Create the token
+          with scripts/mtrace-caller-token.sh, or remove the name.
       no_log: true
 
     # Without this the play would install a stale binary, or none, and the service would
