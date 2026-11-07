@@ -7,6 +7,10 @@
 # A gate turns on only after its prerequisite is met; the variable's description in
 # variables.tf names it.
 manage_resource_pool  = true
-manage_backup_job     = true
+manage_backup_job     = false
 email_routing_live    = true
 email_routing_forward = true
+
+# manage_backup_job is false again (2026-11-07): with it true, every apply failed at
+# proxmox_backup_job.pve01 with 403 "Permission check failed (/storage/ollama-backups,
+# Datastore.Allocate)". Set it true after the token holds that grant.
