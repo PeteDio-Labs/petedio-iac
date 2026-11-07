@@ -1,0 +1,239 @@
+---
+# backup-audit.yml — read what the backups produced, not what they are set up to produce (PET-834).
+#
+#   scripts/lab-action.sh playbook_check backup-audit.yml     # read-only; runs with no approval
+#
+# lab-verify.sh reads the 06:00 backup-health verdict on pve02 and pve03. That verdict covers
+# the two nodes with a hand-made job. It says nothing about pve01, and it does not name a guest
+# with no archive. This play reads three facts directly:
+#
+#   1. Every node that hosts a guest has an enabled cluster backup job.
+#   2. Every guest, except the ones excluded on purpose, has an archive on the share that is
+#      younger than backup_audit_max_age_h.
+#   3. The last Vault snapshot service run succeeded and left a snapshot younger than
+#      backup_audit_vault_max_age_h.
+#
+# It changes nothing. Every command task carries check_mode: false so a check reads the live
+# state, and each carries the lab-action marker after review (scripts/lab-playbook-guard.py).
+# The final task fails the play when any fact does not hold, and prints how many guests,
+# archives and jobs it read, so a pass cannot mean "found nothing to look at".
+
+- name: Read the backup state of the cluster
+  hosts: proxmox:pve_new:pve_gpu
+  gather_facts: false
+  vars:
+    backup_audit_storage: ollama-backups
+    backup_audit_dump_dir: /mnt/ollama-backups/dump
+    # The nightly jobs run at 02:30 to 03:15. 30 hours covers one missed night's drift in the
+    # clock and no more. A guest 48 hours old fails.
+    backup_audit_max_age_h: 30
+    # Left out of the nightly job on purpose; the reason is beside backup_store_jobs in the role that owns the jobs.
+    backup_audit_excluded_vmids: [247]
+    # The node that reads the share. pve03 mounts it over NFS and hosts the Vault guest.
+    backup_audit_reader: pve03
+    backup_audit_vault_vmid: 223
+    backup_audit_vault_dir: /var/backups/vault-snapshots
+    backup_audit_vault_max_age_h: 30
+
+  tasks:
+    # run_once is safe here: the play uses the default linear strategy, and every later task reads
+    # these results through hostvars of the reader or a run_once task.
+    - name: Read the cluster's backup jobs  # noqa: run-once[task]
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/backup, --output-format, json]
+      register: backup_audit_jobs_raw
+      run_once: true
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Read the cluster's guests  # noqa: run-once[task]
+      ansible.builtin.command:
+        argv: [pvesh, get, /cluster/resources, --type, vm, --output-format, json]
+      register: backup_audit_guests_raw
+      run_once: true
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Read this node's view of the backup storage
+      ansible.builtin.command:
+        argv: [pvesm, status, --storage, "{{ backup_audit_storage }}"]
+      register: backup_audit_storage_raw
+      changed_when: false
+      failed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Read this node's mount of the share
+      ansible.builtin.command:
+        argv: [findmnt, -no, FSTYPE, --mountpoint, /mnt/ollama-backups]
+      register: backup_audit_mount_raw
+      changed_when: false
+      failed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Read the archives on the share
+      ansible.builtin.command:
+        argv:
+          - find
+          - "{{ backup_audit_dump_dir }}"
+          - -maxdepth
+          - "1"
+          - -type
+          - f
+          - (
+          - -name
+          - "*.tar.zst"
+          - -o
+          - -name
+          - "*.vma.zst"
+          - )
+          - -printf
+          - "%f %s %T@\\n"
+      register: backup_audit_archives_raw
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+      when: inventory_hostname == backup_audit_reader
+
+    - name: Read the Vault snapshot service result
+      ansible.builtin.command:
+        argv:
+          - pct
+          - exec
+          - "{{ backup_audit_vault_vmid }}"
+          - --
+          - systemctl
+          - show
+          - vault-snapshot.service
+          - -p
+          - Result
+          - -p
+          - ExecMainStatus
+          - -p
+          - LoadState
+      register: backup_audit_vault_service_raw
+      changed_when: false
+      failed_when: false
+      check_mode: false  # lab-action: read-only
+      when: inventory_hostname == backup_audit_reader
+
+    - name: Read the Vault snapshots on the guest
+      ansible.builtin.command:
+        argv:
+          - pct
+          - exec
+          - "{{ backup_audit_vault_vmid }}"
+          - --
+          - find
+          - "{{ backup_audit_vault_dir }}"
+          - -maxdepth
+          - "1"
+          - -type
+          - f
+          - -printf
+          - "%f %s %T@\\n"
+      register: backup_audit_vault_files_raw
+      changed_when: false
+      failed_when: false
+      check_mode: false  # lab-action: read-only
+      when: inventory_hostname == backup_audit_reader
+
+    - name: Read the clock on the reader
+      ansible.builtin.command:
+        argv: [date, +%s]
+      register: backup_audit_now_raw
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+      when: inventory_hostname == backup_audit_reader
+
+    - name: Judge what was read  # noqa: run-once[task]
+      run_once: true
+      delegate_to: "{{ backup_audit_reader }}"
+      vars:
+        jobs: "{{ backup_audit_jobs_raw.stdout | from_json }}"
+        guests: >-
+          {{ backup_audit_guests_raw.stdout | from_json
+             | selectattr('type', 'in', ['lxc', 'qemu']) | list }}
+        clock_epoch: "{{ hostvars[backup_audit_reader].backup_audit_now_raw.stdout | int }}"
+        archive_lines: >-
+          {{ hostvars[backup_audit_reader].backup_audit_archives_raw.stdout_lines }}
+        vault_lines: >-
+          {{ hostvars[backup_audit_reader].backup_audit_vault_files_raw.stdout_lines | default([]) }}
+        vault_service: >-
+          {{ hostvars[backup_audit_reader].backup_audit_vault_service_raw.stdout | default('') }}
+        # newest archive time per VMID, as {"223": 1762500000.0}
+        newest: >-
+          {%- set ns = namespace(d={}) -%}
+          {%- for line in archive_lines -%}
+          {%- set parts = line.split() -%}
+          {%- set vmid = parts[0] | regex_findall('^vzdump-(?:lxc|qemu)-([0-9]+)-') -%}
+          {%- if vmid and parts[1] | int > 0 and (vmid[0] not in ns.d or parts[2] | float > ns.d[vmid[0]]) -%}
+          {%- set ns.d = ns.d | combine({vmid[0]: parts[2] | float}) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ ns.d | to_json }}
+        newest_map: "{{ newest | from_json }}"
+        nodes_with_guests: "{{ guests | map(attribute='node') | unique | list }}"
+        enabled_job_nodes: >-
+          {{ jobs | selectattr('node', 'defined')
+             | rejectattr('enabled', 'defined') | map(attribute='node') | list
+             + jobs | selectattr('node', 'defined') | selectattr('enabled', 'defined')
+             | selectattr('enabled', 'in', [1, true, '1']) | map(attribute='node') | list }}
+        nodes_without_job: "{{ nodes_with_guests | difference(enabled_job_nodes) }}"
+        guests_expected: >-
+          {{ guests | rejectattr('vmid', 'in', backup_audit_excluded_vmids) | list }}
+        guests_missing: >-
+          {{ guests_expected | rejectattr('vmid', 'in', (newest_map.keys() | map('int') | list)) |
+             map(attribute='vmid') | sort | list }}
+        guests_stale: >-
+          {{ guests_expected | selectattr('vmid', 'in', (newest_map.keys() | map('int') | list))
+             | selectattr('vmid', 'in', (newest_map | dict2items
+               | selectattr('value', 'lt', (clock_epoch | int) - backup_audit_max_age_h * 3600)
+               | map(attribute='key') | map('int') | list))
+             | map(attribute='vmid') | sort | list }}
+        vault_newest: >-
+          {{ vault_lines | map('split', ' ') | selectattr('1', 'ne', '0') | map(attribute=2) | map('float') | sort
+             | last | default(0) }}
+        vault_age_h: "{{ (((clock_epoch | int) - (vault_newest | float)) / 3600) | round(1) }}"
+        vault_ok: >-
+          {{ 'Result=success' in vault_service and 'ExecMainStatus=0' in vault_service
+             and 'LoadState=loaded' in vault_service
+             and vault_lines | length > 0
+             and ((clock_epoch | int) - (vault_newest | float)) < backup_audit_vault_max_age_h * 3600 }}
+        reader_fstype: "{{ hostvars[backup_audit_reader].backup_audit_mount_raw.stdout | default('') }}"
+        storage_by_node: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars, 'backup_audit_storage_raw')
+             | map(attribute='stdout_lines') | list }}
+      block:
+        - name: Say what was read
+          ansible.builtin.debug:
+            msg:
+              - "read {{ jobs | length }} backup jobs, {{ guests | length }} guests,
+                {{ archive_lines | length }} archives, {{ vault_lines | length }} vault snapshots"
+              - "jobs: {{ jobs | selectattr('node', 'defined') | map(attribute='node') | list }}"
+              - "nodes with guests: {{ nodes_with_guests }}; without an enabled job: {{ nodes_without_job }}"
+              - "guests expected {{ guests_expected | length }}; with no archive: {{ guests_missing }};
+                older than {{ backup_audit_max_age_h }} h: {{ guests_stale }}"
+              - "excluded on purpose: {{ backup_audit_excluded_vmids }}"
+              - "share on {{ backup_audit_reader }}: {{ reader_fstype }}"
+              - "vault: service {{ vault_service | replace('\n', ' ') }}; newest snapshot {{ vault_age_h }} h old"
+              - "storage {{ backup_audit_storage }} per node: {{ storage_by_node }}"
+
+        - name: Fail when a fact does not hold, or when nothing was read
+          ansible.builtin.assert:
+            that:
+              - jobs | length > 0
+              - guests | length > 0
+              - archive_lines | length > 0
+              - reader_fstype is match('nfs')
+              - nodes_without_job | length == 0
+              - guests_missing | length == 0
+              - guests_stale | length == 0
+              - vault_ok | bool
+            fail_msg: >-
+              Backups do not hold. Nodes without an enabled job: {{ nodes_without_job }}.
+              Guests with no archive: {{ guests_missing }}. Guests with an archive older than
+              {{ backup_audit_max_age_h }} h: {{ guests_stale }}. Vault snapshot ok: {{ vault_ok }}.
+              Share filesystem on {{ backup_audit_reader }}: '{{ reader_fstype }}'.
+            success_msg: >-
+              Backups hold: {{ guests_expected | length }} guests have an archive younger than
+              {{ backup_audit_max_age_h }} h, every node with a guest has an enabled job, and the
+              Vault snapshot is {{ vault_age_h }} h old.

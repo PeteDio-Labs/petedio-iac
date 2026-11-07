@@ -16,4 +16,6 @@ apt-hygiene.yml
 configure-timezone.yml
 configure-ssh-ca-ollama-246.yml
 configure-ssh-ca-deploy-hosts.yml
+backup-audit.yml
+restore-test-backup.yml
 grant-iac-backup-storage.yml

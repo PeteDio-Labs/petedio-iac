@@ -16,23 +16,12 @@
 
 locals {
   # One entry per database. `vault_path` and `password_field` are per-entry because the
-  # three live secrets were seeded under three different conventions, before there was one:
-  #
-  #   poker      kv/poker/db            field poker_password
-  #   admin      kv/admin/db            field owner_password
-  #   waterfast  kv/services/water-fast field db_password
-  #
-  # Migrating live secrets as part of an already-delicate refactor would mean rewriting
-  # paths, policies and consumers in the same change as moving state — so the map absorbs
-  # the inconsistency instead. NEW databases should omit both fields and take the defaults
+  # legacy secrets were seeded under different conventions, before there was one. The map
+  # absorbs that inconsistency instead of rewriting paths, policies and consumers in the
+  # same change as moving state. NEW databases should omit both fields and take the defaults
   # below (kv/db/<name>, field `password`), which is the convention to converge on; the
   # legacy secrets can be migrated later as their own, separately-reviewable change.
   postgres_databases = {
-    waterfast = {
-      vault_path     = "services/water-fast"
-      password_field = "db_password"
-    }
-
     # plane — the tracker that replaces Linear (plane.tf, LXC 235). FIRST database to
     # take the defaults: no vault_path, no password_field, so it resolves to
     # kv/db/plane field `password`. That is the convention every new database should
@@ -42,7 +31,7 @@ locals {
     # role. That is sufficient: every extension it plausibly needs (pg_trgm, btree_gin,
     # uuid-ossp, citext, pgcrypto) is `trusted` on 231, and since PG13 a non-superuser
     # DATABASE OWNER may CREATE EXTENSION a trusted one. No superuser grant — that would
-    # be superuser over waterfast too.
+    # be superuser over every database on the server.
     plane = {}
   }
 
@@ -101,26 +90,3 @@ module "postgres_db" {
 # **0 destroyed**, because `postgresql_database`'s identity IS the database name, so a
 # rename Terraform does not understand reads as dropping and recreating a live database.
 # Anything else is a STOP-and-reassess (docs/runbooks/postgres-import.md).
-
-# ---- adopting the live `waterfast` objects ------------------------------------------------
-#
-# waterfast was created by hand alongside the first deploy (as poker originally was, before
-# PET-366 removed it),
-# so it exists on the server but has never been in state. Import writes the live objects
-# into state so the following plan is a diff against reality rather than a create-from-
-# nothing, which against a live host errors "already exists" at best.
-#
-# The GRANT is deliberately absent: postgresql_grant defines no Importer at provider v1.x,
-# so it cannot be imported. Its Create is idempotent on the database (the role already holds
-# ALL), so apply adds the state entry and does nothing to Postgres — the provider-supported
-# path, and the same one poker took before it was removed. Expect exactly one resource to
-# add for this reason.
-import {
-  to = module.postgres_db["waterfast"].postgresql_role.owner
-  id = "waterfast"
-}
-
-import {
-  to = module.postgres_db["waterfast"].postgresql_database.this
-  id = "waterfast"
-}
