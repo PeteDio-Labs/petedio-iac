@@ -107,6 +107,8 @@
           - Result
           - -p
           - ExecMainStatus
+          - -p
+          - LoadState
       register: backup_audit_vault_service_raw
       changed_when: false
       failed_when: false
@@ -163,7 +165,7 @@
           {%- for line in archive_lines -%}
           {%- set parts = line.split() -%}
           {%- set vmid = parts[0] | regex_findall('^vzdump-(?:lxc|qemu)-([0-9]+)-') -%}
-          {%- if vmid and (vmid[0] not in ns.d or parts[2] | float > ns.d[vmid[0]]) -%}
+          {%- if vmid and parts[1] | int > 0 and (vmid[0] not in ns.d or parts[2] | float > ns.d[vmid[0]]) -%}
           {%- set ns.d = ns.d | combine({vmid[0]: parts[2] | float}) -%}
           {%- endif -%}
           {%- endfor -%}
@@ -188,13 +190,15 @@
                | map(attribute='key') | map('int') | list))
              | map(attribute='vmid') | sort | list }}
         vault_newest: >-
-          {{ vault_lines | map('split', ' ') | map(attribute=2) | map('float') | sort
+          {{ vault_lines | map('split', ' ') | selectattr('1', 'ne', '0') | map(attribute=2) | map('float') | sort
              | last | default(0) }}
         vault_age_h: "{{ (((clock_epoch | int) - (vault_newest | float)) / 3600) | round(1) }}"
         vault_ok: >-
           {{ 'Result=success' in vault_service and 'ExecMainStatus=0' in vault_service
+             and 'LoadState=loaded' in vault_service
              and vault_lines | length > 0
              and ((clock_epoch | int) - (vault_newest | float)) < backup_audit_vault_max_age_h * 3600 }}
+        reader_fstype: "{{ hostvars[backup_audit_reader].backup_audit_mount_raw.stdout | default('') }}"
         storage_by_node: >-
           {{ ansible_play_hosts_all | map('extract', hostvars, 'backup_audit_storage_raw')
              | map(attribute='stdout_lines') | list }}
@@ -209,6 +213,7 @@
               - "guests expected {{ guests_expected | length }}; with no archive: {{ guests_missing }};
                 older than {{ backup_audit_max_age_h }} h: {{ guests_stale }}"
               - "excluded on purpose: {{ backup_audit_excluded_vmids }}"
+              - "share on {{ backup_audit_reader }}: {{ reader_fstype }}"
               - "vault: service {{ vault_service | replace('\n', ' ') }}; newest snapshot {{ vault_age_h }} h old"
               - "storage {{ backup_audit_storage }} per node: {{ storage_by_node }}"
 
@@ -218,6 +223,7 @@
               - jobs | length > 0
               - guests | length > 0
               - archive_lines | length > 0
+              - reader_fstype is match('nfs')
               - nodes_without_job | length == 0
               - guests_missing | length == 0
               - guests_stale | length == 0
@@ -226,6 +232,7 @@
               Backups do not hold. Nodes without an enabled job: {{ nodes_without_job }}.
               Guests with no archive: {{ guests_missing }}. Guests with an archive older than
               {{ backup_audit_max_age_h }} h: {{ guests_stale }}. Vault snapshot ok: {{ vault_ok }}.
+              Share filesystem on {{ backup_audit_reader }}: '{{ reader_fstype }}'.
             success_msg: >-
               Backups hold: {{ guests_expected | length }} guests have an archive younger than
               {{ backup_audit_max_age_h }} h, every node with a guest has an enabled job, and the

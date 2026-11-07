@@ -156,9 +156,21 @@
       changed_when: false
       check_mode: false  # lab-action: read-only
 
+    # pct restore writes the archive's firewall file for the scratch VMID, and pct destroy removes it.
+    - name: Look for a firewall file already named for the scratch VMID
+      ansible.builtin.stat:
+        path: "/etc/pve/firewall/{{ restore_test_scratch_vmid }}.fw"
+      register: restore_test_fw
+      check_mode: false  # lab-action: read-only
+
+    - name: Refuse a leftover firewall file
+      ansible.builtin.assert:
+        that: not restore_test_fw.stat.exists
+        fail_msg: /etc/pve/firewall/{{ restore_test_scratch_vmid }}.fw already exists. Check it, then remove it by hand.
+
     - name: Refuse a leftover volume
       ansible.builtin.assert:
-        that: restore_test_leftovers.stdout_lines | length <= 1
+        that: restore_test_leftovers.stdout_lines | select('search', 'vm-' ~ restore_test_scratch_vmid ~ '-') | list | length == 0
         fail_msg: >-
           {{ restore_test_target_storage }} already holds a volume for VMID {{ restore_test_scratch_vmid }}.
           Remove it by hand after checking it: {{ restore_test_leftovers.stdout_lines }}
@@ -174,7 +186,7 @@
           - "config lines read {{ restore_test_conf.stdout_lines | length }}; no mount point, device or lxc.* line"
           - "target {{ restore_test_target_storage }}: {{ restore_test_storage.stdout_lines[1] }};
             rootfs to allocate {{ restore_test_rootfs_kib }} KiB; leftover volumes for the scratch VMID:
-            {{ (restore_test_leftovers.stdout_lines | length) - 1 }}"
+            {{ restore_test_leftovers.stdout_lines | select('search', 'vm-' ~ restore_test_scratch_vmid ~ '-') | list | length }}"
 
     - name: Restore, inspect and remove the scratch guest
       when: not ansible_check_mode
@@ -222,7 +234,7 @@
 
         - name: Read the restored release file
           ansible.builtin.command:
-            argv: [cat, "/var/lib/lxc/{{ restore_test_scratch_vmid }}/rootfs/etc/os-release"]
+            argv: [cat, "/var/lib/lxc/{{ restore_test_scratch_vmid }}/rootfs/usr/lib/os-release"]
           register: restore_test_release
           changed_when: false
           check_mode: false  # lab-action: read-only
@@ -256,6 +268,8 @@
               - "{{ restore_test_scratch_vmid }}"
               - --purge
               - "1"
+              - --destroy-unreferenced-disks
+              - "0"
           when: restore_test_restore is succeeded
           failed_when: false
           changed_when: true
