@@ -37,7 +37,17 @@
 
     - name: Read the version the running cloudflared reports
       ansible.builtin.command:
-        argv: [pct, exec, "{{ cf_audit_vmid }}", --, sh, -c, "docker ps -q | head -n 5 | while read id; do docker exec $id cloudflared --version 2>&1 | head -n 1; done"]
+        argv:
+          - pct
+          - exec
+          - "{{ cf_audit_vmid }}"
+          - --
+          - sh
+          - -c
+          - >-
+            docker ps -q | head -n 5 | while read id;
+            do docker exec $id cloudflared --version 2>&1 | head -n 1;
+            done
       register: cf_audit_version
       changed_when: false
       failed_when: false
@@ -48,14 +58,43 @@
     # The report below masks every eyJ... value and drops each Env value, so the token never prints.
     - name: Read each container's image, policy, network, command and variable names
       ansible.builtin.command:
-        argv: [pct, exec, "{{ cf_audit_vmid }}", --, sh, -c, "docker ps -aq | while read id; do docker inspect --format '{% raw %}{{.Name}}|{{.Config.Image}}|{{.HostConfig.RestartPolicy.Name}}|{{.HostConfig.NetworkMode}}|{{.State.Status}}|{{json .Config.Entrypoint}}|{{json .Config.Cmd}}|{{json .Config.Env}}{% endraw %}' $id; done"]
+        argv:
+          - pct
+          - exec
+          - "{{ cf_audit_vmid }}"
+          - --
+          - sh
+          - -c
+          - >-
+            docker ps -aq | while read id;
+            do docker inspect --format '{% raw %}
+            {{.Name}}|
+            {{.Config.Image}}|
+            {{.HostConfig.RestartPolicy.Name}}|
+            {{.HostConfig.NetworkMode}}|
+            {{.State.Status}}|
+            {{json .Config.Entrypoint}}|
+            {{json .Config.Cmd}}|
+            {{json .Config.Env}}
+            {% endraw %}' $id;
+            done
       register: cf_audit_inspect
       changed_when: false
       check_mode: false  # lab-action: read-only
 
     - name: Find compose files and the unit that starts docker on boot
       ansible.builtin.command:
-        argv: [pct, exec, "{{ cf_audit_vmid }}", --, sh, -c, "ls -la /opt /root /srv 2>/dev/null | head -n 40; rc-status -a 2>/dev/null | grep -i -E 'docker|cloudflared'; find / -xdev -name 'docker-compose*.y*ml' -o -xdev -name 'compose.y*ml' 2>/dev/null | head -n 10"]
+        argv:
+          - pct
+          - exec
+          - "{{ cf_audit_vmid }}"
+          - --
+          - sh
+          - -c
+          - >-
+            ls -la /opt /root /srv 2>/dev/null | head -n 40;
+            rc-status -a 2>/dev/null | grep -i -E 'docker|cloudflared';
+            find / -xdev -name 'docker-compose*.y*ml' -o -xdev -name 'compose.y*ml' 2>/dev/null | head -n 10
       register: cf_audit_files
       changed_when: false
       failed_when: false
@@ -63,7 +102,15 @@
 
     - name: Read whether a metrics port answers on the guest
       ansible.builtin.command:
-        argv: [pct, exec, "{{ cf_audit_vmid }}", --, sh, -c, "netstat -ltn 2>/dev/null | grep LISTEN"]
+        argv:
+          - pct
+          - exec
+          - "{{ cf_audit_vmid }}"
+          - --
+          - sh
+          - -c
+          - >-
+            netstat -ltn 2>/dev/null | grep LISTEN
       register: cf_audit_listen
       changed_when: false
       failed_when: false
@@ -76,7 +123,11 @@
           - "containers listed: {{ cf_audit_ps.stdout_lines | length }}"
           - "{{ cf_audit_ps.stdout_lines }}"
           - "cloudflared --version: {{ cf_audit_version.stdout_lines }}"
-          - "inspect (token masked, Env values dropped): {{ cf_audit_inspect.stdout_lines | map('regex_replace', 'eyJ[A-Za-z0-9_=+/.-]+', '<token>') | map('regex_replace', '=[^\"]*\"', '=<dropped>\"') | list }}"
+          - >-
+            inspect (token masked, Env values dropped):
+            {{ cf_audit_inspect.stdout_lines
+            | map('regex_replace', 'eyJ[A-Za-z0-9_=+/.-]+', '<token>')
+            | map('regex_replace', '=[^"]*"', '=<dropped>"') | list }}
           - "files and services: {{ cf_audit_files.stdout_lines }}"
           - "listening sockets: {{ cf_audit_listen.stdout_lines }}"
 
