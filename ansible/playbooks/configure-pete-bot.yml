@@ -105,6 +105,13 @@
     pete_bot_weekly_access_emails: [pedelgadillo@gmail.com]
     pete_bot_weekly_access_aud: "afad22e93a3b7bca79a6a8ce72d815a15de34143ea2b7f7afbc66a85e99c7b52"
     pete_bot_weekly_ollama_url: http://192.168.50.246:11434
+    # The daily copy of the reports database (PET-868). The endpoint and bucket are not secret;
+    # the key pair comes from kv/services/pete-bot-reports-backup through pete-bot's deploy.yml,
+    # which passes pete_bot_report_backup_access_key and _secret_key. Without both, no REPORT_BACKUP_*
+    # line is rendered and the bot's /health reports the copy as off. With a key and a copy that
+    # is not running, the play fails (the checks after the weekly report's).
+    pete_bot_report_backup_endpoint: http://192.168.50.245:9000
+    pete_bot_report_backup_bucket: pete-bot
     pete_bot_weekly_ready: >-
       {{ (pete_bot_reports_ready | bool) and (pete_bot_weekly_access_aud | length > 0) }}
 
@@ -905,6 +912,30 @@
         - pete_bot_weekly_ready | bool
         - not ansible_check_mode
         - (pete_bot_weekly_health.json.weekly.state | default('')) != 'running'
+
+    # A key was passed, so the copy must be on. Without this the deploy ends green with no copy and
+    # no line saying so. `never` is fine: the first copy runs after this read. `failing` is not.
+    - name: Fail when a backup key was passed but the weekly report is off
+      ansible.builtin.fail:
+        msg: >-
+          kv/services/pete-bot-reports-backup supplied a key, but the weekly report is off, so the
+          reports are not stored and nothing is copied. Fix the weekly report's settings first.
+      when:
+        - not (pete_bot_weekly_ready | bool)
+        - (pete_bot_report_backup_access_key | default('') | length > 0)
+
+    - name: Fail when a backup key was passed and the copy is not running
+      ansible.builtin.fail:
+        msg: >-
+          A backup key was passed, but the bot reports its backup as
+          {{ pete_bot_weekly_health.json.weekly.backup.state | default('absent: this binary predates it') }}
+          {{ pete_bot_weekly_health.json.weekly.backup.reason | default(pete_bot_weekly_health.json.weekly.backup.detail | default('')) }}.
+          Read weekly.backup in the bot's /health on 237.
+      when:
+        - pete_bot_weekly_ready | bool
+        - (pete_bot_report_backup_access_key | default('') | length > 0)
+        - not ansible_check_mode
+        - (pete_bot_weekly_health.json.weekly.backup.state | default('')) not in ['never', 'ok']
 
     - name: Read the Codex queue key's public half
       ansible.builtin.slurp:
