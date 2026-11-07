@@ -413,7 +413,7 @@ resource "vault_jwt_auth_backend_role" "lab_action_read" {
   token_ttl      = 900
 }
 
-# terraform-plan role → ci-read policy (PET-866). terraform-plan.yml plans a same-repo pull
+# terraform-plan role → terraform-plan policy (PET-866; narrowed from ci-read in the 2026-11-07 audit). terraform-plan.yml plans a same-repo pull
 # request on the homelab runner and comments the result, so a thread reads the plan and Pedro
 # does not run it by hand.
 #
@@ -442,7 +442,7 @@ resource "vault_jwt_auth_backend_role" "terraform_plan" {
     event_name   = "workflow_run"
     workflow_ref = "${var.github_repo}/.github/workflows/terraform-plan.yml@refs/heads/main"
   }
-  token_policies = [vault_policy.ci_read.name]
+  token_policies = [vault_policy.terraform_plan.name]
   token_ttl      = 900
 }
 

@@ -89,6 +89,50 @@ resource "vault_policy" "ci_read" {
   EOT
 }
 
+# terraform-plan: what terraform-plan.yml may read (security audit, 2026-11-07). That workflow runs
+# a same-repo pull request's HCL on the homelab runner, so it gets the least that a plan needs.
+# It is ci-read without kv/iac/lxc-ssh, which holds the root key of every LXC: the workflow does
+# not read it, because the proxmox provider logs in over the SSH agent and the public key that
+# feeds `initialization[0].user_account` is in ignore_changes (modules/proxmox-lxc), so a
+# placeholder gives the same plan. Add a path here only with a comment naming the plan step that
+# reads it.
+resource "vault_policy" "terraform_plan" {
+  name = "terraform-plan"
+
+  policy = <<-EOT
+    path "kv/data/iac/minio" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/proxmox" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/cloudflare" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/authentik" {
+      capabilities = ["read"]
+    }
+
+    # The postgresql provider's admin credential, and the per-database owner passwords that
+    # databases.tf reads as ephemeral resources.
+    path "kv/data/admin/postgres" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/db/plane" {
+      capabilities = ["read"]
+    }
+
+    # databases.tf still declares waterfast until iac#651 merges.
+    path "kv/data/services/water-fast" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 # terraform: local/CI Terraform runs read all infra + poker secrets.
 resource "vault_policy" "terraform" {
   name = "terraform"
