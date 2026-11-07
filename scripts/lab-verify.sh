@@ -813,5 +813,20 @@ else
   esac
 fi
 
+sec "Vault config matches what vault-config declares (PET-894)"
+# scripts/lab-action.sh lists Vault's policy and role names while its token lives and sets
+# LAB_VAULT_LIVE. Names only: a policy edited by hand under its declared name is not found here.
+if [ -n "${LAB_VAULT_LIVE:-}" ] && [ -r "$LAB_VAULT_LIVE" ]; then
+  DRIFT=$(python3 "$(dirname "$0")/vault-config-drift.py" "$LAB_VAULT_LIVE" 2>&1); DRC=$?
+  DSUM=$(printf '%s\n' "$DRIFT" | tail -1)
+  case "$DRC" in
+    0) ok "vault names match vault-config" "$DSUM" ;;
+    3) skip "vault names match vault-config" "Vault refused the list grant; apply the lab-action-read policy (PET-894)" ;;
+    *) printf '%s\n' "$DRIFT" | head -5; bad "vault names match vault-config" "$DSUM" ;;
+  esac
+else
+  skip "vault names match vault-config" "no live listing; run through lab-action.yml"
+fi
+
 printf "\n\033[1m%d passed, %d failed, %d skipped\033[0m\n" "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1
