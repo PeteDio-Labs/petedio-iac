@@ -217,8 +217,8 @@ resource "vault_jwt_auth_backend_role" "media_dash_cd" {
 # search-cd role → search-cd policy. petedio-search's deploy.yml compiles the binary on the
 # runner and runs configure-search.yml against ollama-246 on every push to main, so a deploy no
 # longer waits on an operator running scripts/deploy-search.sh. workflow_ref pins deploy.yml, the
-# only workflow in that repo that mints this role. event_name stays open: deploy.yml runs on push
-# and on workflow_dispatch.
+# only workflow in that repo that mints this role. event_name admits the two triggers deploy.yml
+# has, push and workflow_dispatch, and nothing else.
 resource "vault_jwt_auth_backend_role" "search_cd" {
   backend           = vault_jwt_auth_backend.github.path
   role_name         = "search-cd"
@@ -229,6 +229,7 @@ resource "vault_jwt_auth_backend_role" "search_cd" {
   bound_claims = {
     repository   = var.search_repo
     ref          = "refs/heads/main"
+    event_name   = "push,workflow_dispatch"
     workflow_ref = "${var.search_repo}/.github/workflows/deploy.yml@refs/heads/main"
   }
   token_policies = [vault_policy.search_cd.name]
