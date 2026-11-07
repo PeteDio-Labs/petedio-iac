@@ -34,7 +34,7 @@ FILE_TOKENS = [
     (r'\bterraform_remote_state\b', "remote state read"),
     (r'\bprovider' + W + r'"|\brequired_providers\b', "provider configuration"),
     (r'\bproviders?' + W + r'=', "provider meta-argument"),
-    (r'\bbackend' + W + r'"', "backend block"),
+    (r'\b(backend|cloud)' + W + r'["{]', "backend block"),
     (r'\\[uU][0-9a-fA-F]{4}', "unicode escape in a string"),
     # A function call may have comments between the name and "(" in HCL.
     (r'\b(file|fileexists|fileset|filebase64|filebase64sha256|filebase64sha512|filemd5|filesha1|filesha256|filesha512|templatefile|pathexpand|nonsensitive)\b'

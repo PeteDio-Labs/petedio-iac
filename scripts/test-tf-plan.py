@@ -147,6 +147,7 @@ results = [
     check("// comment in data label refused", guard('data //x\n"vault_kv_secret_v2" "s" {}\n'), 1),
     check("// comment in source refused", guard('module "m" { source //x\n= "git::https://evil/x" }\n'), 1),
     check("// comment in backend refused", guard('terraform { backend //x\n"s3" {} }\n'), 1),
+    check("cloud block refused", guard('terraform { cloud { hostname = "evil.example" } }\n'), 1),
     check("# comment in provider refused", guard('provider #x\n"vault" {}\n'), 1),
     check("homelab subdirectory scanned", guard2("environments/homelab/sub/x.tf", 'provisioner "local-exec" {}\n'), 1),
     check("unquoted vault label refused", guard('data vault_generic_secret leak {}\n'), 1),
