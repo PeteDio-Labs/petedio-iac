@@ -1,0 +1,5 @@
+---
+# roles/ssh-ca writes these into root's principals file beside `pedro` (PET-771). Keep the list equal to
+# playbooks/configure-ssh-ca-deploy-hosts.yml, which writes the same file through the node.
+# deploy-metrics is the Vault SSH role that .github/workflows/deploy-*.yml signs per run (vault-config/deploy-hosts.tf).
+ssh_ca_root_extra_principals: [deploy-metrics]
