@@ -1,12 +1,18 @@
-# pve-media — the media NAS node (MED-6), a SEPARATE inventory file for the reason
-# pve03.yml and pve01.yml give: hosts.yml is watched by apply-on-merge workflows, and a
-# node that does not exist yet is no reason to redeploy anything (PET-302).
+# pve-media — the media NAS node (MED-6), STAGED OUTSIDE ansible/inventory/ on purpose.
+#
+# ⚠ ansible.cfg loads the whole inventory/ directory, and a host in any file there joins
+# `all`. Plays that target `all` then try the unbuilt node: collect-cve-inventory.yml
+# refuses to replace the live snapshot when any host is unreadable, and
+# configure-ssh-ca.yml targets `all`. So this file lives here, where nothing loads it.
+# Phase 1 of docs/runbooks/three-machine-split.md moves it to ansible/inventory/ once the
+# node answers SSH. Until then, load it by hand:
+#   ansible-playbook -i inventory/ -i planned/pve-media.yml <playbook> --limit pve-media
 #
 # WHAT THIS MACHINE IS. A Jonsbo N5 tower NAS at 192.168.50.13 that takes all of media
 # (docs/runbooks/three-machine-split.md, phase 1). It does not exist until build day, so
 # nothing here has been checked against hardware.
 #
-# ⚠ ITS OWN GROUP, pve_media, AND NO PLAYBOOK NAMES IT. Many plays target `pve_new` or
+# ⚠ ITS OWN GROUP, pve_media, AND NO PLAYBOOK NAMES IT, except the mesh bridge play via -e. Many plays target `pve_new` or
 # `pve_gpu` (configure-pve-node.yml, configure-media-split.yml, configure-lxc-features.yml
 # and others). Putting this host in either group would point those plays at a machine
 # that has no Proxmox yet. On build day, add `pve_media` to one play at a time, in the

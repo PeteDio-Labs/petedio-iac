@@ -39,6 +39,19 @@ expect 1 "missing logs fail"          report "$D/empty"
 expect 1 "one bad of two fails"       report "$D/good" "$D/badblk"
 expect 1 "no drives is a fault"       report
 expect 2 "unknown command is usage"   frobnicate
+# Inspection failures must refuse, not pass as "nothing found". Stub the three readers.
+( # shellcheck source=/dev/null
+  source "$S"
+  try(){ ( inspect_target /dev/disk/by-id/ata-X /dev/sdz ) >/dev/null 2>&1; }
+  lsblk(){ return 0; }; wipefs(){ return 0; }; zpool(){ return 0; }
+  try || { echo "FAIL clean drive refused"; exit 1; }; echo "ok   clean drive is accepted"
+  wipefs(){ echo "ext4 signature" ; }; try && { echo "FAIL signature accepted"; exit 1; }; echo "ok   signature is refused"
+  wipefs(){ return 1; }; try && { echo "FAIL wipefs error accepted"; exit 1; }; echo "ok   wipefs error is refused"
+  wipefs(){ return 0; }; lsblk(){ return 1; }; try && { echo "FAIL lsblk error accepted"; exit 1; }; echo "ok   lsblk error is refused"
+  lsblk(){ echo /mnt/x; }; try && { echo "FAIL mounted accepted"; exit 1; }; echo "ok   mounted drive is refused"
+  lsblk(){ return 0; }; zpool(){ return 1; }; try && { echo "FAIL zpool error accepted"; exit 1; }; echo "ok   zpool error is refused"
+  zpool(){ echo "  /dev/disk/by-id/ata-X ONLINE"; }; try && { echo "FAIL pooled accepted"; exit 1; }; echo "ok   pool member is refused"
+)
 echo "$("$S" report "$D/good" "$D/badblk" 2>&1 | tail -1)" | grep -q 'examined 2 drives: 1 passed, 1 failed' \
   || { echo "FAIL summary line"; exit 1; }
 echo "ok   summary names how many drives it read"

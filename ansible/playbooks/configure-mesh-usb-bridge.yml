@@ -9,7 +9,8 @@
 # Does not reload networking automatically — see the role for why.
 #
 # pve-media (MED-6, phase 1 of docs/runbooks/three-machine-split.md) bridges its PCIe NIC
-# with the same role. Set mesh_usb_interface in inventory/pve-media.yml first, then:
+# with the same role. Set mesh_usb_interface in planned/pve-media.yml (or inventory/pve-media.yml after the
+# node joins) first, then:
 #
 #   ansible-playbook playbooks/configure-mesh-usb-bridge.yml -e mesh_bridge_hosts=pve_media
 #

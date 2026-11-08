@@ -26,9 +26,11 @@ Run one phase per lab day (Friday to Monday). Only one node is down at a time. R
 
 These land unapplied so build day needs only hardware.
 
-- `ansible/inventory/pve-media.yml` puts `pve-media` in group `pve_media`. **No playbook names
-  that group.** Adding the host to `pve_new` or `pve_gpu` would point a dozen plays at a node
-  that has no Proxmox yet.
+- `ansible/planned/pve-media.yml` stages `pve-media` in group `pve_media`, **outside
+  `ansible/inventory/`**. `ansible.cfg` loads that whole directory and every host in it joins
+  `all`, which `collect-cve-inventory.yml` and `configure-ssh-ca.yml` target. A planned host
+  there would make the CVE snapshot refuse to refresh. No playbook names `pve_media`, and
+  `pve_new` and `pve_gpu` stay untouched.
 - `ansible/roles/mesh-usb-bridge` takes any interface name and fails with the interfaces it
   found when the name is absent.
 - `scripts/hdd-burnin.sh` burns in the HDDs, and `scripts/test-hdd-burnin.sh` checks its
@@ -70,16 +72,17 @@ production runs untouched. Quorum goes from 2 of 3 to 3 of 4.
    independently, so one failure does not condemn the other three.
 4. **Install Proxmox VE 9** from the ISO (OpenZFS 2.3 or later, for RAIDZ expansion) onto the
    NVMe. Use hostname `pve-media`, address 192.168.50.13/24, gateway 192.168.50.1.
-5. **Set the LAN port in inventory.** Read `ip -br link` on the node and set
-   `pve_node_lan_interface` in `ansible/inventory/pve-media.yml`. Also set `mesh_usb_interface`
-   to the i226 port.
+5. **Set the LAN port.** Read `ip -br link` on the node and set `pve_node_lan_interface` in
+   `ansible/planned/pve-media.yml`. Also set `mesh_usb_interface` to the i226 port. Load the
+   file with `-i inventory/ -i planned/pve-media.yml` until step 10 moves it.
 6. **Run `configure-pve-node.yml`.** Its `hosts:` line names `pve_new`. In the build-day change,
    widen it to `pve_new:pve_media`, merge, and run the play with `--limit pve-media`. Read
    `--list-hosts` first and expect exactly one host.
 7. **Build the mesh bridge** and test it before phase 2:
 
    ```bash
-   ansible-playbook playbooks/configure-mesh-usb-bridge.yml -e mesh_bridge_hosts=pve_media
+   ansible-playbook -i inventory/ -i planned/pve-media.yml \
+     playbooks/configure-mesh-usb-bridge.yml -e mesh_bridge_hosts=pve_media
    # on pve-media, once you are ready to bring it up
    ifreload -a
    ```
@@ -97,10 +100,18 @@ production runs untouched. Quorum goes from 2 of 3 to 3 of 4.
    zpool status tank
    ```
 
-10. **Re-pin and authorize the node:** run `configure-lab-runner-known-hosts.yml` and add
+10. **Move the host into live inventory** (`git mv ansible/planned/pve-media.yml
+    ansible/inventory/`) in a PR that also updates the consumers of `all`: confirm
+    `collect-cve-inventory.yml` and `configure-ssh-ca.yml` can reach the node first.
+11. **Re-pin and authorize the node:** run `configure-lab-runner-known-hosts.yml` and add
     `pve-media` to the lab-runner SSH CA principals (`ansible/inventory/pve03.yml` shows the
     shape), so `lab-verify` can read it.
-11. **Run `scripts/lab-verify.sh`** and expect the new node in its count. A count that does not
+12. **Update `scripts/lab-verify.sh` first, in the same PR as step 10.** It probes only
+    `PVE01`, `PVE02` and `PVE03`, asserts exactly 3 cluster members, and reads 3 node
+    firewall directories, so a joined fourth node turns it red. Add `pve-media` to the node
+    probes, change the member and `host.fw` counts to 4, and write the node's `host.fw`
+    before it joins: a node with none drops its own traffic (PET-528).
+13. **Run `scripts/lab-verify.sh`** and expect the new node in its count. A count that does not
     change means the check never reached the node.
 
 ### Rollback
@@ -114,7 +125,7 @@ to 2 of 3 quorum.
 - `pvecm status` shows 4 nodes and quorum 3.
 - `zpool status tank` shows `ONLINE` and four drives.
 - `hdd-burnin.sh report` shows 4 of 4 passed, or phase 3 is blocked on a replacement.
-- `lab-verify.sh` counts `pve-media`.
+- `lab-verify.sh` counts `pve-media` and expects 4 members.
 
 ## Phases 2-7
 

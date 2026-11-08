@@ -57,16 +57,29 @@ check_target(){
     *) die "$dev: pass a /dev/disk/by-id path, not a /dev/sdX name that can change between boots" ;;
   esac
   [ -b "$dev" ] || die "$dev: not a block device"
-  local real; real="$(readlink -f "$dev")"
-  # Refuse anything mounted, partitioned, carrying a filesystem or a ZFS label.
-  if lsblk -nr -o MOUNTPOINTS "$real" | grep -q '[^[:space:]]'; then
+  inspect_target "$dev" "$(readlink -f "$dev")"
+}
+
+# Prove a drive holds nothing worth keeping. Separate from check_target so the offline
+# test can drive it with stubbed lsblk, wipefs and zpool.
+inspect_target(){
+  local dev="$1" real="$2"
+  # Refuse anything mounted, partitioned, carrying a filesystem or a ZFS label. Every
+  # inspection must itself succeed: a read that failed has not shown the drive is safe.
+  local mounts sigs pools
+  mounts="$(lsblk -nr -o MOUNTPOINTS "$real")" || die "$dev ($real): lsblk failed; cannot prove the drive is unmounted"
+  if printf '%s' "$mounts" | grep -q '[^[:space:]]'; then
     die "$dev ($real) or a partition of it is mounted"
   fi
-  if [ -n "$(wipefs -n "$real" 2>/dev/null)" ]; then
+  sigs="$(wipefs -n "$real")" || die "$dev ($real): wipefs failed; cannot prove the drive has no signature"
+  if [ -n "$sigs" ]; then
     die "$dev ($real) has a signature (wipefs -n lists it). Wipe it on purpose first; this script does not."
   fi
-  if command -v zpool >/dev/null && zpool status -P 2>/dev/null | grep -qF "$real"; then
-    die "$dev ($real) is in an imported ZFS pool"
+  if command -v zpool >/dev/null; then
+    pools="$(zpool status -P)" || die "zpool status failed; cannot prove $dev ($real) is outside an imported pool"
+    if printf '%s' "$pools" | grep -qF -e "$real" -e "$dev"; then
+      die "$dev ($real) is in an imported ZFS pool"
+    fi
   fi
 }
 
@@ -149,6 +162,9 @@ verdict_one(){
   printf '        - %s\n' "${fails[@]}"
   return 1
 }
+
+# Let the offline test source the functions without running a command.
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
 
 cmd="${1:-}"; [ -n "$cmd" ] || usage; shift || true
 case "$cmd" in
