@@ -9,6 +9,7 @@
 #   scripts/lab-probe.sh guests           # {"data":{"guests":[{vmid,node,status}]}} for scripts/check-staleness.py
 #   scripts/lab-probe.sh backup_jobs      # the cluster's vzdump jobs: id, schedule, storage, mode, enabled (PET-884)
 #   scripts/lab-probe.sh ollama_ps        # models loaded in Ollama on CT 246: name, size, VRAM share, expiry
+#   scripts/lab-probe.sh node_hw node=pve01|pve02|pve03   # one node's CPU, board, DIMM slots, PCIe slots, SATA and block devices (no serials)
 #   scripts/lab-probe.sh health [service=pete-bot|lab-agent]   # GET /health on 237; both when none is named
 #
 # WHAT RUNS. Each probe is a fixed command. The caller supplies values, never commands: every value
@@ -122,6 +123,40 @@ for x in m:
     print("model %s: size=%.1fGiB vram=%s expires=%s" % (str(x.get("name", "?"))[:80], size / 2**30, pct, str(x.get("expires_at", "?"))[:25]))
 print("probe ollama_ps: %d model(s) loaded on CT 246" % len(m))
 ' || { echo "FAILED: /api/ps did not return the expected JSON." >&2; exit 1; }
+  exit 0
+fi
+
+# node_hw reads one node's hardware, to plan a rebuild: the CPU model and core count, the board's
+# make and model, every DIMM slot (empty or full, with size, type and speed), the physical PCIe slots
+# and whether each is in use, the SATA port count, and the block devices (name, size, model, bus).
+# The command is fixed and the only value, node=, maps through an allowlist to an address. The output
+# drops serial numbers, UUIDs and asset tags, because the run log is public. A node with no
+# dmidecode, or an output that holds no DIMM slot, fails and prints no summary line.
+if [ "$PROBE" = node_hw ]; then
+  need node; only node
+  case "${KV[node]}" in
+    pve01) HW=192.168.50.12 ;;
+    pve02) HW=192.168.50.11 ;;
+    pve03) HW=192.168.50.10 ;;
+    *) die "node_hw needs node=pve01, pve02 or pve03" ;;
+  esac
+  RAW="$(ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$HW" '
+    command -v dmidecode >/dev/null || { echo "NO_DMIDECODE"; exit 0; }
+    echo "## cpu"; lscpu | grep -E "^(Model name|Socket|Core|Thread|CPU\(s\)):"
+    echo "## board"; dmidecode -t baseboard | grep -E "Manufacturer|Product Name|Version"
+    echo "## memory"; dmidecode -t 16 | grep -E "Maximum Capacity|Number Of Devices"
+    dmidecode -t memory | grep -E "^Memory Device|^[[:space:]]+(Size|Locator|Type|Speed|Configured Memory Speed|Form Factor|Manufacturer|Part Number):"
+    echo "## slots"; dmidecode -t slot | grep -E "Designation|Type:|Current Usage|Bus Address"
+    echo "## sata"; echo "ata_ports=$(ls /sys/class/ata_port 2>/dev/null | wc -l)"; lspci | grep -iE "sata|raid|sas"
+    echo "## igpu"; lspci | grep -iE "vga|display|3d"
+    echo "## blockdev"; lsblk -dno NAME,SIZE,MODEL,TRAN,TYPE 2>/dev/null
+  ' 2>/dev/null)" || { echo "FAILED: ${KV[node]} did not answer over ssh, so nothing was read." >&2; exit 1; }
+  [ "$RAW" != NO_DMIDECODE ] || { echo "FAILED: dmidecode is not installed on ${KV[node]}, so no board or DIMM slot was read." >&2; exit 1; }
+  printf '%s\n' "$RAW" | sed -E '/[Ss]erial|UUID|[Aa]sset/d'
+  SLOTS="$(printf '%s\n' "$RAW" | grep -c '^Memory Device' || true)"
+  EMPTY="$(printf '%s\n' "$RAW" | grep -cE '^[[:space:]]+Size: No Module Installed' || true)"
+  [ "$SLOTS" -gt 0 ] || { echo "FAILED: ${KV[node]} output held no DIMM slot, so nothing was examined." >&2; exit 1; }
+  echo "probe node_hw: ${KV[node]} read, $SLOTS DIMM slot(s), $EMPTY empty"
   exit 0
 fi
 
