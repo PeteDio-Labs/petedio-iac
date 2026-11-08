@@ -1,5 +1,10 @@
 # Mission Control v3 — live PR board (PET-158)
 
+> ⚠ **Stale since the move to Plane and the merge desk.** The board reads Linear, and the
+> tracker is Plane (read it from `petedio-pm/mirror/PET.json`, never the API). The agent loop it
+> labels as `loop` is retired. The merge desk in `pete-bot` (PET-645) is the PR triage surface
+> now. Treat the rest of this file as history. Do not wire new credentials into the board.
+
 A **single self-contained HTML artifact** (`index.html`) — no backend, no build step, no host.
 Open it in a browser; it reads live state at runtime from **GitHub** and **Linear**, joins each
 open PR to its Linear issue on the `PET-<n>` key, and surfaces the merge-readiness signal Pedro
