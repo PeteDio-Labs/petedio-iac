@@ -34,20 +34,37 @@ usage(){ sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exi
 
 need(){ command -v "$1" >/dev/null || die "$1 not in PATH"; }
 
-# smartctl prints "Serial Number:    XYZ". Empty output is a fault, not a blank serial.
+# Run smartctl and return its output. smartctl sets bits 0-2 of its exit status when the
+# command itself failed (bad usage, cannot open device, command failed); higher bits report
+# drive health and are not read failures. Empty output is a failed read too.
+smart_read(){
+  local out rc=0
+  out="$(smartctl "$@")" || rc=$?
+  if [ $((rc & 7)) -ne 0 ] || [ -z "$out" ]; then
+    printf 'ABORT: smartctl %s failed (exit %s, %s bytes of output)\n' "$*" "$rc" "${#out}" >&2
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+# Serial number, or a failure. A blank serial must never reach the confirmation check.
 serial_of(){
-  local s
-  s="$(smartctl -i "$1" | awk -F: '/^Serial [Nn]umber/ {gsub(/^[ \t]+/,"",$2); print $2; exit}')"
-  [ -n "$s" ] || die "no serial number from smartctl for $1"
+  local out s
+  out="$(smart_read -i "$1")" || return 1
+  s="$(printf '%s\n' "$out" | awk -F: '/^Serial [Nn]umber/ {gsub(/^[ \t]+/,"",$2); print $2; exit}')"
+  [ -n "$s" ] || { printf 'ABORT: no serial number from smartctl for %s\n' "$1" >&2; return 1; }
   printf '%s' "$s"
 }
 
 # Name used for log files: the by-id basename, so a log maps to one physical drive.
 tag_of(){ basename "$1"; }
 
-# Raw value of one SMART attribute, or "NA" when the drive does not report it.
+# Raw value of one SMART attribute, "NA" when a successful read shows the drive does not
+# report it, and a failure when the read itself fails.
 attr_raw(){
-  smartctl -A "$1" | awk -v id="$2" '$1==id {print $10; found=1; exit} END {if(!found) print "NA"}'
+  local out
+  out="$(smart_read -A "$1")" || return 1
+  printf '%s\n' "$out" | awk -v id="$2" '$1==id {print $10; found=1; exit} END {if(!found) print "NA"}'
 }
 
 check_target(){
@@ -84,8 +101,11 @@ inspect_target(){
 }
 
 confirm_value(){
-  local d out=()
-  for d in "$@"; do out+=("$(serial_of "$d")"); done
+  local d s out=()
+  for d in "$@"; do
+    s="$(serial_of "$d")" || return 1
+    out+=("$s")
+  done
   printf '%s\n' "${out[@]}" | sort | paste -sd, -
 }
 
@@ -94,10 +114,13 @@ burn_one(){
   local log="$LOG_DIR/$tag"
   mkdir -p "$log"
   : > "$log/status"
-  {
-    echo "serial=$(serial_of "$dev")"
-    for a in $WATCH_ATTRS; do echo "before_$a=$(attr_raw "$dev" "$a")"; done
-  } > "$log/baseline.txt"
+  local ser v a
+  ser="$(serial_of "$dev")" || die "$dev: cannot read serial; not starting"
+  echo "serial=$ser" > "$log/baseline.txt"
+  for a in $WATCH_ATTRS; do
+    v="$(attr_raw "$dev" "$a")" || die "$dev: cannot read SMART attribute $a; not starting"
+    echo "before_$a=$v" >> "$log/baseline.txt"
+  done
   smartctl -x "$dev" > "$log/smart-before.txt" || true   # smartctl sets nonzero bits for warnings
 
   smart_test "$dev" short "$log"
@@ -110,7 +133,10 @@ burn_one(){
   echo "badblocks: end $(date -Is)" >> "$log/status"
   smart_test "$dev" long "$log" long2
   smartctl -x "$dev" > "$log/smart-after.txt" || true
-  for a in $WATCH_ATTRS; do echo "after_$a=$(attr_raw "$dev" "$a")"; done >> "$log/baseline.txt"
+  for a in $WATCH_ATTRS; do
+    v="$(attr_raw "$dev" "$a")" || { echo "after: cannot read attribute $a" >> "$log/status"; die "$dev: cannot read SMART attribute $a after the run; the run is not a pass"; }
+    echo "after_$a=$v" >> "$log/baseline.txt"
+  done
   echo "done $(date -Is)" >> "$log/status"
 }
 
@@ -177,9 +203,10 @@ case "$cmd" in
   plan|run)
     for t in smartctl badblocks lsblk wipefs; do need "$t"; done
     for d in "$@"; do check_target "$d"; done
-    want="$(confirm_value "$@")"
+    want="$(confirm_value "$@")" || die "cannot read every drive's serial; nothing started"
+    [ -n "$want" ] || die "empty serial list; nothing started"
     echo "Drives to erase and burn in ($#):"
-    for d in "$@"; do echo "  $d  serial $(serial_of "$d")  -> $(readlink -f "$d")"; done
+    for d in "$@"; do ser="$(serial_of "$d")" || die "serial lookup failed for $d"; echo "  $d  serial $ser  -> $(readlink -f "$d")"; done
     echo "Logs: $LOG_DIR/<by-id name>/"
     echo "BURNIN_CONFIRM=$want"
     [ "$cmd" = plan ] && { echo "plan only: nothing changed."; exit 0; }

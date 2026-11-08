@@ -52,6 +52,18 @@ expect 2 "unknown command is usage"   frobnicate
   lsblk(){ return 0; }; zpool(){ return 1; }; try && { echo "FAIL zpool error accepted"; exit 1; }; echo "ok   zpool error is refused"
   zpool(){ echo "  /dev/disk/by-id/ata-X ONLINE"; }; try && { echo "FAIL pooled accepted"; exit 1; }; echo "ok   pool member is refused"
 )
+# SMART read and serial failures must abort, not yield a blank serial or an "NA" pass.
+( source "$S"
+  smartctl(){ return 2; }
+  serial_of /dev/x >/dev/null 2>&1 && { echo "FAIL serial read failure accepted"; exit 1; }; echo "ok   failed serial read is refused"
+  confirm_value /dev/x >/dev/null 2>&1 && { echo "FAIL confirm_value accepted a failed serial"; exit 1; }; echo "ok   failed serial cannot yield an empty confirmation"
+  attr_raw /dev/x 5 >/dev/null 2>&1 && { echo "FAIL attr read failure accepted"; exit 1; }; echo "ok   failed attribute read is refused"
+  smartctl(){ echo "Serial Number:    ABC123"; return 0; }
+  [ "$(serial_of /dev/x)" = ABC123 ] || { echo "FAIL serial parse"; exit 1; }; echo "ok   serial parses"
+  smartctl(){ printf '  5 Reallocated_Sector_Ct 0x0033 100 100 010 Pre-fail Always - 0\n'; return 8; }
+  [ "$(attr_raw /dev/x 5)" = 0 ] || { echo "FAIL attr parse"; exit 1; }; echo "ok   a health-bit exit status is not a read failure"
+  [ "$(attr_raw /dev/x 187)" = NA ] || { echo "FAIL NA"; exit 1; }; echo "ok   unsupported attribute reads NA"
+)
 echo "$("$S" report "$D/good" "$D/badblk" 2>&1 | tail -1)" | grep -q 'examined 2 drives: 1 passed, 1 failed' \
   || { echo "FAIL summary line"; exit 1; }
 echo "ok   summary names how many drives it read"
