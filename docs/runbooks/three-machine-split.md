@@ -12,7 +12,7 @@ name; `pve01` was reused once and left stale notes behind (see `ansible/inventor
 | Phase | What | Down | Needs |
 |---|---|---|---|
 | 1 | Build `pve-media` and join it | Nothing | Parts delivered |
-| 2 | Media cutover to `pve-media` | Plex, qBittorrent, arr: 2-3 h | Phase 1 |
+| 2 | Media cutover to `pve-media`; ends the USB single point of failure | Plex, qBittorrent, arr: 2-3 h | Phase 1, clean scrubs |
 | 3 | Library to the HDD pool, backups to the NAS | Media: 10-20 min | Phase 2, HDDs past burn-in |
 | 4 | Rebuild `pve01` as `pve-compute` | Ollama: 3-4 h | Phase 3 |
 | 5 | Retire `pve02` | Nothing | Phase 4 |
@@ -21,6 +21,33 @@ name; `pve01` was reused once and left stale notes behind (see `ansible/inventor
 
 Run one phase per lab day (Friday to Monday). Only one node is down at a time. Read
 `vault/Hosts/hosts-inventory.md` and run `scripts/lab-verify.sh` before and after each phase.
+
+## Why media leaves USB first
+
+On 2026-11-08 at 22:04 EST, pve02's ORICO USB enclosure (JMicron 152d:0567) re-enumerated with no
+disconnect logged. The disks came back as `sdf`-`sdj` and both ZFS pools suspended. Plex could not
+read most of the library for 75 minutes. `zpool clear media` and `zpool clear downloads` recovered
+the pools without a reboot; `media` reported no data errors and `downloads` held 4 permanent errors
+in pool metadata only, no files. It was the first drop since pve02 booted on 2026-10-23.
+`vault/Incidents/2026-11-08-media-pools-suspended.md` has the record.
+
+What this changes in the plan:
+
+- **The enclosure is a live single point of failure for all media data.** Phase 2 moves the five
+  SSDs onto the N5's SATA and HBA bays and ends it. Run phase 2 as soon as phase 1 is done, and do
+  not wait for the HDDs to finish burn-in: phase 2 needs none of them.
+- **Size from today's numbers.** `media` holds 1.32 TB used and 1.29 TB free (49% of the pool). The
+  370 GB figure in the vault (2026-09-21) is out of date.
+- **Put the arr stack beside the pools.** pve03's hard NFS mounts hang Sonarr, Radarr and Bazarr
+  whenever pve02's pools stall. Phase 2 migrates 104, 105, 109, 222, 101 and 102 onto `pve-media`,
+  where `/mnt/media` is local ZFS, which removes that coupling.
+- **Until phase 2 runs,** a suspended pool on pve02 is fixed with `zpool clear <pool>`. mtrace's
+  `pool_health` tool (petedio-media-control#24) reads the pool state from inside 236 and reports
+  `SUSPENDED` with that fix text. It never reports an unknown state as `ONLINE`.
+
+Before phase 2, Pedro runs `zpool scrub media` and `zpool scrub downloads` on pve02 and reads
+`zpool status -v` for both once they finish. The scrubs have not run since the incident. Do not
+export a pool with a scrub in progress or with errors you have not read.
 
 ## Code that ships before the hardware
 
