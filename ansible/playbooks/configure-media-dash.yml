@@ -195,6 +195,16 @@
           mtrace_mcp_access_aud must be empty (MCP door off) or the 64-hex audience tag from
           `terraform output -raw media_mcp_subdomain_access_aud`.
 
+    - name: Assert the MCP door has its peer on the allowlist and an email
+      ansible.builtin.assert:
+        that:
+          - mtrace_mcp_peer in mtrace_allow_sources
+          - mtrace_mcp_access_emails | length > 0
+        fail_msg: >-
+          With mtrace_mcp_access_aud set, mtrace_mcp_peer must be in mtrace_allow_sources and
+          mtrace_mcp_access_emails must not be empty, or the MCP door is dead or refuses everyone.
+      when: mtrace_mcp_access_aud | length > 0
+
     - name: Assert every write caller holds a token
       ansible.builtin.assert:
         that:

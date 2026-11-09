@@ -1,6 +1,6 @@
 # PET-839 — one Cloudflare MCP server portal in front of the Plane, lab and media MCP servers.
 #
-# A portal gives an MCP client a single connector URL for both servers. The per-hostname
+# A portal gives an MCP client a single connector URL for the Plane, lab and media servers. The per-hostname
 # Access applications in cloudflare-routes.tf stay in place, so the direct URLs keep working
 # and the portal is removable without losing access. Schema checked against provider 5.21.1
 # on 2026-11-06 (PET-839 comment 1d235af7). Plan tier: Free (Pedro, 2026-11-06).
@@ -69,7 +69,7 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_portal" "pdlab" {
   account_id  = local.cloudflare_account_id
   id          = "pdlab"
   name        = "PeteDio lab"
-  description = "Plane and lab MCP servers behind one URL (PET-839)."
+  description = "Plane, lab and media MCP servers behind one URL (PET-839)."
   hostname    = "mcp.pdlab.dev"
 
   # Off on purpose. The beta runs remote code in Dynamic Workers, and the provider defaults
