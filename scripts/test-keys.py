@@ -11,6 +11,8 @@ No network and no credentials. It proves the parts a live run cannot show safely
   - reissue repairs a lost token with a fresh 90 days
   - a revoke finishes when Cloudflare already deleted the token
   - an agent name with a trailing newline is refused
+  - create reads expires_at back, since the create response need not carry it
+  - renew keeps the token id and refuses unless Cloudflare reads back a 90-day expiry
 Run: python3 scripts/test-keys.py
 """
 from __future__ import annotations
@@ -29,10 +31,15 @@ keys = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(keys)
 
 SECRET = "f" * 64
+import datetime as _dt
+# A creation expiry well short of a renew, so a renew that changes nothing is visible.
+CREATED = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+RENEWED = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class Fake:
-    def __init__(self, fail_vault_write: bool = False) -> None:
+    def __init__(self, fail_vault_write: bool = False, renew_works: bool = True) -> None:
+        self.renew_works = renew_works
         self.vault: dict[str, dict] = {}   # name -> {"data": ..., "custom": ..., "version": n}
         self.cf: dict[str, dict] = {}      # id -> token
         self.n = 0
@@ -73,16 +80,24 @@ class Fake:
 
     def cf_call(self, method, url, body):
         tail = url.split("/service_tokens", 1)[1]
-        if method == "GET":
+        if method == "GET" and (tail == "" or tail.startswith("?")):
             return 200, {"success": True, "result": list(self.cf.values()), "result_info": {"total_pages": 1}}
         if method == "POST" and tail == "":
             self.create_bodies.append(body)
             self.n += 1
             t = {"id": f"id{self.n}", "name": body["name"], "client_id": f"cid{self.n}.access",
-                 "expires_at": "2027-02-07T00:00:00Z"}
+                 "expires_at": CREATED}
             self.cf[t["id"]] = t
-            return 200, {"success": True, "result": dict(t, client_secret=SECRET)}
+            # The documented create response gives created_at and duration, not expires_at.
+            out = {k: v for k, v in t.items() if k != "expires_at"}
+            return 200, {"success": True, "result": dict(out, client_secret=SECRET, duration=body["duration"])}
         tid = tail.strip("/").split("/")[0]
+        if method == "GET" and tid in self.cf:
+            return 200, {"success": True, "result": dict(self.cf[tid])}
+        if method == "PUT" and tid in self.cf:
+            if self.renew_works:
+                self.cf[tid]["expires_at"] = RENEWED
+            return 200, {"success": True, "result": dict(self.cf[tid])}
         if method == "DELETE":
             if tid not in self.cf:
                 return 404, {"success": False, "errors": [{"message": "not found"}]}
@@ -175,7 +190,7 @@ def main() -> int:
     assert rc == 0, out
     assert "previous_client_secret_expires_at" in fake.rotate_bodies[0]
     assert json.loads(fake.vault["bobbert"]["data"]["header"])["cf-access-client-secret"] == "e" * 64
-    assert fake.vault["bobbert"]["custom"]["expires_at"] == "2027-02-07T00:00:00Z"
+    assert fake.vault["bobbert"]["custom"]["expires_at"] == CREATED
     assert fake.refreshes == 0, "rotate called /refresh"
     assert "e" * 64 not in out
     passed += 1
@@ -219,8 +234,35 @@ def main() -> int:
     assert rc == 1 and "REFUSED" in out, out
     passed += 1
 
-    print(f"test-keys: {passed} of 11 cases passed")
-    return 0 if passed == 11 else 1
+    # 12. create stored the expiry it read back, not the empty one in the create response
+    assert fake.vault["bobbert"]["custom"]["expires_at"] == CREATED, fake.vault["bobbert"]
+    passed += 1
+
+    # 13. renew keeps id, client id and secret, and records the new expiry
+    before = dict(fake.vault["bobbert"])
+    tid = before["custom"]["token_id"]
+    rc, out = run(fake, one, ["renew", "bobbert", "--expect", digest(fake, one, "bobbert", "renew")])
+    assert rc == 0, out
+    after = fake.vault["bobbert"]
+    assert after["custom"]["token_id"] == tid and after["custom"]["expires_at"] == RENEWED
+    assert after["data"] == before["data"] and after["version"] == before["version"], "renew wrote a new secret"
+    passed += 1
+
+    # 14. renew refuses, changing nothing in Vault, when Cloudflare keeps the old expiry
+    stuck, sone = Fake(renew_works=False), callers("bobbert")
+    run(stuck, sone, ["sync", "--expect", digest(stuck, sone)])
+    md = json.dumps(stuck.vault, sort_keys=True)
+    rc, out = run(stuck, sone, ["renew", "bobbert", "--expect", digest(stuck, sone, "bobbert", "renew")])
+    assert rc == 1 and "action=reissue" in out and json.dumps(stuck.vault, sort_keys=True) == md, out
+    passed += 1
+
+    # 15. the reissue plan names what a new token id breaks
+    rc, out = run(fake, one, ["plan", "--reissue", "bobbert"])
+    assert rc == 0 and "Terraform apply" in out and "client id" in out, out
+    passed += 1
+
+    print(f"test-keys: {passed} of 15 cases passed")
+    return 0 if passed == 15 else 1
 
 
 if __name__ == "__main__":

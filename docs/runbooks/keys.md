@@ -51,13 +51,24 @@ Dispatch `keys.yml` with `action=rotate` and `name=<agent>`, then approve. The o
 working for 24 hours. The token keeps its expiry. The owner replaces the stored value in the agent
 within that window. For a Muse agent, that is `request_api_access` with `reconnect: true`.
 
-## Renew or reissue
+## Renew
 
-To renew a token before it expires, dispatch `action=reissue` with `name=<agent>`, then approve.
-It deletes the token and creates one with a fresh 90 days, so the old secret stops at once. Tell
-the owner first, because the agent is refused until they store the new value. Use reissue also
-to cut off a leaked secret. `keys.py` never calls Cloudflare's refresh, which extends a token by
-one year.
+To extend a token before it expires, dispatch `action=renew` with `name=<agent>`, then approve.
+It sets the token to 90 days from now. The token id, client id and secret stay the same, so no
+route, door or agent changes. `renew` reads the expiry back and refuses unless Cloudflare reports
+at least 89 days. The nightly register check reads the same date from the path's metadata and
+warns 21 days ahead. `keys.py` never calls Cloudflare's refresh, which extends a token by one year.
+
+## Reissue
+
+To replace a token Cloudflare lost, or when `renew` refuses, dispatch `action=reissue`. It
+deletes the token and creates another, so the old secret stops at once. The plan says what else
+changes: the token id and the client id.
+
+1. Tell the owner first. The agent is refused until they store the new value.
+2. Run a Terraform apply of `environments/homelab` so each route that lists the agent points at
+   the new token id. Until then those routes refuse it.
+3. Give each door that maps the agent the new client id, from `action=list`.
 
 ## Drift
 

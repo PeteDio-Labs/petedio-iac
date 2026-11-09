@@ -20,10 +20,14 @@ Commands:
   rotate NAME --expect D
                      replace NAME's secret and keep the old one valid for 24 hours. The
                      token's expiry does not change.
+  renew NAME --expect D
+                     set NAME's token to 90 days from now. The token id, client id and secret
+                     stay, so routes and doors need no change. Refuses unless Cloudflare reads
+                     back the new expiry.
   reissue NAME --expect D
-                     delete NAME's token and create one with a fresh 90 days. The old secret
-                     stops at once. Use it to renew an expiry, to cut off a leaked secret, or
-                     when Cloudflare lost the token Vault describes.
+                     delete NAME's token and create another. Only for a token Cloudflare lost,
+                     or when renew refuses. The token id and client id change, so each route
+                     that lists NAME needs a Terraform apply, and each door its client id.
 
 What it never does: print a secret, write one to a file, or put one in argv. Inside GitHub
 Actions it registers each new secret with ::add-mask:: before anything else can print it. A
@@ -62,6 +66,8 @@ CF_API = "https://api.cloudflare.com/client/v4"
 # 90 days (Pedro, 2026-11-09). The register's nightly check warns 21 days ahead.
 TOKEN_DURATION = "2160h"
 ROTATE_OVERLAP = dt.timedelta(hours=24)
+# A renew must leave at least this long; a 90-day renew leaves 90 days, less clock skew.
+RENEW_FLOOR = dt.timedelta(days=89)
 EXPIRY_WARN = dt.timedelta(days=21)
 # `agents = ["bobbert", "batsy"]` on a route. Matches one line, as terraform fmt writes it.
 AGENTS_LIST = re.compile(r'^\s*agents\s*=\s*\[([^\]]*)\]', re.M)
@@ -266,6 +272,11 @@ class Vault:
             raise Fail(f"Vault metadata write for {name} returned {code}")
         return version
 
+    def set_custom(self, name: str, custom: dict) -> None:
+        code, _ = self._call("POST", f"{VAULT_MOUNT}/metadata/{VAULT_PREFIX}/{name}", {"custom_metadata": custom})
+        if code not in (200, 204):
+            raise Fail(f"Vault metadata write for {name} returned {code}")
+
     def destroy(self, name: str) -> None:
         code, _ = self._call("DELETE", f"{VAULT_MOUNT}/metadata/{VAULT_PREFIX}/{name}")
         if code not in (200, 204):
@@ -323,6 +334,13 @@ class Cloudflare:
     # No refresh(): Cloudflare's refresh extends a token by one year, not by its own 90 days
     # (Codex review of petedio-iac#685). To renew, reissue.
 
+    def get(self, token_id: str, name: str) -> dict:
+        return self._call("GET", f"/{token_id}", what=f"read {name}") or {}
+
+    def renew(self, token_id: str, name: str) -> dict:
+        return self._call("PUT", f"/{token_id}", {"name": TOKEN_PREFIX + name, "duration": TOKEN_DURATION},
+                          f"renew {name}") or {}
+
     def delete(self, token_id: str, name: str) -> bool:
         """Delete a token. Returns False when Cloudflare no longer has it, so a retry can finish."""
         return self._call("DELETE", f"/{token_id}", what=f"delete {name}", missing_ok=True) is not None
@@ -342,12 +360,29 @@ def header_value(client_id: str, client_secret: str) -> str:
                       separators=(",", ":"))
 
 
+def parse_time(value: str) -> dt.datetime | None:
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+    except ValueError:
+        return None
+
+
+def expiry_of_new(cf: "Cloudflare", t: dict, name: str) -> str:
+    """Cloudflare's create response need not carry expires_at, so read the token back."""
+    exp = t.get("expires_at") or cf.get(t["id"], name).get("expires_at") or ""
+    if parse_time(exp) is None:
+        print(f"sync: WARNING Cloudflare gave no expires_at for {TOKEN_PREFIX}{name}; "
+              "the register check reports its expiry as unknown")
+        return ""
+    return exp
+
+
 # ------------------------------------------------------------------------------------- plan/sync
 
 def compute_plan(agents: dict[str, dict], in_vault: list[str], target: str | None = None,
                  verb: str = "rotate") -> tuple[list[str], str]:
     if target:
-        if verb not in ("rotate", "reissue"):
+        if verb not in ("rotate", "renew", "reissue"):
             raise Fail(f"unknown action {verb}")
         if not NAME_RE.fullmatch(target):
             raise Fail("the agent name must match ^[a-z][a-z0-9-]{1,30}$")
@@ -375,6 +410,11 @@ def cmd_plan(target: str | None, verb: str) -> int:
               "since nobody holds its secret")
     if not target:
         print("plan: apply refuses, and changes nothing, if Cloudflare disagrees with Vault")
+    if verb == "reissue" and target:
+        routes = [f for f, names in route_agents()[0].items() if target in names]
+        print(f"plan: reissue changes {target}'s token id and client id. Until a Terraform apply, "
+              f"routes that list {target} refuse it, in {len(routes)} files: {', '.join(routes) or 'none'}. "
+              f"Each door that maps {target} needs the client id from action=list.")
     print(f"keys plan: read {len(agents)} agents in callers.yml and {len(in_vault)} Vault entries; "
           f"{len(actions)} actions; plan-digest {digest}")
     out = os.environ.get("GITHUB_OUTPUT")
@@ -406,12 +446,13 @@ def cmd_list() -> int:
                 expired += 1
                 left = ", EXPIRED"
             elif when - now <= EXPIRY_WARN:
-                left += " (rotate soon)"
+                left += " (renew soon)"
         except ValueError:
             left = ", expiry unknown"
         state = "in callers.yml" if n in agents else "NOT in callers.yml (sync revokes it)"
+        # The client id is not secret: a door maps it to the caller name.
         print(f"{n}: owner {cm.get('owner', '?')}, version {md.get('current_version', '?')}, "
-              f"expires {exp or '?'}{left}; {state}")
+              f"client id {cm.get('client_id', '?')}, expires {exp or '?'}{left}; {state}")
     print(f"keys list: read {len(agents)} agents in callers.yml and {len(in_vault)} Vault entries; {expired} expired")
     return 1 if expired else 0
 
@@ -464,16 +505,17 @@ def cmd_sync(expect: str) -> int:
             if not t.get("client_secret") or not t.get("id"):
                 raise Fail(f"Cloudflare create {name} returned no secret or id")
             try:
+                expires = expiry_of_new(cf, t, name)
                 version = vault.write(name, {"header": header_value(t["client_id"], t["client_secret"]),
                                              "client_id": t["client_id"]},
                                       {"owner": agents[name]["owner"], "token_id": t["id"],
-                                       "client_id": t["client_id"], "expires_at": t.get("expires_at", "")})
+                                       "client_id": t["client_id"], "expires_at": expires})
             except Fail:
                 cf.delete(t["id"], name)  # never leave a token whose secret nobody holds
                 raise
             created += 1
             print(f"sync: created {TOKEN_PREFIX}{name} for owner {agents[name]['owner']}, "
-                  f"Vault version {version}, expires {t.get('expires_at', '?')}")
+                  f"Vault version {version}, expires {expires or 'unknown'}")
         else:
             md = vault.metadata(name)
             want = {(md.get("custom_metadata") or {}).get("token_id"), (tokens.get(name) or {}).get("id")} - {None, ""}
@@ -537,16 +579,38 @@ def cmd_reissue(name: str, expect: str) -> int:
     if not t.get("client_secret") or not t.get("id"):
         raise Fail(f"Cloudflare create {name} returned no secret or id. Dispatch reissue again.")
     try:
+        expires = expiry_of_new(cf, t, name)
         version = vault.write(name, {"header": header_value(t["client_id"], t["client_secret"]),
                                      "client_id": t["client_id"]},
                               {"owner": agents[name]["owner"], "token_id": t["id"],
-                               "client_id": t["client_id"], "expires_at": t.get("expires_at", "")})
+                               "client_id": t["client_id"], "expires_at": expires})
     except Fail:
         cf.delete(t["id"], name)  # never leave a token whose secret nobody holds
         raise
     print(f"keys reissue: {TOKEN_PREFIX}{name} reissued, old token {'deleted' if deleted else 'was already absent'}, "
-          f"Vault version {version}, expires {t.get('expires_at', '?')}. "
-          f"The old secret no longer works; tell {agents[name]['owner']} to update the agent.")
+          f"Vault version {version}, expires {expires or 'unknown'}, new client id {t['client_id']}. "
+          f"The old secret no longer works; tell {agents[name]['owner']} to update the agent. Every route "
+          f"that lists {name} refuses it until a Terraform apply, and every door needs the new client id.")
+    return 0
+
+
+def cmd_renew(name: str, expect: str) -> int:
+    agents, vault, cm, cf, tokens = _approved(name, "renew", expect)
+    token_id = cm.get("token_id")
+    if not token_id or not any(t.get("id") == token_id for t in tokens.values()):
+        raise Fail(f"Cloudflare has no token {token_id or '?'} for {name}. Dispatch action=reissue name={name}.")
+    floor = dt.datetime.now(dt.timezone.utc) + RENEW_FLOOR
+    cf.renew(token_id, name)
+    # Read back rather than trust the update's answer: renew counts only if Cloudflare now
+    # reports an expiry at least RENEW_FLOOR ahead.
+    expires = cf.get(token_id, name).get("expires_at") or ""
+    when = parse_time(expires)
+    if when is None or when < floor:
+        raise Fail(f"Cloudflare kept {TOKEN_PREFIX}{name}'s expiry at {expires or 'unknown'} after the update. "
+                   f"Nothing else changed. Dispatch action=reissue name={name} to get a fresh 90 days.")
+    vault.set_custom(name, dict(cm, expires_at=expires))
+    print(f"keys renew: {TOKEN_PREFIX}{name} now expires {expires}; token id, client id and secret unchanged. "
+          f"read 1 Vault entry and {len(tokens)} Cloudflare agent tokens")
     return 0
 
 
@@ -558,11 +622,12 @@ def main() -> int:
     p = sub.add_parser("plan")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--rotate", metavar="NAME")
+    g.add_argument("--renew", metavar="NAME")
     g.add_argument("--reissue", metavar="NAME")
     sub.add_parser("list")
     s = sub.add_parser("sync")
     s.add_argument("--expect", required=True)
-    for verb in ("rotate", "reissue"):
+    for verb in ("rotate", "renew", "reissue"):
         r = sub.add_parser(verb)
         r.add_argument("name")
         r.add_argument("--expect", required=True)
@@ -575,6 +640,8 @@ def main() -> int:
         if a.cmd == "plan":
             if a.reissue:
                 return cmd_plan(a.reissue, "reissue")
+            if a.renew:
+                return cmd_plan(a.renew, "renew")
             return cmd_plan(a.rotate, "rotate")
         if a.cmd == "list":
             return cmd_list()
@@ -582,6 +649,8 @@ def main() -> int:
             return cmd_sync(a.expect)
         if a.cmd == "reissue":
             return cmd_reissue(a.name, a.expect)
+        if a.cmd == "renew":
+            return cmd_renew(a.name, a.expect)
         return cmd_rotate(a.name, a.expect)
     except Fail as e:
         print(f"keys {a.cmd}: REFUSED: {e}")

@@ -147,9 +147,9 @@ def expiry_error(entry: dict) -> str | None:
     """Return why an `expiry` declaration is malformed, or None when it is valid."""
     rule = entry.get("expiry")
     if not isinstance(rule, dict) or "rule" not in rule:
-        return "`expiry` must be a mapping with a `rule` (none, date or ttl_days)"
+        return "`expiry` must be a mapping with a `rule` (none, date, ttl_days or metadata_expires_at)"
     kind = rule["rule"]
-    if kind == "none":
+    if kind in ("none", "metadata_expires_at"):
         return None
     if kind == "date":
         d = rule.get("date")
@@ -164,7 +164,8 @@ def expiry_error(entry: dict) -> str | None:
     return f"unknown expiry rule {kind!r}"
 
 
-def expiry_of(entry: dict, updated: dt.datetime | None) -> tuple[dt.date | None, str]:
+def expiry_of(entry: dict, updated: dt.datetime | None,
+              expires: dt.date | None = None) -> tuple[dt.date | None, str]:
     rule = entry.get("expiry") or {}
     kind = rule.get("rule")
     if kind in (None, "none"):
@@ -181,6 +182,12 @@ def expiry_of(entry: dict, updated: dt.datetime | None) -> tuple[dt.date | None,
         if updated is None:
             return None, "ttl_days needs live mode"
         return (updated + dt.timedelta(days=days)).date(), f"{days} days after {updated.date()}"
+    if kind == "metadata_expires_at":
+        # The real expiry, which the writer records in the path's custom metadata. keys.py writes
+        # Cloudflare's expires_at there, and a rotate keeps it (PET-904).
+        if expires is None:
+            return None, "metadata_expires_at needs live mode"
+        return expires, f"expires_at in custom metadata"
     return None, f"unknown rule {kind!r}"
 
 
@@ -227,15 +234,17 @@ def check(entries: list[dict], refs: dict[str, set[str]], today: dt.date,
         if not consumed:
             problems.append(f"{p}: no code reads it and the entry names no `consumers_external`")
 
-        updated = None
+        updated = expires = None
         meta = (metadata or {}).get(p)
         if metadata is not None and e.get("kind") != "external" and e.get("status") != "retired":
             if meta is None:
                 if not e.get("optional"):
                     problems.append(f"{p}: absent from Vault (mark it `optional: true` if it is not seeded yet)")
             else:
-                updated = meta["updated"]
-        when, why = expiry_of(e, updated)
+                updated, expires = meta["updated"], meta.get("expires")
+                if (e.get("expiry") or {}).get("rule") == "metadata_expires_at" and expires is None:
+                    problems.append(f"{p}: no valid expires_at in its custom metadata, so its expiry is unknown")
+        when, why = expiry_of(e, updated, expires)
         if when is not None:
             left = (when - today).days
             if left < 0:
@@ -269,7 +278,14 @@ def vault_metadata(entries: list[dict]) -> tuple[dict[str, dict | None], int]:
                 raise ValueError(f"unparseable updated_time {data['updated_time']!r}")
             # Vault prints nanoseconds; datetime reads six digits.
             ts = m.group(1) + (m.group(2) or "")[:7] + "+00:00"
-            out[p] = {"updated": dt.datetime.fromisoformat(ts), "version": data["current_version"]}
+            exp = None
+            raw = (data.get("custom_metadata") or {}).get("expires_at") or ""
+            try:
+                exp = dt.datetime.fromisoformat(raw.replace("Z", "+00:00")).date() if raw else None
+            except ValueError:
+                exp = None
+            out[p] = {"updated": dt.datetime.fromisoformat(ts), "version": data["current_version"],
+                      "expires": exp}
         except urllib.error.HTTPError as err:
             if err.code == 404:
                 reads += 1
@@ -322,7 +338,7 @@ def render_report(entries: list[dict], refs: dict[str, set[str]], grants: list[t
             last = str(e["rotated"])
         else:
             last = "unknown" if not live else ("absent" if e.get("kind") != "external" else "unknown")
-        when, why = expiry_of(e, meta["updated"] if meta else None)
+        when, why = expiry_of(e, meta["updated"] if meta else None, meta.get("expires") if meta else None)
         expiry = str(when) if when else "none"
         out.append("| " + " | ".join(cell(x) for x in (
             f"`{p}`", e.get("owner", ""), "; ".join(roles) or "none", consumer or "none",
@@ -359,13 +375,22 @@ def self_test() -> int:
     child = check([later], {**refs, "kv/services/probe/child": {"scripts/z.sh"}}, today, None)
     wild = check([dict(later, path="kv/services/probe-*")], refs, today, None)
     badfield = check([dict(later, fields=[{"name": "k"}])], refs, today, None)
+    # metadata_expires_at reads the recorded expiry, not the last write: a token rotated
+    # yesterday that expires in 5 days must still warn, and a missing expiry must fail.
+    md = dict(base, expiry={"rule": "metadata_expires_at"})
+    fresh = dt.datetime(2025, 12, 31, tzinfo=dt.timezone.utc)
+    md_soon = check([md], refs, today, {"kv/services/probe": {"updated": fresh, "version": 2,
+                                                              "expires": today + dt.timedelta(days=5)}})
+    md_none = check([md], refs, today, {"kv/services/probe": {"updated": fresh, "version": 2, "expires": None}})
     report = render_report([dict(later, fields=[{"name": "k", "rotation": "manual", "expiry": {"rule": "none"}}])],
                            refs, [("pol", "kv/services/probe", "read")], None, today)
     ok = (bool(bad) and bool(badfield) and "pol (read)" in report and "field `k`" in report and not good and any("no owner" in p for p in orphan)
           and quoted and unknown and empty and not retired and live_gone
+          and any("expires in 5" in p for p in md_soon) and any("expiry is unknown" in p for p in md_none)
           and any("wildcard" in p for p in wild)
           and len(blank) >= 2 and any("no owner" in p for p in child))
     print(f"self-test: quoted date / unknown rule / empty expiry -> {bool(quoted and unknown and empty)}")
+    print(f"self-test: metadata expiry in 5 days -> {md_soon}; missing -> {md_none}")
     print(f"self-test: retired 404 passes -> {not retired}; live 404 fails -> {bool(live_gone)}")
     print(f"self-test: 7-day entry -> {bad or 'NO PROBLEM (wrong)'}")
     print(f"self-test: 60-day entry -> {good or 'no problems'}")
