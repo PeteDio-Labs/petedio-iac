@@ -60,6 +60,10 @@ ROTATE_OVERLAP = dt.timedelta(hours=24)
 EXPIRY_WARN = dt.timedelta(days=21)
 # `agents = ["bobbert", "batsy"]` on a route. Matches one line, as terraform fmt writes it.
 AGENTS_LIST = re.compile(r'^\s*agents\s*=\s*\[([^\]]*)\]', re.M)
+# mtrace's write callers live in the deploy play. callers.yml records each agent's mtrace scope
+# too, so a reader sees it in one place; check() fails when the two disagree.
+MTRACE_PLAY = os.path.join(REPO_ROOT, "ansible", "playbooks", "configure-media-dash.yml")
+MTRACE_WRITERS = re.compile(r'^\s*mtrace_write_callers:\s*\[([^\]]*)\]', re.M)
 
 
 class Fail(Exception):
@@ -105,7 +109,9 @@ def validate(data: dict) -> tuple[list[str], dict[str, dict]]:
             problems.append(f"agent {a!r}: must be a mapping")
             continue
         n, owner = a.get("name"), a.get("owner")
-        extra = set(a) - {"name", "owner", "note"}
+        extra = set(a) - {"name", "owner", "note", "mtrace"}
+        if a.get("mtrace", "read") not in ("read", "write"):
+            problems.append(f"agent {n}: mtrace must be read or write")
         if extra:
             problems.append(f"agent {n}: unknown field(s) {sorted(extra)}")
         if not isinstance(n, str) or not NAME_RE.match(n):
@@ -134,6 +140,15 @@ def route_agents() -> tuple[dict[str, list[str]], int]:
     return found, len(files)
 
 
+def mtrace_writers() -> list[str] | None:
+    try:
+        with open(MTRACE_PLAY, encoding="utf-8") as f:
+            m = MTRACE_WRITERS.search(f.read())
+    except OSError:
+        return None
+    return re.findall(r'"([^"]*)"', m.group(1)) if m else None
+
+
 def cmd_check(path: str) -> int:
     data = load_callers(path)
     problems, agents = validate(data)
@@ -144,6 +159,16 @@ def cmd_check(path: str) -> int:
             nrefs += 1
             if n not in agents:
                 problems.append(f"{f}: route lists agent {n!r}, which is not in callers.yml")
+    writers = mtrace_writers()
+    if writers is None:
+        problems.append(f"{os.path.relpath(MTRACE_PLAY, REPO_ROOT)}: no mtrace_write_callers list found")
+    else:
+        for n, a in agents.items():
+            want = a.get("mtrace", "read") == "write"
+            if want != (n in writers):
+                live = "write" if n in writers else "read"
+                problems.append(f"agent {n}: callers.yml says mtrace {a.get('mtrace', 'read')}, "
+                                f"but mtrace_write_callers makes it {live}")
     for p in problems:
         print(f"FAIL {p}")
     people = len(data.get("people") or [])
