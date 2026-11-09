@@ -43,9 +43,7 @@ on:
         type: string
         default: ""
 
-permissions:
-  contents: read
-  id-token: write
+permissions: {}
 
 env:
   VAULT_ADDR: https://192.168.50.223:8200
@@ -56,6 +54,9 @@ jobs:
     # The Vault binding is the gate; this line only stops main's copy running on another ref.
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, x64, homelab]
+    permissions:
+      contents: read
+      id-token: write # the OIDC token vault-action exchanges for keys-list
     timeout-minutes: 10
     outputs:
       digest: ${{ steps.plan.outputs.digest }}
@@ -132,6 +133,9 @@ jobs:
       group: keys
       cancel-in-progress: false
     runs-on: [self-hosted, linux, x64, homelab]
+    permissions:
+      contents: read
+      id-token: write # the OIDC token vault-action exchanges for keys-sync
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
