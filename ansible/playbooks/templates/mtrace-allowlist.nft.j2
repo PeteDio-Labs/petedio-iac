@@ -20,5 +20,9 @@ table inet mtrace_allow {
     tcp dport {{ mtrace_port }} iif "lo" accept
     tcp dport {{ mtrace_port }} ip saddr { {{ mtrace_allow_sources | join(', ') }} } accept
     tcp dport {{ mtrace_port }} reject with tcp reset
+    # The MCP door's own port: only the tunnel host reaches it (see mtrace_mcp_sources).
+    tcp dport {{ mtrace_mcp_port }} iif "lo" accept
+    tcp dport {{ mtrace_mcp_port }} ip saddr { {{ mtrace_mcp_sources | join(', ') }} } accept
+    tcp dport {{ mtrace_mcp_port }} reject with tcp reset
   }
 }

@@ -140,10 +140,13 @@
     # below is what makes opening this bind safe; see mtrace.env.j2 for the rest of that
     # story.
     mtrace_bind: "192.168.50.237"
-    # .112 is cloudflared on LXC 112, which carries mcp-media.pdlab.dev to this port. It joins
-    # the list as one named host, never a subnet. The MCP door also checks the source and an
-    # Access JWT, and every other route still needs a caller's bearer token.
-    mtrace_allow_sources: ["192.168.50.4", "192.168.50.112"]
+    mtrace_allow_sources: ["192.168.50.4"]
+    # The MCP door listens on its own port, so the tunnel host (LXC 112, which carries
+    # mcp-media.pdlab.dev) reaches only that port and never the bearer-gated API on mtrace_port.
+    # The nftables allowlist admits one named host there, never a subnet. The door also checks
+    # the source and an Access JWT.
+    mtrace_mcp_port: 8238
+    mtrace_mcp_sources: ["192.168.50.112"]
     # The media MCP door (media-control src/mcp.ts). Off until the audience tag is set:
     # `terraform output -raw media_mcp_subdomain_access_aud` in environments/homelab. Not a secret.
     mtrace_mcp_peer: 192.168.50.112
@@ -195,13 +198,13 @@
           mtrace_mcp_access_aud must be empty (MCP door off) or the 64-hex audience tag from
           `terraform output -raw media_mcp_subdomain_access_aud`.
 
-    - name: Assert the MCP door has its peer on the allowlist and an email
+    - name: Assert the MCP door has its peer on its allowlist and an email
       ansible.builtin.assert:
         that:
-          - mtrace_mcp_peer in mtrace_allow_sources
+          - mtrace_mcp_peer in mtrace_mcp_sources
           - mtrace_mcp_access_emails | length > 0
         fail_msg: >-
-          With mtrace_mcp_access_aud set, mtrace_mcp_peer must be in mtrace_allow_sources and
+          With mtrace_mcp_access_aud set, mtrace_mcp_peer must be in mtrace_mcp_sources and
           mtrace_mcp_access_emails must not be empty, or the MCP door is dead or refuses everyone.
       when: mtrace_mcp_access_aud | length > 0
 
@@ -423,6 +426,8 @@
           - (mtrace_port | string) in mtrace_allow_live.stdout
           - "'iif \"lo\" accept' in mtrace_allow_live.stdout"
           - mtrace_allow_sources | select('in', mtrace_allow_live.stdout) | list | length == mtrace_allow_sources | length
+          - (mtrace_mcp_port | string) in mtrace_allow_live.stdout
+          - mtrace_mcp_sources | select('in', mtrace_allow_live.stdout) | list | length == mtrace_mcp_sources | length
           - "'reject' in mtrace_allow_live.stdout"
         fail_msg: >-
           table inet mtrace_allow is not carrying the rules this deploy expects — port
