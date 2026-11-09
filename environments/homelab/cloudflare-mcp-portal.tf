@@ -1,4 +1,4 @@
-# PET-839 — one Cloudflare MCP server portal in front of the Plane and lab MCP servers.
+# PET-839 — one Cloudflare MCP server portal in front of the Plane, lab and media MCP servers.
 #
 # A portal gives an MCP client a single connector URL for both servers. The per-hostname
 # Access applications in cloudflare-routes.tf stay in place, so the direct URLs keep working
@@ -53,6 +53,18 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "lab" {
   is_shared_oauth_callback_enabled = true
 }
 
+resource "cloudflare_zero_trust_access_ai_controls_mcp_server" "media" {
+  account_id  = local.cloudflare_account_id
+  id          = "media"
+  name        = "Media"
+  description = "Read-only media stack state through mtrace."
+  hostname    = "https://mcp-media.pdlab.dev/mcp/media"
+  auth_type   = "oauth"
+
+  # Set explicitly, never unset (see the plane server above).
+  is_shared_oauth_callback_enabled = true
+}
+
 resource "cloudflare_zero_trust_access_ai_controls_mcp_portal" "pdlab" {
   account_id  = local.cloudflare_account_id
   id          = "pdlab"
@@ -67,6 +79,7 @@ resource "cloudflare_zero_trust_access_ai_controls_mcp_portal" "pdlab" {
   servers = [
     { server_id = cloudflare_zero_trust_access_ai_controls_mcp_server.plane.id },
     { server_id = cloudflare_zero_trust_access_ai_controls_mcp_server.lab.id },
+    { server_id = cloudflare_zero_trust_access_ai_controls_mcp_server.media.id },
   ]
 }
 
@@ -83,6 +96,7 @@ resource "cloudflare_zero_trust_access_application" "mcp_server" {
   for_each = {
     plane = cloudflare_zero_trust_access_ai_controls_mcp_server.plane.id
     lab   = cloudflare_zero_trust_access_ai_controls_mcp_server.lab.id
+    media = cloudflare_zero_trust_access_ai_controls_mcp_server.media.id
   }
 
   account_id   = local.cloudflare_account_id
