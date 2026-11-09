@@ -56,7 +56,9 @@ defaults:
 
 env:
   VAULT_ADDR: https://192.168.50.223:8200
-  PY_IMAGE: python:3.12-slim
+  # python:3.12-slim by digest, read on 2026-11-09. PyYAML installs from
+  # scripts/keys-requirements.txt with --require-hashes.
+  PY_IMAGE: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
 jobs:
   plan:
@@ -81,13 +83,17 @@ jobs:
           PET: ${{ inputs.pet }}
           ACTOR: ${{ github.actor }}
         run: |
-          echo "action=$ACTION name=${NAME:-none} pet=${PET:-none} sha=$GITHUB_SHA actor=$ACTOR"
-          # [[ =~ ]] matches the whole string, so a name with a newline fails. grep would test
-          # each line alone and pass it (Codex review of petedio-iac#685).
+          # Check every input before anything prints it, so a newline and a ::command:: cannot
+          # reach the log. [[ =~ ]] matches the whole string; grep would test each line alone.
           case "$ACTION" in
             rotate|renew|reissue)
               [[ "$NAME" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || { echo "ABORT: $ACTION needs a valid agent name."; exit 1; } ;;
+            list|sync)
+              [ -z "$NAME" ] || { echo "ABORT: $ACTION takes no name."; exit 1; } ;;
+            *) echo "ABORT: unknown action"; exit 1 ;;
           esac
+          [[ "$PET" =~ ^(PET-[0-9]{1,6})?$ ]] || { echo "ABORT: pet must look like PET-123."; exit 1; }
+          echo "action=$ACTION name=${NAME:-none} pet=${PET:-none} sha=$GITHUB_SHA actor=$ACTOR"
           command -v docker >/dev/null || { echo "ABORT: docker is not installed on this runner."; exit 1; }
 
       - name: Encode Vault CA
@@ -124,7 +130,7 @@ jobs:
           docker run --rm -v "$PWD:/w:ro" -w /w \
             -e PYTHONDONTWRITEBYTECODE=1 -e VAULT_ADDR -e VAULT_TOKEN \
             -e VAULT_CACERT=/w/environments/homelab/vault-ca.crt \
-            "$PY_IMAGE" sh -c 'pip install -q --no-cache-dir "pyyaml==6.0.2" && python3 scripts/keys.py check && exec python3 scripts/keys.py "$@"' \
+            "$PY_IMAGE" sh -c 'pip install -q --no-cache-dir --require-hashes -r scripts/keys-requirements.txt && python3 scripts/keys.py check && exec python3 scripts/keys.py "$@"' \
             sh "${ARGS[@]}" \
             | tee plan.log
           digest="$(sed -n 's/.*plan-digest \([0-9a-f]\{16\}\)$/\1/p' plan.log | tail -1)"
@@ -191,5 +197,5 @@ jobs:
           docker run --rm -v "$PWD:/w:ro" -w /w \
             -e PYTHONDONTWRITEBYTECODE=1 -e GITHUB_ACTIONS -e VAULT_ADDR -e VAULT_TOKEN \
             -e VAULT_CACERT=/w/environments/homelab/vault-ca.crt \
-            "$PY_IMAGE" sh -c 'pip install -q --no-cache-dir "pyyaml==6.0.2" && exec python3 scripts/keys.py "$@"' \
+            "$PY_IMAGE" sh -c 'pip install -q --no-cache-dir --require-hashes -r scripts/keys-requirements.txt && exec python3 scripts/keys.py "$@"' \
             sh "${ARGS[@]}"

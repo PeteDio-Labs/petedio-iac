@@ -13,6 +13,7 @@ No network and no credentials. It proves the parts a live run cannot show safely
   - an agent name with a trailing newline is refused
   - create reads expires_at back, since the create response need not carry it
   - renew keeps the token id and refuses unless Cloudflare reads back a 90-day expiry
+  - two tokens with one name refuse the sync, and a token with no expiry fails the run
 Run: python3 scripts/test-keys.py
 """
 from __future__ import annotations
@@ -38,7 +39,8 @@ RENEWED = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=90)).strftime
 
 
 class Fake:
-    def __init__(self, fail_vault_write: bool = False, renew_works: bool = True) -> None:
+    def __init__(self, fail_vault_write: bool = False, renew_works: bool = True, no_expiry: bool = False) -> None:
+        self.no_expiry = no_expiry
         self.renew_works = renew_works
         self.vault: dict[str, dict] = {}   # name -> {"data": ..., "custom": ..., "version": n}
         self.cf: dict[str, dict] = {}      # id -> token
@@ -93,7 +95,10 @@ class Fake:
             return 200, {"success": True, "result": dict(out, client_secret=SECRET, duration=body["duration"])}
         tid = tail.strip("/").split("/")[0]
         if method == "GET" and tid in self.cf:
-            return 200, {"success": True, "result": dict(self.cf[tid])}
+            t = dict(self.cf[tid])
+            if self.no_expiry:
+                t.pop("expires_at", None)
+            return 200, {"success": True, "result": t}
         if method == "PUT" and tid in self.cf:
             if self.renew_works:
                 self.cf[tid]["expires_at"] = RENEWED
@@ -261,8 +266,24 @@ def main() -> int:
     assert rc == 0 and "Terraform apply" in out and "client id" in out, out
     passed += 1
 
-    print(f"test-keys: {passed} of 15 cases passed")
-    return 0 if passed == 15 else 1
+    # 16. two agent-bobbert tokens: sync refuses before any change
+    fake.cf["dup"] = {"id": "dup", "name": "agent-bobbert", "client_id": "d.access", "expires_at": CREATED}
+    before = json.dumps(fake.vault, sort_keys=True)
+    rc, out = run(fake, one, ["sync", "--expect", digest(fake, one)])
+    assert rc == 1 and "more than one token" in out and json.dumps(fake.vault, sort_keys=True) == before, out
+    fake.cf.pop("dup")
+    passed += 1
+
+    # 17. a token Cloudflare reports no expiry for is stored, and the run fails loudly
+    keys.UNKNOWN_EXPIRY.clear()
+    noexp, nb = Fake(no_expiry=True), callers("bobbert")
+    rc, out = run(noexp, nb, ["sync", "--expect", digest(noexp, nb)])
+    assert rc == 1 and "no expiry" in out and "bobbert" in noexp.vault, out
+    keys.UNKNOWN_EXPIRY.clear()
+    passed += 1
+
+    print(f"test-keys: {passed} of 17 cases passed")
+    return 0 if passed == 17 else 1
 
 
 if __name__ == "__main__":

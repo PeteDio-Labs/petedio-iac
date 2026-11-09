@@ -12,6 +12,7 @@
 # WHAT THIS CHECKS BEFORE IT WRITES:
 #   1. Cloudflare says the token is active (/user/tokens/verify).
 #   2. The token sees exactly one account, and can list that account's service tokens.
+#   2a. It cannot read zones, tunnels or Access apps, so its scope is not wider.
 #   3. The token is not the Terraform token at kv/iac/cloudflare.
 #
 # WHERE THE TOKEN COMES FROM. The clipboard: copy it from the dashboard, then run this. The
@@ -76,6 +77,19 @@ CODE="$(cf_get "$TMP/key" "/accounts/$ACCOUNT_ID/access/service_tokens?per_page=
 [ "$CODE" = 200 ] || die "Cloudflare answered the service-token list with HTTP $CODE.
   Give the token Account > Access: Service Tokens > Edit, and run this again."
 echo "  it can."
+
+step "Checking it can do nothing else it might have been given by mistake"
+# Cloudflare cannot list a token's own permissions without API Tokens Read, so this probes
+# three neighbours instead: zones, tunnels and Access apps. Each must be refused or empty.
+CODE="$(cf_get "$TMP/key" "/zones?per_page=1" "$TMP/z.json")" || die "Cannot reach $CF_API."
+if [ "$CODE" = 200 ] && [ "$(jq '.result | length' "$TMP/z.json")" != 0 ]; then
+  die "The token can read zones. Give it only Account > Access: Service Tokens > Edit."
+fi
+for probe in cfd_tunnel access/apps; do
+  CODE="$(cf_get "$TMP/key" "/accounts/$ACCOUNT_ID/$probe?per_page=1" "$TMP/p.json")" || die "Cannot reach $CF_API."
+  [ "$CODE" != 200 ] || die "The token can read $probe. Give it only Account > Access: Service Tokens > Edit."
+done
+echo "  zones, tunnels and Access apps are refused."
 
 step "Authenticating to Vault"
 [ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'. Run the script from the repo, or export VAULT_CACERT."

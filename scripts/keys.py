@@ -311,6 +311,7 @@ class Cloudflare:
 
     def list_agent_tokens(self) -> dict[str, dict]:
         out: dict[str, dict] = {}
+        dupes: set[str] = set()
         page = 1
         while True:
             code, j = _request("GET", f"{self.base}?per_page=100&page={page}", self.headers, None, self.ctx)
@@ -318,9 +319,16 @@ class Cloudflare:
                 raise Fail(f"Cloudflare list service tokens returned {code}")
             for t in j.get("result") or []:
                 if t.get("name", "").startswith(TOKEN_PREFIX):
-                    out[t["name"][len(TOKEN_PREFIX):]] = t
+                    name = t["name"][len(TOKEN_PREFIX):]
+                    if name in out:
+                        dupes.add(name)
+                    out[name] = t
             info = j.get("result_info") or {}
             if page >= int(info.get("total_pages") or 1):
+                if dupes:
+                    # Keying by name would hide one, and the Terraform module refuses them too.
+                    raise Fail(f"Cloudflare holds more than one token named {', '.join(TOKEN_PREFIX + d for d in sorted(dupes))}. "
+                               "Delete the extra under Access > Service credentials; nothing changed")
                 return out
             page += 1
 
@@ -371,10 +379,23 @@ def expiry_of_new(cf: "Cloudflare", t: dict, name: str) -> str:
     """Cloudflare's create response need not carry expires_at, so read the token back."""
     exp = t.get("expires_at") or cf.get(t["id"], name).get("expires_at") or ""
     if parse_time(exp) is None:
-        print(f"sync: WARNING Cloudflare gave no expires_at for {TOKEN_PREFIX}{name}; "
-              "the register check reports its expiry as unknown")
+        UNKNOWN_EXPIRY.append(name)
+        print(f"sync: ERROR Cloudflare gave no expires_at for {TOKEN_PREFIX}{name}; "
+              "the token works, but nothing can warn before it expires")
         return ""
     return exp
+
+
+UNKNOWN_EXPIRY: list[str] = []
+
+
+def finish(rc: int) -> int:
+    """Exit non-zero when a token was stored with no expiry, so the run shows red."""
+    if rc == 0 and UNKNOWN_EXPIRY:
+        print(f"keys: FAILED: stored {len(UNKNOWN_EXPIRY)} tokens with no expiry ({', '.join(UNKNOWN_EXPIRY)}). "
+              "Read the date in the Cloudflare dashboard and dispatch action=renew for each.")
+        return 1
+    return rc
 
 
 # ------------------------------------------------------------------------------------- plan/sync
@@ -646,9 +667,9 @@ def main() -> int:
         if a.cmd == "list":
             return cmd_list()
         if a.cmd == "sync":
-            return cmd_sync(a.expect)
+            return finish(cmd_sync(a.expect))
         if a.cmd == "reissue":
-            return cmd_reissue(a.name, a.expect)
+            return finish(cmd_reissue(a.name, a.expect))
         if a.cmd == "renew":
             return cmd_renew(a.name, a.expect)
         return cmd_rotate(a.name, a.expect)

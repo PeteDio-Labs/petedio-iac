@@ -107,10 +107,13 @@ data "cloudflare_zero_trust_access_service_tokens" "agents" {
 }
 
 locals {
-  agent_token_ids = length(local.agent_routes) == 0 ? {} : {
+  # Grouped, so two tokens with one name give a list of two ids, not a "Duplicate object key"
+  # error that stops every route. The policy's precondition refuses the duplicate by name.
+  agent_token_id_lists = length(local.agent_routes) == 0 ? {} : {
     for t in data.cloudflare_zero_trust_access_service_tokens.agents[0].result :
-    trimprefix(t.name, "agent-") => t.id if startswith(t.name, "agent-")
+    trimprefix(t.name, "agent-") => t.id... if startswith(t.name, "agent-")
   }
+  agent_token_ids = { for n, ids in local.agent_token_id_lists : n => ids[0] if length(ids) == 1 }
 }
 
 # Service Auth for agents: a non_identity policy matches a service token, never a person. A
@@ -124,6 +127,10 @@ resource "cloudflare_zero_trust_access_policy" "route_agents" {
   include    = [for a in each.value.agents : { service_token = { token_id = lookup(local.agent_token_ids, a, "") } }]
 
   lifecycle {
+    precondition {
+      condition     = alltrue([for a in each.value.agents : length(lookup(local.agent_token_id_lists, a, [])) <= 1])
+      error_message = "Cloudflare holds more than one agent-<name> token for an agent on this route. Delete the extra one under Access > Service credentials, then run keys.yml action=sync."
+    }
     precondition {
       condition     = alltrue([for a in each.value.agents : contains(keys(local.agent_token_ids), a)])
       error_message = "A route lists an agent with no service token. Add it to secrets/callers.yml and run keys.yml action=sync first."
