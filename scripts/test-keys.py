@@ -6,7 +6,11 @@ No network and no credentials. It proves the parts a live run cannot show safely
   - a failed Vault write deletes the token it just created
   - sync revokes an agent removed from callers.yml, in Cloudflare and in Vault
   - sync refuses when the plan digest changed after approval
-  - rotate keeps a 24-hour overlap and writes the new secret
+  - rotate keeps a 24-hour overlap, writes the new secret and never calls /refresh
+  - sync refuses, changing nothing, when Cloudflare lost a token or holds a stray one
+  - reissue repairs a lost token with a fresh 90 days
+  - a revoke finishes when Cloudflare already deleted the token
+  - an agent name with a trailing newline is refused
 Run: python3 scripts/test-keys.py
 """
 from __future__ import annotations
@@ -34,6 +38,8 @@ class Fake:
         self.n = 0
         self.fail_vault_write = fail_vault_write
         self.rotate_bodies: list[dict] = []
+        self.create_bodies: list[dict] = []
+        self.refreshes = 0
 
     def __call__(self, method, url, headers, body, ctx):
         if url.startswith("https://vault"):
@@ -70,6 +76,7 @@ class Fake:
         if method == "GET":
             return 200, {"success": True, "result": list(self.cf.values()), "result_info": {"total_pages": 1}}
         if method == "POST" and tail == "":
+            self.create_bodies.append(body)
             self.n += 1
             t = {"id": f"id{self.n}", "name": body["name"], "client_id": f"cid{self.n}.access",
                  "expires_at": "2027-02-07T00:00:00Z"}
@@ -77,13 +84,16 @@ class Fake:
             return 200, {"success": True, "result": dict(t, client_secret=SECRET)}
         tid = tail.strip("/").split("/")[0]
         if method == "DELETE":
-            self.cf.pop(tid, None)
+            if tid not in self.cf:
+                return 404, {"success": False, "errors": [{"message": "not found"}]}
+            self.cf.pop(tid)
             return 200, {"success": True, "result": {"id": tid}}
         if tail.endswith("/rotate"):
             self.rotate_bodies.append(body)
             return 200, {"success": True, "result": dict(self.cf[tid], client_secret="e" * 64)}
         if tail.endswith("/refresh"):
-            return 200, {"success": True, "result": dict(self.cf[tid], expires_at="2027-03-01T00:00:00Z")}
+            self.refreshes += 1  # refresh extends by a year, so keys.py must never call it
+            return 500, {"success": False}
         return 500, {"success": False}
 
 
@@ -111,8 +121,8 @@ def run(fake: Fake, path: str, argv: list[str]) -> tuple[int, str]:
     return rc, out.getvalue()
 
 
-def digest(fake: Fake, path: str, rotate: str | None = None) -> str:
-    rc, out = run(fake, path, ["plan"] + (["--rotate", rotate] if rotate else []))
+def digest(fake: Fake, path: str, rotate: str | None = None, verb: str = "rotate") -> str:
+    rc, out = run(fake, path, ["plan"] + ([f"--{verb}", rotate] if rotate else []))
     assert rc == 0, out
     return out.rsplit("plan-digest ", 1)[1].strip()
 
@@ -133,6 +143,7 @@ def main() -> int:
     assert fake.vault["batsy"]["custom"]["owner"] == "sonia"
     assert SECRET not in out, "sync printed a secret"
     assert "created 2, revoked 0" in out, out
+    assert all(b["duration"] == "2160h" for b in fake.create_bodies), fake.create_bodies
     passed += 1
 
     # 2. a second sync has nothing to do
@@ -164,7 +175,8 @@ def main() -> int:
     assert rc == 0, out
     assert "previous_client_secret_expires_at" in fake.rotate_bodies[0]
     assert json.loads(fake.vault["bobbert"]["data"]["header"])["cf-access-client-secret"] == "e" * 64
-    assert fake.vault["bobbert"]["custom"]["expires_at"] == "2027-03-01T00:00:00Z"
+    assert fake.vault["bobbert"]["custom"]["expires_at"] == "2027-02-07T00:00:00Z"
+    assert fake.refreshes == 0, "rotate called /refresh"
     assert "e" * 64 not in out
     passed += 1
 
@@ -173,8 +185,42 @@ def main() -> int:
     assert rc == 0 and "bobbert: owner pedro, version 2" in out, out
     passed += 1
 
-    print(f"test-keys: {passed} of 7 cases passed")
-    return 0 if passed == 7 else 1
+    # 8. a token deleted in the dashboard: sync refuses and changes nothing; reissue repairs it
+    fake.cf.clear()
+    before = json.dumps(fake.vault, sort_keys=True)
+    rc, out = run(fake, one, ["sync", "--expect", digest(fake, one)])
+    assert rc == 1 and "action=reissue name=bobbert" in out and "nothing changed" in out, out
+    assert json.dumps(fake.vault, sort_keys=True) == before and fake.cf == {}
+    rc, out = run(fake, one, ["reissue", "bobbert", "--expect", digest(fake, one, "bobbert", "reissue")])
+    assert rc == 0 and "already absent" in out, out
+    assert len(fake.cf) == 1 and fake.vault["bobbert"]["custom"]["token_id"] in fake.cf
+    assert fake.create_bodies[-1]["duration"] == "2160h" and SECRET not in out
+    passed += 1
+
+    # 9. a stray agent-* token: sync refuses and leaves it for Pedro to judge
+    fake.cf["stray"] = {"id": "stray", "name": "agent-ghost", "client_id": "x.access", "expires_at": ""}
+    rc, out = run(fake, one, ["sync", "--expect", digest(fake, one)])
+    assert rc == 1 and "agent-ghost" in out and "stray" in fake.cf, out
+    fake.cf.pop("stray")
+    passed += 1
+
+    # 10. a revoke whose Cloudflare token is already gone still destroys the Vault entry
+    fake2, two = Fake(), both
+    run(fake2, two, ["sync", "--expect", digest(fake2, two)])
+    gone = fake2.vault["batsy"]["custom"]["token_id"]
+    fake2.cf.pop(gone)
+    rc, out = run(fake2, one, ["sync", "--expect", digest(fake2, one)])
+    assert rc == 0 and "revoked 1" in out and "already absent" in out, out
+    assert "batsy" not in fake2.vault
+    passed += 1
+
+    # 11. a name with a trailing newline is refused
+    rc, out = run(fake, one, ["plan", "--rotate", "bobbert\n"])
+    assert rc == 1 and "REFUSED" in out, out
+    passed += 1
+
+    print(f"test-keys: {passed} of 11 cases passed")
+    return 0 if passed == 11 else 1
 
 
 if __name__ == "__main__":

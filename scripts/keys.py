@@ -14,11 +14,16 @@ Commands:
                      digest. Needs VAULT_ADDR and VAULT_TOKEN (the keys-list role).
   list               read Vault metadata and print each agent's owner, version and expiry.
   sync --expect D    create a token for each agent that has none and revoke each token whose
-                     agent left callers.yml. Refuses unless the plan digest still equals D.
+                     agent left callers.yml. Refuses unless the plan digest still equals D,
+                     and refuses before any change when Cloudflare disagrees with Vault.
                      Needs the keys-sync role, which reads the Cloudflare token.
   rotate NAME --expect D
-                     replace NAME's secret, keep the old one valid for 24 hours, and extend
-                     the token's expiry.
+                     replace NAME's secret and keep the old one valid for 24 hours. The
+                     token's expiry does not change.
+  reissue NAME --expect D
+                     delete NAME's token and create one with a fresh 90 days. The old secret
+                     stops at once. Use it to renew an expiry, to cut off a leaked secret, or
+                     when Cloudflare lost the token Vault describes.
 
 What it never does: print a secret, write one to a file, or put one in argv. Inside GitHub
 Actions it registers each new secret with ::add-mask:: before anything else can print it. A
@@ -97,7 +102,7 @@ def validate(data: dict) -> tuple[list[str], dict[str, dict]]:
     known = set()
     for p in people:
         n = (p or {}).get("name") if isinstance(p, dict) else None
-        if not isinstance(n, str) or not NAME_RE.match(n):
+        if not isinstance(n, str) or not NAME_RE.fullmatch(n):
             problems.append(f"person {p!r}: name must match {NAME_RE.pattern}")
             continue
         if n in known:
@@ -114,7 +119,7 @@ def validate(data: dict) -> tuple[list[str], dict[str, dict]]:
             problems.append(f"agent {n}: mtrace must be read or write")
         if extra:
             problems.append(f"agent {n}: unknown field(s) {sorted(extra)}")
-        if not isinstance(n, str) or not NAME_RE.match(n):
+        if not isinstance(n, str) or not NAME_RE.fullmatch(n):
             problems.append(f"agent {n!r}: name must match {NAME_RE.pattern}")
             continue
         if n in by_name:
@@ -283,8 +288,11 @@ class Cloudflare:
         self.headers = {"Authorization": f"Bearer {token}"}
         self.ctx = _ctx(None)
 
-    def _call(self, method: str, suffix: str = "", body: dict | None = None, what: str = "") -> dict:
+    def _call(self, method: str, suffix: str = "", body: dict | None = None, what: str = "",
+              missing_ok: bool = False) -> dict | None:
         code, j = _request(method, self.base + suffix, self.headers, body, self.ctx)
+        if missing_ok and code == 404:
+            return None
         if code >= 300 or not j.get("success", False):
             msgs = "; ".join(str(e.get("message", "")) for e in j.get("errors", []) if isinstance(e, dict))
             raise Fail(f"Cloudflare {what or method} returned {code}: {msgs or 'no error message'}")
@@ -312,11 +320,12 @@ class Cloudflare:
         until = (dt.datetime.now(dt.timezone.utc) + ROTATE_OVERLAP).strftime("%Y-%m-%dT%H:%M:%SZ")
         return self._call("POST", f"/{token_id}/rotate", {"previous_client_secret_expires_at": until}, f"rotate {name}")
 
-    def refresh(self, token_id: str, name: str) -> dict:
-        return self._call("POST", f"/{token_id}/refresh", {}, f"refresh {name}")
+    # No refresh(): Cloudflare's refresh extends a token by one year, not by its own 90 days
+    # (Codex review of petedio-iac#685). To renew, reissue.
 
-    def delete(self, token_id: str, name: str) -> None:
-        self._call("DELETE", f"/{token_id}", what=f"delete {name}")
+    def delete(self, token_id: str, name: str) -> bool:
+        """Delete a token. Returns False when Cloudflare no longer has it, so a retry can finish."""
+        return self._call("DELETE", f"/{token_id}", what=f"delete {name}", missing_ok=True) is not None
 
 
 def mask(*values: str) -> None:
@@ -335,13 +344,18 @@ def header_value(client_id: str, client_secret: str) -> str:
 
 # ------------------------------------------------------------------------------------- plan/sync
 
-def compute_plan(agents: dict[str, dict], in_vault: list[str], rotate: str | None) -> tuple[list[str], str]:
-    if rotate:
-        if rotate not in agents:
-            raise Fail(f"{rotate} is not in callers.yml")
-        if rotate not in in_vault:
-            raise Fail(f"{rotate} has no token yet. Run sync first.")
-        actions = [f"rotate {rotate}"]
+def compute_plan(agents: dict[str, dict], in_vault: list[str], target: str | None = None,
+                 verb: str = "rotate") -> tuple[list[str], str]:
+    if target:
+        if verb not in ("rotate", "reissue"):
+            raise Fail(f"unknown action {verb}")
+        if not NAME_RE.fullmatch(target):
+            raise Fail("the agent name must match ^[a-z][a-z0-9-]{1,30}$")
+        if target not in agents:
+            raise Fail(f"{target} is not in callers.yml")
+        if target not in in_vault:
+            raise Fail(f"{target} has no token yet. Run sync first.")
+        actions = [f"{verb} {target}"]
     else:
         actions = [f"create {n}" for n in sorted(set(agents) - set(in_vault))]
         actions += [f"revoke {n}" for n in sorted(set(in_vault) - set(agents))]
@@ -349,13 +363,18 @@ def compute_plan(agents: dict[str, dict], in_vault: list[str], rotate: str | Non
     return actions, digest
 
 
-def cmd_plan(rotate: str | None) -> int:
+def cmd_plan(target: str | None, verb: str) -> int:
     _, agents = _valid_agents()
     vault = Vault()
     in_vault = vault.list_agents()
-    actions, digest = compute_plan(agents, in_vault, rotate)
+    actions, digest = compute_plan(agents, in_vault, target, verb)
     for a in actions:
         print(f"plan: {a}")
+    if any(a.startswith("create ") for a in actions):
+        print("plan: each create first deletes an agent-<name> token that has no Vault entry, "
+              "since nobody holds its secret")
+    if not target:
+        print("plan: apply refuses, and changes nothing, if Cloudflare disagrees with Vault")
     print(f"keys plan: read {len(agents)} agents in callers.yml and {len(in_vault)} Vault entries; "
           f"{len(actions)} actions; plan-digest {digest}")
     out = os.environ.get("GITHUB_OUTPUT")
@@ -414,6 +433,23 @@ def cmd_sync(expect: str) -> int:
         raise Fail(f"the plan changed since it was approved (digest {digest}, approved {expect}). Run sync again.")
     cf = Cloudflare(*vault.cf_credentials())
     tokens = cf.list_agent_tokens()
+    ids = {t.get("id") for t in tokens.values()}
+    # Reconcile both stores before any change. The plan reads Vault only, so anything that
+    # Cloudflare alone reveals was not approved: say what it is and change nothing.
+    drift = []
+    for name in sorted(set(agents) & set(in_vault)):
+        token_id = (vault.metadata(name).get("custom_metadata") or {}).get("token_id")
+        if not token_id or token_id not in ids:
+            drift.append(f"{name}: Vault holds a token Cloudflare does not have. "
+                         f"Dispatch keys.yml action=reissue name={name}.")
+    for name in sorted(set(tokens) - set(agents) - set(in_vault)):
+        drift.append(f"{TOKEN_PREFIX}{name}: a Cloudflare token that callers.yml and Vault do not know. "
+                     "Delete it under Access > Service credentials, or add the agent to callers.yml.")
+    if drift:
+        for d in drift:
+            print(f"sync: drift: {d}")
+        raise Fail(f"{len(drift)} drift findings after reading {len(agents)} agents, {len(in_vault)} Vault entries "
+                   f"and {len(tokens)} Cloudflare agent tokens; nothing changed")
     created = revoked = 0
     for a in actions:
         verb, name = a.split(" ", 1)
@@ -440,44 +476,47 @@ def cmd_sync(expect: str) -> int:
                   f"Vault version {version}, expires {t.get('expires_at', '?')}")
         else:
             md = vault.metadata(name)
-            token_id = (md.get("custom_metadata") or {}).get("token_id") or (tokens.get(name) or {}).get("id")
-            if token_id:
-                cf.delete(token_id, name)
+            want = {(md.get("custom_metadata") or {}).get("token_id"), (tokens.get(name) or {}).get("id")} - {None, ""}
+            # A token Cloudflare no longer has counts as deleted, so a retry after a failed
+            # Vault delete finishes the revoke instead of failing on Cloudflare's 404.
+            deleted = sum(cf.delete(tid, name) for tid in sorted(want))
             vault.destroy(name)
             revoked += 1
-            print(f"sync: revoked {TOKEN_PREFIX}{name}; Cloudflare token {'deleted' if token_id else 'was absent'}, Vault entry destroyed")
-    # Strays: an agent-* token Cloudflare holds that neither callers.yml nor Vault knows.
-    strays = sorted(set(tokens) - set(agents) - set(in_vault))
-    for name in strays:
-        cf.delete(tokens[name]["id"], name)
-        revoked += 1
-        print(f"sync: deleted stray {TOKEN_PREFIX}{name}")
+            print(f"sync: revoked {TOKEN_PREFIX}{name}; Cloudflare token "
+                  f"{'deleted' if deleted else 'was already absent'}, Vault entry destroyed")
     print(f"keys sync: read {len(agents)} agents, {len(in_vault)} Vault entries, {len(tokens)} Cloudflare agent tokens; "
           f"created {created}, revoked {revoked}, kept {len(agents) - created}")
     return 0
 
 
-def cmd_rotate(name: str, expect: str) -> int:
+def _approved(name: str, verb: str, expect: str) -> tuple[dict, "Vault", dict, "Cloudflare", dict]:
     _, agents = _valid_agents()
     vault = Vault()
     in_vault = vault.list_agents()
-    _, digest = compute_plan(agents, in_vault, name)
+    _, digest = compute_plan(agents, in_vault, name, verb)
     if digest != expect:
         raise Fail(f"the plan changed since it was approved (digest {digest}, approved {expect})")
-    md = vault.metadata(name)
-    cm = md.get("custom_metadata") or {}
+    cm = vault.metadata(name).get("custom_metadata") or {}
+    cf = Cloudflare(*vault.cf_credentials())
+    return agents, vault, cm, cf, cf.list_agent_tokens()
+
+
+def cmd_rotate(name: str, expect: str) -> int:
+    agents, vault, cm, cf, tokens = _approved(name, "rotate", expect)
     token_id, client_id = cm.get("token_id"), cm.get("client_id")
     if not token_id or not client_id:
-        raise Fail(f"Vault metadata for {name} lacks token_id or client_id")
-    cf = Cloudflare(*vault.cf_credentials())
+        raise Fail(f"Vault metadata for {name} lacks token_id or client_id. Dispatch action=reissue.")
+    live = next((t for t in tokens.values() if t.get("id") == token_id), None)
+    if live is None:
+        raise Fail(f"Cloudflare has no token {token_id} for {name}. Dispatch action=reissue name={name}.")
     t = cf.rotate(token_id, name)
     secret = t.get("client_secret", "")
     client_id = t.get("client_id") or client_id
     mask(secret, header_value(client_id, secret))
     if not secret:
         raise Fail(f"Cloudflare rotate {name} returned no secret. The old one stays valid for 24 hours; run rotate again.")
-    r = cf.refresh(token_id, name)
-    expires = r.get("expires_at") or t.get("expires_at", "")
+    # Rotating replaces the secret only; the token keeps its expiry.
+    expires = t.get("expires_at") or live.get("expires_at") or cm.get("expires_at", "")
     try:
         version = vault.write(name, {"header": header_value(client_id, secret), "client_id": client_id},
                               {"owner": agents[name]["owner"], "token_id": token_id, "client_id": client_id,
@@ -489,19 +528,44 @@ def cmd_rotate(name: str, expect: str) -> int:
     return 0
 
 
+def cmd_reissue(name: str, expect: str) -> int:
+    agents, vault, cm, cf, tokens = _approved(name, "reissue", expect)
+    old = {cm.get("token_id"), (tokens.get(name) or {}).get("id")} - {None, ""}
+    deleted = sum(cf.delete(tid, name) for tid in sorted(old))
+    t = cf.create(name)
+    mask(t.get("client_secret", ""), header_value(t.get("client_id", ""), t.get("client_secret", "")))
+    if not t.get("client_secret") or not t.get("id"):
+        raise Fail(f"Cloudflare create {name} returned no secret or id. Dispatch reissue again.")
+    try:
+        version = vault.write(name, {"header": header_value(t["client_id"], t["client_secret"]),
+                                     "client_id": t["client_id"]},
+                              {"owner": agents[name]["owner"], "token_id": t["id"],
+                               "client_id": t["client_id"], "expires_at": t.get("expires_at", "")})
+    except Fail:
+        cf.delete(t["id"], name)  # never leave a token whose secret nobody holds
+        raise
+    print(f"keys reissue: {TOKEN_PREFIX}{name} reissued, old token {'deleted' if deleted else 'was already absent'}, "
+          f"Vault version {version}, expires {t.get('expires_at', '?')}. "
+          f"The old secret no longer works; tell {agents[name]['owner']} to update the agent.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check")
     sub.add_parser("self-test")
     p = sub.add_parser("plan")
-    p.add_argument("--rotate", metavar="NAME")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--rotate", metavar="NAME")
+    g.add_argument("--reissue", metavar="NAME")
     sub.add_parser("list")
     s = sub.add_parser("sync")
     s.add_argument("--expect", required=True)
-    r = sub.add_parser("rotate")
-    r.add_argument("name")
-    r.add_argument("--expect", required=True)
+    for verb in ("rotate", "reissue"):
+        r = sub.add_parser(verb)
+        r.add_argument("name")
+        r.add_argument("--expect", required=True)
     a = ap.parse_args()
     try:
         if a.cmd == "check":
@@ -509,11 +573,15 @@ def main() -> int:
         if a.cmd == "self-test":
             return cmd_self_test()
         if a.cmd == "plan":
-            return cmd_plan(a.rotate)
+            if a.reissue:
+                return cmd_plan(a.reissue, "reissue")
+            return cmd_plan(a.rotate, "rotate")
         if a.cmd == "list":
             return cmd_list()
         if a.cmd == "sync":
             return cmd_sync(a.expect)
+        if a.cmd == "reissue":
+            return cmd_reissue(a.name, a.expect)
         return cmd_rotate(a.name, a.expect)
     except Fail as e:
         print(f"keys {a.cmd}: REFUSED: {e}")

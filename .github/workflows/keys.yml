@@ -5,6 +5,7 @@
 #   sync    create a token per new agent in secrets/callers.yml and
 #           revoke each token whose agent left it                        lab-write tap
 #   rotate  replace one agent's secret, old one valid for 24 hours       lab-write tap
+#   reissue replace one agent's token with a fresh 90 days, old one cut  lab-write tap
 #
 # WHY. Every new caller used to be a Mac prompt: a seed script run with the root Vault token, a
 # redeploy and a pbcopy hand-off. A thread dispatches this workflow instead, and Pedro taps.
@@ -25,15 +26,16 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "list, sync or rotate"
+        description: "list, sync, rotate or reissue"
         required: true
         type: choice
         options:
           - list
           - sync
           - rotate
+          - reissue
       name:
-        description: "rotate only: the agent name from secrets/callers.yml"
+        description: "rotate and reissue only: the agent name from secrets/callers.yml"
         required: false
         type: string
         default: ""
@@ -44,6 +46,11 @@ on:
         default: ""
 
 permissions: {}
+
+# Bash, named: the steps use [[ =~ ]] and arrays.
+defaults:
+  run:
+    shell: bash
 
 env:
   VAULT_ADDR: https://192.168.50.223:8200
@@ -73,9 +80,12 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: |
           echo "action=$ACTION name=${NAME:-none} pet=${PET:-none} sha=$GITHUB_SHA actor=$ACTOR"
-          if [ "$ACTION" = rotate ] && ! printf '%s' "$NAME" | grep -Eq '^[a-z][a-z0-9-]{1,30}$'; then
-            echo "ABORT: rotate needs a valid agent name."; exit 1
-          fi
+          # [[ =~ ]] matches the whole string, so a name with a newline fails. grep would test
+          # each line alone and pass it (Codex review of petedio-iac#685).
+          case "$ACTION" in
+            rotate|reissue)
+              [[ "$NAME" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || { echo "ABORT: $ACTION needs a valid agent name."; exit 1; } ;;
+          esac
           command -v docker >/dev/null || { echo "ABORT: docker is not installed on this runner."; exit 1; }
 
       - name: Encode Vault CA
@@ -102,16 +112,18 @@ jobs:
           NAME: ${{ inputs.name }}
         run: |
           set -o pipefail
+          # The name reaches keys.py as an argument, never as shell source.
           case "$ACTION" in
-            list)   CMD='python3 scripts/keys.py list' ;;
-            sync)   CMD='python3 scripts/keys.py plan' ;;
-            rotate) CMD="python3 scripts/keys.py plan --rotate $NAME" ;;
+            list)           ARGS=(list) ;;
+            sync)           ARGS=(plan) ;;
+            rotate|reissue) ARGS=(plan "--$ACTION" "$NAME") ;;
             *) echo "ABORT: unknown action"; exit 1 ;;
           esac
           docker run --rm -v "$PWD:/w:ro" -w /w \
             -e PYTHONDONTWRITEBYTECODE=1 -e VAULT_ADDR -e VAULT_TOKEN \
             -e VAULT_CACERT=/w/environments/homelab/vault-ca.crt \
-            "$PY_IMAGE" sh -c "pip install -q --no-cache-dir 'pyyaml==6.0.2' && python3 scripts/keys.py check && $CMD" \
+            "$PY_IMAGE" sh -c 'pip install -q --no-cache-dir "pyyaml==6.0.2" && python3 scripts/keys.py check && exec python3 scripts/keys.py "$@"' \
+            sh "${ARGS[@]}" \
             | tee plan.log
           digest="$(sed -n 's/.*plan-digest \([0-9a-f]\{16\}\)$/\1/p' plan.log | tail -1)"
           if [ "$ACTION" != list ] && [ -z "$digest" ]; then
@@ -165,14 +177,17 @@ jobs:
         run: |
           set -o pipefail
           printf '%s' "$DIGEST" | grep -Eq '^[0-9a-f]{16}$' || { echo "ABORT: no approved digest."; exit 1; }
-          if [ "$ACTION" = rotate ]; then
-            CMD="python3 scripts/keys.py rotate $NAME --expect $DIGEST"
-          else
-            CMD="python3 scripts/keys.py sync --expect $DIGEST"
-          fi
+          case "$ACTION" in
+            rotate|reissue)
+              [[ "$NAME" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || { echo "ABORT: $ACTION needs a valid agent name."; exit 1; }
+              ARGS=("$ACTION" "$NAME" --expect "$DIGEST") ;;
+            sync) ARGS=(sync --expect "$DIGEST") ;;
+            *) echo "ABORT: unknown action"; exit 1 ;;
+          esac
           # GITHUB_ACTIONS reaches the container so keys.py registers each new secret with
           # ::add-mask:: before anything else prints.
           docker run --rm -v "$PWD:/w:ro" -w /w \
             -e PYTHONDONTWRITEBYTECODE=1 -e GITHUB_ACTIONS -e VAULT_ADDR -e VAULT_TOKEN \
             -e VAULT_CACERT=/w/environments/homelab/vault-ca.crt \
-            "$PY_IMAGE" sh -c "pip install -q --no-cache-dir 'pyyaml==6.0.2' && $CMD"
+            "$PY_IMAGE" sh -c 'pip install -q --no-cache-dir "pyyaml==6.0.2" && exec python3 scripts/keys.py "$@"' \
+            sh "${ARGS[@]}"

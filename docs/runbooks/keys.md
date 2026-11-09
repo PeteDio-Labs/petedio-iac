@@ -48,15 +48,34 @@ A route that lists an agent with no token fails its plan with a precondition. Ru
 ## Rotate
 
 Dispatch `keys.yml` with `action=rotate` and `name=<agent>`, then approve. The old secret keeps
-working for 24 hours, and the token's 90 days restart. The owner replaces the stored value in the
-agent within that window. For a Muse agent, that is `request_api_access` with `reconnect: true`.
+working for 24 hours. The token keeps its expiry. The owner replaces the stored value in the agent
+within that window. For a Muse agent, that is `request_api_access` with `reconnect: true`.
+
+## Renew or reissue
+
+To renew a token before it expires, dispatch `action=reissue` with `name=<agent>`, then approve.
+It deletes the token and creates one with a fresh 90 days, so the old secret stops at once. Tell
+the owner first, because the agent is refused until they store the new value. Use reissue also
+to cut off a leaked secret. `keys.py` never calls Cloudflare's refresh, which extends a token by
+one year.
+
+## Drift
+
+`sync` lists Cloudflare's `agent-*` tokens before it changes anything. It refuses, and changes
+nothing, in two cases:
+
+- Vault describes a token that Cloudflare no longer has, for example after a dashboard delete.
+  Run `action=reissue` for that agent.
+- Cloudflare holds an `agent-*` token that `callers.yml` and Vault do not know. Delete it under
+  **Access > Service credentials**, or add the agent to `callers.yml`.
 
 ## Revoke
 
 Delete the agent from `secrets/callers.yml` and from every route's `agents` list, merge, then run
 `sync`. It deletes the Cloudflare token and destroys the Vault entry. Every route refuses the token
-at once. To cut a token off before a PR can merge, delete it in the Cloudflare dashboard under
-**Access > Service credentials**. The next `sync` then recreates it if the agent is still listed.
+at once. A token that Cloudflare already deleted counts as revoked, so a retry finishes. To cut a
+token off before a PR can merge, delete it in the Cloudflare dashboard under **Access > Service
+credentials**. The next `sync` then refuses for that agent until you run `reissue`.
 
 ## What the log shows
 
