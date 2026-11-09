@@ -28,7 +28,7 @@ import sys
 
 ALLOWED_TYPES = {"vault_policy", "vault_jwt_auth_backend_role", "vault_ssh_secret_backend_role"}
 PROTECTED_ADDR = re.compile(
-    r"^(vault_policy|vault_jwt_auth_backend_role)\.(vault_config_\w+|breakglass\w*|claude_ops\w*)(\[.*\])?$"
+    r"^(vault_policy|vault_jwt_auth_backend_role)\.(vault_config_\w+|breakglass\w*|claude_ops\w*|keys_\w+)(\[.*\])?$"
     r"|^vault_ssh_secret_backend_role\.(lab_runner|pedro)(\[.*\])?$"
 )
 # A JWT role may attach only these policies, or the policies it already had. The set is an

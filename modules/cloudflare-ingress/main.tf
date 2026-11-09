@@ -45,6 +45,10 @@ locals {
   ingress_rules = concat(local.route_rules, [local.catch_all])
 
   access_routes = { for h, r in var.routes : h => r if r.access }
+  agent_routes  = { for h, r in local.access_routes : h => r if length(r.agents) > 0 }
+
+  # The one header an agent sends its service token in (read_service_tokens_from_header).
+  agent_token_header = "Cf-Access-Token"
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
@@ -93,6 +97,40 @@ resource "cloudflare_zero_trust_access_policy" "route" {
   )
 }
 
+# The agents' service tokens, by name. keys.yml creates each one as agent-<name>
+# (scripts/keys.py). Read only when a route lists agents, so a plan with none never calls the
+# service-token API.
+data "cloudflare_zero_trust_access_service_tokens" "agents" {
+  count      = length(local.agent_routes) > 0 ? 1 : 0
+  account_id = var.account_id
+  max_items  = 1000
+}
+
+locals {
+  agent_token_ids = length(local.agent_routes) == 0 ? {} : {
+    for t in data.cloudflare_zero_trust_access_service_tokens.agents[0].result :
+    trimprefix(t.name, "agent-") => t.id if startswith(t.name, "agent-")
+  }
+}
+
+# Service Auth for agents: a non_identity policy matches a service token, never a person. A
+# route gets one only when it lists agents, so every other route plans unchanged.
+resource "cloudflare_zero_trust_access_policy" "route_agents" {
+  for_each = local.agent_routes
+
+  account_id = var.account_id
+  name       = "${each.key} — agents"
+  decision   = "non_identity"
+  include    = [for a in each.value.agents : { service_token = { token_id = lookup(local.agent_token_ids, a, "") } }]
+
+  lifecycle {
+    precondition {
+      condition     = alltrue([for a in each.value.agents : contains(keys(local.agent_token_ids), a)])
+      error_message = "A route lists an agent with no service token. Add it to secrets/callers.yml and run keys.yml action=sync first."
+    }
+  }
+}
+
 resource "cloudflare_zero_trust_access_application" "route" {
   for_each = local.access_routes
 
@@ -107,7 +145,16 @@ resource "cloudflare_zero_trust_access_application" "route" {
   # v5 `policies` is a list of objects (ListNestedAttribute), not bare IDs. A bare-string
   # element passes `terraform validate` (the for_each .id is unknown at validate time) but
   # FAILS the apply plan with "object required, but have string". Use the { id = ... } form.
-  policies = [{ id = cloudflare_zero_trust_access_policy.route[each.key].id }]
+  policies = concat(
+    [{ id = cloudflare_zero_trust_access_policy.route[each.key].id }],
+    contains(keys(local.agent_routes), each.key) ? [{ id = cloudflare_zero_trust_access_policy.route_agents[each.key].id }] : [],
+  )
+
+  # Agents send their service token as one JSON header, because Muse can send only one custom
+  # header (2026-11-09). A refused agent gets a 401, not a redirect to the login page. Both stay
+  # null on a route with no agents, so those apps plan unchanged.
+  read_service_tokens_from_header = contains(keys(local.agent_routes), each.key) ? local.agent_token_header : null
+  service_auth_401_redirect       = contains(keys(local.agent_routes), each.key) ? true : null
 
   # Managed OAuth (PET-292). Present only for routes that asked for it, so every
   # existing app keeps oauth_configuration unset and plans clean.

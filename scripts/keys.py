@@ -1,0 +1,499 @@
+#!/usr/bin/env python3
+"""keys.py: make Cloudflare Access service tokens and Vault match secrets/callers.yml.
+
+Each agent in secrets/callers.yml gets one Cloudflare Access service token, named
+`agent-<name>`. The token's one-header value lives in Vault at kv/callers/edge/<name>, field
+`header`, and the agent's owner copies it from there into the agent's own credential store.
+A route lets an agent through when its `agents` list names it (modules/cloudflare-ingress).
+
+Commands:
+  check              offline: validate callers.yml and every `agents = [...]` list in
+                     environments/homelab. No credentials. Runs on every pull request.
+  self-test          prove that check fails on a bad callers file.
+  plan               read Vault metadata and print what sync would create and revoke, with a
+                     digest. Needs VAULT_ADDR and VAULT_TOKEN (the keys-list role).
+  list               read Vault metadata and print each agent's owner, version and expiry.
+  sync --expect D    create a token for each agent that has none and revoke each token whose
+                     agent left callers.yml. Refuses unless the plan digest still equals D.
+                     Needs the keys-sync role, which reads the Cloudflare token.
+  rotate NAME --expect D
+                     replace NAME's secret, keep the old one valid for 24 hours, and extend
+                     the token's expiry.
+
+What it never does: print a secret, write one to a file, or put one in argv. Inside GitHub
+Actions it registers each new secret with ::add-mask:: before anything else can print it. A
+Cloudflare error prints the status and the error messages only, never the response body,
+because a create or rotate response carries the secret.
+
+Every command ends with a line that says what it examined, and exits 2 when it examined nothing,
+so "0 problems" cannot hide "0 read" (the PET-298 shape).
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import glob
+import hashlib
+import json
+import os
+import re
+import ssl
+import sys
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+CALLERS = os.environ.get("KEYS_CALLERS") or os.path.join(REPO_ROOT, "secrets", "callers.yml")
+ROUTE_GLOB = os.path.join(REPO_ROOT, "environments", "homelab", "*.tf")
+
+NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+TOKEN_PREFIX = "agent-"
+VAULT_MOUNT = "kv"
+VAULT_PREFIX = "callers/edge"
+CF_CRED_PATH = "services/keys-cloudflare"
+CF_API = "https://api.cloudflare.com/client/v4"
+# 90 days (Pedro, 2026-11-09). The register's nightly check warns 21 days ahead.
+TOKEN_DURATION = "2160h"
+ROTATE_OVERLAP = dt.timedelta(hours=24)
+EXPIRY_WARN = dt.timedelta(days=21)
+# `agents = ["bobbert", "batsy"]` on a route. Matches one line, as terraform fmt writes it.
+AGENTS_LIST = re.compile(r'^\s*agents\s*=\s*\[([^\]]*)\]', re.M)
+
+
+class Fail(Exception):
+    """A refusal: the message says what was refused and why. Exit 1."""
+
+
+# ---------------------------------------------------------------------------------- callers file
+
+def load_callers(path: str) -> dict:
+    try:
+        import yaml
+    except ImportError:  # fail closed: a checker that cannot read its input checks nothing
+        print("keys: PyYAML is not installed, so nothing was examined.", file=sys.stderr)
+        sys.exit(2)
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        raise Fail(f"{path} is not a mapping")
+    return data
+
+
+def validate(data: dict) -> tuple[list[str], dict[str, dict]]:
+    """Return (problems, agents by name)."""
+    problems: list[str] = []
+    if data.get("version") != 1:
+        problems.append("version must be 1")
+    people = data.get("people") or []
+    agents = data.get("agents") or []
+    if not isinstance(people, list) or not isinstance(agents, list):
+        return ["people and agents must be lists"], {}
+    known = set()
+    for p in people:
+        n = (p or {}).get("name") if isinstance(p, dict) else None
+        if not isinstance(n, str) or not NAME_RE.match(n):
+            problems.append(f"person {p!r}: name must match {NAME_RE.pattern}")
+            continue
+        if n in known:
+            problems.append(f"person {n}: listed twice")
+        known.add(n)
+    by_name: dict[str, dict] = {}
+    for a in agents:
+        if not isinstance(a, dict):
+            problems.append(f"agent {a!r}: must be a mapping")
+            continue
+        n, owner = a.get("name"), a.get("owner")
+        extra = set(a) - {"name", "owner", "note"}
+        if extra:
+            problems.append(f"agent {n}: unknown field(s) {sorted(extra)}")
+        if not isinstance(n, str) or not NAME_RE.match(n):
+            problems.append(f"agent {n!r}: name must match {NAME_RE.pattern}")
+            continue
+        if n in by_name:
+            problems.append(f"agent {n}: listed twice")
+        if n in known:
+            problems.append(f"agent {n}: has the same name as a person")
+        if owner not in known:
+            problems.append(f"agent {n}: owner {owner!r} is not in people")
+        by_name[n] = a
+    return problems, by_name
+
+
+def route_agents() -> tuple[dict[str, list[str]], int]:
+    """Return ({file: [agent names]}, files read) for every `agents = [...]` in the env."""
+    found: dict[str, list[str]] = {}
+    files = sorted(glob.glob(ROUTE_GLOB))
+    for path in files:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        for m in AGENTS_LIST.finditer(text):
+            names = re.findall(r'"([^"]*)"', m.group(1))
+            found.setdefault(os.path.relpath(path, REPO_ROOT), []).extend(names)
+    return found, len(files)
+
+
+def cmd_check(path: str) -> int:
+    data = load_callers(path)
+    problems, agents = validate(data)
+    refs, files = route_agents()
+    nrefs = 0
+    for f, names in refs.items():
+        for n in names:
+            nrefs += 1
+            if n not in agents:
+                problems.append(f"{f}: route lists agent {n!r}, which is not in callers.yml")
+    for p in problems:
+        print(f"FAIL {p}")
+    people = len(data.get("people") or [])
+    print(f"keys check: read {len(agents)} agents and {people} people in {os.path.relpath(path, REPO_ROOT)}, "
+          f"{nrefs} route agent references in {files} files; {len(problems)} problems")
+    if files == 0:
+        print("keys check: no Terraform files were read, so nothing was examined.", file=sys.stderr)
+        return 2
+    return 1 if problems else 0
+
+
+def cmd_self_test() -> int:
+    bad = (
+        "version: 1\npeople:\n  - name: pedro\nagents:\n"
+        "  - name: Bad_Name\n    owner: pedro\n"
+        "  - name: orphan\n    owner: nobody\n"
+        "  - name: twice\n    owner: pedro\n  - name: twice\n    owner: pedro\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as f:
+        f.write(bad)
+        tmp = f.name
+    try:
+        problems, _ = validate(load_callers(tmp))
+    finally:
+        os.unlink(tmp)
+    want = ["name must match", "owner 'nobody'", "listed twice"]
+    missing = [w for w in want if not any(w in p for p in problems)]
+    if missing:
+        print(f"keys self-test: FAILED, check did not catch {missing}")
+        return 1
+    print(f"keys self-test: a bad callers file produced {len(problems)} problems, as expected")
+    return 0
+
+
+# ---------------------------------------------------------------------------------------- HTTP
+
+def _ctx(cafile: str | None) -> ssl.SSLContext:
+    return ssl.create_default_context(cafile=cafile) if cafile else ssl.create_default_context()
+
+
+def _request(method: str, url: str, headers: dict, body: dict | None, ctx) -> tuple[int, dict]:
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+            raw = r.read()
+            return r.status, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, (json.loads(raw) if raw else {})
+        except ValueError:
+            return e.code, {}
+
+
+class Vault:
+    def __init__(self) -> None:
+        self.addr = os.environ.get("VAULT_ADDR", "").rstrip("/")
+        self.token = os.environ.get("VAULT_TOKEN", "")
+        if not self.addr or not self.token:
+            raise Fail("VAULT_ADDR and VAULT_TOKEN must be set")
+        self.ctx = _ctx(os.environ.get("VAULT_CACERT"))
+
+    def _call(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+        return _request(method, f"{self.addr}/v1/{path}", {"X-Vault-Token": self.token}, body, self.ctx)
+
+    def list_agents(self) -> list[str]:
+        code, j = self._call("LIST", f"{VAULT_MOUNT}/metadata/{VAULT_PREFIX}")
+        if code == 404:
+            return []  # Vault answers 404 to a LIST of an empty prefix
+        if code != 200:
+            raise Fail(f"Vault LIST {VAULT_MOUNT}/metadata/{VAULT_PREFIX} returned {code}")
+        return sorted(k for k in j.get("data", {}).get("keys", []) if not k.endswith("/"))
+
+    def metadata(self, name: str) -> dict:
+        code, j = self._call("GET", f"{VAULT_MOUNT}/metadata/{VAULT_PREFIX}/{name}")
+        if code != 200:
+            raise Fail(f"Vault metadata read for {name} returned {code}")
+        return j.get("data", {})
+
+    def write(self, name: str, data: dict, custom: dict) -> int:
+        code, j = self._call("POST", f"{VAULT_MOUNT}/data/{VAULT_PREFIX}/{name}", {"data": data})
+        if code not in (200, 204):
+            raise Fail(f"Vault write for {name} returned {code}")
+        version = j.get("data", {}).get("version", 0)
+        code, _ = self._call("POST", f"{VAULT_MOUNT}/metadata/{VAULT_PREFIX}/{name}", {"custom_metadata": custom})
+        if code not in (200, 204):
+            raise Fail(f"Vault metadata write for {name} returned {code}")
+        return version
+
+    def destroy(self, name: str) -> None:
+        code, _ = self._call("DELETE", f"{VAULT_MOUNT}/metadata/{VAULT_PREFIX}/{name}")
+        if code not in (200, 204):
+            raise Fail(f"Vault delete for {name} returned {code}")
+
+    def cf_credentials(self) -> tuple[str, str]:
+        code, j = self._call("GET", f"{VAULT_MOUNT}/data/{CF_CRED_PATH}")
+        if code != 200:
+            raise Fail(f"Vault read of kv/{CF_CRED_PATH} returned {code}. Run scripts/seed-keys-cloudflare.sh.")
+        d = j.get("data", {}).get("data", {})
+        token, account = d.get("api_token", ""), d.get("account_id", "")
+        if not token or not re.fullmatch(r"[0-9a-f]{32}", account):
+            raise Fail(f"kv/{CF_CRED_PATH} lacks api_token or a 32-hex account_id")
+        return token, account
+
+
+class Cloudflare:
+    def __init__(self, token: str, account: str) -> None:
+        self.base = f"{CF_API}/accounts/{account}/access/service_tokens"
+        self.headers = {"Authorization": f"Bearer {token}"}
+        self.ctx = _ctx(None)
+
+    def _call(self, method: str, suffix: str = "", body: dict | None = None, what: str = "") -> dict:
+        code, j = _request(method, self.base + suffix, self.headers, body, self.ctx)
+        if code >= 300 or not j.get("success", False):
+            msgs = "; ".join(str(e.get("message", "")) for e in j.get("errors", []) if isinstance(e, dict))
+            raise Fail(f"Cloudflare {what or method} returned {code}: {msgs or 'no error message'}")
+        return j.get("result") or {}
+
+    def list_agent_tokens(self) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        page = 1
+        while True:
+            code, j = _request("GET", f"{self.base}?per_page=100&page={page}", self.headers, None, self.ctx)
+            if code != 200 or not j.get("success", False):
+                raise Fail(f"Cloudflare list service tokens returned {code}")
+            for t in j.get("result") or []:
+                if t.get("name", "").startswith(TOKEN_PREFIX):
+                    out[t["name"][len(TOKEN_PREFIX):]] = t
+            info = j.get("result_info") or {}
+            if page >= int(info.get("total_pages") or 1):
+                return out
+            page += 1
+
+    def create(self, name: str) -> dict:
+        return self._call("POST", body={"name": TOKEN_PREFIX + name, "duration": TOKEN_DURATION}, what=f"create {name}")
+
+    def rotate(self, token_id: str, name: str) -> dict:
+        until = (dt.datetime.now(dt.timezone.utc) + ROTATE_OVERLAP).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return self._call("POST", f"/{token_id}/rotate", {"previous_client_secret_expires_at": until}, f"rotate {name}")
+
+    def refresh(self, token_id: str, name: str) -> dict:
+        return self._call("POST", f"/{token_id}/refresh", {}, f"refresh {name}")
+
+    def delete(self, token_id: str, name: str) -> None:
+        self._call("DELETE", f"/{token_id}", what=f"delete {name}")
+
+
+def mask(*values: str) -> None:
+    """Register secrets with the Actions log masker before anything else can print them."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        for v in values:
+            if v:
+                print(f"::add-mask::{v}", flush=True)
+
+
+def header_value(client_id: str, client_secret: str) -> str:
+    # One line, no spaces: Muse sends the stored string as the header value (2026-11-09).
+    return json.dumps({"cf-access-client-id": client_id, "cf-access-client-secret": client_secret},
+                      separators=(",", ":"))
+
+
+# ------------------------------------------------------------------------------------- plan/sync
+
+def compute_plan(agents: dict[str, dict], in_vault: list[str], rotate: str | None) -> tuple[list[str], str]:
+    if rotate:
+        if rotate not in agents:
+            raise Fail(f"{rotate} is not in callers.yml")
+        if rotate not in in_vault:
+            raise Fail(f"{rotate} has no token yet. Run sync first.")
+        actions = [f"rotate {rotate}"]
+    else:
+        actions = [f"create {n}" for n in sorted(set(agents) - set(in_vault))]
+        actions += [f"revoke {n}" for n in sorted(set(in_vault) - set(agents))]
+    digest = hashlib.sha256("\n".join(actions).encode()).hexdigest()[:16]
+    return actions, digest
+
+
+def cmd_plan(rotate: str | None) -> int:
+    _, agents = _valid_agents()
+    vault = Vault()
+    in_vault = vault.list_agents()
+    actions, digest = compute_plan(agents, in_vault, rotate)
+    for a in actions:
+        print(f"plan: {a}")
+    print(f"keys plan: read {len(agents)} agents in callers.yml and {len(in_vault)} Vault entries; "
+          f"{len(actions)} actions; plan-digest {digest}")
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a", encoding="utf-8") as f:
+            f.write(f"digest={digest}\nactions={len(actions)}\n")
+    return 0
+
+
+def cmd_list() -> int:
+    _, agents = _valid_agents()
+    vault = Vault()
+    in_vault = vault.list_agents()
+    now = dt.datetime.now(dt.timezone.utc)
+    expired = 0
+    for n in sorted(set(agents) | set(in_vault)):
+        if n not in in_vault:
+            print(f"{n}: no token (sync creates it)")
+            continue
+        md = vault.metadata(n)
+        cm = md.get("custom_metadata") or {}
+        exp = cm.get("expires_at", "")
+        left = ""
+        try:
+            when = dt.datetime.fromisoformat(exp.replace("Z", "+00:00"))
+            days = (when - now).days
+            left = f", {days} days left"
+            if when <= now:
+                expired += 1
+                left = ", EXPIRED"
+            elif when - now <= EXPIRY_WARN:
+                left += " (rotate soon)"
+        except ValueError:
+            left = ", expiry unknown"
+        state = "in callers.yml" if n in agents else "NOT in callers.yml (sync revokes it)"
+        print(f"{n}: owner {cm.get('owner', '?')}, version {md.get('current_version', '?')}, "
+              f"expires {exp or '?'}{left}; {state}")
+    print(f"keys list: read {len(agents)} agents in callers.yml and {len(in_vault)} Vault entries; {expired} expired")
+    return 1 if expired else 0
+
+
+def _valid_agents() -> tuple[dict, dict[str, dict]]:
+    data = load_callers(CALLERS)
+    problems, agents = validate(data)
+    if problems:
+        raise Fail("callers.yml is invalid: " + "; ".join(problems))
+    return data, agents
+
+
+def cmd_sync(expect: str) -> int:
+    _, agents = _valid_agents()
+    vault = Vault()
+    in_vault = vault.list_agents()
+    actions, digest = compute_plan(agents, in_vault, None)
+    if digest != expect:
+        raise Fail(f"the plan changed since it was approved (digest {digest}, approved {expect}). Run sync again.")
+    cf = Cloudflare(*vault.cf_credentials())
+    tokens = cf.list_agent_tokens()
+    created = revoked = 0
+    for a in actions:
+        verb, name = a.split(" ", 1)
+        if verb == "create":
+            if name in tokens:
+                # A token with no Vault entry: an earlier run created it and failed before the
+                # write. Nobody holds its secret, so replacing it loses nothing.
+                cf.delete(tokens[name]["id"], name)
+                print(f"sync: deleted {TOKEN_PREFIX}{name}, which had no Vault entry")
+            t = cf.create(name)
+            mask(t.get("client_secret", ""), header_value(t.get("client_id", ""), t.get("client_secret", "")))
+            if not t.get("client_secret") or not t.get("id"):
+                raise Fail(f"Cloudflare create {name} returned no secret or id")
+            try:
+                version = vault.write(name, {"header": header_value(t["client_id"], t["client_secret"]),
+                                             "client_id": t["client_id"]},
+                                      {"owner": agents[name]["owner"], "token_id": t["id"],
+                                       "client_id": t["client_id"], "expires_at": t.get("expires_at", "")})
+            except Fail:
+                cf.delete(t["id"], name)  # never leave a token whose secret nobody holds
+                raise
+            created += 1
+            print(f"sync: created {TOKEN_PREFIX}{name} for owner {agents[name]['owner']}, "
+                  f"Vault version {version}, expires {t.get('expires_at', '?')}")
+        else:
+            md = vault.metadata(name)
+            token_id = (md.get("custom_metadata") or {}).get("token_id") or (tokens.get(name) or {}).get("id")
+            if token_id:
+                cf.delete(token_id, name)
+            vault.destroy(name)
+            revoked += 1
+            print(f"sync: revoked {TOKEN_PREFIX}{name}; Cloudflare token {'deleted' if token_id else 'was absent'}, Vault entry destroyed")
+    # Strays: an agent-* token Cloudflare holds that neither callers.yml nor Vault knows.
+    strays = sorted(set(tokens) - set(agents) - set(in_vault))
+    for name in strays:
+        cf.delete(tokens[name]["id"], name)
+        revoked += 1
+        print(f"sync: deleted stray {TOKEN_PREFIX}{name}")
+    print(f"keys sync: read {len(agents)} agents, {len(in_vault)} Vault entries, {len(tokens)} Cloudflare agent tokens; "
+          f"created {created}, revoked {revoked}, kept {len(agents) - created}")
+    return 0
+
+
+def cmd_rotate(name: str, expect: str) -> int:
+    _, agents = _valid_agents()
+    vault = Vault()
+    in_vault = vault.list_agents()
+    _, digest = compute_plan(agents, in_vault, name)
+    if digest != expect:
+        raise Fail(f"the plan changed since it was approved (digest {digest}, approved {expect})")
+    md = vault.metadata(name)
+    cm = md.get("custom_metadata") or {}
+    token_id, client_id = cm.get("token_id"), cm.get("client_id")
+    if not token_id or not client_id:
+        raise Fail(f"Vault metadata for {name} lacks token_id or client_id")
+    cf = Cloudflare(*vault.cf_credentials())
+    t = cf.rotate(token_id, name)
+    secret = t.get("client_secret", "")
+    client_id = t.get("client_id") or client_id
+    mask(secret, header_value(client_id, secret))
+    if not secret:
+        raise Fail(f"Cloudflare rotate {name} returned no secret. The old one stays valid for 24 hours; run rotate again.")
+    r = cf.refresh(token_id, name)
+    expires = r.get("expires_at") or t.get("expires_at", "")
+    try:
+        version = vault.write(name, {"header": header_value(client_id, secret), "client_id": client_id},
+                              {"owner": agents[name]["owner"], "token_id": token_id, "client_id": client_id,
+                               "expires_at": expires})
+    except Fail as e:
+        raise Fail(f"{e}. Cloudflare rotated {name}, so the old secret stops working in 24 hours; run rotate again.")
+    print(f"keys rotate: {TOKEN_PREFIX}{name} rotated, Vault version {version}, expires {expires}; "
+          f"the old secret works until {ROTATE_OVERLAP} from now. Tell {agents[name]['owner']} to update the agent.")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("check")
+    sub.add_parser("self-test")
+    p = sub.add_parser("plan")
+    p.add_argument("--rotate", metavar="NAME")
+    sub.add_parser("list")
+    s = sub.add_parser("sync")
+    s.add_argument("--expect", required=True)
+    r = sub.add_parser("rotate")
+    r.add_argument("name")
+    r.add_argument("--expect", required=True)
+    a = ap.parse_args()
+    try:
+        if a.cmd == "check":
+            return cmd_check(CALLERS)
+        if a.cmd == "self-test":
+            return cmd_self_test()
+        if a.cmd == "plan":
+            return cmd_plan(a.rotate)
+        if a.cmd == "list":
+            return cmd_list()
+        if a.cmd == "sync":
+            return cmd_sync(a.expect)
+        return cmd_rotate(a.name, a.expect)
+    except Fail as e:
+        print(f"keys {a.cmd}: REFUSED: {e}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
