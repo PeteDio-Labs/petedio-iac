@@ -89,6 +89,8 @@ class Fake:
             self.n += 1
             t = {"id": f"id{self.n}", "name": body["name"], "client_id": f"cid{self.n}.access",
                  "expires_at": CREATED}
+            if self.no_expiry:
+                t.pop("expires_at")
             self.cf[t["id"]] = t
             # The documented create response gives created_at and duration, not expires_at.
             out = {k: v for k, v in t.items() if k != "expires_at"}
@@ -279,6 +281,9 @@ def main() -> int:
     noexp, nb = Fake(no_expiry=True), callers("bobbert")
     rc, out = run(noexp, nb, ["sync", "--expect", digest(noexp, nb)])
     assert rc == 1 and "no expiry" in out and "bobbert" in noexp.vault, out
+    keys.UNKNOWN_EXPIRY.clear()
+    rc, out = run(noexp, nb, ["rotate", "bobbert", "--expect", digest(noexp, nb, "bobbert")])
+    assert rc == 1 and "no expiry" in out, out
     keys.UNKNOWN_EXPIRY.clear()
     passed += 1
 

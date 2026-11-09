@@ -132,7 +132,8 @@ resource "cloudflare_zero_trust_access_policy" "route_agents" {
       error_message = "Cloudflare holds more than one agent-<name> token for an agent on this route. Delete the extra one under Access > Service credentials, then run keys.yml action=sync."
     }
     precondition {
-      condition     = alltrue([for a in each.value.agents : contains(keys(local.agent_token_ids), a)])
+      # The grouped map, so a duplicate fails only the precondition above.
+      condition     = alltrue([for a in each.value.agents : contains(keys(local.agent_token_id_lists), a)])
       error_message = "A route lists an agent with no service token. Add it to secrets/callers.yml and run keys.yml action=sync first."
     }
   }

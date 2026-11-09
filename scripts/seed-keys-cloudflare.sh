@@ -12,7 +12,8 @@
 # WHAT THIS CHECKS BEFORE IT WRITES:
 #   1. Cloudflare says the token is active (/user/tokens/verify).
 #   2. The token sees exactly one account, and can list that account's service tokens.
-#   2a. It cannot read zones, tunnels or Access apps, so its scope is not wider.
+#   2a. It cannot read zones, tunnels or Access apps. This probes three likely mistakes; it
+#       cannot prove the token holds no other permission.
 #   3. The token is not the Terraform token at kv/iac/cloudflare.
 #
 # WHERE THE TOKEN COMES FROM. The clipboard: copy it from the dashboard, then run this. The
@@ -80,7 +81,8 @@ echo "  it can."
 
 step "Checking it can do nothing else it might have been given by mistake"
 # Cloudflare cannot list a token's own permissions without API Tokens Read, so this probes
-# three neighbours instead: zones, tunnels and Access apps. Each must be refused or empty.
+# three likely mistakes instead: zones, tunnels and Access apps. Each must be refused or empty.
+# A pass does not prove the token holds no other permission; check the dashboard's summary.
 CODE="$(cf_get "$TMP/key" "/zones?per_page=1" "$TMP/z.json")" || die "Cannot reach $CF_API."
 if [ "$CODE" = 200 ] && [ "$(jq '.result | length' "$TMP/z.json")" != 0 ]; then
   die "The token can read zones. Give it only Account > Access: Service Tokens > Edit."

@@ -18,7 +18,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install PyYAML
-        run: python3 -m pip install --user "pyyaml==6.0.2"
+        run: python3 -m pip install --user --require-hashes -r scripts/keys-requirements.txt
       - name: Prove a bad callers file fails
         run: python3 scripts/keys.py self-test
       - name: Check callers.yml and the route agents lists

@@ -580,6 +580,8 @@ def cmd_rotate(name: str, expect: str) -> int:
         raise Fail(f"Cloudflare rotate {name} returned no secret. The old one stays valid for 24 hours; run rotate again.")
     # Rotating replaces the secret only; the token keeps its expiry.
     expires = t.get("expires_at") or live.get("expires_at") or cm.get("expires_at", "")
+    if parse_time(expires) is None:
+        UNKNOWN_EXPIRY.append(name)
     try:
         version = vault.write(name, {"header": header_value(client_id, secret), "client_id": client_id},
                               {"owner": agents[name]["owner"], "token_id": token_id, "client_id": client_id,
@@ -672,7 +674,7 @@ def main() -> int:
             return finish(cmd_reissue(a.name, a.expect))
         if a.cmd == "renew":
             return cmd_renew(a.name, a.expect)
-        return cmd_rotate(a.name, a.expect)
+        return finish(cmd_rotate(a.name, a.expect))
     except Fail as e:
         print(f"keys {a.cmd}: REFUSED: {e}")
         return 1
