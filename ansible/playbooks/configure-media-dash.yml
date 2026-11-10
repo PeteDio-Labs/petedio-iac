@@ -156,8 +156,9 @@
     # Callers that may use mtrace's write tools (search_missing, blocklist_release,
     # refresh_plex). Every caller not listed stays read-only. Each name must also be a
     # token_<name> field in kv/services/media/dashboard: mtrace stops at startup on one
-    # that is not. lab-agent is deliberately absent.
-    mtrace_write_callers: ["bobbert"]
+    # that is not. lab-agent is deliberately absent. batsy joined on Pedro's word
+    # (2026-11-09, PET-904).
+    mtrace_write_callers: ["bobbert", "batsy"]
 
   pre_tasks:
     - name: Assert the LAN bind and allowlist are sane

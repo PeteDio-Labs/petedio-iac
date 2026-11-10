@@ -65,7 +65,11 @@ variable "routes" {
     allowed_idps        = optional(list(string), [])
     access_email_domain = optional(string)
     access_emails       = optional(list(string), [])
-    session_duration    = optional(string, "24h")
+    # Agents from secrets/callers.yml, each let through by its Cloudflare Access service token,
+    # sent in the one header Cf-Access-Token. Needs access = true. The module finds each token by
+    # its name, agent-<name>, which keys.yml gives it.
+    agents           = optional(list(string), [])
+    session_duration = optional(string, "24h")
 
     # Omit entirely for ordinary browser-gated apps (the default): a null here
     # leaves oauth_configuration unset, which is the pre-Managed-OAuth behaviour.
@@ -92,6 +96,10 @@ variable "routes" {
     error_message = "Every route that shares a hostname must set path, and a gated one must also set access_path."
   }
 
+  validation {
+    condition     = alltrue([for k, r in var.routes : length(r.agents) == 0 || r.access])
+    error_message = "A route that lists agents must set access = true."
+  }
   validation {
     condition     = alltrue([for k, r in var.routes : r.access_path == null || startswith(coalesce(r.access_path, "/"), "/")])
     error_message = "access_path must start with a slash, for example \"/mcp/plane\"."

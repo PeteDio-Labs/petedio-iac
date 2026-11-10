@@ -1,0 +1,27 @@
+# keys-check: validate secrets/callers.yml and every route's `agents` list on each pull request,
+# and drive scripts/keys.py against a fake Vault and a fake Cloudflare. GitHub-hosted, no
+# credentials. Each step's last line says what it read, and a run that read nothing is red.
+name: keys-check
+
+on:
+  pull_request: {}
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Install PyYAML
+        run: python3 -m pip install --user --require-hashes -r scripts/keys-requirements.txt
+      - name: Prove a bad callers file fails
+        run: python3 scripts/keys.py self-test
+      - name: Check callers.yml and the route agents lists
+        run: python3 scripts/keys.py check
+      - name: Drive sync and rotate against fakes
+        run: python3 scripts/test-keys.py
