@@ -147,12 +147,13 @@
     # the source and an Access JWT.
     mtrace_mcp_port: 8238
     mtrace_mcp_sources: ["192.168.50.112"]
-    # The media MCP door (media-control src/mcp.ts). Off until the audience tag is set:
-    # `terraform output -raw media_mcp_subdomain_access_aud` in environments/homelab. Not a secret.
+    # The media MCP door (media-control src/mcp.ts). The audience tag is
+    # `terraform output -raw media_mcp_subdomain_access_aud` in environments/homelab, read from
+    # the apply log of 2026-11-10. Not a secret. Empty turns the door off.
     mtrace_mcp_peer: 192.168.50.112
     mtrace_mcp_access_team_domain: petedillo-labs.cloudflareaccess.com
     mtrace_mcp_access_emails: [pedelgadillo@gmail.com]
-    mtrace_mcp_access_aud: ""
+    mtrace_mcp_access_aud: "ec3ad851e140e255de2f9f7433f82091d135087e44483c2c80c36ae7da14f7a7"
     # Callers that may use mtrace's write tools (search_missing, blocklist_release,
     # refresh_plex). Every caller not listed stays read-only. Each name must also be a
     # token_<name> field in kv/services/media/dashboard: mtrace stops at startup on one
