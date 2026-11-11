@@ -107,6 +107,9 @@
     home: "{{ claude_home }}"
     shell: /bin/bash
     create_home: true
+    # systemd-journal lets sessions read `journalctl -u lab-watchdog` without root (PET-907).
+    groups: systemd-journal
+    append: true
     state: present
 
 - name: Authorize the operator SSH keys for the session user

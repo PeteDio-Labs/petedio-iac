@@ -95,6 +95,36 @@ check("a fresh heartbeat posts RECOVERED once", len(posts) == 2 and posts[1].sta
 run(s, T0 + 2000)
 check("a healthy run posts nothing", len(posts) == 2)
 
+# 3b. A recovery beat that carries the lab's outage note puts the cause on RECOVERED, once (PET-907).
+configure()
+s = Store()
+s.put("heartbeat", ts=T0)
+posts.clear()
+run(s, T0 + 1000)
+run(s, T0 + 1300)
+ev = {"requestContext": {"http": {}}, "headers": {
+    "x-heartbeat-secret": "s3cret", "x-outage-note": "first=%d;missed=30;err=curl_(28)_Resolving_timed_out" % (T0 + 100)}}
+h.handler(ev, None, store=s, now=T0 + 3900)
+run(s, T0 + 3960)
+check("RECOVERED names the cause and the length",
+      posts[-1].startswith("RECOVERED") and "64 min" in posts[-1] and "30 missed" in posts[-1] and "Resolving timed out" in posts[-1],
+      posts[-1])
+bad = {"requestContext": {"http": {}}, "headers": {"x-heartbeat-secret": "s3cret", "x-outage-note": "garbage"}}
+check("a malformed note is dropped, not an error", h.handler(bad, None, store=Store(), now=T0)["statusCode"] == 200)
+s.put("heartbeat", ts=T0 + 9000)
+posts.clear()
+s.put("state#lab-heartbeat", fails=2, posted=True)
+run(s, T0 + 9010)
+check("a consumed note is not repeated", posts and "Lab says" not in posts[0], str(posts))
+
+# 3c. Every run prints one JSON line per check.
+import io, contextlib
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    run(Store(), T0)
+lines = [json.loads(ln) for ln in buf.getvalue().splitlines() if ln.startswith("{")]
+check("each run logs one JSON line per check", len(lines) == 1 and lines[0]["check"] == "lab-heartbeat" and "up" in lines[0], buf.getvalue())
+
 # 4. A failed post raises, leaves its marker unset, and does not block another target's marker.
 configure([{"name": "alpha", "url": "https://a.test/"}, {"name": "bravo", "url": "https://b.test/"}])
 s = Store()

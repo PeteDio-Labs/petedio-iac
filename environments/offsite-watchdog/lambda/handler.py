@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 HEARTBEAT_ID = "heartbeat"
+OUTAGE_ID = "outage-note"  # the lab's account of its own missed beats, read once by RECOVERED
 USER_AGENT = "DiscordBot (https://github.com/PeteDio-Labs/petedio-iac, 1)"  # Discord answers 403 to the default urllib agent
 DISCORD_API = "https://discord.com/api/v10"
 
@@ -103,12 +104,32 @@ def discord(target, text):
         pass
 
 
+def parse_outage_note(raw):
+    """Parse `first=<epoch>;missed=<n>;err=<text>` from the lab. Anything malformed is dropped."""
+    try:
+        fields = dict(part.split("=", 1) for part in raw.split(";"))
+        first, missed = int(fields["first"]), int(fields["missed"])
+    except (KeyError, ValueError):
+        return None
+    err = "".join(c for c in fields.get("err", "") if c.isalnum() or c in " ():._-")[:80]
+    return {"first": first, "missed": missed, "err": err}
+
+
+def outage_text(note, now):
+    minutes = max(0, (int(now) - int(note["first"])) // 60)
+    return "lab stayed up but could not reach AWS for %d min, %d missed beats (%s)" % (
+        minutes, int(note["missed"]), note["err"].replace("_", " ") or "no error text")
+
+
 def heartbeat(event, store, now):
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
     given = headers.get("x-heartbeat-secret", "")
     if not hmac.compare_digest(given, store.secret(_env("PARAM_HEARTBEAT"))):
         return {"statusCode": 403, "body": "forbidden"}
     store.put(HEARTBEAT_ID, ts=int(now))
+    note = parse_outage_note(headers.get("x-outage-note", ""))
+    if note:
+        store.put(OUTAGE_ID, **note)
     return {"statusCode": 200, "body": "ok"}
 
 
@@ -141,8 +162,15 @@ def run_checks(store, now, probe_fn=probe, post_fn=discord):
         state = store.get("state#" + name) or {"fails": 0, "posted": False}
         fails, posted = int(state["fails"]), bool(state["posted"])
         if up:
-            if posted and post("RECOVERED: %s answers again (%s). From AWS." % (name, detail)):
+            why = ""
+            if posted and name == "lab-heartbeat":
+                note = store.get(OUTAGE_ID)
+                if note and int(note.get("missed", 0)):
+                    why = " Lab says: " + outage_text(note, now) + "."
+            if posted and post("RECOVERED: %s answers again (%s).%s From AWS." % (name, detail, why)):
                 posted = False
+                if why:
+                    store.put(OUTAGE_ID, first=0, missed=0, err="")  # consumed
             fails = 0
         else:
             fails += 1
@@ -175,6 +203,12 @@ def run_checks(store, now, probe_fn=probe, post_fn=discord):
         answering = sum(1 for _, up, _ in results if up)
         if post("petedio-watchdog alive on AWS: %d of %d checks answering." % (answering, len(results))):
             store.put("daily", day=today)
+
+    # One JSON line per check puts a timeline in CloudWatch. It records what was examined.
+    for name, up, detail in results:
+        state = store.get("state#" + name) or {}
+        print(json.dumps({"check": name, "up": up, "detail": detail,
+                          "fails": int(state.get("fails", 0)), "posted": bool(state.get("posted", False))}))
 
     if failed_posts:
         raise RuntimeError("%d Discord post(s) failed" % len(failed_posts))
