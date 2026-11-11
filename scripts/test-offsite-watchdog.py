@@ -105,9 +105,9 @@ run(s, T0 + 1300)
 ev = {"requestContext": {"http": {}}, "headers": {
     "x-heartbeat-secret": "s3cret", "x-outage-note": "first=%d;missed=30;err=curl_(28)_Resolving_timed_out" % (T0 + 100)}}
 h.handler(ev, None, store=s, now=T0 + 3900)
-run(s, T0 + 3960)
+run(s, T0 + 4200)  # the check runs 5 min after the recovery beat
 check("RECOVERED names the cause and the length",
-      posts[-1].startswith("RECOVERED") and "64 min" in posts[-1] and "30 missed" in posts[-1] and "Resolving timed out" in posts[-1],
+      posts[-1].startswith("RECOVERED") and "63 min" in posts[-1] and "30 missed" in posts[-1] and "Resolving timed out" in posts[-1],
       posts[-1])
 bad = {"requestContext": {"http": {}}, "headers": {"x-heartbeat-secret": "s3cret", "x-outage-note": "garbage"}}
 check("a malformed note is dropped, not an error", h.handler(bad, None, store=Store(), now=T0)["statusCode"] == 200)
@@ -116,6 +116,22 @@ posts.clear()
 s.put("state#lab-heartbeat", fails=2, posted=True)
 run(s, T0 + 9010)
 check("a consumed note is not repeated", posts and "Lab says" not in posts[0], str(posts))
+
+# 3d. A note from a short interruption that never reached DOWN must not explain a later outage.
+s = Store()
+s.put("heartbeat", ts=T0)
+posts.clear()
+short = {"requestContext": {"http": {}}, "headers": {
+    "x-heartbeat-secret": "s3cret", "x-outage-note": "first=%d;missed=2;err=curl_(6)_dns" % (T0 + 10)}}
+h.handler(short, None, store=s, now=T0 + 300)
+run(s, T0 + 310)  # healthy, not posted: the note is cleared
+s.put("heartbeat", ts=T0 + 320)
+run(s, T0 + 1500)
+run(s, T0 + 1800)  # power loss: DOWN
+s.put("heartbeat", ts=T0 + 2000)
+run(s, T0 + 2100)
+check("a stale note is not reused for a later outage",
+      posts and posts[-1].startswith("RECOVERED") and "Lab says" not in posts[-1], str(posts))
 
 # 3c. Every run prints one JSON line per check.
 import io, contextlib

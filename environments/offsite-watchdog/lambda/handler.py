@@ -115,8 +115,8 @@ def parse_outage_note(raw):
     return {"first": first, "missed": missed, "err": err}
 
 
-def outage_text(note, now):
-    minutes = max(0, (int(now) - int(note["first"])) // 60)
+def outage_text(note):
+    minutes = max(0, (int(note.get("ended", note["first"])) - int(note["first"])) // 60)
     return "lab stayed up but could not reach AWS for %d min, %d missed beats (%s)" % (
         minutes, int(note["missed"]), note["err"].replace("_", " ") or "no error text")
 
@@ -129,7 +129,11 @@ def heartbeat(event, store, now):
     store.put(HEARTBEAT_ID, ts=int(now))
     note = parse_outage_note(headers.get("x-outage-note", ""))
     if note:
-        store.put(OUTAGE_ID, **note)
+        # The recovery time is fixed when the note arrives, so a later check never lengthens the outage.
+        # A repeat of the same note (a retried beat) keeps its first recovery time.
+        kept = store.get(OUTAGE_ID)
+        if not (kept and int(kept.get("first", 0)) == note["first"] and int(kept.get("missed", 0))):
+            store.put(OUTAGE_ID, ended=int(now), **note)
     return {"statusCode": 200, "body": "ok"}
 
 
@@ -166,11 +170,16 @@ def run_checks(store, now, probe_fn=probe, post_fn=discord):
             if posted and name == "lab-heartbeat":
                 note = store.get(OUTAGE_ID)
                 if note and int(note.get("missed", 0)):
-                    why = " Lab says: " + outage_text(note, now) + "."
+                    why = " Lab says: " + outage_text(note) + "."
             if posted and post("RECOVERED: %s answers again (%s).%s From AWS." % (name, detail, why)):
                 posted = False
                 if why:
-                    store.put(OUTAGE_ID, first=0, missed=0, err="")  # consumed
+                    store.put(OUTAGE_ID, first=0, ended=0, missed=0, err="")  # consumed
+            elif not posted and name == "lab-heartbeat":
+                # A note from an interruption that never reached DOWN must not explain a later outage.
+                note = store.get(OUTAGE_ID)
+                if note and int(note.get("missed", 0)):
+                    store.put(OUTAGE_ID, first=0, ended=0, missed=0, err="")
             fails = 0
         else:
             fails += 1
