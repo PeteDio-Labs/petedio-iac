@@ -49,10 +49,10 @@ runs on pi1, so check the Kuma page loads afterwards.
 - **What a check examines:** the current tag, that the three images share it, and that every
   compose container reports healthy. It refuses a downgrade, a jump of more than one minor and
   a minor outside the reviewed list in `authentik-upgrade.sh`. It changes nothing.
-- **What an apply does:** takes a `vzdump` archive of 119 unless one under six hours old exists,
+- **What an apply does:** takes a `vzdump` archive of 119 unless one under 30 minutes old exists,
   copies the compose file, dumps the database to `/root/authentik-pre-<version>-<time>.sql.gz`,
   edits the tag, pulls, then recreates `server`, `worker` and `ldap` one at a time and waits for
-  each to be healthy. It restores the compose file when a service does not return healthy.
+  each to be healthy. It restores the compose file when the tag edit, the config check, the pull or the first recreate fails. It waits 300 s per service, because the first server start runs migrations. On a timeout it changes nothing more, because the old image against a half-migrated database is worse than a slow start.
 - **Bad:** a rollback restores the image only. A migration that already ran stays, so recover
   from the `vzdump` archive. The play never reboots. 119 has a pending `dbus` reboot (Pedro,
   2026-11-12: do it when convenient), so reboot 119 in the window of the first minor bump.

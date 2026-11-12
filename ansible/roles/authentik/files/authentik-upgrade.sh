@@ -37,12 +37,13 @@ ci=$(idx "$(minor "$CUR")"); wi=$(idx "$(minor "$WANT")")
 
 health() {  # prints the number of containers that are not healthy
   bad=0
-  for c in $(docker compose -f "$F" ps -q); do
+  [ "$(docker compose -f "$F" ps -aq | grep -c .)" -ge 5 ] || { echo 99; return; }
+  for c in $(docker compose -f "$F" ps -aq); do
     [ "$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null)" = healthy ] || bad=$((bad+1))
   done
   echo $bad
 }
-[ "$(docker compose -f "$F" ps -q | grep -c .)" -ge 5 ] || { echo "ERR fewer than 5 compose containers" >&2; exit 1; }
+[ "$(docker compose -f "$F" ps -aq | grep -c .)" -ge 5 ] || { echo "ERR fewer than 5 compose containers" >&2; exit 1; }
 [ "$(health)" -eq 0 ] || { echo "ERR a container is not healthy; fix it first" >&2; exit 1; }
 
 if [ "$CUR" = "$WANT" ]; then echo "RESULT|$MODE|$CUR|$WANT|noop"; exit 0; fi
@@ -50,22 +51,40 @@ if [ "$MODE" = plan ]; then echo "RESULT|plan|$CUR|$WANT|bump"; exit 0; fi
 
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 cp -p "$F" "$F.pre-$WANT-$TS"
-DUMP=/root/authentik-pre-$WANT-$TS.sql.gz
+DUMP=/root/authentik-pre-$WANT-$TS.sql
 # POSTGRES_USER and POSTGRES_DB are read inside the container, so no credential passes here.
-docker compose -f "$F" exec -T postgresql sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$DUMP"
-gzip -t "$DUMP" && [ "$(zcat "$DUMP" | grep -c '^CREATE TABLE')" -gt 100 ] || { rm -f "$DUMP"; echo "ERR database dump failed its check" >&2; exit 1; }
+# The dump goes to a file first, so a pg_dump failure is the exit status of this command and not
+# hidden behind a pipe. </dev/null keeps `exec` from reading the rest of this script from stdin.
+docker compose -f "$F" exec -T postgresql sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' </dev/null > "$DUMP" \
+  && tail -n 5 "$DUMP" | grep -q 'PostgreSQL database dump complete' \
+  && [ "$(grep -c '^CREATE TABLE' "$DUMP")" -gt 100 ] \
+  || { rm -f "$DUMP"; echo "ERR database dump failed its check" >&2; exit 1; }
+gzip -f "$DUMP"
 
 sed -i -E "s#(image:[[:space:]]*ghcr\.io/goauthentik/(server|ldap)):$CUR#\1:$WANT#" "$F"
-rollback() { cp -p "$F.pre-$WANT-$TS" "$F"; echo "ROLLED_BACK compose file; images not recreated: $1" >&2; exit 1; }
+# Before any container is recreated, a failure only needs the compose file put back.
+rollback() { cp -p "$F.pre-$WANT-$TS" "$F"; echo "ROLLED_BACK compose file; no container recreated: $1" >&2; exit 1; }
+[ "$(grep -E '^[[:space:]]*image:[[:space:]]*ghcr\.io/goauthentik/(server|ldap):' "$F" | sed -E 's/.*://' | tr -d ' \r' | sort -u)" = "$WANT" ] || rollback "tag edit did not take"
 docker compose -f "$F" config -q || rollback "compose config"
 docker compose -f "$F" pull -q server worker ldap >/dev/null 2>&1 || rollback "pull"
 
 for svc in server worker ldap; do
-  docker compose -f "$F" up -d --no-deps "$svc" >/dev/null 2>&1 || rollback "up $svc"
+  if [ "$svc" = server ]; then
+    docker compose -f "$F" up -d --no-deps "$svc" >/dev/null 2>&1 || rollback "up $svc"
+  else
+    docker compose -f "$F" up -d --no-deps "$svc" >/dev/null 2>&1 || { echo "ERR up $svc failed after server was recreated; compose file left at $WANT" >&2; exit 1; }
+  fi
+  # 300 s, because the server runs database migrations on its first start. A timeout leaves the
+  # stack and the compose file as they are: putting the old image back against a half-migrated
+  # database is worse than a slow start. A person reads the logs, then restores from the archive.
   n=0
   until [ "$(health)" -eq 0 ]; do
-    n=$((n+1)); [ $n -le 24 ] || { echo "ERR $svc not healthy after 120 s; restoring compose file" >&2; cp -p "$F.pre-$WANT-$TS" "$F"; docker compose -f "$F" up -d --no-deps "$svc" >/dev/null 2>&1 || true; exit 1; }
+    n=$((n+1)); [ $n -le 60 ] || { echo "ERR $svc not healthy after 300 s; nothing was rolled back" >&2; exit 1; }
     sleep 5
   done
+done
+for svc in server worker ldap; do
+  img=$(docker compose -f "$F" images "$svc" --format '{{.Tag}}' 2>/dev/null | head -1)
+  [ "$img" = "$WANT" ] || { echo "ERR $svc runs $img, not $WANT" >&2; exit 1; }
 done
 echo "RESULT|apply|$CUR|$WANT|bumped"

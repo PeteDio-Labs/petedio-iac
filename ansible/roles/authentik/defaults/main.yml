@@ -9,6 +9,6 @@ authentik_version: "2024.12.5"
 
 authentik_vmid: 119
 # A vzdump archive of the guest younger than this many minutes skips the pre-upgrade backup.
-authentik_backup_max_age_min: 360
+authentik_backup_max_age_min: 30
 authentik_backup_storage: ollama-backups
 authentik_backup_dir: /mnt/ollama-backups/dump
