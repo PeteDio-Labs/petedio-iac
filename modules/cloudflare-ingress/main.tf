@@ -109,9 +109,14 @@ data "cloudflare_zero_trust_access_service_tokens" "agents" {
 locals {
   # Grouped, so two tokens with one name give a list of two ids, not a "Duplicate object key"
   # error that stops every route. The policy's precondition refuses the duplicate by name.
+  # The provider can return a token with a null name, and startswith(null) stops the plan with
+  # "Invalid function argument" (iac#695). A null name becomes "", which no agent matches.
+  agent_token_names = length(local.agent_routes) == 0 ? [] : [
+    for t in data.cloudflare_zero_trust_access_service_tokens.agents[0].result : (t.name == null ? "" : t.name)
+  ]
   agent_token_id_lists = length(local.agent_routes) == 0 ? {} : {
     for t in data.cloudflare_zero_trust_access_service_tokens.agents[0].result :
-    trimprefix(t.name, "agent-") => t.id... if startswith(t.name, "agent-")
+    trimprefix((t.name == null ? "" : t.name), "agent-") => t.id... if startswith((t.name == null ? "" : t.name), "agent-")
   }
   agent_token_ids = { for n, ids in local.agent_token_id_lists : n => ids[0] if length(ids) == 1 }
 }
@@ -128,13 +133,13 @@ resource "cloudflare_zero_trust_access_policy" "route_agents" {
 
   lifecycle {
     precondition {
-      condition     = alltrue([for a in each.value.agents : length(lookup(local.agent_token_id_lists, a, [])) <= 1])
+      condition     = alltrue([for a in each.value.agents : length(try(local.agent_token_id_lists[a], [])) <= 1])
       error_message = "Cloudflare holds more than one agent-<name> token for an agent on this route. Delete the extra one under Access > Service credentials, then run keys.yml action=sync."
     }
     precondition {
       # The grouped map, so a duplicate fails only the precondition above.
       condition     = alltrue([for a in each.value.agents : contains(keys(local.agent_token_id_lists), a)])
-      error_message = "A route lists an agent with no service token. Add it to secrets/callers.yml and run keys.yml action=sync first."
+      error_message = "A route lists an agent with no service token. Add it to secrets/callers.yml and run keys.yml action=sync first. The token list held ${length(local.agent_token_names)} tokens named ${jsonencode(local.agent_token_names)}."
     }
   }
 }

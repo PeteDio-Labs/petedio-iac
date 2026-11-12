@@ -154,6 +154,12 @@
     mtrace_mcp_access_team_domain: petedillo-labs.cloudflareaccess.com
     mtrace_mcp_access_emails: [pedelgadillo@gmail.com]
     mtrace_mcp_access_aud: "ec3ad851e140e255de2f9f7433f82091d135087e44483c2c80c36ae7da14f7a7"
+    # Agents on the MCP door (PET-904): name -> Cloudflare service-token client id. A client id is
+    # not secret. keys.yml action=list prints it, and a reissue changes it, so update it here then.
+    # The route's `agents` list in environments/homelab/cloudflare-routes.tf names the same agents.
+    mtrace_mcp_access_agents:
+      bobbert: ca14c1dd4db82530a133724cd7945be4.access
+      batsy: d620c3ddbedd7cde30577aeb2f11feb6.access
     # Callers that may use mtrace's write tools (search_missing, blocklist_release,
     # refresh_plex). Every caller not listed stays read-only. Each name must also be a
     # token_<name> field in kv/services/media/dashboard: mtrace stops at startup on one
@@ -199,6 +205,17 @@
         fail_msg: >-
           mtrace_mcp_access_aud must be empty (MCP door off) or the 64-hex audience tag from
           `terraform output -raw media_mcp_subdomain_access_aud`.
+
+    - name: Assert each MCP door agent is a name and a service-token client id
+      ansible.builtin.assert:
+        that:
+          - mtrace_mcp_access_agents is mapping
+          - mtrace_mcp_access_agents.keys() | reject('match', '\\A[a-z][a-z0-9-]{1,30}\\Z') | list | length == 0
+          - mtrace_mcp_access_agents.values() | reject('match', '\\A[0-9a-f]{32}\\.access\\Z') | list | length == 0
+          - mtrace_mcp_access_agents.values() | unique | list | length == mtrace_mcp_access_agents | length
+        fail_msg: >-
+          mtrace_mcp_access_agents maps an agent name from secrets/callers.yml to its client id,
+          `<32 hex>.access`, from keys.yml action=list. mtrace refuses to start on a malformed list.
 
     - name: Assert the MCP door has its peer on its allowlist and an email
       ansible.builtin.assert:
