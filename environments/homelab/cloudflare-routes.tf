@@ -111,6 +111,9 @@ module "cloudflare_ingress" {
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["pedelgadillo@gmail.com"]
+      # The Muse agents (PET-904). Each sends its service token in Cf-Access-Token, and mtrace maps
+      # the JWT's client id to the name through mtrace_mcp_access_agents.
+      agents = ["bobbert", "batsy"]
 
       managed_oauth = {
         allowed_redirect_uris = [
