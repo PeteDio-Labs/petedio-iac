@@ -133,7 +133,7 @@ resource "cloudflare_zero_trust_access_policy" "route_agents" {
 
   lifecycle {
     precondition {
-      condition     = alltrue([for a in each.value.agents : length(lookup(local.agent_token_id_lists, a, [])) <= 1])
+      condition     = alltrue([for a in each.value.agents : length(try(local.agent_token_id_lists[a], [])) <= 1])
       error_message = "Cloudflare holds more than one agent-<name> token for an agent on this route. Delete the extra one under Access > Service credentials, then run keys.yml action=sync."
     }
     precondition {
