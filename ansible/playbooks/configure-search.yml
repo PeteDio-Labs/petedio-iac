@@ -25,7 +25,7 @@
 #
 # SECRETS (resolved by scripts/deploy-search.sh from Vault, passed as no_log extra-vars):
 #   search_caller_tokens     kv/services/search, one field token_<name> per caller
-#                            (claude, bobbert); scripts/search-secrets.sh mints them
+#                            (claude, muse); scripts/search-secrets.sh mints them
 #   search_plane_api_key     kv/services/search field plane_api_key, optional: without
 #                            it, refresh skips Plane
 #   search_github_app_id, search_github_app_installation_id, search_github_app_pem

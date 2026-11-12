@@ -156,10 +156,10 @@ def main() -> int:
     passed = 0
 
     # 1. create two agents
-    fake, both = Fake(), callers("bobbert", "batsy")
+    fake, both = Fake(), callers("muse", "batsy")
     rc, out = run(fake, both, ["sync", "--expect", digest(fake, both)])
     assert rc == 0, out
-    assert sorted(fake.vault) == ["batsy", "bobbert"], fake.vault
+    assert sorted(fake.vault) == ["batsy", "muse"], fake.vault
     hdr = fake.vault["batsy"]["data"]["header"]
     assert " " not in hdr and json.loads(hdr)["cf-access-client-secret"] == SECRET
     assert fake.vault["batsy"]["custom"]["owner"] == "sonia"
@@ -174,10 +174,10 @@ def main() -> int:
     passed += 1
 
     # 3. removing batsy revokes it in both places
-    one = callers("bobbert")
+    one = callers("muse")
     rc, out = run(fake, one, ["sync", "--expect", digest(fake, one)])
     assert rc == 0 and "revoked 1" in out, out
-    assert list(fake.vault) == ["bobbert"] and len(fake.cf) == 1
+    assert list(fake.vault) == ["muse"] and len(fake.cf) == 1
     passed += 1
 
     # 4. a stale digest is refused and changes nothing
@@ -193,29 +193,29 @@ def main() -> int:
     passed += 1
 
     # 6. rotate keeps a 24-hour overlap and writes the new secret
-    rc, out = run(fake, one, ["rotate", "bobbert", "--expect", digest(fake, one, "bobbert")])
+    rc, out = run(fake, one, ["rotate", "muse", "--expect", digest(fake, one, "muse")])
     assert rc == 0, out
     assert "previous_client_secret_expires_at" in fake.rotate_bodies[0]
-    assert json.loads(fake.vault["bobbert"]["data"]["header"])["cf-access-client-secret"] == "e" * 64
-    assert fake.vault["bobbert"]["custom"]["expires_at"] == CREATED
+    assert json.loads(fake.vault["muse"]["data"]["header"])["cf-access-client-secret"] == "e" * 64
+    assert fake.vault["muse"]["custom"]["expires_at"] == CREATED
     assert fake.refreshes == 0, "rotate called /refresh"
     assert "e" * 64 not in out
     passed += 1
 
     # 7. list reads metadata only and reports each agent
     rc, out = run(fake, one, ["list"])
-    assert rc == 0 and "bobbert: owner pedro, version 2" in out, out
+    assert rc == 0 and "muse: owner pedro, version 2" in out, out
     passed += 1
 
     # 8. a token deleted in the dashboard: sync refuses and changes nothing; reissue repairs it
     fake.cf.clear()
     before = json.dumps(fake.vault, sort_keys=True)
     rc, out = run(fake, one, ["sync", "--expect", digest(fake, one)])
-    assert rc == 1 and "action=reissue name=bobbert" in out and "nothing changed" in out, out
+    assert rc == 1 and "action=reissue name=muse" in out and "nothing changed" in out, out
     assert json.dumps(fake.vault, sort_keys=True) == before and fake.cf == {}
-    rc, out = run(fake, one, ["reissue", "bobbert", "--expect", digest(fake, one, "bobbert", "reissue")])
+    rc, out = run(fake, one, ["reissue", "muse", "--expect", digest(fake, one, "muse", "reissue")])
     assert rc == 0 and "already absent" in out, out
-    assert len(fake.cf) == 1 and fake.vault["bobbert"]["custom"]["token_id"] in fake.cf
+    assert len(fake.cf) == 1 and fake.vault["muse"]["custom"]["token_id"] in fake.cf
     assert fake.create_bodies[-1]["duration"] == "2160h" and SECRET not in out
     passed += 1
 
@@ -237,39 +237,39 @@ def main() -> int:
     passed += 1
 
     # 11. a name with a trailing newline is refused
-    rc, out = run(fake, one, ["plan", "--rotate", "bobbert\n"])
+    rc, out = run(fake, one, ["plan", "--rotate", "muse\n"])
     assert rc == 1 and "REFUSED" in out, out
     passed += 1
 
     # 12. create stored the expiry it read back, not the empty one in the create response
-    assert fake.vault["bobbert"]["custom"]["expires_at"] == CREATED, fake.vault["bobbert"]
+    assert fake.vault["muse"]["custom"]["expires_at"] == CREATED, fake.vault["muse"]
     passed += 1
 
     # 13. renew keeps id, client id and secret, and records the new expiry
-    before = dict(fake.vault["bobbert"])
+    before = dict(fake.vault["muse"])
     tid = before["custom"]["token_id"]
-    rc, out = run(fake, one, ["renew", "bobbert", "--expect", digest(fake, one, "bobbert", "renew")])
+    rc, out = run(fake, one, ["renew", "muse", "--expect", digest(fake, one, "muse", "renew")])
     assert rc == 0, out
-    after = fake.vault["bobbert"]
+    after = fake.vault["muse"]
     assert after["custom"]["token_id"] == tid and after["custom"]["expires_at"] == RENEWED
     assert after["data"] == before["data"] and after["version"] == before["version"], "renew wrote a new secret"
     passed += 1
 
     # 14. renew refuses, changing nothing in Vault, when Cloudflare keeps the old expiry
-    stuck, sone = Fake(renew_works=False), callers("bobbert")
+    stuck, sone = Fake(renew_works=False), callers("muse")
     run(stuck, sone, ["sync", "--expect", digest(stuck, sone)])
     md = json.dumps(stuck.vault, sort_keys=True)
-    rc, out = run(stuck, sone, ["renew", "bobbert", "--expect", digest(stuck, sone, "bobbert", "renew")])
+    rc, out = run(stuck, sone, ["renew", "muse", "--expect", digest(stuck, sone, "muse", "renew")])
     assert rc == 1 and "action=reissue" in out and json.dumps(stuck.vault, sort_keys=True) == md, out
     passed += 1
 
     # 15. the reissue plan names what a new token id breaks
-    rc, out = run(fake, one, ["plan", "--reissue", "bobbert"])
+    rc, out = run(fake, one, ["plan", "--reissue", "muse"])
     assert rc == 0 and "Terraform apply" in out and "client id" in out, out
     passed += 1
 
-    # 16. two agent-bobbert tokens: sync refuses before any change
-    fake.cf["dup"] = {"id": "dup", "name": "agent-bobbert", "client_id": "d.access", "expires_at": CREATED}
+    # 16. two agent-muse tokens: sync refuses before any change
+    fake.cf["dup"] = {"id": "dup", "name": "agent-muse", "client_id": "d.access", "expires_at": CREATED}
     before = json.dumps(fake.vault, sort_keys=True)
     rc, out = run(fake, one, ["sync", "--expect", digest(fake, one)])
     assert rc == 1 and "more than one token" in out and json.dumps(fake.vault, sort_keys=True) == before, out
@@ -278,11 +278,11 @@ def main() -> int:
 
     # 17. a token Cloudflare reports no expiry for is stored, and the run fails loudly
     keys.UNKNOWN_EXPIRY.clear()
-    noexp, nb = Fake(no_expiry=True), callers("bobbert")
+    noexp, nb = Fake(no_expiry=True), callers("muse")
     rc, out = run(noexp, nb, ["sync", "--expect", digest(noexp, nb)])
-    assert rc == 1 and "no expiry" in out and "bobbert" in noexp.vault, out
+    assert rc == 1 and "no expiry" in out and "muse" in noexp.vault, out
     keys.UNKNOWN_EXPIRY.clear()
-    rc, out = run(noexp, nb, ["rotate", "bobbert", "--expect", digest(noexp, nb, "bobbert")])
+    rc, out = run(noexp, nb, ["rotate", "muse", "--expect", digest(noexp, nb, "muse")])
     assert rc == 1 and "no expiry" in out, out
     keys.UNKNOWN_EXPIRY.clear()
     passed += 1
