@@ -1,0 +1,10 @@
+---
+# Restart each guest in guest_restart_list, one at a time. The first guest that does not come back
+# healthy fails the play, so no later guest restarts. Runs on one node and delegates to the node
+# that holds each guest, so the order is the list's order across nodes.
+- name: Restart each guest in order
+  ansible.builtin.include_tasks: one.yml
+  loop: "{{ guest_restart_list }}"
+  loop_control:
+    loop_var: guest
+    label: "{{ guest.vmid }}"

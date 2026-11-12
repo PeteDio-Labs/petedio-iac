@@ -1,0 +1,23 @@
+---
+# Guests that nothing restarts on its own, in restart order (PET-908). A patched library stays loaded
+# until its service restarts, so after patch-guests.yml these guests need one deliberate restart.
+#
+# Left out on purpose:
+#   - pve03's guests except 247: the nightly pve03 backup job runs `mode: stop` (the backup job definition),
+#     which restarts each of them. 223 (Vault) seals in that stop; the two unseal watchers reopen it.
+#   - 233 (a runner): a lab-action job can run on it, and restarting its own runner ends the run.
+#     A session on 247 or the Mac restarts it with `ssh pve02 pct reboot 233` between runs.
+#
+# `node` is the node that holds the guest. `check_url` is fetched from that node after the restart.
+# `check_unit` (optional) is a systemd unit that must be active inside the guest. Every entry also
+# passes the generic check: no new failed unit and no unhealthy container.
+# 247 goes last, because its restart ends the Remote Control sessions.
+guest_restart_list:
+  - { vmid: 240, node: pve02 }
+  - { vmid: 246, node: pve01, check_url: "http://192.168.50.246:11434/api/version" }
+  - { vmid: 110, node: pve02 }
+  - { vmid: 236, node: pve02, check_url: "http://192.168.50.236:32400/identity" }
+  - { vmid: 247, node: pve03 }
+
+# How long to wait for each guest to come back, in 5-second tries.
+guest_restart_tries: 36
