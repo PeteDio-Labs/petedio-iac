@@ -39,6 +39,22 @@ ssh pi1 'sudo sh -s apply' < ansible/playbooks/files/security-patch.sh
 The last line starts with `RESULT|`. Post that line, and nothing else, on the PET item. Kuma
 runs on pi1, so check the Kuma page loads afterwards.
 
+## Restart the guests after patching (`restart-guests.yml`, `PET-908`)
+
+- **Run:** `playbook_check restart-guests.yml`, then `playbook_apply restart-guests.yml`.
+- **Why:** `patch-guests.yml` restarts no service, so a patched library stays loaded until the guest
+  restarts. Guests on pve03 restart nightly under the backup job's `mode: stop`, and Vault's two
+  unseal watchers reopen it. The play covers the guests nothing restarts: 240, 246, 110, 236 and 247.
+- **Order:** the list in `roles/guest-restart/defaults/main.yml`, one guest at a time, 247 last
+  because its restart ends the Remote Control sessions. The first guest that does not come back
+  healthy stops the play.
+- **Healthy means:** the guest answers `pct exec` after its restart marker clears, any
+  configured URL or unit answers, systemd has finished booting, Docker answers, no container is starting or unhealthy, no unit has failed that was not already failed (by name), and as many containers run as before. Plex is checked by its unit, `plexmediaserver`; run `lab_verify` afterwards, because it probes Plex at its mesh address.
+- **Before you apply:** the play cannot read Plex or qBittorrent. Read `lab_probe mtrace` for
+  Plex sessions and unfinished torrents, and name what you saw.
+- **Not covered:** 233, a runner. A restart of the runner that executes the job ends the job.
+  A session on 247 or the Mac restarts it between runs with `ssh pve02 pct reboot 233`.
+
 ## Upgrade Authentik (119) (`upgrade-authentik.yml`, `PET-908`)
 
 - **Run:** `playbook_check upgrade-authentik.yml`, then `playbook_apply upgrade-authentik.yml`.

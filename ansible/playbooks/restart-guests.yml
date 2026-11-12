@@ -1,0 +1,20 @@
+---
+# restart-guests.yml — restart the guests that nothing restarts on its own, one at a time. (PET-908)
+#
+#   scripts/lab-action.sh playbook_check restart-guests.yml   # reads each guest; restarts nothing
+#   scripts/lab-action.sh playbook_apply restart-guests.yml   # restarts, in order, stopping at the first failure
+#
+# patch-guests.yml never restarts a service, so a patched library stays loaded until the guest
+# restarts. Guests on pve03 restart nightly under the backup job's `mode: stop`; the list in
+# roles/guest-restart/defaults/main.yml is the rest, with 247 last.
+#
+# Run it only when Plex and qBittorrent are idle. This play cannot read their sessions, so the
+# thread that dispatches it reads `mtrace` first (`lab_probe mtrace`) and names what it saw.
+# It runs on one node and delegates to the node that holds each guest.
+
+- name: Restart guests in order
+  hosts: pve02
+  become: false
+  gather_facts: false
+  roles:
+    - guest-restart
