@@ -84,7 +84,8 @@ for svc in server worker ldap; do
   done
 done
 for svc in server worker ldap; do
-  img=$(docker compose -f "$F" images "$svc" --format '{{.Tag}}' 2>/dev/null | head -1)
-  [ "$img" = "$WANT" ] || { echo "ERR $svc runs $img, not $WANT" >&2; exit 1; }
+  cid=$(docker compose -f "$F" ps -q "$svc") && [ -n "$cid" ] || { echo "ERR $svc has no container" >&2; exit 1; }
+  img=$(docker inspect -f '{{.Config.Image}}' "$cid") || { echo "ERR cannot inspect $svc" >&2; exit 1; }
+  case "$img" in *:"$WANT") ;; *) echo "ERR $svc runs a different tag than $WANT" >&2; exit 1 ;; esac
 done
 echo "RESULT|apply|$CUR|$WANT|bumped"

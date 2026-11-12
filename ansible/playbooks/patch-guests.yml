@@ -63,7 +63,7 @@
         stdin: "{{ lookup('ansible.builtin.file', 'security-patch.sh') }}"
       loop: "{{ security_patch_ids }}"
       register: security_patch_apply
-      changed_when: "'patched=0|' not in stdout"
+      changed_when: "'patched=0|' not in security_patch_apply.stdout | default('')"
       failed_when: false
       when: not ansible_check_mode
 
