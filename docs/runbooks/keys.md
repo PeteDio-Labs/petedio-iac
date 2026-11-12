@@ -35,7 +35,8 @@ Pedro does these three steps once.
    `kv/callers/edge/<agent>` entry to `secrets/register.yml`. Merge the PR.
 2. Dispatch `keys.yml` with `action=sync`. The `plan` job prints `plan: create <agent>` and a
    digest. Pedro reads it and approves the `lab-write` step on the run's web page.
-3. The owner copies the `header` field from Vault and enters it in the agent's credential store.
+3. The owner copies the `header` field from Vault. On the Mac, `scripts/keys-copy.sh <agent>` puts it on the
+   clipboard without printing it and enters it in the agent's credential store.
    For a Muse agent, that is `credentials.request_api_access` with placement
    `custom_header:Authorization` and the host in `api_hosts`. Never send it by email or chat.
 
