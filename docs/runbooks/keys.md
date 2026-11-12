@@ -24,6 +24,10 @@ Pedro does these three steps once.
 2. Apply `vault-config` with `scripts/apply-vault-config.sh`. The gated `vault-config-apply`
    path cannot create the `keys-*` roles, by design.
 3. Dispatch `keys.yml` with `action=list`. A green run with `read 2 agents` proves `keys-list`.
+4. Add **Account > Access: Service Tokens > Read** to the Terraform Cloudflare token
+   (`homelab-tunnel-management`, at `kv/iac/cloudflare`). A route with `agents` reads the
+   `agent-*` tokens through a data source. Without that permission, Cloudflare answers with an
+   empty list, and the plan fails on "A route lists an agent with no service token".
 
 ## Give an agent a token
 
