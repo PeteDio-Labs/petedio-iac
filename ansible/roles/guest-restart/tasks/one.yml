@@ -82,7 +82,7 @@
     gr_before: "{{ guest_restart_before.stdout | default('0 0 0|') }}"
     gr_a_counts: "{{ (gr_after.split('|')[0].split() + ['9', '9', '0'])[:3] | map('int') | list }}"
     gr_b_counts: "{{ (gr_before.split('|')[0].split() + ['0', '0', '0'])[:3] | map('int') | list }}"
-    gr_a_names: "{{ (gr_after.split('|') + [''])[1].split(',') | reject('equalto', '') | list }}"
+    gr_a_names: "{{ (gr_after.split('|') + [''])[1].split(',') | reject('equalto', '') | reject('in', guest_restart_ignore_units) | list }}"
     gr_b_names: "{{ (gr_before.split('|') + [''])[1].split(',') | reject('equalto', '') | list }}"
   until:
     - guest_restart_after.rc == 0

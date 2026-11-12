@@ -19,6 +19,12 @@ guest_restart_list:
   - { vmid: 236, node: pve02, check_unit: plexmediaserver }
   - { vmid: 247, node: pve03 }
 
+# Units that fail inside a container whatever the restart does, so they never count against it.
+# openipmi.service needs /dev/ipmi0, which no LXC has: 246 showed it failed after a restart and not
+# before, because the unit had not run yet (PET-908).
+guest_restart_ignore_units:
+  - openipmi.service
+
 # How long to wait for each guest to come back, in 5-second tries.
 guest_restart_tries: 60
 
