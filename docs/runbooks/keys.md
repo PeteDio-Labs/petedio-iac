@@ -2,7 +2,7 @@
 
 Each agent that calls a lab service over HTTPS, such as Pedro's Muse (`bobbert`) or Sonia's
 (`batsy`), holds one Cloudflare Access service token. The agent sends it in one header,
-`Cf-Access-Token`. Cloudflare refuses any other request at the edge. The design is
+`Authorization`, the only name Cloudflare accepts for a one-header token. Cloudflare refuses any other request at the edge. The design is
 [Lab access and keys](https://claude.ai/artifact/6A23RZ9uT4X74qWX5sHBuy).
 
 | Piece | Where |
@@ -37,7 +37,7 @@ Pedro does these three steps once.
    digest. Pedro reads it and approves the `lab-write` step on the run's web page.
 3. The owner copies the `header` field from Vault and enters it in the agent's credential store.
    For a Muse agent, that is `credentials.request_api_access` with placement
-   `custom_header:Cf-Access-Token` and the host in `api_hosts`. Never send it by email or chat.
+   `custom_header:Authorization` and the host in `api_hosts`. Never send it by email or chat.
 
 ## Let an agent call a service
 

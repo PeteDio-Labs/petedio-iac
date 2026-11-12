@@ -66,7 +66,7 @@ variable "routes" {
     access_email_domain = optional(string)
     access_emails       = optional(list(string), [])
     # Agents from secrets/callers.yml, each let through by its Cloudflare Access service token,
-    # sent in the one header Cf-Access-Token. Needs access = true. The module finds each token by
+    # sent in the one header Authorization. Needs access = true. The module finds each token by
     # its name, agent-<name>, which keys.yml gives it.
     agents           = optional(list(string), [])
     session_duration = optional(string, "24h")

@@ -48,7 +48,9 @@ locals {
   agent_routes  = { for h, r in local.access_routes : h => r if length(r.agents) > 0 }
 
   # The one header an agent sends its service token in (read_service_tokens_from_header).
-  agent_token_header = "Cf-Access-Token"
+  # Cloudflare accepts only Authorization here: a PUT with Cf-Access-Token got 400, code
+  # 12130, "must be one of [Authorization]" (apply of iac#695, 2026-11-12).
+  agent_token_header = "Authorization"
 }
 
 resource "cloudflare_zero_trust_tunnel_cloudflared_config" "this" {
