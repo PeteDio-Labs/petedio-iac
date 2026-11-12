@@ -154,7 +154,7 @@
     lab_agent_mcp_port: 3017
     # The metrics door (pete-bot#114): GET /metrics, LAN address, Prometheus on 240 only.
     # Add the lab-agent job to prometheus_extra_jobs after this play has run.
-    lab_agent_metrics_port: 3018
+    lab_agent_metrics_port: 3019
     lab_agent_metrics_peer: 192.168.50.240
     # Kits to offer the media assistant. Empty offers every kit.
     lab_agent_media_toolkits: ""
