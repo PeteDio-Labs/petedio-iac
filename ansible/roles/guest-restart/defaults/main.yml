@@ -20,4 +20,17 @@ guest_restart_list:
   - { vmid: 247, node: pve03 }
 
 # How long to wait for each guest to come back, in 5-second tries.
-guest_restart_tries: 36
+guest_restart_tries: 60
+
+
+# Run inside a guest. Prints `<failed units> <unhealthy> <starting> <running>`. It waits for systemd to
+# finish booting first, and prints 9 9 9 0 while Docker is installed but not answering yet, so a guest
+# that has only just started never reads as healthy.
+guest_restart_probe: >-
+  timeout 120 systemctl is-system-running --wait >/dev/null 2>&1;
+  failed=$(systemctl --failed --no-legend | wc -l);
+  if command -v docker >/dev/null 2>&1; then
+  if docker info >/dev/null 2>&1; then
+  echo "$failed $(docker ps --filter health=unhealthy -q | wc -l) $(docker ps --filter health=starting -q | wc -l) $(docker ps -q | wc -l)";
+  else echo "9 9 9 0"; fi;
+  else echo "$failed 0 0 0"; fi

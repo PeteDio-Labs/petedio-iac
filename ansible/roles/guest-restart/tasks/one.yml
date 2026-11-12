@@ -9,19 +9,9 @@
   failed_when: "'status: running' not in guest_restart_status.stdout"
   check_mode: false  # lab-action: read-only
 
-- name: Count failed systemd units and unhealthy containers before
+- name: Count failed units and containers before
   ansible.builtin.command:
-    argv:
-      - pct
-      - exec
-      - "{{ guest.vmid }}"
-      - --
-      - sh
-      - -c
-      - >-
-        failed=$(systemctl --failed --no-legend | wc -l);
-        unhealthy=0; if command -v docker >/dev/null 2>&1; then unhealthy=$(docker ps --filter health=unhealthy -q | wc -l); fi;
-        echo "$failed $unhealthy"
+    argv: [pct, exec, "{{ guest.vmid }}", --, sh, -c, "{{ guest_restart_probe }}"]
   delegate_to: "{{ guest.node }}"
   register: guest_restart_before
   changed_when: false
@@ -79,43 +69,27 @@
     - not ansible_check_mode
     - guest.check_unit | default('') | length > 0
 
-# Docker services start after the guest does, so give them the same wait.
-- name: Wait until no failed unit or unhealthy container is new
+# systemd has finished booting, Docker answers, no container is starting or unhealthy, no new
+# failed unit, and at least as many containers run as before.
+- name: Wait until the guest is healthy
   ansible.builtin.command:
-    argv:
-      - pct
-      - exec
-      - "{{ guest.vmid }}"
-      - --
-      - sh
-      - -c
-      - >-
-        failed=$(systemctl --failed --no-legend | wc -l);
-        unhealthy=0; if command -v docker >/dev/null 2>&1; then unhealthy=$(docker ps --filter health=unhealthy -q | wc -l); fi;
-        echo "$failed $unhealthy"
+    argv: [pct, exec, "{{ guest.vmid }}", --, sh, -c, "{{ guest_restart_probe }}"]
   delegate_to: "{{ guest.node }}"
   register: guest_restart_after
-  until: >-
-    (guest_restart_after.stdout.split()[0] | int) <= (guest_restart_before.stdout.split()[0] | int)
-    and (guest_restart_after.stdout.split()[1] | int) == 0
+  until:
+    - guest_restart_after.rc == 0
+    - (guest_restart_after.stdout.split() + ['9', '9', '9', '0'])[0] | int <= (guest_restart_before.stdout.split() + ['0', '0', '0', '0'])[0] | int
+    - (guest_restart_after.stdout.split() + ['9', '9', '9', '0'])[1] | int == 0
+    - (guest_restart_after.stdout.split() + ['9', '9', '9', '0'])[2] | int == 0
+    - (guest_restart_after.stdout.split() + ['9', '9', '9', '0'])[3] | int >= (guest_restart_before.stdout.split() + ['0', '0', '0', '0'])[3] | int
   retries: "{{ guest_restart_tries }}"
   delay: 5
   changed_when: false
   when: not ansible_check_mode
 
-- name: Read whether a reboot is still pending
-  ansible.builtin.command:
-    argv: [pct, exec, "{{ guest.vmid }}", --, test, "!", -e, /var/run/reboot-required]
-  delegate_to: "{{ guest.node }}"
-  register: guest_restart_flag
-  changed_when: false
-  failed_when: false
-  check_mode: false  # lab-action: read-only
-
 - name: Report the guest
   ansible.builtin.debug:
     msg: >-
       guest {{ guest.vmid }} on {{ guest.node }}:
-      {{ 'restarted' if not ansible_check_mode else 'would restart (check mode)' }};
-      failed units and unhealthy containers before {{ guest_restart_before.stdout }};
-      reboot flag {{ 'cleared' if guest_restart_flag.rc == 0 else 'still set' }}.
+      {{ 'restarted and healthy' if not ansible_check_mode else 'would restart (check mode)' }};
+      before: failed units, unhealthy, starting, running = {{ guest_restart_before.stdout }}.
