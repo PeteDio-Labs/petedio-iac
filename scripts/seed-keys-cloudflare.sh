@@ -11,7 +11,7 @@
 #
 # WHAT THIS CHECKS BEFORE IT WRITES:
 #   1. Cloudflare says the token is active (/user/tokens/verify).
-#   2. The token sees exactly one account, and can list that account's service tokens.
+#   2. The token can list the service tokens of the account in kv/iac/cloudflare.
 #   2a. It cannot read zones, tunnels or Access apps. This probes three likely mistakes; it
 #       cannot prove the token holds no other permission.
 #   3. The token is not the Terraform token at kv/iac/cloudflare.
@@ -21,6 +21,7 @@
 # terminal or a transcript: curl reads its header from stdin.
 #
 #   Vault token: $VAULT_TOKEN, else the macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM.
+#   Account id: field account_id of kv/iac/cloudflare, else $CF_ACCOUNT_ID.
 #
 # Usage: ./scripts/seed-keys-cloudflare.sh
 set -euo pipefail
@@ -64,14 +65,25 @@ CODE="$(cf_get "$TMP/key" /user/tokens/verify "$TMP/verify.json")" || die "Canno
   || die "Cloudflare answered /user/tokens/verify with HTTP $CODE. The token is wrong, revoked or expired."
 echo "  active."
 
-step "Finding the one account it works on"
-CODE="$(cf_get "$TMP/key" "/accounts?per_page=50" "$TMP/accounts.json")" || die "Cannot reach $CF_API."
-[ "$CODE" = 200 ] || die "Cloudflare answered /accounts with HTTP $CODE."
-N="$(jq '.result | length' "$TMP/accounts.json")"
-[ "$N" = 1 ] || die "The token sees $N accounts. Scope it to the one account, and run this again."
-ACCOUNT_ID="$(jq -r '.result[0].id' "$TMP/accounts.json")"
-printf '%s' "$ACCOUNT_ID" | grep -Eq '^[0-9a-f]{32}$' || die "The account id is not 32 hex characters."
-echo "  account $ACCOUNT_ID ($(jq -r '.result[0].name' "$TMP/accounts.json"))."
+step "Authenticating to Vault"
+[ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'. Run the script from the repo, or export VAULT_CACERT."
+if [ -z "${VAULT_TOKEN:-}" ]; then
+  VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
+fi
+[ -n "${VAULT_TOKEN:-}" ] || die "No Vault token. Export VAULT_TOKEN, or store it in the Keychain item '$VAULT_TOKEN_KEYCHAIN_ITEM'."
+export VAULT_TOKEN
+vault token lookup >/dev/null 2>&1 || die "Vault rejected the token, or $VAULT_ADDR is unreachable.
+  Run ./scripts/pet-secrets doctor to see whether Vault is sealed."
+
+step "Reading the account id from $TF_VAULT_PATH"
+# The account id is not secret, and kv/iac/cloudflare already holds it for Terraform. Reading
+# it here means the token needs no account-read permission: an Access: Service Tokens token
+# sees 0 accounts at /accounts (Pedro's Mac run, 2026-11-12). The service-token list below
+# proves the token works on this account.
+ACCOUNT_ID="${CF_ACCOUNT_ID:-$(vault kv get -field=account_id "$TF_VAULT_PATH" 2>/dev/null || true)}"
+printf '%s' "$ACCOUNT_ID" | grep -Eq '^[0-9a-f]{32}$' \
+  || die "No 32-hex account_id at $TF_VAULT_PATH. Export CF_ACCOUNT_ID from the dashboard URL, and run this again."
+echo "  account $ACCOUNT_ID."
 
 step "Checking it can list Access service tokens"
 CODE="$(cf_get "$TMP/key" "/accounts/$ACCOUNT_ID/access/service_tokens?per_page=1" "$TMP/st.json")" || die "Cannot reach $CF_API."
@@ -92,16 +104,6 @@ for probe in cfd_tunnel access/apps; do
   [ "$CODE" != 200 ] || die "The token can read $probe. Give it only Account > Access: Service Tokens > Edit."
 done
 echo "  zones, tunnels and Access apps are refused."
-
-step "Authenticating to Vault"
-[ -f "$VAULT_CACERT" ] || die "VAULT_CACERT not found at '$VAULT_CACERT'. Run the script from the repo, or export VAULT_CACERT."
-if [ -z "${VAULT_TOKEN:-}" ]; then
-  VAULT_TOKEN="$(security find-generic-password -s "$VAULT_TOKEN_KEYCHAIN_ITEM" -w 2>/dev/null || true)"
-fi
-[ -n "${VAULT_TOKEN:-}" ] || die "No Vault token. Export VAULT_TOKEN, or store it in the Keychain item '$VAULT_TOKEN_KEYCHAIN_ITEM'."
-export VAULT_TOKEN
-vault token lookup >/dev/null 2>&1 || die "Vault rejected the token, or $VAULT_ADDR is unreachable.
-  Run ./scripts/pet-secrets doctor to see whether Vault is sealed."
 
 step "Checking this is not the Terraform token"
 if vault kv get -field=api_token "$TF_VAULT_PATH" > "$TMP/tf" 2>/dev/null; then
