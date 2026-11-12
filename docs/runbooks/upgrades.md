@@ -49,7 +49,7 @@ runs on pi1, so check the Kuma page loads afterwards.
   because its restart ends the Remote Control sessions. The first guest that does not come back
   healthy stops the play.
 - **Healthy means:** the guest answers `pct exec` after its restart marker clears, any
-  configured URL or unit answers, systemd has finished booting, Docker answers, no container is starting or unhealthy, no failed unit is new, and as many containers run as before.
+  configured URL or unit answers, systemd has finished booting, Docker answers, no container is starting or unhealthy, no unit has failed that was not already failed (by name), and as many containers run as before. Plex is checked by its unit, `plexmediaserver`; run `lab_verify` afterwards, because it probes Plex at its mesh address.
 - **Before you apply:** the play cannot read Plex or qBittorrent. Read `lab_probe mtrace` for
   Plex sessions and unfinished torrents, and name what you saw.
 - **Not covered:** 233, a runner. A restart of the runner that executes the job ends the job.

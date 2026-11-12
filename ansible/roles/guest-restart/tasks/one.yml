@@ -15,6 +15,7 @@
   delegate_to: "{{ guest.node }}"
   register: guest_restart_before
   changed_when: false
+  failed_when: guest_restart_before.rc != 0 or '|notbooted' in guest_restart_before.stdout or '|docker-down' in guest_restart_before.stdout
   check_mode: false  # lab-action: read-only
 
 # /run is a tmpfs, so a marker there survives only until the guest restarts.
@@ -69,19 +70,26 @@
     - not ansible_check_mode
     - guest.check_unit | default('') | length > 0
 
-# systemd has finished booting, Docker answers, no container is starting or unhealthy, no new
-# failed unit, and at least as many containers run as before.
+# systemd has finished booting, Docker answers, no container is starting or unhealthy, no unit
+# failed that was not already failed before, and at least as many containers run as before.
 - name: Wait until the guest is healthy
   ansible.builtin.command:
     argv: [pct, exec, "{{ guest.vmid }}", --, sh, -c, "{{ guest_restart_probe }}"]
   delegate_to: "{{ guest.node }}"
   register: guest_restart_after
+  vars:
+    gr_after: "{{ guest_restart_after.stdout | default('9 9 0|') }}"
+    gr_before: "{{ guest_restart_before.stdout | default('0 0 0|') }}"
+    gr_a_counts: "{{ (gr_after.split('|')[0].split() + ['9', '9', '0'])[:3] | map('int') | list }}"
+    gr_b_counts: "{{ (gr_before.split('|')[0].split() + ['0', '0', '0'])[:3] | map('int') | list }}"
+    gr_a_names: "{{ (gr_after.split('|') + [''])[1].split(',') | reject('equalto', '') | list }}"
+    gr_b_names: "{{ (gr_before.split('|') + [''])[1].split(',') | reject('equalto', '') | list }}"
   until:
     - guest_restart_after.rc == 0
-    - (guest_restart_after.stdout.split() + ['9', '9', '9', '0'])[0] | int <= (guest_restart_before.stdout.split() + ['0', '0', '0', '0'])[0] | int
-    - (guest_restart_after.stdout.split() + ['9', '9', '9', '0'])[1] | int == 0
-    - (guest_restart_after.stdout.split() + ['9', '9', '9', '0'])[2] | int == 0
-    - (guest_restart_after.stdout.split() + ['9', '9', '9', '0'])[3] | int >= (guest_restart_before.stdout.split() + ['0', '0', '0', '0'])[3] | int
+    - gr_a_counts[0] == 0
+    - gr_a_counts[1] == 0
+    - gr_a_counts[2] >= gr_b_counts[2]
+    - gr_a_names | difference(gr_b_names) | length == 0
   retries: "{{ guest_restart_tries }}"
   delay: 5
   changed_when: false
@@ -92,4 +100,4 @@
     msg: >-
       guest {{ guest.vmid }} on {{ guest.node }}:
       {{ 'restarted and healthy' if not ansible_check_mode else 'would restart (check mode)' }};
-      before: failed units, unhealthy, starting, running = {{ guest_restart_before.stdout }}.
+      before: unhealthy, starting, running | failed units = {{ guest_restart_before.stdout }}.

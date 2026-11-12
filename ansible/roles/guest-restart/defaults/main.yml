@@ -16,21 +16,24 @@ guest_restart_list:
   - { vmid: 240, node: pve02 }
   - { vmid: 246, node: pve01, check_url: "http://192.168.50.246:11434/api/version" }
   - { vmid: 110, node: pve02 }
-  - { vmid: 236, node: pve02, check_url: "http://192.168.50.236:32400/identity" }
+  - { vmid: 236, node: pve02, check_unit: plexmediaserver }
   - { vmid: 247, node: pve03 }
 
 # How long to wait for each guest to come back, in 5-second tries.
 guest_restart_tries: 60
 
 
-# Run inside a guest. Prints `<failed units> <unhealthy> <starting> <running>`. It waits for systemd to
-# finish booting first, and prints 9 9 9 0 while Docker is installed but not answering yet, so a guest
-# that has only just started never reads as healthy.
+# Run inside a guest. Prints `<unhealthy> <starting> <running>|<failed unit names, comma separated>`.
+# It waits up to 120 s for systemd to finish booting and accepts only `running` or `degraded`.
+# A degraded guest is judged by which units failed, not by the state. While the boot is unfinished
+# it prints `9 9 0|notbooted`, and while Docker is installed but not answering `9 9 9|docker-down`,
+# so a guest that has only just started never reads as healthy.
 guest_restart_probe: >-
-  timeout 120 systemctl is-system-running --wait >/dev/null 2>&1;
-  failed=$(systemctl --failed --no-legend | wc -l);
+  state=$(timeout 120 systemctl is-system-running --wait 2>/dev/null);
+  case "$state" in running|degraded) ;; *) echo "9 9 0|notbooted"; exit 0 ;; esac;
+  failed=$(systemctl --failed --no-legend --plain | awk '{print $1}' | sort | tr '\n' ',');
   if command -v docker >/dev/null 2>&1; then
   if docker info >/dev/null 2>&1; then
-  echo "$failed $(docker ps --filter health=unhealthy -q | wc -l) $(docker ps --filter health=starting -q | wc -l) $(docker ps -q | wc -l)";
-  else echo "9 9 9 0"; fi;
-  else echo "$failed 0 0 0"; fi
+  echo "$(docker ps --filter health=unhealthy -q | wc -l) $(docker ps --filter health=starting -q | wc -l) $(docker ps -q | wc -l)|$failed";
+  else echo "9 9 9|docker-down"; fi;
+  else echo "0 0 0|$failed"; fi
