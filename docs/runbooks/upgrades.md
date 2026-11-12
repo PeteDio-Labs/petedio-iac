@@ -13,6 +13,9 @@ examined, unreadable and skipped, so read those, not only the package total.
 - **What it does:** per node, one node at a time, it runs `files/security-patch.sh` inside each
   running LXC through `pct exec`. It upgrades security packages only. It never reboots and never
   runs `apt autoremove`.
+- **No service restarts:** an apply blocks every maintainer-script restart (`policy-rc.d`), so a
+  patched library stays loaded until you restart its service. Restart the service in a planned
+  window, or reboot the guest when a row says `reboot=yes`.
 - **Held packages:** the script counts but does not upgrade Vault, Postgres, Docker, containerd,
   MinIO, GPU drivers, kernels and Proxmox packages. The sections below upgrade them.
 - **Expected:** each node's summary line says how many guests it listed and read, how many have

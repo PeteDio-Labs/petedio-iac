@@ -19,22 +19,35 @@ MODE=${1:-}
 case "$MODE" in plan|apply) ;; *) echo "REFUSED: mode must be plan or apply" >&2; exit 2 ;; esac
 
 . /etc/os-release
+OSNAME=${PRETTY_NAME:-unknown}
 if command -v apk >/dev/null 2>&1; then
   # apk marks no update as a security fix, so this script cannot tell which ones to take.
-  echo "RESULT|$MODE|$PRETTY_NAME|security=na|held=0|patched=0|remaining=na|reboot=no|lists=na"
+  echo "RESULT|$MODE|$OSNAME|security=na|held=0|patched=0|remaining=na|reboot=no|lists=na"
   exit 0
 fi
 
 HOLD='^(vault|postgresql|docker|containerd|runc|nvidia|libnvidia|plexmediaserver|minio|grafana|loki|prometheus|alloy|tailscale|cloudflared|linux-image|linux-modules|proxmox|pve-|libpve|qemu|lxc|corosync|zfs)'
-export DEBIAN_FRONTEND=noninteractive
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1
+
+# Block every maintainer-script service restart during an apply. A package list alone cannot
+# stop `libssl3` or `libc6` from restarting Vault, Postgres or dockerd through its postinst, so
+# policy-rc.d answers 101 ("do not start or restart") and is removed afterwards. A patched library
+# stays loaded by a running service until that service restarts, so `reboot=` and the runbook say
+# when to restart one deliberately.
+PRC=/usr/sbin/policy-rc.d
+if [ "$MODE" = apply ]; then
+  [ ! -e "$PRC" ] || { echo "ERR $PRC already exists" >&2; exit 1; }
+  printf '#!/bin/sh\nexit 101\n' > "$PRC"; chmod 755 "$PRC"
+  trap 'rm -f "$PRC"' EXIT
+fi
 
 if [ "$MODE" = apply ]; then
-  apt-get update -q >/dev/null || { echo "ERR apt-get update failed" >&2; exit 1; }
+  apt-get update -q >/dev/null 2>&1 || { echo "ERR apt-get update failed" >&2; exit 1; }
 fi
 
 # Names of every `Inst` line whose origin is a security pocket (Debian-Security, noble-security).
 pending() {
-  sim=$(apt-get -s upgrade) || return 1
+  sim=$(apt-get -s dist-upgrade 2>/dev/null) || return 1
   printf '%s\n' "$sim" | awk '/^Inst / && tolower($0) ~ /security/ {print $2}'
 }
 all=$(pending) || { echo "ERR apt simulation failed" >&2; exit 1; }
@@ -46,7 +59,7 @@ patched=0
 if [ "$MODE" = apply ] && [ -n "$take" ]; then
   # shellcheck disable=SC2086 # package names never hold whitespace
   apt-get install -y -q --only-upgrade --no-install-recommends \
-    -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef $take >/dev/null \
+    -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef $take >/dev/null 2>&1 \
     || { echo "ERR apt-get install failed" >&2; exit 1; }
   patched=$(printf '%s\n' "$take" | grep -vc '^$')
 fi
@@ -57,4 +70,4 @@ newest=$(stat -c %Y /var/lib/apt/periodic/update-success-stamp /var/lib/apt/list
 [ -n "$newest" ] || { echo "ERR package-list-age" >&2; exit 1; }
 lists=$(( ( $(date +%s) - newest ) / 86400 ))
 rb=no; [ -e /var/run/reboot-required ] && rb=yes
-echo "RESULT|$MODE|$PRETTY_NAME|security=$sec|held=$held|patched=$patched|remaining=$remaining|reboot=$rb|lists=$lists"
+echo "RESULT|$MODE|$OSNAME|security=$sec|held=$held|patched=$patched|remaining=$remaining|reboot=$rb|lists=$lists"
