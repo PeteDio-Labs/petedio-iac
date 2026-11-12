@@ -1,0 +1,61 @@
+---
+# Upgrade the Authentik stack in LXC 119 to authentik_version, run from the node that holds 119.
+# lab-action reaches the nodes only, so this runs `pct exec` into the guest (PET-908).
+- name: Read the Authentik stack and decide what the upgrade would do
+  ansible.builtin.command:
+    argv: [pct, exec, "{{ authentik_vmid }}", --, sh, -s, plan, "{{ authentik_version }}"]
+    stdin: "{{ lookup('ansible.builtin.file', 'authentik-upgrade.sh') }}"
+  register: authentik_plan
+  changed_when: false
+  check_mode: false  # lab-action: read-only
+
+- name: Read the plan line
+  ansible.builtin.set_fact:
+    authentik_action: "{{ (authentik_plan.stdout_lines | last | split('|'))[4] }}"
+    authentik_current: "{{ (authentik_plan.stdout_lines | last | split('|'))[2] }}"
+
+- name: Report the plan
+  ansible.builtin.debug:
+    msg: "Authentik {{ authentik_current }} -> {{ authentik_version }}: {{ authentik_action }}"
+
+- name: Look for a recent backup of the guest
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ authentik_backup_dir }}"
+      - -maxdepth
+      - "1"
+      - -name
+      - "vzdump-lxc-{{ authentik_vmid }}-*.tar.zst"
+      - -mmin
+      - "-{{ authentik_backup_max_age_min }}"
+  register: authentik_recent_backup
+  changed_when: false
+  check_mode: false  # lab-action: read-only
+  when: authentik_action == 'bump'
+
+# The guest pauses about 3 seconds in suspend mode; snapshot mode is refused for this rootfs.
+- name: Back up the guest first
+  ansible.builtin.command:
+    argv: [vzdump, "{{ authentik_vmid }}", --storage, "{{ authentik_backup_storage }}", --mode, suspend, --compress, zstd]
+  changed_when: true
+  when:
+    - authentik_action == 'bump'
+    - not ansible_check_mode
+    - authentik_recent_backup.stdout_lines | length == 0
+
+- name: Upgrade the stack
+  ansible.builtin.command:
+    argv: [pct, exec, "{{ authentik_vmid }}", --, sh, -s, apply, "{{ authentik_version }}"]
+    stdin: "{{ lookup('ansible.builtin.file', 'authentik-upgrade.sh') }}"
+  register: authentik_apply
+  changed_when: authentik_action == 'bump'
+  when:
+    - authentik_action == 'bump'
+    - not ansible_check_mode
+
+- name: Confirm the result
+  ansible.builtin.assert:
+    that:
+      - ansible_check_mode or authentik_action == 'noop' or (authentik_apply.stdout_lines | last).endswith('|bumped')
+    fail_msg: "The upgrade did not report `bumped`. Read the run log, then follow docs/runbooks/upgrades.md."
