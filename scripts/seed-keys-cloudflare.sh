@@ -93,17 +93,32 @@ echo "  it can."
 
 step "Checking it can do nothing else it might have been given by mistake"
 # Cloudflare cannot list a token's own permissions without API Tokens Read, so this probes
-# three likely mistakes instead: zones, tunnels and Access apps. Each must be refused or empty.
-# A pass does not prove the token holds no other permission; check the dashboard's summary.
-CODE="$(cf_get "$TMP/key" "/zones?per_page=1" "$TMP/z.json")" || die "Cannot reach $CF_API."
-if [ "$CODE" = 200 ] && [ "$(jq '.result | length' "$TMP/z.json")" != 0 ]; then
-  die "The token can read zones. Give it only Account > Access: Service Tokens > Edit."
-fi
-for probe in cfd_tunnel access/apps; do
-  CODE="$(cf_get "$TMP/key" "/accounts/$ACCOUNT_ID/$probe?per_page=1" "$TMP/p.json")" || die "Cannot reach $CF_API."
-  [ "$CODE" != 200 ] || die "The token can read $probe. Give it only Account > Access: Service Tokens > Edit."
-done
-echo "  zones, tunnels and Access apps are refused."
+# three likely mistakes instead: zones, tunnels and Access apps. A pass does not prove the token
+# holds no other permission; check the dashboard's summary.
+#
+# A token without the permission gets either a refusal or HTTP 200 with an empty list:
+# Cloudflare answered /cfd_tunnel with 200 and no result for Pedro's Service Tokens-only token
+# (2026-11-12). This account has a zone, a tunnel and Access apps, so a token that can read any
+# of them gets a non-empty list. That is the only verdict that fails.
+probe() {  # <label> <path>
+  local code n
+  code="$(cf_get "$TMP/key" "$2" "$TMP/p.json")" || die "Cannot reach $CF_API."
+  case "$code" in
+    200)
+      n="$(jq -e '.result | length' "$TMP/p.json" 2>/dev/null)" \
+        || die "Cloudflare answered $1 with HTTP 200 but no result list; cannot tell what the token reads."
+      case "$n" in
+        0) echo "  $1: empty, so not readable." ;;
+        *) die "The token can read $1 ($n seen). Give it only Account > Access: Service Tokens > Edit." ;;
+      esac ;;
+    4??) echo "  $1: refused (HTTP $code)." ;;
+    *) die "Cloudflare answered $1 with HTTP $code; cannot tell what the token reads." ;;
+  esac
+}
+probe zones "/zones?per_page=1"
+probe tunnels "/accounts/$ACCOUNT_ID/cfd_tunnel?per_page=1"
+probe "Access apps" "/accounts/$ACCOUNT_ID/access/apps?per_page=1"
+echo "  zones, tunnels and Access apps are not readable."
 
 step "Checking this is not the Terraform token"
 if vault kv get -field=api_token "$TF_VAULT_PATH" > "$TMP/tf" 2>/dev/null; then
