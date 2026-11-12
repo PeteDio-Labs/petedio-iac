@@ -13,7 +13,7 @@ die(){ printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ $# -eq 1 ] || die "usage: $0 <agent>"
 AGENT="$1"
 printf '%s' "$AGENT" | grep -Eq '^[a-z][a-z0-9-]{1,30}$' || die "not an agent name: $AGENT"
-for t in vault pbcopy security; do command -v "$t" >/dev/null || die "$t not in PATH."; done
+for t in vault pbcopy security python3; do command -v "$t" >/dev/null || die "$t not in PATH."; done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
@@ -26,10 +26,14 @@ export VAULT_TOKEN
 
 # Read into a variable first, so a failed read never leaves an empty or partial clipboard.
 VALUE="$(vault kv get -field=header "kv/callers/edge/$AGENT")" || die "could not read kv/callers/edge/$AGENT (sealed Vault, bad token or no such agent)"
-case "$VALUE" in
-  '{"cf-access-client-id":'*'"cf-access-client-secret":'*'}') ;;
-  *) die "kv/callers/edge/$AGENT header is not the expected JSON; nothing copied" ;;
-esac
+# Parse it: both fields must be non-empty strings, and nothing else may be present.
+printf '%s' "$VALUE" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+keys = ("cf-access-client-id", "cf-access-client-secret")
+ok = isinstance(d, dict) and sorted(d) == sorted(keys) and all(isinstance(d[k], str) and d[k] for k in keys)
+sys.exit(0 if ok else 1)
+' 2>/dev/null || die "kv/callers/edge/$AGENT header is not the expected JSON; nothing copied"
 printf '%s' "$VALUE" | pbcopy
 unset VALUE
 echo "Copied the header for $AGENT to the clipboard. Paste it, then copy something else to clear it."
