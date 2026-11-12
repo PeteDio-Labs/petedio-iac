@@ -39,12 +39,30 @@ ssh pi1 'sudo sh -s apply' < ansible/playbooks/files/security-patch.sh
 The last line starts with `RESULT|`. Post that line, and nothing else, on the PET item. Kuma
 runs on pi1, so check the Kuma page loads afterwards.
 
-## Upgrade Authentik (119)
+## Upgrade Authentik (119) (`upgrade-authentik.yml`, `PET-908`)
 
-Not yet declared in Ansible. No role exists, and the compose file's location, tag source and
-secret wiring are not captured in the repo (`authentik-import.md`). The tag is bumped by hand
-until a role pins it. The role manages the version tag only, backs up the compose file first,
-and restarts one service at a time.
+- **Run:** `playbook_check upgrade-authentik.yml`, then `playbook_apply upgrade-authentik.yml`.
+- **Version:** one line, `authentik_version` in `ansible/roles/authentik/defaults/main.yml`. The
+  tag sits inline on the `image:` lines of `server`, `worker` and `ldap` in
+  `/opt/authentik/docker-compose.yml`. `.env` holds no tag. The running version was 2024.12.5
+  after the hand patch of 2026-11-12.
+- **What a check examines:** the current tag, that the three images share it, and that every
+  compose container reports healthy. It refuses a downgrade, a jump of more than one minor and
+  a minor outside the reviewed list in `authentik-upgrade.sh`. It changes nothing.
+- **What an apply does:** takes a `vzdump` archive of 119 unless one under six hours old exists,
+  copies the compose file, dumps the database to `/root/authentik-pre-<version>-<time>.sql.gz`,
+  edits the tag, pulls, then recreates `server`, `worker` and `ldap` one at a time and waits for
+  each to be healthy. It restores the compose file when a service does not return healthy.
+- **Bad:** a rollback restores the image only. A migration that already ran stays, so recover
+  from the `vzdump` archive. The play never reboots. 119 has a pending `dbus` reboot (Pedro,
+  2026-11-12: do it when convenient), so reboot 119 in the window of the first minor bump.
+- **Path from 2024.12:** 2025.2, 2025.4, 2025.6, 2025.8, 2025.10, 2025.12, 2026.2, 2026.5,
+  2026.8. One PR per minor changes `authentik_version` and cites that minor's release notes. Read
+  each minor's breaking changes before you open its PR; 2025.2 notes the Source stage change
+  and the frozen `:latest` tag, and says to upgrade outposts with the instance.
+- **Open drift:** the compose and `.env` headers say "managed by Ansible", and this role now
+  owns the tag only. The embedded outpost still shows a stale `auth.toastedbytes.com` host, and
+  Docker's apt key sits in legacy `/etc/apt/trusted.gpg`. Neither changes here.
 
 ## Upgrade Vault (223)
 

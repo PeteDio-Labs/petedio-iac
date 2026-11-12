@@ -1,0 +1,14 @@
+---
+# The Authentik version the compose file at /opt/authentik/docker-compose.yml runs (PET-908).
+# This is the one line a version bump changes. The tag lives inline on the `image:` lines of
+# the server, worker and ldap services; `.env` holds no AUTHENTIK_TAG key (read live 2026-11-12).
+#
+# 2024.12.5 is what the host runs after the hand patch of 2026-11-12. Bump one minor at a time
+# along the path in docs/runbooks/upgrades.md: a jump of more than one minor is refused.
+authentik_version: "2024.12.5"
+
+authentik_vmid: 119
+# A vzdump archive of the guest younger than this many minutes skips the pre-upgrade backup.
+authentik_backup_max_age_min: 360
+authentik_backup_storage: ollama-backups
+authentik_backup_dir: /mnt/ollama-backups/dump
