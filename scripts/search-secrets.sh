@@ -14,7 +14,7 @@
 #
 # The first setup is three commands:
 #   search-secrets.sh create claude
-#   search-secrets.sh create bobbert
+#   search-secrets.sh create muse
 #   pbpaste | search-secrets.sh plane-key     (a Plane API key minted for this service)
 #
 # The service reads the vault through the petedio-workspace-mirror GitHub App, whose key

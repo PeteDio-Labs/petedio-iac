@@ -69,7 +69,7 @@ ROTATE_OVERLAP = dt.timedelta(hours=24)
 # A renew must leave at least this long; a 90-day renew leaves 90 days, less clock skew.
 RENEW_FLOOR = dt.timedelta(days=89)
 EXPIRY_WARN = dt.timedelta(days=21)
-# `agents = ["bobbert", "batsy"]` on a route. Matches one line, as terraform fmt writes it.
+# `agents = ["muse", "batsy"]` on a route. Matches one line, as terraform fmt writes it.
 AGENTS_LIST = re.compile(r'^\s*agents\s*=\s*\[([^\]]*)\]', re.M)
 # mtrace's write callers live in the deploy play. callers.yml records each agent's mtrace scope
 # too, so a reader sees it in one place; check() fails when the two disagree.

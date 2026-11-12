@@ -1,6 +1,6 @@
 # Agent keys: Cloudflare Access service tokens
 
-Each agent that calls a lab service over HTTPS, such as Pedro's Muse (`bobbert`) or Sonia's
+Each agent that calls a lab service over HTTPS, such as Pedro's Muse (`muse`) or Sonia's
 (`batsy`), holds one Cloudflare Access service token. The agent sends it in one header,
 `Authorization`, the only name Cloudflare accepts for a one-header token. Cloudflare refuses any other request at the edge. The design is
 [Lab access and keys](https://claude.ai/artifact/6A23RZ9uT4X74qWX5sHBuy).
