@@ -554,7 +554,7 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   under that `sub`. So a role that holds homelab credentials binds `repository`, `ref`,
   `event_name` and the workflow file: `workflow_ref` for a top-level workflow, and
   `job_workflow_ref` for a reusable one, whose `workflow_ref` names its caller.
-  `github-actions`, `openfaas-ci`, `media-updates` and `claude-247-deploy` follow it.
+  `github-actions`, `media-updates` and `claude-247-deploy` follow it. (`openfaas-ci` followed it until PET-888 removed it.)
 
 - **The Terraform provider only takes STRING `bound_claims`, not lists.** Put multiple
   allowed values in ONE comma-separated string with OR semantics:
@@ -1592,3 +1592,20 @@ does this, and it was tested against pve02: a wrong CA and a wrong hostname are 
 - **No `gh`:** the runner has none. `scripts/tf-plan-gh.py` uses python3 and urllib.
 
 Residual risk: a collaborator's branch can still read any secret `ci-read` allows. A narrower plan-only Vault policy would shrink it.
+
+## A `pull_request` job on the self-hosted runner runs a stranger's code (PET-407)
+
+The runners (232 and 233) sit on the LAN with Vault, Proxmox and Postgres in reach, and this
+repository is public. For a `pull_request` event, `actions/checkout` checks out the pull
+request's own content, so a job on `runs-on: [self-hosted, ...]` runs it there. The fork-pull-request
+policy was "require approval for first-time contributors", which makes one merged contribution
+the gate, not membership. A stranger who lands a typo fix then runs code on the runner.
+
+- **No workflow gets a `pull_request` trigger on the self-hosted runner.** Use `ubuntu-latest`,
+  or `pull_request_target` with an explicit `ref: main`, and know why.
+- **A deploy workflow binds its Vault role to `workflow_dispatch` or `push`, on `main`, and to its
+  own workflow file.** See the `sub` rule above (PET-675).
+- `ansible-stack.yml` held a `pull_request` syntax-check job on the self-hosted runner. It was
+  deleted because `ansible-validate.yml` already syntax-checks every playbook on a hosted
+  runner (PET-397). The file itself was removed in PET-888, with the `openfaas-ci` role it
+  minted.

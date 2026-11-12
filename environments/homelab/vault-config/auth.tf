@@ -87,7 +87,7 @@ resource "vault_jwt_auth_backend" "github" {
 # (which executes PR-controlled terraform/workflow code) put arbitrary code next to
 # live creds. The PR job is now a GitHub-HOSTED, no-Vault fmt/validate
 # (.github/workflows/terraform.yml), so nothing on a PR needs — or may mint — a token
-# here. Matches the openfaas-ci role's main-only pattern below.
+# here. Main-only, like the other deploy roles below.
 #
 # bound_claims_type = "string" → EXACT match (not glob): each claim is a fixed string
 # with no wildcard.
@@ -348,34 +348,6 @@ resource "vault_jwt_auth_backend_role" "infra_reconcile" {
   token_ttl      = 300
 }
 
-
-# openfaas-ci role → openfaas-ci policy. ⚠ MISNAMED, NOT DEAD — see the policy's comment in
-# policies.tf. `.github/workflows/ansible-stack.yml` mints as this role (lines 102, 116) to
-# deploy the palworld stack; openfaas-241 itself is gone. Bound to a push to petedio-iac's
-# main through ansible-stack.yml only, so a PR or a dispatch cannot mint it. The other
-# values were captured from live Vault on 2026-09-12, not reconstructed (PET-423).
-resource "vault_jwt_auth_backend_role" "openfaas_ci" {
-  backend           = vault_jwt_auth_backend.github.path
-  role_name         = "openfaas-ci"
-  role_type         = "jwt"
-  user_claim        = "actor"
-  bound_audiences   = [var.github_oidc_audience]
-  bound_claims_type = "string"
-  # ⚠ BOUND TO THE REUSABLE FILE AND THE EVENT (PET-675), for the reason on the
-  # github-actions role above: a sub alone lets any workflow on main mint the lxc-ssh
-  # key. ansible-stack.yml is a reusable workflow, so workflow_ref names its caller
-  # (ansible-claude-247.yml) and job_workflow_ref names ansible-stack.yml itself. Pinning
-  # job_workflow_ref lets a new stack caller work with no change here, and event_name
-  # still refuses a dispatch or a schedule.
-  bound_claims = {
-    repository       = var.github_repo
-    ref              = "refs/heads/main"
-    event_name       = "push"
-    job_workflow_ref = "${var.github_repo}/.github/workflows/ansible-stack.yml@refs/heads/main"
-  }
-  token_policies = [vault_policy.openfaas_ci.name]
-  token_ttl      = 900
-}
 
 # claude-247-deploy role → claude-247-deploy policy (PET-515). petedio-iac's
 # ansible-claude-247.yml deploys 247's claude-code role from the homelab runner, and this is
