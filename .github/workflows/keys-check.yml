@@ -25,3 +25,5 @@ jobs:
         run: python3 scripts/keys.py check
       - name: Drive sync and rotate against fakes
         run: python3 scripts/test-keys.py
+      - name: Drive the seed script's scope probes against fake answers
+        run: bash scripts/test-seed-keys-probe.sh

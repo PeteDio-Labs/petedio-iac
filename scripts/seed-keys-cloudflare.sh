@@ -105,7 +105,8 @@ probe() {  # <label> <path>
   code="$(cf_get "$TMP/key" "$2" "$TMP/p.json")" || die "Cannot reach $CF_API."
   case "$code" in
     200)
-      n="$(jq -e '.result | length' "$TMP/p.json" 2>/dev/null)" \
+      # Count only a real array: jq gives length 0 for null, {} and "", which would pass.
+      n="$(jq -e '.result | if type == "array" then length else error("no list") end' "$TMP/p.json" 2>/dev/null)" \
         || die "Cloudflare answered $1 with HTTP 200 but no result list; cannot tell what the token reads."
       case "$n" in
         0) echo "  $1: empty, so not readable." ;;
