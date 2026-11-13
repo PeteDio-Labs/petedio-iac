@@ -50,7 +50,18 @@ resource "aws_cloudfront_response_headers_policy" "security" {
   custom_headers_config {
     items {
       header   = "Permissions-Policy"
-      value    = "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+      value    = "camera=(), microphone=(), geolocation=()"
+      override = true
+    }
+    # The site embeds nothing and is embedded by nothing, so isolate its browsing context group.
+    items {
+      header   = "Cross-Origin-Opener-Policy"
+      value    = "same-origin"
+      override = true
+    }
+    items {
+      header   = "Cross-Origin-Resource-Policy"
+      value    = "same-origin"
       override = true
     }
   }
