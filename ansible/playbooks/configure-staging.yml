@@ -267,8 +267,9 @@
     # Through the service, not the script, so systemd serializes it with the timer's runs and a
     # failed sync fails this task.
     - name: Run the first sync now when the App identity is present
-      ansible.builtin.command: systemctl start staging-sync.service
-      changed_when: false
+      ansible.builtin.systemd:
+        name: staging-sync.service
+        state: started
       when: staging_app_pem | length > 0
 
   handlers:
