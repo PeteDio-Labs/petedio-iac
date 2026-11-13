@@ -224,11 +224,13 @@
         daemon_reload: true
       when: staging_sync_unit.changed or staging_sync_timer.changed
 
+    # The timer runs only once the App identity is on the host. Without it every tick would fail.
     - name: Enable the sync timer
       ansible.builtin.systemd:
         name: staging-sync.timer
         enabled: true
         state: started
+      when: staging_app_pem | length > 0
 
     - name: Write the Caddyfile
       ansible.builtin.copy:

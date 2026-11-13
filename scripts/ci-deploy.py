@@ -209,7 +209,12 @@ def stage_backup_store() -> dict:
 
 
 def stage_staging() -> dict:
-    app = kv("services/staging-app", True)
+    # Optional until Pedro seeds the dedicated App. Absent, the play still converges Caddy and the
+    # site root, and leaves the sync timer off. All three fields or none, as codex-248 does.
+    app = kv("services/staging-app", False)
+    if not app:
+        print("staging-app: not seeded. The play converges Caddy only, and the sync timer stays off.")
+        return {"staging_app_id": "", "staging_installation_id": "", "staging_app_pem": ""}
     app_id, inst, pem = need(app, "services/staging-app", "app_id", "installation_id", "app_pem")
     if not (app_id + inst).isdigit():
         raise Abort("kv/services/staging-app holds a non-numeric id.")
