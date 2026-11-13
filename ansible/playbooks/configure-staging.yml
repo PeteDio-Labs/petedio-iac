@@ -1,39 +1,203 @@
 ---
-# configure-staging.yml — serve the portfolio's built dist/ from staging-249 with Caddy.
+# configure-staging.yml — serve and build the portfolio's `staging` branch on staging-249.
 #
-# The play installs Caddy from Debian's own repository and writes one site on :8080 that
-# mirrors how CloudFront serves the portfolio: /path resolves to path.html, a directory
-# resolves to its index.html, and a missing path returns 404.html with status 404. It
-# never touches /srv/staging/dist beyond creating the directory, so a deploy and a
-# converge do not fight over the site content.
+# Two halves:
+#   1. Caddy serves /srv/staging/current on :8080 the way CloudFront serves the portfolio:
+#      /path resolves to path.html, a directory to its index.html, and a missing path returns
+#      404.html with status 404. Every response sends Cache-Control: no-store, so a new build
+#      shows on the next page load with no cache to purge. /__staging.json says which commit
+#      is live.
+#   2. staging-sync.timer runs every minute. It mints a read-only GitHub App token for
+#      pdlabs-portfolio, reads the `staging` branch tip, and when that moved it builds the
+#      branch as the unprivileged `staging` user and swaps /srv/staging/current to the new
+#      release. See files/staging-sync.sh.
 #
-# The origin is reachable on the LAN and the tailnet at http://192.168.50.249:8080, and
-# through cloudflared (LXC 112) as staging.pdlab.dev behind Cloudflare Access. It serves
-# only a copy of the public site. It sends X-Robots-Tag: noindex and Cache-Control: no-store,
-# so a new deploy appears on the next page load, with no cache to purge.
-- name: Serve the portfolio staging site
+# The origin is reachable on the LAN and the tailnet at http://192.168.50.249:8080, and through
+# cloudflared (LXC 112) as staging.pdlab.dev behind Cloudflare Access. It serves a copy of the
+# site and sends X-Robots-Tag: noindex.
+#
+# SECRETS (resolved by scripts/ci-deploy.py staging-249 from Vault, passed as no_log extra-vars):
+#   staging_app_id, staging_installation_id, staging_app_pem
+#                           kv/services/claude-workspace-mirror, the GitHub App that Pedro
+#                           installed on pdlabs-portfolio with contents read-only.
+# Run via:  .github/workflows/deploy-staging-249.yml (dispatch, main only).
+#
+# ⚠ BRANCH CODE RUNS ON THIS HOST, so the host is the blast radius: it holds the App key (root
+# only; the build runs as `staging` and never sees it) and it can reach the LAN. Only a push to
+# pdlabs-portfolio's `staging` branch, which Pedro and his threads make, starts a build.
+- name: Serve and build the portfolio staging site
   hosts: staging
   become: true
 
   vars:
-    staging_root: /srv/staging/dist
+    staging_base: /srv/staging
     staging_port: 8080
+    staging_bun_version: "1.4.4"
+    # From the release's SHASUMS256.txt (bun-linux-x64.zip), read on 2026-11-13.
+    staging_bun_sha256: bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c
+    staging_app_id: ""
+    staging_installation_id: ""
+    staging_app_pem: ""
+
+  pre_tasks:
+    - name: Assert the App identity is complete, or absent on purpose
+      ansible.builtin.assert:
+        that:
+          - (staging_app_id | string | length == 0) == (staging_installation_id | string | length == 0)
+          - (staging_app_id | string | length == 0) == (staging_app_pem | length == 0)
+        fail_msg: >-
+          staging_app_id, staging_installation_id and staging_app_pem must all be set or all be empty.
+          Run the deploy-staging-249 workflow, which stages all three.
 
   tasks:
-    - name: Install Caddy
+    - name: Install packages
       ansible.builtin.apt:
-        name: caddy
+        name: [caddy, git, curl, jq, openssl, unzip, ca-certificates]
         state: present
         update_cache: true
         cache_valid_time: 3600
 
-    - name: Create the site root
+    - name: Create the build user
+      ansible.builtin.user:
+        name: staging
+        system: true
+        shell: /usr/sbin/nologin
+        home: /var/lib/staging-build
+        create_home: true
+
+    - name: Download Bun, checked against the release checksum
+      ansible.builtin.get_url:
+        url: "https://github.com/oven-sh/bun/releases/download/bun-v{{ staging_bun_version }}/bun-linux-x64.zip"
+        dest: "/opt/bun-{{ staging_bun_version }}.zip"
+        checksum: "sha256:{{ staging_bun_sha256 }}"
+        mode: "0644"
+
+    - name: Unpack Bun
+      ansible.builtin.unarchive:
+        src: "/opt/bun-{{ staging_bun_version }}.zip"
+        dest: /opt
+        remote_src: true
+        creates: /opt/bun-linux-x64/bun
+
+    - name: Put Bun on the path
+      ansible.builtin.copy:
+        src: /opt/bun-linux-x64/bun
+        dest: /usr/local/bin/bun
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create the site directories
       ansible.builtin.file:
-        path: "{{ staging_root }}"
+        path: "{{ item }}"
         state: directory
         owner: root
         group: root
         mode: "0755"
+      loop:
+        - "{{ staging_base }}"
+        - "{{ staging_base }}/releases"
+        - "{{ staging_base }}/releases/placeholder"
+        - /etc/staging
+
+    - name: Write the placeholder page that serves until the first build
+      ansible.builtin.copy:
+        dest: "{{ staging_base }}/releases/placeholder/index.html"
+        force: false
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          <!doctype html><title>staging</title><p>No build yet. Push to the staging branch of pdlabs-portfolio.
+          See /__staging.json.
+
+    - name: Point current at the placeholder until a build replaces it
+      ansible.builtin.file:
+        src: "{{ staging_base }}/releases/placeholder"
+        dest: "{{ staging_base }}/current"
+        state: link
+        force: false
+
+    - name: Write the App identity
+      ansible.builtin.copy:
+        dest: /etc/staging/app.env
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          APP_ID={{ staging_app_id }}
+          INSTALLATION_ID={{ staging_installation_id }}
+      no_log: true
+      when: staging_app_pem | length > 0
+
+    - name: Write the App key
+      ansible.builtin.copy:
+        dest: /etc/staging/app.pem
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ staging_app_pem | trim }}\n"
+      no_log: true
+      when: staging_app_pem | length > 0
+
+    - name: Install the sync script
+      ansible.builtin.copy:
+        src: files/staging-sync.sh
+        dest: /usr/local/sbin/staging-sync
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the sync service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/staging-sync.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by configure-staging.yml. Do not edit by hand.
+          [Unit]
+          Description=Build and publish the portfolio staging branch
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/staging-sync
+          TimeoutStartSec=600
+      register: staging_sync_unit
+
+    - name: Install the sync timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/staging-sync.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by configure-staging.yml. Do not edit by hand.
+          [Unit]
+          Description=Check the portfolio staging branch every minute
+
+          [Timer]
+          OnBootSec=1min
+          OnUnitActiveSec=1min
+          AccuracySec=5s
+
+          [Install]
+          WantedBy=timers.target
+      register: staging_sync_timer
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: staging_sync_unit.changed or staging_sync_timer.changed
+
+    - name: Enable the sync timer
+      ansible.builtin.systemd:
+        name: staging-sync.timer
+        enabled: true
+        state: started
 
     - name: Write the Caddyfile
       ansible.builtin.copy:
@@ -48,13 +212,19 @@
           }
 
           :{{ staging_port }} {
-            root * {{ staging_root }}
+            root * {{ staging_base }}/current
             header X-Robots-Tag "noindex, nofollow"
             # No caching anywhere. Browsers and Cloudflare's edge both obey no-store, so a
             # rebuilt page shows on the next load, and the filename needs no content hash.
             header Cache-Control "no-store"
-            try_files {path} {path}.html {path}/index.html
-            file_server
+            handle /__staging.json {
+              root * {{ staging_base }}
+              file_server
+            }
+            handle {
+              try_files {path} {path}.html {path}/index.html
+              file_server
+            }
             handle_errors {
               rewrite * /404.html
               file_server
@@ -77,7 +247,6 @@
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ staging_port }}/__converge_check"
         status_code: [200, 404]
-        return_content: false
       register: staging_probe
       # A missing page proves Caddy answers; the status code is the assertion, not the body.
 
@@ -85,6 +254,11 @@
       ansible.builtin.assert:
         that: staging_probe.status in [200, 404]
         success_msg: "Caddy answered {{ staging_probe.status }} on :{{ staging_port }}"
+
+    - name: Run the first sync now when the App identity is present
+      ansible.builtin.command: /usr/local/sbin/staging-sync
+      changed_when: false
+      when: staging_app_pem | length > 0
 
   handlers:
     - name: Restart Caddy

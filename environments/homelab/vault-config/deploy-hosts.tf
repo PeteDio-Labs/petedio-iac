@@ -56,6 +56,12 @@ locals {
       kv   = ["services/backup-health"]
       sign = "deploy-backup-store"
     }
+    # The portfolio staging host (staging-249) mints its own read-only GitHub App token to pull the
+    # portfolio's `staging` branch, so it holds the workspace-mirror App identity.
+    "staging-249" = {
+      kv   = ["services/claude-workspace-mirror"]
+      sign = "deploy-staging-249"
+    }
   }
 
   # The signing roles to create, one per deploy.

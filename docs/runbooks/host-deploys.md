@@ -14,6 +14,7 @@ None of these six deploys reads the shared `kv/iac/lxc-ssh` key. `deploy-claude-
 | `deploy-lab-watchdog.yml` | `configure-lab-watchdog.yml` | `claude-247` | `deploy-lab-watchdog` | `deploy-lab-watchdog` |
 | `deploy-codex-248.yml` | `configure-codex.yml` | `codex-248` | `deploy-codex-248` | `deploy-codex-248` |
 | `deploy-backup-store.yml` | `configure-backup-store.yml` | `pve01`, `pve02`, `pve03` | `deploy-backup-store` | `deploy-backup-store` |
+| `deploy-staging-249.yml` | `configure-staging.yml` | `staging-249` | `deploy-staging-249` | `deploy-staging-249` |
 
 `ansible-claude-247.yml` already deploys `claude-247`'s identities. It still reads the shared
 key. Moving it to a `deploy-claude-247` principal is a separate change.
