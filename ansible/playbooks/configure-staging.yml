@@ -9,7 +9,8 @@
 #
 # The origin is reachable on the LAN and the tailnet at http://192.168.50.249:8080, and
 # through cloudflared (LXC 112) as staging.pdlab.dev behind Cloudflare Access. It serves
-# only a copy of the public site, and sends X-Robots-Tag: noindex.
+# only a copy of the public site. It sends X-Robots-Tag: noindex and Cache-Control: no-store,
+# so a new deploy appears on the next page load, with no cache to purge.
 - name: Serve the portfolio staging site
   hosts: staging
   become: true
@@ -49,6 +50,9 @@
           :{{ staging_port }} {
             root * {{ staging_root }}
             header X-Robots-Tag "noindex, nofollow"
+            # No caching anywhere. Browsers and Cloudflare's edge both obey no-store, so a
+            # rebuilt page shows on the next load, and the filename needs no content hash.
+            header Cache-Control "no-store"
             try_files {path} {path}.html {path}/index.html
             file_server
             handle_errors {
