@@ -34,6 +34,7 @@
     - "{{ claude_iac_tools_dir }}/terraform-{{ claude_terraform_version }}"
     - "{{ claude_iac_tools_dir }}/vault-{{ claude_vault_cli_version }}"
     - "{{ claude_iac_tools_dir }}/bun-{{ claude_bun_version }}"
+    - "{{ claude_iac_tools_dir }}/awscli-{{ claude_aws_cli_version }}-src"
 
 # --- terraform ------------------------------------------------------------------------------
 # The release zip, checked against the pinned sha256. get_url refuses a download whose
@@ -106,6 +107,36 @@
     group: root
     creates: "{{ claude_iac_tools_dir }}/bun-{{ claude_bun_version }}/bun-linux-x64/bun"
 
+# --- AWS CLI v2 -----------------------------------------------------------------------------
+# The official zip installer, checked against the pinned sha256 by get_url. The installer copies
+# the CLI to {{ claude_iac_tools_dir }}/aws-cli and links /usr/local/bin/aws. This installs the
+# binary only: no credential, profile or config file.
+
+- name: Download the pinned AWS CLI v2 installer
+  ansible.builtin.get_url:
+    url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{{ claude_aws_cli_version }}.zip"
+    dest: "{{ claude_iac_tools_dir }}/awscli-exe-linux-x86_64-{{ claude_aws_cli_version }}.zip"
+    checksum: "sha256:{{ claude_aws_cli_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Unpack the AWS CLI installer
+  ansible.builtin.unarchive:
+    src: "{{ claude_iac_tools_dir }}/awscli-exe-linux-x86_64-{{ claude_aws_cli_version }}.zip"
+    dest: "{{ claude_iac_tools_dir }}/awscli-{{ claude_aws_cli_version }}-src"
+    remote_src: true
+    owner: root
+    group: root
+    creates: "{{ claude_iac_tools_dir }}/aws-cli/v2/{{ claude_aws_cli_version }}/bin/aws"
+
+- name: Install the AWS CLI v2
+  ansible.builtin.command:
+    cmd: >-
+      {{ claude_iac_tools_dir }}/awscli-{{ claude_aws_cli_version }}-src/aws/install
+      --install-dir {{ claude_iac_tools_dir }}/aws-cli --bin-dir /usr/local/bin --update
+    creates: "{{ claude_iac_tools_dir }}/aws-cli/v2/{{ claude_aws_cli_version }}/bin/aws"
+
 # --- ansible-core and ansible-lint ------------------------------------------------------------
 
 - name: Install the pinned ansible-core and ansible-lint into their venv
@@ -157,6 +188,7 @@
     - { name: shellcheck, cmd: /usr/bin/shellcheck --version }
     - { name: vault, cmd: /usr/local/bin/vault version }
     - { name: bun, cmd: /usr/local/bin/bun --version }
+    - { name: aws, cmd: /usr/local/bin/aws --version }
   loop_control:
     label: "{{ item.name }}"
   register: claude_iac_tools_versions
@@ -173,6 +205,7 @@
       - claude_iac_tools_versions.results[2].stdout is search('version. ' ~ claude_shellcheck_version.split('-') | first ~ '$', multiline=True)
       - claude_iac_tools_versions.results[3].stdout is search('^Vault v' ~ claude_vault_cli_version)
       - claude_iac_tools_versions.results[4].stdout is search('^' ~ claude_bun_version ~ '$', multiline=True)
+      - claude_iac_tools_versions.results[5].stdout is search('^aws-cli/' ~ claude_aws_cli_version ~ ' ', multiline=True)
     fail_msg: >-
       The IaC toolchain on {{ inventory_hostname }} does not match the pins in
       roles/claude-code/defaults/main.yml. Read the output above.
