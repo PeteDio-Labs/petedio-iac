@@ -19,6 +19,10 @@ ENV_FILE=/etc/staging/app.env
 PEM=/etc/staging/app.pem
 BUILD_USER=staging
 
+# One sync at a time, whether the timer or a deploy started it. A second run waits for the first.
+exec 9>/run/staging-sync.lock
+flock -w 900 9 || { echo "staging-sync: another sync held the lock for 900 s." >&2; exit 1; }
+
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 live_sha() { [ -f "$BASE/live-sha" ] && cat "$BASE/live-sha" || printf none; }
 
@@ -56,8 +60,10 @@ sig=$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sign "$PEM" | 
   || fail "could not sign the App JWT with $PEM"
 jwt="$header.$payload.$sig"
 
-resp=$(curl -fsS --max-time 30 -X POST \
-  -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+# The JWT goes to curl on stdin (-H @-), through the shell builtin printf, so it never appears in
+# an argument list that the build user could read from /proc.
+resp=$(printf 'Authorization: Bearer %s\n' "$jwt" | curl -fsS --max-time 30 -X POST \
+  -H @- -H "Accept: application/vnd.github+json" \
   -d '{"repositories":["pdlabs-portfolio"],"permissions":{"contents":"read"}}' \
   "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens") \
   || fail "GitHub refused the installation token. Check that the App is installed on pdlabs-portfolio with contents read."

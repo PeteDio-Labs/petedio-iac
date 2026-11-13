@@ -112,12 +112,20 @@
           <!doctype html><title>staging</title><p>No build yet. Push to the staging branch of pdlabs-portfolio.
           See /__staging.json.
 
+    # state: link repoints an existing link, so create it only when absent. A converge after a
+    # publish must leave the published release in place.
+    - name: Look for the current link
+      ansible.builtin.stat:
+        path: "{{ staging_base }}/current"
+        follow: false
+      register: staging_current
+
     - name: Point current at the placeholder until a build replaces it
       ansible.builtin.file:
         src: "{{ staging_base }}/releases/placeholder"
         dest: "{{ staging_base }}/current"
         state: link
-        force: false
+      when: not staging_current.stat.exists
 
     - name: Write the App identity
       ansible.builtin.copy:
@@ -219,6 +227,7 @@
             header Cache-Control "no-store"
             handle /__staging.json {
               root * {{ staging_base }}
+              rewrite * /status.json
               file_server
             }
             handle {
@@ -255,8 +264,10 @@
         that: staging_probe.status in [200, 404]
         success_msg: "Caddy answered {{ staging_probe.status }} on :{{ staging_port }}"
 
+    # Through the service, not the script, so systemd serializes it with the timer's runs and a
+    # failed sync fails this task.
     - name: Run the first sync now when the App identity is present
-      ansible.builtin.command: /usr/local/sbin/staging-sync
+      ansible.builtin.command: systemctl start staging-sync.service
       changed_when: false
       when: staging_app_pem | length > 0
 
