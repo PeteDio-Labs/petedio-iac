@@ -7,9 +7,17 @@
 #   ansible-playbook playbooks/configure-mesh-usb-bridge.yml
 #
 # Does not reload networking automatically — see the role for why.
+#
+# pve-media (MED-6, phase 1 of docs/runbooks/three-machine-split.md) bridges its PCIe NIC
+# with the same role. Set mesh_usb_interface in planned/pve-media.yml (or inventory/pve-media.yml after the
+# node joins) first, then:
+#
+#   ansible-playbook playbooks/configure-mesh-usb-bridge.yml -e mesh_bridge_hosts=pve_media
+#
+# The default stays pve02, so a run with no -e cannot reach a node that is not built yet.
 
 - name: Bridge pve02's USB-Ethernet adapter onto the mesh
-  hosts: pve02
+  hosts: "{{ mesh_bridge_hosts | default('pve02') }}"
   become: true
   roles:
     - mesh-usb-bridge

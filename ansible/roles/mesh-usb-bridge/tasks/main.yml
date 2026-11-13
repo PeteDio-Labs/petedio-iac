@@ -1,4 +1,28 @@
 ---
+# Fail before touching /etc/network/interfaces when the named port is absent. A
+# bridge on a missing port is written without error and fails at the next boot, which
+# is the failure this role is meant to avoid. The message lists what the node has, so
+# a stale or empty name is fixed in one read. Examined: /sys/class/net on the node.
+- name: List the network interfaces on this node
+  ansible.builtin.command: ls -1 /sys/class/net
+  register: mesh_usb_ifaces
+  changed_when: false
+  check_mode: false   # read-only; skipped under --check it would leave stdout_lines empty and fail the assert
+
+- name: Check the bridge port exists on this node
+  ansible.builtin.assert:
+    that:
+      - mesh_usb_ifaces.stdout_lines | length > 0
+      - mesh_usb_interface | length > 0
+      - mesh_usb_interface in mesh_usb_ifaces.stdout_lines
+    fail_msg: >-
+      mesh_usb_interface={{ mesh_usb_interface | to_json }} is not an interface on
+      {{ inventory_hostname }}. Interfaces found ({{ mesh_usb_ifaces.stdout_lines | length }}):
+      {{ mesh_usb_ifaces.stdout_lines | sort | join(', ') }}. Set it in inventory to the
+      port cabled to the mesh.
+    success_msg: >-
+      {{ mesh_usb_interface }} found among {{ mesh_usb_ifaces.stdout_lines | length }} interfaces.
+
 - name: Back up the interfaces file before first modification
   ansible.builtin.copy:
     src: /etc/network/interfaces
