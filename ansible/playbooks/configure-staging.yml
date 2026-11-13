@@ -110,6 +110,17 @@
         group: root
         mode: "0755"
 
+    # The release zip holds only `bun`. Bun's own installer adds `bunx` as a link to it, and the
+    # portfolio's build.ts spawns `bunx tailwindcss`. Without the link the build fails with
+    # "Executable not found in $PATH: bunx" (PET-913).
+    - name: Link bunx to Bun
+      ansible.builtin.file:
+        src: /usr/local/bin/bun
+        dest: /usr/local/bin/bunx
+        state: link
+        owner: root
+        group: root
+
     - name: Create the site directories
       ansible.builtin.file:
         path: "{{ item }}"
