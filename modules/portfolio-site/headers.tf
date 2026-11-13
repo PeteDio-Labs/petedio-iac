@@ -119,7 +119,18 @@ resource "aws_cloudfront_response_headers_policy" "api" {
   custom_headers_config {
     items {
       header   = "Permissions-Policy"
-      value    = "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+      value    = "camera=(), microphone=(), geolocation=()"
+      override = true
+    }
+    items {
+      header   = "Cross-Origin-Opener-Policy"
+      value    = "same-origin"
+      override = true
+    }
+    # Other origins read this API on purpose, so it carries the opposite of the site's value.
+    items {
+      header   = "Cross-Origin-Resource-Policy"
+      value    = "cross-origin"
       override = true
     }
   }
