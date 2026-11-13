@@ -105,15 +105,30 @@ runuser -u "$BUILD_USER" -- env -i HOME="$work/home" PATH=/usr/local/bin:/usr/bi
   bash -c 'mkdir -p "$HOME" && cd "$1/src" && bun install --frozen-lockfile && bun run build' _ "$work" \
   || fail "bun install or bun run build failed for $tip"
 
-dist="$work/src/dist"
-[ -f "$dist/index.html" ] || fail "the build produced no dist/index.html"
-count=$(find "$dist" -type f | wc -l)
+# Stop everything the build left behind before root reads its output. Only builds run as this
+# user, and the lock keeps them one at a time, so killing the user's processes is safe. A leftover
+# process could otherwise swap dist/ for a symlink after the checks below.
+pkill -KILL -u "$BUILD_USER" || true
+sleep 1
+if pgrep -u "$BUILD_USER" >/dev/null; then fail "build processes survived the kill"; fi
 
+dist="$work/src/dist"
+[ -d "$dist" ] && [ ! -L "$dist" ] || fail "dist is missing or is a symlink"
+[ -f "$dist/index.html" ] || fail "the build produced no dist/index.html"
+if [ -n "$(find "$dist" -type l -print -quit)" ]; then fail "dist holds a symlink, which a published site never needs"; fi
+
+# Take the output into a root-owned copy, then check the copy, so nothing the build user can still
+# reach is read or changed as root.
 rel="$BASE/releases/$tip"
+tmp_rel="$BASE/releases/.new-$$"
+rm -rf "$tmp_rel"
+cp -a --no-dereference "$dist" "$tmp_rel"
+chown -R root:root "$tmp_rel"
+if [ -n "$(find "$tmp_rel" -type l -print -quit)" ]; then rm -rf "$tmp_rel"; fail "the copied release holds a symlink"; fi
+count=$(find "$tmp_rel" -type f | wc -l)
+chmod -R a+rX "$tmp_rel"
 rm -rf "$rel"
-mv "$dist" "$rel"
-chown -R root:root "$rel"
-chmod -R a+rX "$rel"
+mv "$tmp_rel" "$rel"
 ln -sfn "$rel" "$BASE/current.new"
 mv -T "$BASE/current.new" "$BASE/current"
 printf '%s' "$tip" > "$BASE/live-sha"
