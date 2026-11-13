@@ -137,6 +137,16 @@
       --install-dir {{ claude_iac_tools_dir }}/aws-cli --bin-dir /usr/local/bin --update
     creates: "{{ claude_iac_tools_dir }}/aws-cli/v2/{{ claude_aws_cli_version }}/bin/aws"
 
+# The installer links /usr/local/bin/aws through v2/current, which an earlier install can leave
+# pointing at a different version. Link the pinned version's binary directly on every run, so
+# restoring a pin from B back to A converges even though A's directory already exists.
+- name: Link the pinned AWS CLI into /usr/local/bin
+  ansible.builtin.file:
+    src: "{{ claude_iac_tools_dir }}/aws-cli/v2/{{ claude_aws_cli_version }}/bin/aws"
+    dest: /usr/local/bin/aws
+    state: link
+    force: true
+
 # --- ansible-core and ansible-lint ------------------------------------------------------------
 
 - name: Install the pinned ansible-core and ansible-lint into their venv
