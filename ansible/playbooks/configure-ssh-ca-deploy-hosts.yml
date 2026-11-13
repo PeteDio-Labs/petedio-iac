@@ -39,6 +39,7 @@
       - { vmid: 245, name: minio-data-245, node: pve03 }
       - { vmid: 247, name: claude-247, node: pve03 }
       - { vmid: 248, name: codex-248, node: pve03 }
+      - { vmid: 249, name: staging-249, node: pve03 }
       - { vmid: 240, name: metrics-240, node: pve02 }
     my_guests: "{{ trust_guests | selectattr('node', 'equalto', inventory_hostname) | list }}"
     # $1 CA public key, $2 root's principals one per line, $3 CA path, $4 principals dir, $5 drop-in.

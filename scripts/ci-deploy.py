@@ -208,6 +208,21 @@ def stage_backup_store() -> dict:
     return {"backup_store_health_push_tokens": tokens}
 
 
+def stage_staging() -> dict:
+    # Optional until Pedro seeds the dedicated App. Absent, the play still converges Caddy and the
+    # site root, and leaves the sync timer off. All three fields or none, as codex-248 does.
+    app = kv("services/staging-app", False)
+    if not app:
+        print("staging-app: not seeded. The play converges Caddy only, and the sync timer stays off.")
+        return {"staging_app_id": "", "staging_installation_id": "", "staging_app_pem": ""}
+    app_id, inst, pem = need(app, "services/staging-app", "app_id", "installation_id", "app_pem")
+    if not (app_id + inst).isdigit():
+        raise Abort("kv/services/staging-app holds a non-numeric id.")
+    if len(pem.strip().splitlines()) < 3:
+        raise Abort("kv/services/staging-app app_pem lost its newlines. Re-seed it.")
+    return {"staging_app_id": app_id, "staging_installation_id": inst, "staging_app_pem": pem}
+
+
 DEPLOYS = {
     "plane": {
         "playbook": "configure-plane.yml",
@@ -238,6 +253,12 @@ DEPLOYS = {
         "ssh_role": "deploy-codex-248",
         "hosts": {"codex-248"},
         "stage": stage_codex,
+    },
+    "staging-249": {
+        "playbook": "configure-staging.yml",
+        "ssh_role": "deploy-staging-249",
+        "hosts": {"staging-249"},
+        "stage": stage_staging,
     },
     # The nodes list the deploy-backup-store principal (group_vars, written by
     # configure-ssh-ca-deploy-hosts.yml). The node host keys are pinned on the runner, so it checks

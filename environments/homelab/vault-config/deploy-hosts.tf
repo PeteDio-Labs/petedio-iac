@@ -56,6 +56,14 @@ locals {
       kv   = ["services/backup-health"]
       sign = "deploy-backup-store"
     }
+    # The portfolio staging host (staging-249) mints its own read-only GitHub App token to pull the
+    # portfolio's `staging` branch. It holds a dedicated App installed on pdlabs-portfolio alone,
+    # not the workspace-mirror App: the host runs branch code, and a key on it must not reach
+    # petedio-vault (scripts/seed-staging-app-vault.sh proves the scope before it writes).
+    "staging-249" = {
+      kv   = ["services/staging-app"]
+      sign = "deploy-staging-249"
+    }
   }
 
   # The signing roles to create, one per deploy.
