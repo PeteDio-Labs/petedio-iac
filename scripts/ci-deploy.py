@@ -209,12 +209,12 @@ def stage_backup_store() -> dict:
 
 
 def stage_staging() -> dict:
-    app = kv("services/claude-workspace-mirror", True)
-    app_id, inst, pem = need(app, "services/claude-workspace-mirror", "app_id", "installation_id", "app_pem")
+    app = kv("services/staging-app", True)
+    app_id, inst, pem = need(app, "services/staging-app", "app_id", "installation_id", "app_pem")
     if not (app_id + inst).isdigit():
-        raise Abort("kv/services/claude-workspace-mirror holds a non-numeric id.")
+        raise Abort("kv/services/staging-app holds a non-numeric id.")
     if len(pem.strip().splitlines()) < 3:
-        raise Abort("kv/services/claude-workspace-mirror app_pem lost its newlines. Re-seed it.")
+        raise Abort("kv/services/staging-app app_pem lost its newlines. Re-seed it.")
     return {"staging_app_id": app_id, "staging_installation_id": inst, "staging_app_pem": pem}
 
 

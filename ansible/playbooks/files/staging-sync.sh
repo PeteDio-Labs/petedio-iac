@@ -100,9 +100,12 @@ unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 token resp jwt
 rm -rf "$work/src/.git"
 chown -R "$BUILD_USER:$BUILD_USER" "$work"
 
-# Branch code runs only here, as an unprivileged user with no access to the App key.
-runuser -u "$BUILD_USER" -- env -i HOME="$work/home" PATH=/usr/local/bin:/usr/bin:/bin \
-  bash -c 'mkdir -p "$HOME" && cd "$1/src" && bun install --frozen-lockfile && bun run build' _ "$work" \
+# Branch code runs only here, as an unprivileged user with no access to the App key, in a transient
+# systemd service. The service's control group ends with the build, so no child outlives it.
+systemd-run --quiet --wait --collect --pipe \
+  -p User="$BUILD_USER" -p NoNewPrivileges=yes -p WorkingDirectory="$work/src" \
+  -p Environment="HOME=$work/home" -p Environment="PATH=/usr/local/bin:/usr/bin:/bin" \
+  bash -c 'mkdir -p "$HOME" && bun install --frozen-lockfile && bun run build' \
   || fail "bun install or bun run build failed for $tip"
 
 # Stop everything the build left behind before root reads its output. Only builds run as this
@@ -112,6 +115,9 @@ pkill -KILL -u "$BUILD_USER" || true
 sleep 1
 if pgrep -u "$BUILD_USER" >/dev/null; then fail "build processes survived the kill"; fi
 
+# Take ownership of the whole tree before any check, so nothing the build user still runs can
+# change what root reads next.
+chown -R root:root "$work"
 dist="$work/src/dist"
 [ -d "$dist" ] && [ ! -L "$dist" ] || fail "dist is missing or is a symlink"
 [ -f "$dist/index.html" ] || fail "the build produced no dist/index.html"
@@ -129,12 +135,17 @@ count=$(find "$tmp_rel" -type f | wc -l)
 chmod -R a+rX "$tmp_rel"
 rm -rf "$rel"
 mv "$tmp_rel" "$rel"
+touch "$rel"
 ln -sfn "$rel" "$BASE/current.new"
 mv -T "$BASE/current.new" "$BASE/current"
 printf '%s' "$tip" > "$BASE/live-sha"
 
-# Keep the three newest releases.
-ls -1dt "$BASE"/releases/*/ 2>/dev/null | tail -n +4 | xargs -r rm -rf
+# Keep the three newest builds. The placeholder and the release `current` points to stay, whatever
+# date a build gave its files.
+live_target="$(readlink -f "$BASE/current")"
+for d in $(ls -1dt "$BASE"/releases/*/ 2>/dev/null | sed 's#/$##' | grep -v '/placeholder$' | tail -n +4); do
+  [ "$(readlink -f "$d")" = "$live_target" ] || rm -rf "$d"
+done
 
 echo "staging-sync: published $tip ($count files)."
 write_status published "$tip" "built and published $count files"

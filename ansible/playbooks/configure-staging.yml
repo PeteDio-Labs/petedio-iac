@@ -18,8 +18,8 @@
 #
 # SECRETS (resolved by scripts/ci-deploy.py staging-249 from Vault, passed as no_log extra-vars):
 #   staging_app_id, staging_installation_id, staging_app_pem
-#                           kv/services/claude-workspace-mirror, the GitHub App that Pedro
-#                           installed on pdlabs-portfolio with contents read-only.
+#                           kv/services/staging-app, a GitHub App installed on pdlabs-portfolio
+#                           alone with contents read-only (scripts/seed-staging-app-vault.sh).
 # Run via:  .github/workflows/deploy-staging-249.yml (dispatch, main only).
 #
 # ⚠ BRANCH CODE RUNS ON THIS HOST, so the host is the blast radius: it holds the App key (root
@@ -62,8 +62,22 @@
         name: staging
         system: true
         shell: /usr/sbin/nologin
-        home: /var/lib/staging-build
-        create_home: true
+        home: /nonexistent
+        create_home: false
+
+    # Cron and at jobs run outside the build's cgroup and outlive it, so branch code must not
+    # schedule any. The deny files exist whether or not cron is installed.
+    - name: Deny the build user cron and at
+      ansible.builtin.lineinfile:
+        path: "{{ item }}"
+        line: staging
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - /etc/cron.deny
+        - /etc/at.deny
 
     - name: Download Bun, checked against the release checksum
       ansible.builtin.get_url:
@@ -72,16 +86,24 @@
         checksum: "sha256:{{ staging_bun_sha256 }}"
         mode: "0644"
 
+    - name: Create the Bun directory for this version
+      ansible.builtin.file:
+        path: "/opt/bun-{{ staging_bun_version }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Unpack Bun
       ansible.builtin.unarchive:
         src: "/opt/bun-{{ staging_bun_version }}.zip"
-        dest: /opt
+        dest: "/opt/bun-{{ staging_bun_version }}"
         remote_src: true
-        creates: /opt/bun-linux-x64/bun
+        creates: "/opt/bun-{{ staging_bun_version }}/bun-linux-x64/bun"
 
     - name: Put Bun on the path
       ansible.builtin.copy:
-        src: /opt/bun-linux-x64/bun
+        src: "/opt/bun-{{ staging_bun_version }}/bun-linux-x64/bun"
         dest: /usr/local/bin/bun
         remote_src: true
         owner: root
@@ -100,6 +122,7 @@
         - "{{ staging_base }}/releases"
         - "{{ staging_base }}/releases/placeholder"
         - /etc/staging
+        - /var/lib/staging-build
 
     - name: Write the placeholder page that serves until the first build
       ansible.builtin.copy:
