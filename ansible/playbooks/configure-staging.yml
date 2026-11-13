@@ -1,0 +1,84 @@
+---
+# configure-staging.yml — serve the portfolio's built dist/ from staging-249 with Caddy.
+#
+# The play installs Caddy from Debian's own repository and writes one site on :8080 that
+# mirrors how CloudFront serves the portfolio: /path resolves to path.html, a directory
+# resolves to its index.html, and a missing path returns 404.html with status 404. It
+# never touches /srv/staging/dist beyond creating the directory, so a deploy and a
+# converge do not fight over the site content.
+#
+# The origin is reachable on the LAN and the tailnet at http://192.168.50.249:8080, and
+# through cloudflared (LXC 112) as staging.pdlab.dev behind Cloudflare Access. It serves
+# only a copy of the public site, and sends X-Robots-Tag: noindex.
+- name: Serve the portfolio staging site
+  hosts: staging
+  become: true
+
+  vars:
+    staging_root: /srv/staging/dist
+    staging_port: 8080
+
+  tasks:
+    - name: Install Caddy
+      ansible.builtin.apt:
+        name: caddy
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create the site root
+      ansible.builtin.file:
+        path: "{{ staging_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write the Caddyfile
+      ansible.builtin.copy:
+        dest: /etc/caddy/Caddyfile
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by configure-staging.yml. Do not edit by hand.
+          {
+            admin off
+          }
+
+          :{{ staging_port }} {
+            root * {{ staging_root }}
+            header X-Robots-Tag "noindex, nofollow"
+            try_files {path} {path}.html {path}/index.html
+            file_server
+            handle_errors {
+              rewrite * /404.html
+              file_server
+            }
+          }
+      notify: Restart Caddy
+
+    - name: Enable and start Caddy
+      ansible.builtin.systemd:
+        name: caddy
+        enabled: true
+        state: started
+
+    - name: Read the site on loopback
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ staging_port }}/__converge_check"
+        status_code: [200, 404]
+        return_content: false
+      register: staging_probe
+      # A missing page proves Caddy answers; the status code is the assertion, not the body.
+
+    - name: Assert Caddy answered
+      ansible.builtin.assert:
+        that: staging_probe.status in [200, 404]
+        success_msg: "Caddy answered {{ staging_probe.status }} on :{{ staging_port }}"
+
+  handlers:
+    - name: Restart Caddy
+      ansible.builtin.systemd:
+        name: caddy
+        state: restarted

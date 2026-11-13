@@ -139,6 +139,17 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com"]
     }
 
+    # Portfolio staging, a copy of pdlab.dev served by Caddy on staging-249 (LXC 249). A
+    # browser-gated route: Access shows the Authentik login page and the origin checks no JWT,
+    # because it serves only a copy of the public site. The LAN address http://192.168.50.249:8080
+    # stays open as the fallback over Tailscale. access_emails is the whole boundary: keep it to Pedro.
+    "staging.pdlab.dev" = {
+      service       = "http://192.168.50.249:8080"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+    }
+
     # Tom's Plane MCP (PET-610), a copy of mcp-plane.pdlab.dev with a different origin port and email.
     # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
     # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same

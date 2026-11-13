@@ -1,0 +1,12 @@
+---
+# staging-249 — the portfolio staging site. Split out of hosts.yml like media-dash.yml, so an
+# unrelated edit to hosts.yml cannot redeploy it. ansible.cfg loads the whole inventory/ directory.
+all:
+  children:
+    staging:
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_ed25519_ansible
+      hosts:
+        staging-249:
+          ansible_host: 192.168.50.249
