@@ -69,6 +69,10 @@ resource "aws_cloudfront_response_headers_policy" "api" {
     access_control_max_age_sec       = 86400
     origin_override                  = true
 
+    # The provider requires this block. A plain GET sends no custom request headers.
+    access_control_allow_headers {
+      items = ["*"]
+    }
     access_control_allow_methods {
       items = ["GET", "HEAD"]
     }
