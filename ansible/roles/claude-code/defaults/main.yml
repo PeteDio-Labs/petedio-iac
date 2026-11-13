@@ -465,6 +465,15 @@ claude_bun_version: "1.4.2"
 # https://github.com/oven-sh/bun/releases/download/bun-v<version>/SHASUMS256.txt.
 claude_bun_sha256: 36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913
 
+# The AWS CLI v2, so a session on 247 can run AWS steps. The binary only: the role configures
+# no credential and no profile. Pin the version and its sha256 together. To get the hash,
+# download https://awscli.amazonaws.com/awscli-exe-linux-x86_64-<version>.zip and its .sig,
+# run `gpg --verify` against the AWS CLI team key (fingerprint
+# FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C), then run `sha256sum` on the zip.
+# AWS publishes no checksum file, so this hash comes from a signature-verified download.
+claude_aws_cli_version: "2.40.2"
+claude_aws_cli_sha256: a9ac0d635e97fab65e234ae1519fa6bd2b02d72120bf965a8ff6eaf7611f1833
+
 # --- The read-only Proxmox token (PET-510) ------------------------------------------------
 # claude-247@pve!audit, PVEAuditor on / with privilege separation, so a session here reads the
 # cluster's state through the API instead of asking the Mac. tasks/pve.yml lands it, and
