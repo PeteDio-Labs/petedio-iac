@@ -23,6 +23,9 @@ module "portfolio" {
   github_repo   = "PeteDio-Labs/pdlabs-portfolio"
   deploy_auth   = "user"
   attach_domain = var.attach_domain
+
+  budget_limit_usd = var.budget_limit_usd
+  budget_emails    = var.budget_emails
   tags          = { project = "petedio-portfolio" }
 }
 

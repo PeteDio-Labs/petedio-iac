@@ -8,3 +8,15 @@ variable "attach_domain" {
   type        = bool
   default     = true
 }
+
+variable "budget_limit_usd" {
+  description = "Monthly cost budget for the portfolio in USD. 0 creates none."
+  type        = number
+  default     = 0
+}
+
+variable "budget_emails" {
+  description = "Budget notification addresses. Pass with -var at apply time; never commit one."
+  type        = list(string)
+  default     = []
+}
