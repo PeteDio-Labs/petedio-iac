@@ -64,15 +64,3 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
-
-variable "budget_limit_usd" {
-  description = "Monthly cost budget in USD. A notification goes out at 80 percent of actual spend and at 100 percent of forecast. 0 creates no budget."
-  type        = number
-  default     = 0
-}
-
-variable "budget_emails" {
-  description = "Addresses that receive budget notifications. Required when budget_limit_usd is above 0. Pass it at apply time, so no address lands in the repository."
-  type        = list(string)
-  default     = []
-}

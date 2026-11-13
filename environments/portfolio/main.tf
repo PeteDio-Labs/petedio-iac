@@ -24,9 +24,6 @@ module "portfolio" {
   deploy_auth   = "user"
   attach_domain = var.attach_domain
   tags          = { project = "petedio-portfolio" }
-
-  budget_limit_usd = var.budget_limit_usd
-  budget_emails    = var.budget_emails
 }
 
 output "bucket" { value = module.portfolio.bucket }
