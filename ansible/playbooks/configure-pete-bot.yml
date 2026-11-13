@@ -152,6 +152,12 @@
     # The lab MCP (PET-667). The route mcp-lab.pdlab.dev sends here through cloudflared on
     # LXC 112, the only source the allowlist and lab-agent admit.
     lab_agent_mcp_port: 3017
+    # The metrics door (pete-bot#114): GET /metrics, LAN address, Prometheus on 240 only.
+    # Add the lab-agent job to prometheus_extra_jobs after this play has run.
+    lab_agent_metrics_port: 3019
+    lab_agent_metrics_peer: 192.168.50.240
+    # Kits to offer the media assistant. Empty offers every kit.
+    lab_agent_media_toolkits: ""
     lab_agent_mcp_peer: 192.168.50.112
     lab_agent_access_team_domain: petedillo-labs.cloudflareaccess.com
     lab_agent_access_emails: [pedelgadillo@gmail.com]
