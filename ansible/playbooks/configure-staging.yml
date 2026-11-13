@@ -68,6 +68,11 @@
         enabled: true
         state: started
 
+    # Apt starts Caddy with its packaged config, and a queued restart would run only after the
+    # probe below. Restart now so the probe exercises the Caddyfile this play just wrote.
+    - name: Apply the Caddyfile before probing
+      ansible.builtin.meta: flush_handlers
+
     - name: Read the site on loopback
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ staging_port }}/__converge_check"
