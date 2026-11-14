@@ -19,8 +19,10 @@
 name: staging-power
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
+  # The schedule is off until the Vault roles and the node script exist, because every run
+  # fails red before then. Restore it after the rollout:
+  #   schedule:
+  #     - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       mode:
