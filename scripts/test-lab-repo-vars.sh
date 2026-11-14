@@ -22,9 +22,10 @@ REPO_VARS_JSON='{}' python3 scripts/lab-repo-vars.py "$AL" >/dev/null 2>&1; chec
 OUT="$(REPO_VARS_JSON='{"ALLOW_DESTROY":"true"}' scripts/lab-action.sh repo_vars 2>&1)"; check "lab-action.sh routes repo_vars with no Vault" "$(grep -c '^ALLOW_DESTROY = true$' <<<"$OUT")" 1
 scripts/lab-action.sh lab_probe bogus "" >/dev/null 2>&1; check "unknown probe refused" "$?" 2
 check "health is an allowlisted probe" "$(grep -c 'media_ask|guests|health' scripts/lab-action.sh | awk '{print ($1>0)}')" 1
-check "backup_jobs is an allowlisted probe" "$(grep -cF 'backup_jobs|ollama_ps|prometheus)$' scripts/lab-action.sh | awk '{print ($1>0)}')" 1
-check "ollama_ps is an allowlisted probe" "$(grep -cF '|ollama_ps|prometheus)$' scripts/lab-action.sh | awk '{print ($1>0)}')" 1
-check "prometheus is an allowlisted probe" "$(grep -cF '|ollama_ps|prometheus)$' scripts/lab-action.sh | awk '{print ($1>0)}')" 1
+check "backup_jobs is an allowlisted probe" "$(grep -cF 'backup_jobs|ollama_ps|prometheus|guest_unit)$' scripts/lab-action.sh | awk '{print ($1>0)}')" 1
+check "ollama_ps is an allowlisted probe" "$(grep -cF '|ollama_ps|prometheus|guest_unit)$' scripts/lab-action.sh | awk '{print ($1>0)}')" 1
+check "prometheus is an allowlisted probe" "$(grep -cF '|ollama_ps|prometheus|guest_unit)$' scripts/lab-action.sh | awk '{print ($1>0)}')" 1
+check "guest_unit is an allowlisted probe" "$(grep -cF '|guest_unit)$' scripts/lab-action.sh | awk '{print ($1>0)}')" 1
 bash -n scripts/lab-probe.sh; check "lab-probe.sh parses" "$?" 0
 
 # The prometheus probe's remote program, run against a fake Prometheus on a free port (no lab contact).
@@ -77,5 +78,23 @@ runprom downtarget "$R"; check "prometheus probe: names a down target" "$(grep -
 check "prometheus probe: names firing series labels" "$(grep -c '^  firing zpool-not-online: instance=a1$' <<<"$OUTP")" 1
 runprom notargets "$R"; check "prometheus probe: zero targets fails" "$RCP" 1
 runprom down "$R"; check "prometheus probe: a failing query fails" "$RCP" 1
+
+# The guest_unit probe against stub ssh, pct, systemctl, ss and journalctl (no lab contact).
+SB="$PD/stubs"; mkdir -p "$SB"
+printf '#!/usr/bin/env bash\ncmd="${@: -1}"; exec bash -c "$cmd"\n' > "$SB/ssh"
+printf '#!/usr/bin/env bash\nif [ "$1" = status ]; then echo "status: running"; exit 0; fi\nif [ "$1" = exec ]; then shift 3; exec "$@"; fi\n' > "$SB/pct"
+printf '#!/usr/bin/env bash\nprintf "ActiveState=%%s\\nSubState=x\\nNRestarts=3\\nActiveEnterTimestamp=n/a\\n" "${STUB_ACTIVE:-active}"\n' > "$SB/systemctl"
+printf '#!/usr/bin/env bash\necho "LISTEN 0 4096 *:${STUB_PORT:-9100} *:*"\n' > "$SB/ss"
+printf '#!/usr/bin/env bash\necho "2026-11-14T05:00:00+0000 h unit: a line"\n' > "$SB/journalctl"
+chmod +x "$SB"/*
+OUTG="$(PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit vmid=119 2>&1)"; RCG=$?
+check "guest_unit: good read exits 0" "$RCG" 0
+check "guest_unit: summary names state and port" "$(grep -c '^probe guest_unit: read prometheus-node-exporter in CT 119 on node [0-9.]*: active=active, listening on 9100=yes$' <<<"$OUTG")" 1
+OUTG="$(STUB_ACTIVE=failed STUB_PORT=22 PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit vmid=119 2>&1)"; RCG=$?
+check "guest_unit: an inactive unit is a valid read" "$RCG" 0
+check "guest_unit: inactive unit and closed port are reported" "$(grep -c 'active=failed, listening on 9100=no$' <<<"$OUTG")" 1
+PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit vmid=120 >/dev/null 2>&1; check "guest_unit: a VMID outside the table is refused" "$?" 2
+PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit "vmid=119; id" >/dev/null 2>&1; check "guest_unit: a shell fragment is refused" "$?" 2
+PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit >/dev/null 2>&1; check "guest_unit: no vmid is refused" "$?" 2
 
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"; [ "$FAIL" = 0 ]
