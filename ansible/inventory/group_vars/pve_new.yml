@@ -4,4 +4,5 @@
 # those two runners, for 30 minutes. roles/ssh-ca writes the principal; configure-ssh-ca.yml
 # applies it.
 # deploy-backup-store is the Vault SSH role that deploy-backup-store.yml signs per run (PET-771).
-ssh_ca_root_extra_principals: [lab-runner, deploy-backup-store]
+# staging-power is the Vault SSH role whose certificate may only run /usr/local/sbin/staging-power (staging-249 on or off).
+ssh_ca_root_extra_principals: [lab-runner, deploy-backup-store, staging-power]

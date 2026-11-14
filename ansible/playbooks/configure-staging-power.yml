@@ -1,0 +1,39 @@
+---
+# configure-staging-power.yml — install the node-side command for on-demand staging.
+#
+#   scripts/lab-action.sh playbook_apply configure-staging-power.yml   (lab-action.yml, lab-write tap)
+#
+# staging-249 runs only while UI work is pending on the portfolio's `staging` branch.
+# .github/workflows/staging-power.yml starts and stops it through scripts/staging-power.py, which signs a
+# `staging-power` SSH certificate. The Vault role fixes that certificate's command to the script
+# this play installs, and the script accepts only status, start and stop for container 249
+# (files/staging-power-node.sh). Nothing else can run under that principal.
+#
+# ⚠ THE PRINCIPAL IS ALSO LISTED IN group_vars (ssh_ca_root_extra_principals) AND WRITTEN BY
+# configure-ssh-ca-deploy-hosts.yml. Run that play too, or the certificate is refused at the node.
+- name: Install the staging-power command on pve03
+  hosts: pve03
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Install the node-side command
+      ansible.builtin.copy:
+        src: files/staging-power-node.sh
+        dest: /usr/local/sbin/staging-power
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Read the container's state through the installed command
+      ansible.builtin.command: /usr/local/sbin/staging-power
+      environment:
+        SSH_ORIGINAL_COMMAND: status
+      register: staging_power_status
+      check_mode: false  # lab-action: read-only
+      changed_when: false
+
+    - name: Assert the command answered for container 249
+      ansible.builtin.assert:
+        that: staging_power_status.stdout.startswith('staging-249:')
+        success_msg: "{{ staging_power_status.stdout }}"
