@@ -36,6 +36,7 @@
   loop:
     - zpool-autoclear.service
     - zpool-autoclear.timer
+  register: autoclear_units
   notify: Reload systemd for zpool-autoclear
 
 - name: Install the enclosure udev rule
@@ -55,6 +56,8 @@
     name: zpool-autoclear.timer
     enabled: true
     state: started
+  # A check run on a first install has written no unit file, so systemd cannot find the timer.
+  when: not (ansible_check_mode and autoclear_units is changed)
 
 # Run once and read the metrics back. A timer that is enabled but whose script fails would
 # otherwise look installed for a day. The service exits 0 by design, so the proof is the file.
