@@ -146,11 +146,13 @@ try:
     rules = json.load(open("/etc/metric-alerts/rules.json"))
 except (OSError, ValueError) as e:
     sys.exit("FAILED: /etc/metric-alerts/rules.json did not read: %s" % e)
+if not rules:
+    sys.exit("FAILED: /etc/metric-alerts/rules.json holds no rules, so nothing was examined")
 firing = 0
 for r in rules:
     try:
         n = len(get("/api/v1/query", query=r["expr"])["result"])
-        print("metric-alerts rule %s: loaded, for_runs=%s, %d series now" % (r["name"], r.get("for_runs", 1), n))
+        print("metric-alerts rule %s: in rules.json, for_runs=%s, %d series now" % (r["name"], r.get("for_runs", 1), n))
         firing += 1 if n else 0
     except Exception as e:
         print("metric-alerts rule %s: QUERY FAILED: %s" % (r["name"], str(e)[:120]))
@@ -165,6 +167,8 @@ alerts = get("/api/v1/alerts")["alerts"]
 for a in alerts:
     print("prometheus alert %s: %s" % (a["labels"].get("alertname", "?"), a["state"]))
 t = get("/api/v1/targets", state="active")["activeTargets"]
+if not t:
+    sys.exit("FAILED: Prometheus lists no active targets, so the store is not scraping")
 up = sum(1 for x in t if x["health"] == "up")
 print("probe prometheus: read %d metric-alerts rules (%d with series now), %d Prometheus rules in %d groups, %d alerts, %d of %d targets up" % (len(rules), firing, nrules, len(groups), len(alerts), up, len(t)))'
 if [ "$PROBE" = prometheus ]; then
