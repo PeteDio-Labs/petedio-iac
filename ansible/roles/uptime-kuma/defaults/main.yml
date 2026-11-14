@@ -169,6 +169,30 @@ uptime_kuma_monitors:
     port: 8006
     description: "Proxmox node carrying every guest."
 
+  # -- the media pools on pve02 (PET-914) --------------------------------------
+  # The JMicron enclosure drops off USB, and ZFS suspends both pools. Port 8006 stays
+  # green through that, and Plex fails every title. These read node-exporter on pve02
+  # and need the pool's online line, which node-exporter takes from kstat and keeps
+  # reporting while the pool is suspended. zpool-autoclear clears a pool within about
+  # two minutes of its disks returning, so three retries a minute apart let a healed
+  # drop pass and page only when the pool stays down.
+  - name: zfs-media
+    type: keyword
+    url: "http://192.168.50.11:9100/metrics"
+    keyword: 'node_zfs_zpool_state{state="online",zpool="media"} 1'
+    interval: 60
+    max_retries: 3
+    retry_interval: 60
+    description: "ZFS pool media on pve02 is ONLINE. DOWN means suspended or faulted, and Plex fails."
+  - name: zfs-downloads
+    type: keyword
+    url: "http://192.168.50.11:9100/metrics"
+    keyword: 'node_zfs_zpool_state{state="online",zpool="downloads"} 1'
+    interval: 60
+    max_retries: 3
+    retry_interval: 60
+    description: "ZFS pool downloads on pve02 is ONLINE. DOWN means suspended or faulted, and imports stop."
+
   # ⚠ THE PROVISIONER ADDS AND EDITS, IT DOES NOT PRUNE. Deleting a monitor from
   # this list stops it being managed; it does NOT remove it from Uptime Kuma, so a
   # monitor for a decommissioned host stays and goes permanently red — which
