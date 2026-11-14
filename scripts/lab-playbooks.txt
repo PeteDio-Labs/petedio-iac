@@ -27,3 +27,5 @@ upgrade-authentik.yml
 restart-guests.yml
 # pve02's pools, the auto-clear and the enclosure's USB power setting (PET-914).
 configure-media-storage.yml
+# The on-demand staging command on pve03 (staging-power.yml).
+configure-staging-power.yml
