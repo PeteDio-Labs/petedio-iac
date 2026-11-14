@@ -1,0 +1,11 @@
+# Managed by Ansible: roles/media-storage (PET-914).
+# Clears a suspended media pool once all its disks answer. The timer and the udev rule
+# start it. Runbook: vault/Incidents/2026-11-08-media-pools-suspended.md.
+[Unit]
+Description=Clear a ZFS media pool that a USB enclosure drop suspended
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zpool-autoclear
+# The wait for disks plus a slow zpool clear.
+TimeoutStartSec=10min

@@ -1,0 +1,86 @@
+---
+# zpool-autoclear (PET-914): clear a suspended pool once every disk in it answers again.
+# The script's docstring has the why. Runbook: vault/Incidents/2026-11-08-media-pools-suspended.md.
+
+- name: Install the zpool-autoclear script
+  ansible.builtin.copy:
+    src: zpool-autoclear.py
+    dest: /usr/local/sbin/zpool-autoclear
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the zpool-autoclear config
+  ansible.builtin.template:
+    src: zpool-autoclear.json.j2
+    dest: /etc/zpool-autoclear.json
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Create the node-exporter textfile directory
+  ansible.builtin.file:
+    path: "{{ media_storage_autoclear_textfile_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the zpool-autoclear units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - zpool-autoclear.service
+    - zpool-autoclear.timer
+  notify: Reload systemd for zpool-autoclear
+
+- name: Install the enclosure udev rule
+  ansible.builtin.template:
+    src: 90-zpool-autoclear.rules.j2
+    dest: /etc/udev/rules.d/90-zpool-autoclear.rules
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload udev rules for zpool-autoclear
+
+- name: Load the units and the udev rule
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the zpool-autoclear timer
+  ansible.builtin.systemd:
+    name: zpool-autoclear.timer
+    enabled: true
+    state: started
+
+# Run once and read the metrics back. A timer that is enabled but whose script fails would
+# otherwise look installed for a day. The service exits 0 by design, so the proof is the file.
+- name: Run zpool-autoclear once
+  ansible.builtin.systemd:
+    name: zpool-autoclear.service
+    state: started
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Read the zpool-autoclear metrics back
+  ansible.builtin.slurp:
+    src: "{{ media_storage_autoclear_textfile_dir }}/zpool_autoclear.prom"
+  register: autoclear_prom
+  when: not ansible_check_mode
+
+- name: Assert the metrics name every pool
+  ansible.builtin.assert:
+    that:
+      - "'zpool_autoclear_last_run_timestamp_seconds' in autoclear_text"
+      - "missing_pools | length == 0"
+    fail_msg: "zpool_autoclear.prom lacks pools {{ missing_pools }}:\n{{ autoclear_text }}"
+    quiet: true
+  vars:
+    autoclear_text: "{{ autoclear_prom.content | b64decode }}"
+    missing_pools: >-
+      {{ media_storage_pools | map(attribute='name')
+         | reject('in', autoclear_text | regex_findall('zpool="([^"]+)"')) | list }}
+  when: not ansible_check_mode

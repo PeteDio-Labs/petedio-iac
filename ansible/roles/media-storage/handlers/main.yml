@@ -1,0 +1,8 @@
+---
+- name: Reload systemd for zpool-autoclear
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Reload udev rules for zpool-autoclear
+  ansible.builtin.command: udevadm control --reload
+  changed_when: true

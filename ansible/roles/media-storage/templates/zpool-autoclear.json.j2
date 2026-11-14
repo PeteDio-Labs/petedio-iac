@@ -1,0 +1,13 @@
+{# Managed by Ansible: roles/media-storage (PET-914). Read by /usr/local/sbin/zpool-autoclear. #}
+{{ {
+  "pools": dict(media_storage_pools | map(attribute='name') | zip(media_storage_pools | map(attribute='devices'))),
+  "max_per_hour": media_storage_autoclear_max_per_hour | int,
+  "wait_seconds": media_storage_autoclear_wait_seconds | int,
+  "kstat_dir": "/proc/spl/kstat/zfs",
+  "dev_dir": "/dev/disk/by-id",
+  "state_dir": "/var/lib/zpool-autoclear",
+  "textfile_dir": media_storage_autoclear_textfile_dir,
+  "zpool": "/usr/sbin/zpool",
+  "lock": "/run/zpool-autoclear.lock",
+  "direct_io": true
+} | to_nice_json }}
