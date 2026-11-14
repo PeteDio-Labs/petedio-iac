@@ -5,7 +5,7 @@
 #   scripts/lab-action.sh lab_updates   # scripts/lab-updates.sh
 #   scripts/lab-action.sh playbook_check <playbook.yml>   # scripts/lab-playbook.sh check
 #   scripts/lab-action.sh playbook_apply <playbook.yml>   # only in the lab-write job
-#   scripts/lab-action.sh lab_probe <journal|mtrace|media_ask|guests|health|backup_jobs|ollama_ps> "<key=value ...>"   # read-only, on 237
+#   scripts/lab-action.sh lab_probe <journal|mtrace|media_ask|guests|health|backup_jobs|ollama_ps|prometheus> "<key=value ...>"   # read-only, on 237
 #   scripts/lab-action.sh repo_vars     # prints the allowlisted repo variables from $REPO_VARS_JSON; reaches no node
 #
 # .github/workflows/lab-action.yml calls this on a homelab runner when a thread dispatches it, so
@@ -68,9 +68,9 @@ case "$ACTION" in
   # A read-only probe inside LXC 237 (PET-878, PET-879). scripts/lab-probe.sh validates each value against a
   # strict pattern and reads lab-agent's own token inside 237; nothing is placed.
   lab_probe)
-    [[ "$TARGET" =~ ^(journal|mtrace|media_ask|guests|health|backup_jobs|ollama_ps)$ ]] || { echo "REFUSED: '$TARGET' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps)." >&2; exit 2; }
+    [[ "$TARGET" =~ ^(journal|mtrace|media_ask|guests|health|backup_jobs|ollama_ps|prometheus)$ ]] || { echo "REFUSED: '$TARGET' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps, prometheus)." >&2; exit 2; }
     CMD=("$REPO_ROOT/scripts/lab-probe.sh" "$TARGET" "$PROBE_ARGS")
-    SUMMARY='^probe (journal|mtrace|media_ask|guests|health|backup_jobs|ollama_ps):' ;;
+    SUMMARY='^probe (journal|mtrace|media_ask|guests|health|backup_jobs|ollama_ps|prometheus):' ;;
   *) echo "REFUSED: '$ACTION' is not an allowlisted action (lab_verify, lab_updates, lab_probe, repo_vars, playbook_check, playbook_apply)." >&2; exit 2 ;;
 esac
 

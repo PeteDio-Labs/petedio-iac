@@ -8,6 +8,7 @@
 #   scripts/lab-probe.sh media_ask <args> # question=<text> -> lab-agent POST /v1/media/ask
 #   scripts/lab-probe.sh guests           # {"data":{"guests":[{vmid,node,status}]}} for scripts/check-staleness.py
 #   scripts/lab-probe.sh backup_jobs      # the cluster's vzdump jobs: id, schedule, storage, mode, enabled (PET-884)
+#   scripts/lab-probe.sh prometheus       # alert rules on metrics-240: metric-alerts rules, Prometheus rules, alerts, targets
 #   scripts/lab-probe.sh ollama_ps        # models loaded in Ollama on CT 246: name, size, VRAM share, expiry
 #   scripts/lab-probe.sh health [service=pete-bot|lab-agent]   # GET /health on 237; both when none is named
 #
@@ -125,6 +126,59 @@ print("probe ollama_ps: %d model(s) loaded on CT 246" % len(m))
   exit 0
 fi
 
+# prometheus reads the alert rules on metrics-240 (PET-914 read-back). Prometheus listens on 127.0.0.1 there,
+# so the script finds the node that holds 240 and runs a fixed Python program inside it over `pct exec`.
+# metric-alerts, not Prometheus, evaluates this lab's rules from /etc/metric-alerts/rules.json, so the
+# probe prints both: those rules with the series each one returns now, Prometheus's own /api/v1/rules
+# and /api/v1/alerts, and the target count. The caller supplies no value. It prints names, counts and
+# health, never an expression's result labels beyond the metric name. A store that answers nothing or a
+# rules file that does not parse fails.
+REMOTE_PROM='import json, sys, urllib.parse, urllib.request
+P = "http://127.0.0.1:9090"
+def get(path, **q):
+    u = P + path + ("?" + urllib.parse.urlencode(q) if q else "")
+    with urllib.request.urlopen(u, timeout=15) as r:
+        b = json.load(r)
+    if b.get("status") != "success":
+        sys.exit("FAILED: %s answered status %s" % (path, b.get("status")))
+    return b["data"]
+try:
+    rules = json.load(open("/etc/metric-alerts/rules.json"))
+except (OSError, ValueError) as e:
+    sys.exit("FAILED: /etc/metric-alerts/rules.json did not read: %s" % e)
+firing = 0
+for r in rules:
+    try:
+        n = len(get("/api/v1/query", query=r["expr"])["result"])
+        print("metric-alerts rule %s: loaded, for_runs=%s, %d series now" % (r["name"], r.get("for_runs", 1), n))
+        firing += 1 if n else 0
+    except Exception as e:
+        print("metric-alerts rule %s: QUERY FAILED: %s" % (r["name"], str(e)[:120]))
+        sys.exit("FAILED: the store did not answer for rule %s" % r["name"])
+groups = get("/api/v1/rules")["groups"]
+nrules = 0
+for g in groups:
+    for r in g["rules"]:
+        nrules += 1
+        print("prometheus rule %s/%s: type=%s health=%s state=%s" % (g["name"], r["name"], r["type"], r.get("health", "?"), r.get("state", "-")))
+alerts = get("/api/v1/alerts")["alerts"]
+for a in alerts:
+    print("prometheus alert %s: %s" % (a["labels"].get("alertname", "?"), a["state"]))
+t = get("/api/v1/targets", state="active")["activeTargets"]
+up = sum(1 for x in t if x["health"] == "up")
+print("probe prometheus: read %d metric-alerts rules (%d with series now), %d Prometheus rules in %d groups, %d alerts, %d of %d targets up" % (len(rules), firing, nrules, len(groups), len(alerts), up, len(t)))'
+if [ "$PROBE" = prometheus ]; then
+  [ -z "$ARGS" ] || die "prometheus takes no args"
+  PN=""
+  for n in 192.168.50.10 192.168.50.11 192.168.50.12; do
+    if ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$n" 'pct status 240' 2>/dev/null | grep -q 'status: running'; then PN="$n"; break; fi
+  done
+  [ -n "$PN" ] || { echo "FAILED: no node reports LXC 240 running, so nothing was examined." >&2; exit 1; }
+  ssh -o ConnectTimeout=8 -o BatchMode=yes "$PN" 'pct exec 240 -- python3 -c "$(cat)"' <<<"$REMOTE_PROM" \
+    || { echo "FAILED: the Prometheus read on 240 failed, so no rule was confirmed." >&2; exit 1; }
+  exit 0
+fi
+
 # Find the node that holds 237 now; guests move (PET-334).
 NODE=""
 for n in 192.168.50.10 192.168.50.11 192.168.50.12; do
@@ -236,5 +290,5 @@ case "$PROBE" in
     echo "probe media_ask: one question answered HTTP ${CODE:-none}, ${#OUT} characters read"
     [ "${CODE:-}" = 200 ] || exit 1 ;;
 
-  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps)" ;;
+  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps, prometheus)" ;;
 esac
