@@ -1,0 +1,65 @@
+---
+# Turn off USB 3 link power management (U1/U2) for the media enclosure (PET-914).
+# The defaults hold the evidence. Three layers, because each one covers a different moment:
+#   1. The GRUB drop-in sets usbcore.quirks for every boot after the next update-grub.
+#   2. The runtime quirk applies to the next enumeration, which is every drop and return.
+#   3. The port's usb3_lpm_permit turns U1/U2 off on the live link, with no re-enumeration.
+#      A re-enumeration would suspend both pools, so the fix must not cause one.
+
+- name: Add the enclosure no-LPM quirk to the kernel command line
+  ansible.builtin.copy:
+    dest: /etc/default/grub.d/90-media-enclosure-no-lpm.cfg
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible: roles/media-storage, tasks/usb-lpm.yml (PET-914).
+      GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT} usbcore.quirks={{ media_storage_enclosure_no_lpm_quirks }}"
+  notify: Update GRUB for the enclosure quirk
+
+- name: Set the no-LPM quirk on the running kernel
+  ansible.builtin.shell: |
+    f=/sys/module/usbcore/parameters/quirks
+    [ "$(cat $f)" = "{{ media_storage_enclosure_no_lpm_quirks }}" ] && exit 0
+    echo "{{ media_storage_enclosure_no_lpm_quirks }}" > $f
+    echo changed
+  register: lpm_quirk
+  changed_when: "'changed' in lpm_quirk.stdout"
+  when: not ansible_check_mode
+
+- name: Turn off U1 and U2 on the enclosure's live USB port
+  ansible.builtin.shell: |
+    n=0
+    for d in /sys/bus/usb/devices/*; do
+      [ -f "$d/idVendor" ] || continue
+      case "$(cat $d/idVendor):$(cat $d/idProduct)" in
+        {% for id in media_storage_enclosure_usb_ids %}{{ id.vendor }}:{{ id.product }}{{ '|' if not loop.last }}{% endfor %}) ;;
+        *) continue ;;
+      esac
+      n=$((n + 1))
+      p="$d/port/usb3_lpm_permit"
+      [ "$(cat $p)" = 0 ] && continue
+      echo 0 > "$p"
+      echo "changed $d"
+    done
+    echo "found $n"
+  register: lpm_port
+  changed_when: "'changed' in lpm_port.stdout"
+  failed_when: lpm_port.rc != 0 or 'found 0' in lpm_port.stdout
+  when: not ansible_check_mode
+
+# The proof is the device's own report, not the write: both link states must read disabled.
+- name: Read the enclosure's link power states back
+  ansible.builtin.shell: |
+    for d in /sys/bus/usb/devices/*; do
+      [ -f "$d/idVendor" ] || continue
+      case "$(cat $d/idVendor):$(cat $d/idProduct)" in
+        {% for id in media_storage_enclosure_usb_ids %}{{ id.vendor }}:{{ id.product }}{{ '|' if not loop.last }}{% endfor %}) ;;
+        *) continue ;;
+      esac
+      echo "$(basename $d) u1=$(cat $d/power/usb3_hardware_lpm_u1) u2=$(cat $d/power/usb3_hardware_lpm_u2)"
+    done
+  register: lpm_state
+  changed_when: false
+  failed_when: lpm_state.stdout_lines | length == 0 or 'enabled' in lpm_state.stdout
+  when: not ansible_check_mode

@@ -59,6 +59,18 @@ media_storage_autoclear_interval: 1min
 # node-exporter's textfile collector on pve02. metric-alerts reads the metrics from here,
 # so the alert needs no credential on this host.
 media_storage_autoclear_textfile_dir: /var/lib/prometheus/node-exporter
-# The enclosure's USB bridge: JMicron JMS567. Its disks start the unit as they reappear.
-media_storage_autoclear_usb_ids:
+# The enclosure's USB bridge: JMicron JMS567. Its disks start zpool-autoclear as they
+# reappear, and usb-lpm.yml turns off USB 3 link power management for it.
+media_storage_enclosure_usb_ids:
   - { vendor: "152d", product: "0567" }
+
+# USB 3 link power management (U1/U2) for the enclosure (PET-914). The bridge dropped off
+# the bus three times with no host error first: 2026-10-23, 11-08 and 11-13. Its link had
+# U1/U2 on, and the USB NIC on the same root hub never dropped, so the fault is this link.
+# `k` is USB_QUIRK_NO_LPM. Set false to leave LPM to the kernel.
+media_storage_enclosure_no_lpm: true
+# The usbcore.quirks value: vendor:product:k for each bridge, comma-separated.
+media_storage_enclosure_no_lpm_quirks: >-
+  {{ media_storage_enclosure_usb_ids | map(attribute='vendor')
+     | zip(media_storage_enclosure_usb_ids | map(attribute='product'))
+     | map('join', ':') | map('regex_replace', '$', ':k') | join(',') }}

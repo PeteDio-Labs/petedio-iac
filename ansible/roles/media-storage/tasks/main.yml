@@ -21,6 +21,11 @@
 - name: Install zpool-autoclear
   ansible.builtin.import_tasks: autoclear.yml
 
+# After the auto-clear, so a link that drops while LPM changes still comes back.
+- name: Turn off USB link power management for the enclosure
+  ansible.builtin.import_tasks: usb-lpm.yml
+  when: media_storage_enclosure_no_lpm | bool
+
 - name: Find which pools already exist
   ansible.builtin.command: zpool list -H -o name
   register: existing_pools
