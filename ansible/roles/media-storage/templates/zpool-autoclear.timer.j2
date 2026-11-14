@@ -1,0 +1,11 @@
+# Managed by Ansible: roles/media-storage (PET-914).
+[Unit]
+Description=Check the ZFS media pools for a suspension every {{ media_storage_autoclear_interval }}
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ media_storage_autoclear_interval }}
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

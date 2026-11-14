@@ -1,0 +1,6 @@
+# Managed by Ansible: roles/media-storage (PET-914).
+# When a disk from the media enclosure appears, start zpool-autoclear. The unit waits for the
+# rest of the pool's disks, so the first disk to return is enough to fire it.
+{% for id in media_storage_enclosure_usb_ids %}
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_USB_VENDOR_ID}=="{{ id.vendor }}", ENV{ID_USB_MODEL_ID}=="{{ id.product }}", TAG+="systemd", ENV{SYSTEMD_WANTS}+="zpool-autoclear.service"
+{% endfor %}
