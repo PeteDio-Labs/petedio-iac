@@ -133,7 +133,7 @@ fi
 # and /api/v1/alerts, and the target count. The caller supplies no value. It prints names, counts and
 # health, never an expression's result labels beyond the metric name. A store that answers nothing or a
 # rules file that does not parse fails.
-REMOTE_PROM='import json, sys, urllib.parse, urllib.request
+REMOTE_PROM='import json, re, sys, urllib.parse, urllib.request
 P = "http://127.0.0.1:9090"
 def get(path, **q):
     u = P + path + ("?" + urllib.parse.urlencode(q) if q else "")
@@ -148,12 +148,28 @@ except (OSError, ValueError) as e:
     sys.exit("FAILED: /etc/metric-alerts/rules.json did not read: %s" % e)
 if not rules:
     sys.exit("FAILED: /etc/metric-alerts/rules.json holds no rules, so nothing was examined")
+def metrics(expr):
+    e = re.sub(r"\[[^]]*\]", "", re.sub(r"\{[^}]*\}", "", expr))
+    e = re.sub(r"\b(by|without|on|ignoring)\s*\([^)]*\)", "", e)
+    skip = ("by", "without", "on", "ignoring", "group_left", "group_right", "bool", "and", "or", "unless", "offset", "inf", "nan")
+    return sorted(set(m for m in re.findall(r"[a-zA-Z_:][a-zA-Z0-9_:]*(?![a-zA-Z0-9_:]|\s*\()", e) if m not in skip))
+def labels(m):
+    return ",".join("%s=%s" % (k, str(m[k])[:60]) for k in sorted(m) if k != "__name__") or "no labels"
 firing = 0
+absent = 0
 for r in rules:
     try:
-        n = len(get("/api/v1/query", query=r["expr"])["result"])
-        print("metric-alerts rule %s: in rules.json, for_runs=%s, %d series now" % (r["name"], r.get("for_runs", 1), n))
-        firing += 1 if n else 0
+        res = get("/api/v1/query", query=r["expr"])["result"]
+        present = []
+        for name in metrics(r["expr"]):
+            c = get("/api/v1/query", query="count(%s)" % name)["result"]
+            n = int(float(c[0]["value"][1])) if c else 0
+            absent += 0 if n else 1
+            present.append("%s=%s" % (name, n if n else "ABSENT"))
+        print("metric-alerts rule %s: in rules.json, for_runs=%s, %d series now, metrics: %s" % (r["name"], r.get("for_runs", 1), len(res), " ".join(present) or "none found"))
+        for x in res[:10]:
+            print("  firing %s: %s" % (r["name"], labels(x["metric"])))
+        firing += 1 if res else 0
     except Exception as e:
         print("metric-alerts rule %s: QUERY FAILED: %s" % (r["name"], str(e)[:120]))
         sys.exit("FAILED: the store did not answer for rule %s" % r["name"])
@@ -170,7 +186,10 @@ t = get("/api/v1/targets", state="active")["activeTargets"]
 if not t:
     sys.exit("FAILED: Prometheus lists no active targets, so the store is not scraping")
 up = sum(1 for x in t if x["health"] == "up")
-print("probe prometheus: read %d metric-alerts rules (%d with series now), %d Prometheus rules in %d groups, %d alerts, %d of %d targets up" % (len(rules), firing, nrules, len(groups), len(alerts), up, len(t)))'
+for x in t:
+    if x["health"] != "up":
+        print("down target %s %s: %s" % (x["labels"].get("job", "?"), x["labels"].get("instance", "?"), str(x.get("lastError", ""))[:100]))
+print("probe prometheus: read %d metric-alerts rules (%d with series now, %d metrics absent), %d Prometheus rules in %d groups, %d alerts, %d of %d targets up" % (len(rules), firing, absent, nrules, len(groups), len(alerts), up, len(t)))'
 if [ "$PROBE" = prometheus ]; then
   [ -z "$ARGS" ] || die "prometheus takes no args"
   PN=""
