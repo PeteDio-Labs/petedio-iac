@@ -66,6 +66,11 @@ check "prometheus probe: names the rule" "$(grep -c '^metric-alerts rule zpool-n
 check "prometheus probe: summary says what was examined" "$(grep -c '^probe prometheus: read 1 metric-alerts rules .*0 metrics absent.*1 of 1 targets up$' <<<"$OUTP")" 1
 runprom ok '[]'; check "prometheus probe: empty rules file fails" "$RCP" 1
 runprom ok 'not json'; check "prometheus probe: unparseable rules file fails" "$RCP" 1
+R2='[{"name":"coverage","expr":"(count(up == 1) or vector(0)) < 15"},{"name":"disk-fills-soon","expr":"predict_linear(node_fs_avail[6h], 24 * 3600) < 0 and node_fs_avail < 5"}]'
+runprom ok "$R2"
+check "prometheus probe: counts up as a metric" "$(grep -c 'metric-alerts rule coverage: .*metrics: up=2$' <<<"$OUTP")" 1
+check "prometheus probe: a function name is not a metric" "$(grep -c 'predict_linear\|vector' <<<"$OUTP")" 0
+check "prometheus probe: a range selector is not a metric" "$(grep -c 'disk-fills-soon: .*metrics: node_fs_avail=2$' <<<"$OUTP")" 1
 runprom absent "$R"; check "prometheus probe: names an absent metric" "$(grep -c 'foo_bar=ABSENT' <<<"$OUTP")" 1
 check "prometheus probe: counts absent metrics in the summary" "$(grep -c '1 metrics absent' <<<"$OUTP")" 1
 runprom downtarget "$R"; check "prometheus probe: names a down target" "$(grep -c '^down target node h1:9100: refused$' <<<"$OUTP")" 1

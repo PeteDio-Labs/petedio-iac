@@ -149,9 +149,10 @@ except (OSError, ValueError) as e:
 if not rules:
     sys.exit("FAILED: /etc/metric-alerts/rules.json holds no rules, so nothing was examined")
 def metrics(expr):
-    e = re.sub(r"\{[^}]*\}", "", expr)
+    e = re.sub(r"\[[^]]*\]", "", re.sub(r"\{[^}]*\}", "", expr))
     e = re.sub(r"\b(by|without|on|ignoring)\s*\([^)]*\)", "", e)
-    return sorted(set(m for m in re.findall(r"[a-zA-Z_:][a-zA-Z0-9_:]*", e) if "_" in m))
+    skip = ("by", "without", "on", "ignoring", "group_left", "group_right", "bool", "and", "or", "unless", "offset", "inf", "nan")
+    return sorted(set(m for m in re.findall(r"[a-zA-Z_:][a-zA-Z0-9_:]*(?![a-zA-Z0-9_:]|\s*\()", e) if m not in skip))
 def labels(m):
     return ",".join("%s=%s" % (k, str(m[k])[:60]) for k in sorted(m) if k != "__name__") or "no labels"
 firing = 0
