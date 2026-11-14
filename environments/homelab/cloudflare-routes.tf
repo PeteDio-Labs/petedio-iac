@@ -74,7 +74,7 @@ module "cloudflare_ingress" {
           "https://oauth-callbacks.cloudflareaccess.com/cdn-cgi/access/outbound-oauth-callback",
         ]
         access_token_lifetime = "15m"
-        session_duration      = "168h"
+        session_duration      = "720h"
       }
     }
 
@@ -97,7 +97,7 @@ module "cloudflare_ingress" {
           "https://oauth-callbacks.cloudflareaccess.com/cdn-cgi/access/outbound-oauth-callback",
         ]
         access_token_lifetime = "15m"
-        session_duration      = "168h"
+        session_duration      = "720h"
       }
     }
 
@@ -122,7 +122,7 @@ module "cloudflare_ingress" {
           "https://oauth-callbacks.cloudflareaccess.com/cdn-cgi/access/outbound-oauth-callback",
         ]
         access_token_lifetime = "15m"
-        session_duration      = "168h"
+        session_duration      = "720h"
       }
     }
 
