@@ -24,7 +24,9 @@
         owner: root
         group: root
         mode: "0755"
+      register: staging_power_install
 
+    # A check run cannot install the file, so it has nothing to read until the apply installs it.
     - name: Read the container's state through the installed command
       ansible.builtin.command: /usr/local/sbin/staging-power
       environment:
@@ -32,8 +34,10 @@
       register: staging_power_status
       check_mode: false  # lab-action: read-only
       changed_when: false
+      when: not (ansible_check_mode and staging_power_install is changed)
 
     - name: Assert the command answered for container 249
       ansible.builtin.assert:
         that: staging_power_status.stdout.startswith('staging-249:')
         success_msg: "{{ staging_power_status.stdout }}"
+      when: not (ansible_check_mode and staging_power_install is changed)
