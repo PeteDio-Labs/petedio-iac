@@ -37,9 +37,13 @@ class H(http.server.BaseHTTPRequestHandler):
         p = urllib.parse.urlparse(s.path).path
         if MODE == "down" and p == "/api/v1/query":
             s.send_response(500); s.end_headers(); return
-        d = {"/api/v1/query": {"result": [{"metric": {}}]}, "/api/v1/rules": {"groups": []},
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(s.path).query).get("query", [""])[0]
+        res = [] if (MODE == "absent" and q.startswith("count(")) else [{"metric": {"instance": "a1"}, "value": [0, "2"]}]
+        tg = [{"health": "up"}]
+        if MODE == "downtarget": tg.append({"health": "down", "labels": {"job": "node", "instance": "h1:9100"}, "lastError": "refused"})
+        d = {"/api/v1/query": {"result": res}, "/api/v1/rules": {"groups": []},
              "/api/v1/alerts": {"alerts": []},
-             "/api/v1/targets": {"activeTargets": [] if MODE == "notargets" else [{"health": "up"}]}}[p]
+             "/api/v1/targets": {"activeTargets": [] if MODE == "notargets" else tg}}[p]
         s.send_response(200); s.end_headers(); s.wfile.write(json.dumps({"status": "success", "data": d}).encode())
     def log_message(*a): pass
 http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
@@ -56,12 +60,16 @@ runprom(){ # mode rules-json
   OUTP="$(python3 -c "$PROG" 2>&1)"; RCP=$?
   kill "$FPID" 2>/dev/null; wait "$FPID" 2>/dev/null; FPID=""
 }
-R='[{"name":"zpool-not-online","expr":"x","for_runs":1}]'
+R='[{"name":"zpool-not-online","expr":"foo_bar{state!=\"online\"} == 1","for_runs":1}]'
 runprom ok "$R"; check "prometheus probe: good read exits 0" "$RCP" 0
-check "prometheus probe: names the rule" "$(grep -c '^metric-alerts rule zpool-not-online: in rules.json, for_runs=1, 1 series now$' <<<"$OUTP")" 1
-check "prometheus probe: summary says what was examined" "$(grep -c '^probe prometheus: read 1 metric-alerts rules .*1 of 1 targets up$' <<<"$OUTP")" 1
+check "prometheus probe: names the rule" "$(grep -c '^metric-alerts rule zpool-not-online: in rules.json, for_runs=1, 1 series now, metrics: foo_bar=2$' <<<"$OUTP")" 1
+check "prometheus probe: summary says what was examined" "$(grep -c '^probe prometheus: read 1 metric-alerts rules .*0 metrics absent.*1 of 1 targets up$' <<<"$OUTP")" 1
 runprom ok '[]'; check "prometheus probe: empty rules file fails" "$RCP" 1
 runprom ok 'not json'; check "prometheus probe: unparseable rules file fails" "$RCP" 1
+runprom absent "$R"; check "prometheus probe: names an absent metric" "$(grep -c 'foo_bar=ABSENT' <<<"$OUTP")" 1
+check "prometheus probe: counts absent metrics in the summary" "$(grep -c '1 metrics absent' <<<"$OUTP")" 1
+runprom downtarget "$R"; check "prometheus probe: names a down target" "$(grep -c '^down target node h1:9100: refused$' <<<"$OUTP")" 1
+check "prometheus probe: names firing series labels" "$(grep -c '^  firing zpool-not-online: instance=a1$' <<<"$OUTP")" 1
 runprom notargets "$R"; check "prometheus probe: zero targets fails" "$RCP" 1
 runprom down "$R"; check "prometheus probe: a failing query fails" "$RCP" 1
 
