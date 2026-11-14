@@ -210,6 +210,13 @@ fi
 # 15 journal lines of the unit (cut to 200 characters), and whether the node holds a Proxmox firewall file
 # for the guest. A unit that is inactive is a valid answer and exits 0; the summary line says so. A guest
 # that is not running, or a read that fails, exits 1.
+REMOTE_UNIT='U="$1"; PT="$2"
+SHOW=$(systemctl show "$U" -p ActiveState -p SubState -p NRestarts -p ActiveEnterTimestamp --no-pager 2>&1); R=$?; echo "$SHOW"; echo "ShowExit=$R"
+SOCK=$(ss -ltn 2>&1); R=$?; echo "SsExit=$R"
+if printf "%s\n" "$SOCK" | grep -q ":$PT "; then echo Listening=yes; else echo Listening=no; fi
+echo ---
+JR=$(journalctl -u "$U" -n 15 --no-pager -o short-iso 2>&1); R=$?; echo "JournalExit=$R"
+printf "%s\n" "$JR"'
 declare -A GU_UNIT=([119]=prometheus-node-exporter)
 declare -A GU_PORT=([119]=9100)
 if [ "$PROBE" = guest_unit ]; then
@@ -222,10 +229,19 @@ if [ "$PROBE" = guest_unit ]; then
     if ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$n" "pct status $V" 2>/dev/null | grep -q 'status: running'; then GN="$n"; break; fi
   done
   [ -n "$GN" ] || { echo "FAILED: no node reports LXC $V running, so nothing was examined." >&2; exit 1; }
-  # Shown to the remote shell as one fixed string; $V, $U and $PT come from the table above.
-  OUT="$(ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$GN" "pct exec $V -- sh -c 'systemctl show $U -p ActiveState -p SubState -p NRestarts -p ActiveEnterTimestamp --no-pager; if ss -ltn 2>/dev/null | grep -q \":$PT \"; then echo Listening=yes; else echo Listening=no; fi; echo ---; journalctl -u $U -n 15 --no-pager -o short-iso 2>&1'; if test -f /etc/pve/firewall/$V.fw; then echo FirewallFile=present; else echo FirewallFile=absent; fi")" \
+  # The program travels on stdin and takes the unit and port as arguments, both from the table above.
+  # Each read prints its own exit code, so a failed `ss` or `journalctl` cannot read as a closed port
+  # or an empty journal.
+  OUT="$(ssh -o ConnectTimeout=8 -o BatchMode=yes "$GN" "pct exec $V -- sh -s -- $U $PT" <<<"$REMOTE_UNIT")" \
     || { echo "FAILED: the read inside CT $V failed, so $U was not examined." >&2; exit 1; }
+  FW="$(ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$GN" "if test -f /etc/pve/firewall/$V.fw; then echo present; else echo absent; fi")" \
+    || { echo "FAILED: the node could not say whether a firewall file exists for CT $V." >&2; exit 1; }
   printf '%s\n' "$OUT" | cut -c1-200
+  echo "FirewallFile=$FW"
+  for k in ShowExit SsExit JournalExit; do
+    [ "$(sed -n "s/^$k=//p" <<<"$OUT" | head -1)" = 0 ] \
+      || { echo "FAILED: $k was not 0 inside CT $V, so $U was only partly examined." >&2; exit 1; }
+  done
   AS="$(sed -n 's/^ActiveState=//p' <<<"$OUT" | head -1)"; LS="$(sed -n 's/^Listening=//p' <<<"$OUT" | head -1)"
   [ -n "$AS" ] || { echo "FAILED: no ActiveState came back for $U in CT $V." >&2; exit 1; }
   echo "probe guest_unit: read $U in CT $V on node $GN: active=$AS, listening on $PT=${LS:-unknown}"

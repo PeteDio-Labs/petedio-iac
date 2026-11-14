@@ -84,8 +84,8 @@ SB="$PD/stubs"; mkdir -p "$SB"
 printf '#!/usr/bin/env bash\ncmd="${@: -1}"; exec bash -c "$cmd"\n' > "$SB/ssh"
 printf '#!/usr/bin/env bash\nif [ "$1" = status ]; then echo "status: running"; exit 0; fi\nif [ "$1" = exec ]; then shift 3; exec "$@"; fi\n' > "$SB/pct"
 printf '#!/usr/bin/env bash\nprintf "ActiveState=%%s\\nSubState=x\\nNRestarts=3\\nActiveEnterTimestamp=n/a\\n" "${STUB_ACTIVE:-active}"\n' > "$SB/systemctl"
-printf '#!/usr/bin/env bash\necho "LISTEN 0 4096 *:${STUB_PORT:-9100} *:*"\n' > "$SB/ss"
-printf '#!/usr/bin/env bash\necho "2026-11-14T05:00:00+0000 h unit: a line"\n' > "$SB/journalctl"
+printf '#!/usr/bin/env bash\n[ -z "${STUB_SS_FAIL:-}" ] || { echo "ss: boom" >&2; exit 1; }\necho "LISTEN 0 4096 *:${STUB_PORT:-9100} *:*"\n' > "$SB/ss"
+printf '#!/usr/bin/env bash\n[ -z "${STUB_JR_FAIL:-}" ] || { echo "journalctl: boom" >&2; exit 1; }\necho "2026-11-14T05:00:00+0000 h unit: a line"\n' > "$SB/journalctl"
 chmod +x "$SB"/*
 OUTG="$(PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit vmid=119 2>&1)"; RCG=$?
 check "guest_unit: good read exits 0" "$RCG" 0
@@ -93,6 +93,8 @@ check "guest_unit: summary names state and port" "$(grep -c '^probe guest_unit: 
 OUTG="$(STUB_ACTIVE=failed STUB_PORT=22 PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit vmid=119 2>&1)"; RCG=$?
 check "guest_unit: an inactive unit is a valid read" "$RCG" 0
 check "guest_unit: inactive unit and closed port are reported" "$(grep -c 'active=failed, listening on 9100=no$' <<<"$OUTG")" 1
+STUB_SS_FAIL=1 PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit vmid=119 >/dev/null 2>&1; check "guest_unit: a failing ss fails the probe" "$?" 1
+STUB_JR_FAIL=1 PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit vmid=119 >/dev/null 2>&1; check "guest_unit: a failing journalctl fails the probe" "$?" 1
 PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit vmid=120 >/dev/null 2>&1; check "guest_unit: a VMID outside the table is refused" "$?" 2
 PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit "vmid=119; id" >/dev/null 2>&1; check "guest_unit: a shell fragment is refused" "$?" 2
 PATH="$SB:$PATH" bash scripts/lab-probe.sh guest_unit >/dev/null 2>&1; check "guest_unit: no vmid is refused" "$?" 2
