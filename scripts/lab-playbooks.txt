@@ -25,3 +25,5 @@ patch-kev-nodes.yml
 patch-guests.yml
 upgrade-authentik.yml
 restart-guests.yml
+# pve02's pools, the auto-clear and the enclosure's USB power setting (PET-914).
+configure-media-storage.yml
