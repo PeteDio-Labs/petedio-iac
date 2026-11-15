@@ -171,9 +171,14 @@
     # Callers that may use tracerr's write tools (search_missing, blocklist_release,
     # refresh_plex). Every caller not listed stays read-only. Each name must also be a
     # token_<name> field in kv/services/media/dashboard: tracerr stops at startup on one
-    # that is not. lab-agent is deliberately absent. batsy joined on Pedro's word
-    # (2026-11-09, PET-904).
-    mtrace_write_callers: ["bobbert", "batsy"]
+    # that is not. batsy joined on Pedro's word (2026-11-09, PET-904). lab-agent joined on
+    # Pedro's word (2026-11-15, MED-22) with ONE tool: see mtrace_write_scopes.
+    mtrace_write_callers: ["bobbert", "batsy", "lab-agent"]
+    # A caller named here may use only these write tools; tracerr answers 403 on the rest.
+    # A write caller absent here may use all of them. lab-agent cannot blocklist, refresh Plex
+    # or update a service, and the Discord Confirm tap gates the search it can run.
+    mtrace_write_scopes:
+      lab-agent: ["search_missing"]
 
   pre_tasks:
     - name: Assert the LAN bind and allowlist are sane
@@ -251,10 +256,12 @@
       ansible.builtin.assert:
         that:
           - mtrace_write_callers | difference(mtrace_caller_tokens.keys() | list) | length == 0
+          - mtrace_write_scopes.keys() | list | difference(mtrace_write_callers) | length == 0
         fail_msg: >-
           mtrace_write_callers names a caller with no token_<name> field in
           kv/services/media/dashboard. mtrace would stop at startup. Create the token
-          with scripts/mtrace-caller-token.sh, or remove the name.
+          with scripts/mtrace-caller-token.sh, or remove the name. A name in mtrace_write_scopes
+          must also be in mtrace_write_callers.
       no_log: true
 
     # Without this the play would install a stale binary, or none, and the service would
