@@ -1,12 +1,12 @@
 ---
-# configure-pete-bot.yml — install pete-bot on media-dash-237, beside mtrace (PET-375).
+# configure-pete-bot.yml — install pete-bot on media-dash-237, beside tracerr (PET-375).
 #
 # WHAT IT IS. A Discord surface and nothing else. POST /v1/alert takes an Uptime Kuma
 # webhook and DMs the owner, editing the original message when the service recovers, and
 # /update starts the media-updates workflow. It holds no tools of its own.
 #
-# ⚠ IT NO LONGER TALKS TO MTRACE (PET-518). /ask, DM forwarding and the /status mtrace
-# line are gone, so this play passes no mtrace token or URL. Don't add one back: mtrace
+# ⚠ IT NO LONGER TALKS TO MTRACE (PET-518). /ask, DM forwarding and the /status tracerr
+# line are gone, so this play passes no tracerr token or URL. Don't add one back: tracerr
 # gives each caller its own token, and Pete Bot isn't a caller.
 #
 # WHY IT LIVES HERE. A Discord bot needs only an OUTBOUND websocket, so co-locating it
@@ -358,7 +358,7 @@
         owner: root
         group: "{{ pete_bot_user }}"
         mode: "0750"
-      # ⚠ owner root, not the service account. mtrace's directory is owned by its own
+      # ⚠ owner root, not the service account. tracerr's directory is owned by its own
       # service user, which lets that process replace the root-owned binary it runs.
       # Nothing here needs to write, so nothing here can.
 

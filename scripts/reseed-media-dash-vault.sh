@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # reseed-media-dash-vault.sh — (re)seed kv/services/media/dashboard with the dedicated SSH
-# keypair mtrace needs to read the media hosts (PET-355).
+# keypair tracerr needs to read the media hosts (PET-355).
 #
 # ⚠ NO API TOKEN HERE (PET-518). Callers used to share one bearer token, api_token, minted
 # by this script. That is now one token per caller, field token_<name>, and this script

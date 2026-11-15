@@ -1,7 +1,7 @@
 ---
-# configure-media-dash.yml — deploy mtrace on media-dash-237 as a systemd service.
+# configure-media-dash.yml — deploy tracerr on media-dash-237 as a systemd service.
 #
-# mtrace is the media stack's read-only control surface (PET-355, repo
+# tracerr is the media stack's read-only control surface (PET-355, repo
 # PeteDio-Labs/petedio-media-control). It answers "where is this stuck" by joining seerr
 # requests to Sonarr/Radarr rows, qBittorrent infohashes and Plex rating keys.
 #
@@ -11,7 +11,7 @@
 # petedio-media-iac calls a build-from-source Node app "the single riskiest operation in
 # this stack", and this deliberately does not repeat it.
 #
-# ⚠ HOW IT REACHES THE MEDIA STACK, AND THE COST OF THAT. mtrace does not hold the *arr API
+# ⚠ HOW IT REACHES THE MEDIA STACK, AND THE COST OF THAT. tracerr does not hold the *arr API
 # keys. It SSHes to each host and curls that host's own loopback, so a key is read from the
 # host's config, used there, and only the RESPONSE crosses the LAN. That is a real security
 # property — an *arr API key is equivalent to full control of that app — and it is also the
@@ -37,8 +37,8 @@
   gather_facts: false
 
   # ⚠ Scoped to ONE key on SEVEN hosts, and that is the whole play. petedio-media-iac owns
-  # these containers; this group exists only to answer "who may mtrace log into", which is
-  # a fact about mtrace rather than about the media stack. Keeping it declarative here beats
+  # these containers; this group exists only to answer "who may tracerr log into", which is
+  # a fact about tracerr rather than about the media stack. Keeping it declarative here beats
   # a distribution script nobody re-runs — workflow rule 6.
   # The public half of the media-dash-cd deploy key (PET-724), from kv/services/media/dashboard
   # field deploy_ssh_public_key (scripts/seed-media-dash-cd-key.sh). The GitHub deploy connects
@@ -57,7 +57,7 @@
       when: media_dash_cd_public_key | length > 0
 
     # authorized_key with state: present adds a key and never removes another, so a rotated
-    # key would stay authorized as root. Drop every other media-dash-cd line. mtrace's own key
+    # key would stay authorized as root. Drop every other media-dash-cd line. tracerr's own key
     # carries no such comment, and neither do the ansible and operator keys.
     - name: Remove superseded media-dash-cd deploy keys
       ansible.builtin.replace:
@@ -102,7 +102,7 @@
         # used to pivot or open a shell; `from=` means it works only when presented from
         # 237, so lifting it off that host buys nothing.
         #
-        # It still permits command execution, because mtrace works by running
+        # It still permits command execution, because tracerr works by running
         # `ssh <host> curl 127.0.0.1:<port>` — that is deliberate, and it keeps each
         # *arr API key on its own host instead of centralising them. Narrowing further
         # needs a forced command wrapping that call, deployed to all six hosts, which is
@@ -139,11 +139,11 @@
     # built on the runner; the operator's script points it at the local checkout.
     media_dash_binary_src: "{{ lookup('env', 'HOME') }}/petedio/media-control/dist/mtrace"
 
-    # ⚠ THE LAN BIND, AND WHO IS ON THE OTHER END OF IT (PET-518). mtrace used to answer
+    # ⚠ THE LAN BIND, AND WHO IS ON THE OTHER END OF IT (PET-518). tracerr used to answer
     # only on 127.0.0.1; it now binds its own LAN address so pete-bot's replacement caller
     # and anything else on the allowlist can reach it directly. .4 is pete-pi-1, the
     # tailnet subnet router — `tailscale debug prefs` there shows NoSNAT=false, so a
-    # tailnet client's request arrives at mtrace already SNAT'd to .4, and .4 is the one
+    # tailnet client's request arrives at tracerr already SNAT'd to .4, and .4 is the one
     # address the allowlist needs to carry every tailnet caller. The nftables allowlist
     # below is what makes opening this bind safe; see mtrace.env.j2 for the rest of that
     # story.
@@ -168,9 +168,9 @@
     mtrace_mcp_access_agents:
       bobbert: ca14c1dd4db82530a133724cd7945be4.access
       batsy: d620c3ddbedd7cde30577aeb2f11feb6.access
-    # Callers that may use mtrace's write tools (search_missing, blocklist_release,
+    # Callers that may use tracerr's write tools (search_missing, blocklist_release,
     # refresh_plex). Every caller not listed stays read-only. Each name must also be a
-    # token_<name> field in kv/services/media/dashboard: mtrace stops at startup on one
+    # token_<name> field in kv/services/media/dashboard: tracerr stops at startup on one
     # that is not. lab-agent is deliberately absent. batsy joined on Pedro's word
     # (2026-11-09, PET-904).
     mtrace_write_callers: ["bobbert", "batsy"]
@@ -306,7 +306,7 @@
       when: media_dash_cd_public_key | length > 0
 
     # authorized_key with state: present adds a key and never removes another, so a rotated
-    # key would stay authorized as root. Drop every other media-dash-cd line. mtrace's own key
+    # key would stay authorized as root. Drop every other media-dash-cd line. tracerr's own key
     # carries no such comment, and neither do the ansible and operator keys.
     - name: Remove superseded media-dash-cd deploy keys
       ansible.builtin.replace:
@@ -398,7 +398,7 @@
         mode: "0750"
       notify: Restart mtrace
 
-    # ⚠ THE ALLOWLIST, AND WHY IT LOADS BEFORE mtrace EVER BINDS THE LAN (PET-518). mtrace
+    # ⚠ THE ALLOWLIST, AND WHY IT LOADS BEFORE tracerr EVER BINDS THE LAN (PET-518). tracerr
     # used to bind loopback only; it now binds mtrace_bind, and the SSH key it holds is
     # root on six media hosts. This table is the thing making that bind safe: only lo and
     # mtrace_allow_sources may reach mtrace_port, everything else gets a TCP reset. It is
@@ -522,7 +522,7 @@
 
     # ⚠ runuser, not become_user. become_user defaults to sudo, which this container
     # does not have — it is built from the minimal Debian template and the play installs
-    # no packages. `su` is no help either: mtrace's shell is /usr/sbin/nologin by design.
+    # no packages. `su` is no help either: tracerr's shell is /usr/sbin/nologin by design.
     # runuser is in util-linux, is already present, and drops to a nologin account
     # without PAM, so the check still runs as the service user rather than as root.
     # Running it as root would prove nothing about the key's file mode.
@@ -535,7 +535,7 @@
       register: mtrace_reach
       changed_when: false
       # ⚠ A SERVICE BEING DOWN IS NOT A FAILED DEPLOY. This previously also failed on
-      # 'not answering' in stdout, but mtrace emits that string per service on any error
+      # 'not answering' in stdout, but tracerr emits that string per service on any error
       # and the app documents it as an expected finding: planned downtime is normal in
       # this stack. Sonarr restarting for an update during a deploy turned a converged
       # run red, so the operator re-ran a deploy with nothing left to do.
@@ -561,10 +561,10 @@
       ansible.builtin.systemd:
         daemon_reload: true
 
-    # ⚠ LISTED BEFORE "Restart mtrace", AND THAT ORDER IS THE POINT. Handlers run in the
+    # ⚠ LISTED BEFORE "Restart tracerr", AND THAT ORDER IS THE POINT. Handlers run in the
     # order they are DEFINED here, not the order they are notified, so a run that changes
-    # both the allowlist and mtrace's own files always reloads the allowlist first. The
-    # nftables tasks above also flush handlers and verify the live table before mtrace's
+    # both the allowlist and tracerr's own files always reloads the allowlist first. The
+    # nftables tasks above also flush handlers and verify the live table before tracerr's
     # tasks run at all, so this handler mainly covers a LATER run that only touches the
     # allowlist file or unit.
     - name: Restart mtrace allowlist

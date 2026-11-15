@@ -1,5 +1,5 @@
 ---
-# media-dash — mtrace, the media stack's read-only control surface (PET-355).
+# media-dash — tracerr, the media stack's read-only control surface (PET-355).
 #
 # ⚠ SPLIT OUT OF hosts.yml ON PURPOSE, like palworld.yml, openfaas.yml and pete-pi.yml.
 # This host is deployed by an apply-on-merge workflow — deploy.yml in
@@ -21,8 +21,8 @@ all:
         media-dash-237:
           ansible_host: 192.168.50.237
 
-    # ⚠ THE SEVEN SERVICES mtrace READS, AND THE ONLY REASON THIS GROUP EXISTS: to answer
-    # "who may mtrace log into". petedio-media-iac OWNS these containers — their creation,
+    # ⚠ THE SEVEN SERVICES tracerr READS, AND THE ONLY REASON THIS GROUP EXISTS: to answer
+    # "who may tracerr log into". petedio-media-iac OWNS these containers — their creation,
     # their storage, their placement, everything about them. Nothing here configures them;
     # configure-media-dash.yml only installs ONE public key for root on each.
     #
@@ -47,7 +47,7 @@ all:
         # 2026-09-03 and was never rebuilt; a probe pointed at .140 for three days and
         # scored a hard NO on every Plex check.
         # ⚠ 237 reaches 236's mesh address through the .50 router's NAT, so sshd on 236
-        # sees mtrace arrive as 192.168.86.44, not .237 (PET-522). Every .50 host arrives
+        # sees tracerr arrive as 192.168.86.44, not .237 (PET-522). Every .50 host arrives
         # as .44 too, so here from= no longer pins the key to 237. The key never leaves 237.
         plex-gpu:                                      # 236, pve02, .86 only (PET-504)
           ansible_host: 192.168.86.236
