@@ -429,6 +429,7 @@ uptime_kuma_maintenances:
       - mtrace         # 237
       - media-stack    # reads prowlarr and the arrs, which stop here
       - minio-data     # 245
+      - plex-remote    # 244, the stop-mode job stops it too
 
 # ------------------------------------------------------- backup to the HDD --
 # The database lives on an SD card (mmcblk0p2) and this box has no local disk —
