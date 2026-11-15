@@ -101,17 +101,17 @@ module "cloudflare_ingress" {
       }
     }
 
-    # Media: mtrace on 237 serves /mcp/media on its own MCP port, 8238 (media-control src/mcp.ts), so the
-    # connector URL is https://mcp-media.pdlab.dev/mcp/media. mtrace verifies this Access app's
+    # Media: tracerr on 237 serves /mcp/media on its own MCP port, 8238 (media-control src/mcp.ts), so the
+    # connector URL is https://mcp-media.pdlab.dev/mcp/media. tracerr verifies this Access app's
     # audience tag and email, and its nftables allowlist on 237 admits only 112 on 8238, and never reaches the API port 8237. The door
-    # lists the read tools only. mtrace stays off the door until mtrace_mcp_access_aud is set to the
+    # lists the read tools only. tracerr stays off the door until mtrace_mcp_access_aud is set to the
     # media_mcp_subdomain_access_aud output.
     "mcp-media.pdlab.dev" = {
       service       = "http://192.168.50.237:8238"
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["pedelgadillo@gmail.com"]
-      # The Muse agents (PET-904). Each sends its service token in Authorization, and mtrace maps
+      # The Muse agents (PET-904). Each sends its service token in Authorization, and tracerr maps
       # the JWT's client id to the name through mtrace_mcp_access_agents.
       agents = ["bobbert", "batsy"]
 
@@ -228,7 +228,7 @@ output "lab_mcp_subdomain_access_aud" {
   value       = module.cloudflare_ingress.access_application_auds["mcp-lab.pdlab.dev"]
 }
 
-# The Access application audience tag for mcp-media.pdlab.dev. mtrace checks it against the `aud`
+# The Access application audience tag for mcp-media.pdlab.dev. tracerr checks it against the `aud`
 # claim of the Cf-Access-Jwt-Assertion JWT. It is an identifier, not a secret.
 # configure-media-dash.yml carries it as mtrace_mcp_access_aud, and the MCP door stays off until it does.
 output "media_mcp_subdomain_access_aud" {

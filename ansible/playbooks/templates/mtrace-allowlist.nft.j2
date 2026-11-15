@@ -1,5 +1,5 @@
 #!/usr/sbin/nft -f
-# mtrace's LAN allowlist. MANAGED BY ANSIBLE — edits here are overwritten.
+# tracerr's LAN allowlist. MANAGED BY ANSIBLE — edits here are overwritten.
 #
 # ⚠ ITS OWN TABLE, ON PURPOSE (PET-518). Everything here lives in
 # `table inet mtrace_allow` and nothing else on this node is touched. This does NOT
@@ -9,7 +9,7 @@
 # idempotent — re-running it replaces this table and leaves every other table alone.
 #
 # Loaded by mtrace-allowlist.service, which runs BEFORE mtrace.service (see
-# mtrace.service.j2's Requires=/After=), so mtrace never binds mtrace_bind with the port
+# mtrace.service.j2's Requires=/After=), so tracerr never binds mtrace_bind with the port
 # open to the whole LAN, even for one boot.
 table inet mtrace_allow
 delete table inet mtrace_allow

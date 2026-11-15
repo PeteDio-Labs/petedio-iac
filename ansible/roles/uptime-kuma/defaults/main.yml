@@ -256,7 +256,7 @@ uptime_kuma_monitors:
     url: "http://192.168.50.246:11434/api/version"
 
   # -- the chat surface on 237 (PET-524) ---------------------------------------
-  # /health is mtrace's unauthenticated liveness route. It says the process is up and
+  # /health is tracerr's unauthenticated liveness route. It says the process is up and
   # touches nothing in the media stack, so a stack fault never turns it red. 237's
   # nftables accepts 8237 only from lo and 192.168.50.4, which is this Pi.
   # pete-bot on the same host gets no monitor: its outage would alert through
@@ -266,9 +266,9 @@ uptime_kuma_monitors:
     url: "http://192.168.50.237:8237/health"
     description: "Media triage API on 237. Liveness only; Muse is its caller."
 
-  # mtrace reads Prowlarr's indexer backoff, each arr's /health errors and the gluetun tunnel,
+  # tracerr reads Prowlarr's indexer backoff, each arr's /health errors and the gluetun tunnel,
   # and answers 503 when a request would silently miss (petedio-media-control /health/stack).
-  # The port monitors above stay green through all three. ⚠ Deploy mtrace first: a build without
+  # The port monitors above stay green through all three. ⚠ Deploy tracerr first: a build without
   # the route answers 404 and this reads DOWN.
   - name: media-stack
     type: keyword

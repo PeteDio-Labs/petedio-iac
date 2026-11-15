@@ -71,7 +71,7 @@ RENEW_FLOOR = dt.timedelta(days=89)
 EXPIRY_WARN = dt.timedelta(days=21)
 # `agents = ["muse", "batsy"]` on a route. Matches one line, as terraform fmt writes it.
 AGENTS_LIST = re.compile(r'^\s*agents\s*=\s*\[([^\]]*)\]', re.M)
-# mtrace's write callers live in the deploy play. callers.yml records each agent's mtrace scope
+# tracerr's write callers live in the deploy play. callers.yml records each agent's tracerr scope
 # too, so a reader sees it in one place; check() fails when the two disagree.
 MTRACE_PLAY = os.path.join(REPO_ROOT, "ansible", "playbooks", "configure-media-dash.yml")
 MTRACE_WRITERS = re.compile(r'^\s*mtrace_write_callers:\s*\[([^\]]*)\]', re.M)

@@ -2,7 +2,7 @@
 # {{ ansible_managed }}
 # The lab MCP's LAN allowlist (PET-667). Only the tunnel host may reach lab-agent's MCP port.
 #
-# ⚠ ITS OWN TABLE, as mtrace's allowlist on this host is: `table inet lab_mcp_allow` and
+# ⚠ ITS OWN TABLE, as tracerr's allowlist on this host is: `table inet lab_mcp_allow` and
 # nothing else. It never touches /etc/nftables.conf, whose default content flushes the whole
 # ruleset. `delete table` at the top makes the file idempotent.
 #

@@ -7,7 +7,7 @@
 # a play cannot perform for itself.
 #
 # ⚠ ONE VAULT PATH. Every credential pete-bot uses is at kv/services/pete-bot. It no
-# longer reads kv/services/media/dashboard, because it no longer calls mtrace (PET-518).
+# longer reads kv/services/media/dashboard, because it no longer calls tracerr (PET-518).
 #
 # Usage:
 #   ./scripts/deploy-pete-bot.sh              # build, then deploy
@@ -143,7 +143,7 @@ LAB_PLANE_TOKEN="$(field token 2>/dev/null || true)"
 # Optional (PET-745): the petedio-search bearer for search_lab. Absent leaves the tool off.
 SNAPSHOT="$(read_optional kv/services/lab-agent-search)"
 LAB_SEARCH_TOKEN="$(field token 2>/dev/null || true)"
-# Optional (PET-869): the media assistant's mtrace caller token and Bazarr key. Absent leaves it off.
+# Optional (PET-869): the media assistant's tracerr caller token and Bazarr key. Absent leaves it off.
 SNAPSHOT="$(read_optional kv/services/lab-agent-media)"
 LAB_MTRACE_TOKEN="$(field mtrace_token 2>/dev/null || true)"
 LAB_BAZARR_KEY="$(field bazarr_key 2>/dev/null || true)"

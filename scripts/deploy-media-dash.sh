@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy-media-dash.sh — build mtrace and deploy it to media-dash-237 (PET-355).
+# deploy-media-dash.sh — build tracerr and deploy it to media-dash-237 (PET-355).
 #
 # The by-hand twin of petedio-media-control's deploy.yml: same playbook, same extra-vars,
 # same Vault path. CI runs it on merge; this is how an operator validates a change first.

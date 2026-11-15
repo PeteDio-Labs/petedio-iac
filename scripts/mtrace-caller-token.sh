@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mtrace-caller-token.sh — create, rotate or revoke one caller's mtrace API token
+# mtrace-caller-token.sh — create, rotate or revoke one caller's tracerr API token
 # (PET-518).
 #
 # ⚠ NO CLAUDE SESSION RUNS THIS SCRIPT. Minting or revoking a live credential is the
@@ -8,7 +8,7 @@
 # create muse or revoke pete-bot from a work-item's plan, never a session relaying it
 # on his behalf.
 #
-# mtrace's HTTP API used to gate on one shared MEDIA_CONTROL_TOKEN, minted by
+# tracerr's HTTP API used to gate on one shared MEDIA_CONTROL_TOKEN, minted by
 # scripts/reseed-media-dash-vault.sh. PET-518 splits that into one token per caller —
 # kv/services/media/dashboard field token_<name> — so a leaked or retiring caller costs
 # one token, not every caller's access. The legacy field api_token still exists for
@@ -27,7 +27,7 @@
 # generated with openssl and piped to Vault on stdin. What IS printed: the field name, the
 # resulting secret version, and next steps — never the token itself.
 #
-# After create or rotate, redeploy with scripts/deploy-media-dash.sh so mtrace picks up
+# After create or rotate, redeploy with scripts/deploy-media-dash.sh so tracerr picks up
 # the new MEDIA_CONTROL_TOKENS. After create, hand the token to its caller yourself; this
 # script never prints it:
 #   vault kv get -field=token_<name> kv/services/media/dashboard | pbcopy

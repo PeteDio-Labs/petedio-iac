@@ -9,7 +9,7 @@
 # roles/guest-restart/defaults/main.yml is the rest, with 247 last.
 #
 # Run it only when Plex and qBittorrent are idle. This play cannot read their sessions, so the
-# thread that dispatches it reads `mtrace` first (`lab_probe mtrace`) and names what it saw.
+# thread that dispatches it reads `tracerr` first (`lab_probe mtrace`) and names what it saw.
 # It runs on one node and delegates to the node that holds each guest.
 
 - name: Restart guests in order

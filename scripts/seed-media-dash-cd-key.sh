@@ -3,7 +3,7 @@
 # deploy_ssh_private_key and deploy_ssh_public_key in kv/services/media/dashboard (PET-724).
 #
 # WHY. The media-dash-cd role reads the shared kv/iac/lxc-ssh key, which is root on every
-# Terraform-built LXC. A deploy of mtrace needs root on 237 and the six media hosts it
+# Terraform-built LXC. A deploy of tracerr needs root on 237 and the six media hosts it
 # reads, and nothing else. This script makes an ed25519 pair for the app, scripts/deploy-media-dash.sh authorizes the public half on
 # the seven media hosts (237 and the six it reads), and the deploy workflow connects with the private half.
 #

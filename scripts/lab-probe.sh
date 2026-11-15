@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# lab-probe — run one read-only probe inside LXC 237 (pete-bot, lab-agent, mtrace) from the
+# lab-probe — run one read-only probe inside LXC 237 (pete-bot, lab-agent, tracerr) from the
 # homelab runner (PET-878, PET-879; extends PET-861). A thread dispatches it through lab-action.yml
 # instead of handing Pedro a prompt for the Mac.
 #
 #   scripts/lab-probe.sh journal <args>   # unit=lab-agent since=... until=... mode=callers|lines|count
-#   scripts/lab-probe.sh mtrace  <args>   # title=<text>   -> mtrace trace_request, as caller lab-agent
+#   scripts/lab-probe.sh mtrace   <args>   # title=<text>   -> tracerr trace_request, as caller lab-agent
 #   scripts/lab-probe.sh media_ask <args> # question=<text> -> lab-agent POST /v1/media/ask
 #   scripts/lab-probe.sh guests           # {"data":{"guests":[{vmid,node,status}]}} for scripts/check-staleness.py
 #   scripts/lab-probe.sh backup_jobs      # the cluster's vzdump jobs: id, schedule, storage, mode, enabled (PET-884)
@@ -17,13 +17,13 @@
 # must match a strict pattern below, and the remote text carries only base64 or an allowlisted
 # word, so no value reaches a shell as code.
 #
-# CREDENTIALS. None is placed. `mtrace` and `media_ask` read lab-agent's own mtrace token and ask
+# CREDENTIALS. None is placed. `tracerr` and `media_ask` read lab-agent's own tracerr token and ask
 # port from /etc/lab-agent/lab-agent.env inside 237, as root, in one remote command. The token
-# never leaves 237 and never reaches this script's output. The caller shows in mtrace's journal as
+# never leaves 237 and never reaches this script's output. The caller shows in tracerr's journal as
 # `lab-agent`, which is the same caller the media assistant uses.
 #
 # WHAT IT PRINTS. The run log is public. `journal` prints counts and distinct `caller=` values by
-# default; `lines` prints only lines matching a fixed phrase, cut to 300 characters. `mtrace` and
+# default; `lines` prints only lines matching a fixed phrase, cut to 300 characters. `tracerr` and
 # `media_ask` print the reply, cut to 2000 characters, which names the titles in it. The last line
 # is a summary that says what was examined, so an empty window reads as `0 lines`, never as a pass.
 #
@@ -257,7 +257,7 @@ done
 in237() { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$NODE" "pct exec 237 -- sh -c '$1'"; }
 
 # 237 has no curl, so an HTTP call goes through bash's /dev/tcp. The script travels on stdin and
-# takes the base64 body and the kind (mtrace or ask) as arguments, so no value is shell source.
+# takes the base64 body and the kind (tracerr or ask) as arguments, so no value is shell source.
 # It reads the token from lab-agent.env as root, sends it only to its own socket, and prints the
 # response body and a final "HTTP <code>" line.
 REMOTE_POST='set -u

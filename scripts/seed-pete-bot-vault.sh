@@ -16,7 +16,7 @@
 # drop notify_bearer_token. The payload starts from what the path holds, and the read-back
 # fails on a field the write lost.
 #
-# ⚠ No mtrace token belongs here. Pete Bot stopped calling mtrace in PET-518, so
+# ⚠ No tracerr token belongs here. Pete Bot stopped calling tracerr in PET-518, so
 # deploy-pete-bot.sh reads this one path and nothing else.
 #
 # Usage:

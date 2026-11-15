@@ -1,10 +1,10 @@
-# media-dash (LXC 237) — the host for mtrace, the media stack's read-only control
+# media-dash (LXC 237) — the host for tracerr, the media stack's read-only control
 # surface (PET-355, repo PeteDio-Labs/petedio-media-control).
 #
 # WHY 237 / .237, AND WHY IN THIS REPO
 #
 # 237 is the next free number in the 23x apps block, and this repo owns every guest in
-# it (230 poker-api, 231 postgres, 232/233 the runners, 235 plane). mtrace runs no
+# it (230 poker-api, 231 postgres, 232/233 the runners, 235 plane). tracerr runs no
 # media service — it READS seerr, the *arr apps, qBittorrent and Plex over SSH — so it
 # belongs with the applications, not in petedio-media-iac beside the things it
 # inspects. VMID = last IP octet, as everywhere else here.
@@ -44,15 +44,15 @@ module "media_dash" {
 
   # ⚠ 1 GB FOR TWO PROCESSES, AND THE ASSERTION BELOW STILL APPLIES TO EACH.
   #
-  # mtrace holds no library, caches nothing and serves one operator: every answer is a
+  # tracerr holds no library, caches nothing and serves one operator: every answer is a
   # live read joined in memory, and the whole triage table across 73 seerr requests
-  # builds in 0.41 s. That has not changed, and if mtrace alone ever needs more than
+  # builds in 0.41 s. That has not changed, and if tracerr alone ever needs more than
   # 512 MB, something has started caching and that is the bug.
   #
   # The host was 512 MB until PET-375 put pete-bot here beside it — a Discord surface
-  # that answers /ask by asking mtrace over loopback, and DMs Uptime Kuma's alerts. It
+  # that answers /ask by asking tracerr over loopback, and DMs Uptime Kuma's alerts. It
   # lives here rather than on its own container because a Discord bot needs only an
-  # OUTBOUND websocket, so co-locating exposes nothing, and it reaches mtrace on
+  # OUTBOUND websocket, so co-locating exposes nothing, and it reaches tracerr on
   # 127.0.0.1 without widening that bind or putting the SSH key that is root on six
   # media hosts onto a second box.
   #
