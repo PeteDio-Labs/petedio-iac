@@ -51,10 +51,17 @@ class T(unittest.TestCase):
         for b in bad:
             self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["create"], {"policy": b})])[0], 1, b)
         ok = 'path "kv/data/services/plane" {\n capabilities=["read"]\n}'
-        self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["create"], {"policy": ok})])[0], 0)
+        self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "deploy-n", "policy": ok})])[0], 0)
 
     def test_privileged_policy_update_refused(self):
         self.assertEqual(run([rc("vault_policy.ci_read", "vault_policy", ["update"], {"name": "ci-read", "policy": ""})])[0], 1)
+
+    def test_policy_name_must_be_writable_by_the_apply_token(self):
+        ok = 'path "kv/data/services/plane" {\n capabilities=["read"]\n}'
+        for name in ("pete-bot-cd", "foo", "", None, "deploy-", "Deploy-x", "plane-ci2"):
+            self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["update"], {"name": name, "policy": ok})])[0], 1, name)
+        for name in ("deploy-pete-bot", "plane-ci", "secrets-register"):
+            self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["update"], {"name": name, "policy": ok})])[0], 0, name)
 
     def test_role_privileged_policy_refused(self):
         r = {**ROLE, "token_policies": ["ci-read"]}
@@ -74,13 +81,13 @@ class T(unittest.TestCase):
     def test_policy_may_not_grant_other_ssh_signing(self):
         for path in ("ssh-client-signer/sign/lab-runner", "ssh-client-signer/sign/*", "ssh-client-signer/roles/x"):
             pol = 'path "%s" {\n capabilities=["update"]\n}' % path
-            self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "n", "policy": pol})])[0], 1, path)
+            self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "deploy-n", "policy": pol})])[0], 1, path)
         ok = 'path "ssh-client-signer/sign/deploy-x" {\n capabilities=["update"]\n}'
-        self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "n", "policy": ok})])[0], 0)
+        self.assertEqual(run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "deploy-n", "policy": ok})])[0], 0)
 
     def test_policy_glob_and_format_bypasses(self):
         def pol(text):
-            return run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "n", "policy": text})])[0]
+            return run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "deploy-n", "policy": text})])[0]
         for path in ("ssh-*/sign/lab-runner", "s*/sign/lab-runner", "+/sign/lab-runner", "/ssh-client-signer/sign/lab-runner",
                      "ssh-client-signer/+/lab-runner", "kv/+/x", "*/sign/x"):
             self.assertEqual(pol('path "%s" {\n capabilities=["update"]\n}' % path), 1, path)
@@ -91,11 +98,11 @@ class T(unittest.TestCase):
 
     def test_escapes_interpolation_and_unknowns_refused(self):
         def pol(text):
-            return run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "n", "policy": text})])[0]
+            return run([rc("vault_policy.n", "vault_policy", ["create"], {"name": "deploy-n", "policy": text})])[0]
         self.assertEqual(pol('path "\\u0073ys/policies/acl/x" {\n capabilities=["update"]\n}'), 1)
         self.assertEqual(pol('path "kv/' + 'data/${x}" {\n capabilities=["read"]\n}'), 1)
         self.assertEqual(pol('path "sy\u0455/x" {\n capabilities=["read"]\n}'), 1)
-        c = rc("vault_policy.n", "vault_policy", ["create"], {"name": "n"})
+        c = rc("vault_policy.n", "vault_policy", ["create"], {"name": "deploy-n"})
         c["change"]["after_unknown"] = {"policy": True}
         self.assertEqual(run([c])[0], 1)
         r = rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], ROLE)
