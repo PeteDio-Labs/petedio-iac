@@ -41,10 +41,16 @@
     backup_store_job_wanted: >-
       {{ backup_store_jobs | selectattr('node', 'equalto', inventory_hostname)
          | list | first | default({}) }}
+    # Only a job that covers every guest is the node's nightly job. pve03 also carries
+    # plex-remote-weekly, which lists VMID 244 alone and is managed by Terraform
+    # (environments/homelab/backup.tf). Matching on the node alone would let this play
+    # rewrite that job to the nightly schedule.
     backup_store_job_live: >-
       {{ backup_store_jobs_raw.stdout | from_json
          | selectattr('node', 'defined')
          | selectattr('node', 'equalto', inventory_hostname)
+         | selectattr('all', 'defined')
+         | selectattr('all', 'in', [1, true, '1'])
          | list | first | default({}) }}
 
 - name: Create the nightly job when the node has none

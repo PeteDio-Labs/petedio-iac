@@ -29,6 +29,10 @@
     backup_audit_max_age_h: 30
     # Left out of the nightly job on purpose; the reason is beside backup_store_jobs in the role that owns the jobs.
     backup_audit_excluded_vmids: [247]
+    # Guests backed up by a weekly job instead of the nightly one (MED-11). Seven days plus
+    # a day of slack for the job's runtime and the audit's own clock.
+    backup_audit_weekly_vmids: [244]
+    backup_audit_weekly_max_age_h: 192
     # The node that reads the share. pve03 mounts it over NFS and hosts the Vault guest.
     backup_audit_reader: pve03
     backup_audit_vault_vmid: 223
@@ -184,11 +188,14 @@
           {{ guests_expected | rejectattr('vmid', 'in', (newest_map.keys() | map('int') | list)) |
              map(attribute='vmid') | sort | list }}
         guests_stale: >-
-          {{ guests_expected | selectattr('vmid', 'in', (newest_map.keys() | map('int') | list))
-             | selectattr('vmid', 'in', (newest_map | dict2items
-               | selectattr('value', 'lt', (clock_epoch | int) - backup_audit_max_age_h * 3600)
-               | map(attribute='key') | map('int') | list))
-             | map(attribute='vmid') | sort | list }}
+          {%- set ns = namespace(stale=[]) -%}
+          {%- for g in guests_expected -%}
+          {%- set limit_h = backup_audit_weekly_max_age_h if g.vmid in backup_audit_weekly_vmids else backup_audit_max_age_h -%}
+          {%- if (g.vmid | string) in newest_map and newest_map[g.vmid | string] < (clock_epoch | int) - limit_h * 3600 -%}
+          {%- set ns.stale = ns.stale + [g.vmid] -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ ns.stale | sort }}
         vault_newest: >-
           {{ vault_lines | map('split', ' ') | selectattr('1', 'ne', '0') | map(attribute=2) | map('float') | sort
              | last | default(0) }}
@@ -211,7 +218,8 @@
               - "jobs: {{ jobs | selectattr('node', 'defined') | map(attribute='node') | list }}"
               - "nodes with guests: {{ nodes_with_guests }}; without an enabled job: {{ nodes_without_job }}"
               - "guests expected {{ guests_expected | length }}; with no archive: {{ guests_missing }};
-                older than {{ backup_audit_max_age_h }} h: {{ guests_stale }}"
+                older than {{ backup_audit_max_age_h }} h ({{ backup_audit_weekly_max_age_h }} h for
+                {{ backup_audit_weekly_vmids }}): {{ guests_stale }}"
               - "excluded on purpose: {{ backup_audit_excluded_vmids }}"
               - "share on {{ backup_audit_reader }}: {{ reader_fstype }}"
               - "vault: service {{ vault_service | replace('\n', ' ') }}; newest snapshot {{ vault_age_h }} h old"

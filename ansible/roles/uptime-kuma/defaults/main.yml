@@ -429,7 +429,17 @@ uptime_kuma_maintenances:
       - mtrace         # 237
       - media-stack    # reads prowlarr and the arrs, which stop here
       - minio-data     # 245
-      - plex-remote    # 244, the stop-mode job stops it too
+  # 244 leaves the nightly job and has its own weekly job (MED-11): Sundays at 04:00 in
+  # stop mode, declared as proxmox_backup_job.plex_remote_weekly in environments/homelab/backup.tf.
+  # The window opens five minutes early and runs 30 minutes, the same margin as the nightly one.
+  # Kuma's cron field counts Sunday as 0.
+  - title: pve03-plex-remote-weekly
+    description: "pve03's Sunday 04:00 vzdump job stops plex-remote 244 (MED-11)."
+    cron: "55 3 * * 0"
+    duration_minutes: 30
+    timezone: America/New_York
+    monitors:
+      - plex-remote    # 244
 
 # ------------------------------------------------------- backup to the HDD --
 # The database lives on an SD card (mmcblk0p2) and this box has no local disk —
