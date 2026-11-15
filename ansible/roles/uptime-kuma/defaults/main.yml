@@ -266,6 +266,19 @@ uptime_kuma_monitors:
     url: "http://192.168.50.237:8237/health"
     description: "Media triage API on 237. Liveness only; Muse is its caller."
 
+  # mtrace reads Prowlarr's indexer backoff, each arr's /health errors and the gluetun tunnel,
+  # and answers 503 when a request would silently miss (petedio-media-control /health/stack).
+  # The port monitors above stay green through all three. ⚠ Deploy mtrace first: a build without
+  # the route answers 404 and this reads DOWN.
+  - name: media-stack
+    type: keyword
+    url: "http://192.168.50.237:8237/health/stack"
+    keyword: '"ok": true'
+    interval: 300
+    max_retries: 2
+    retry_interval: 120
+    description: "DOWN means indexers backed off, an arr error, or the VPN down or leaking. The body says which."
+
   # -- services that ran unwatched (PET-706) -----------------------------------
   # petedio-search binds 192.168.50.246 and the LAN reaches it, so the Pi does too.
   # /healthz proves only that the server is up; the embedding lane has its own check
@@ -403,6 +416,7 @@ uptime_kuma_maintenances:
       - postgres       # 231
       - plane          # 235
       - mtrace         # 237
+      - media-stack    # reads prowlarr and the arrs, which stop here
       - minio-data     # 245
 
 # ------------------------------------------------------- backup to the HDD --
