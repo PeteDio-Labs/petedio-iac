@@ -1,0 +1,41 @@
+---
+# configure-lxc-passthrough.yml — declare the bind mounts and device nodes of LXC
+# containers (MED-14). Terraform cannot set them: Proxmox accepts `mpN` and `devN` only
+# from root@pam. It replaces petedio-media-iac's scripts/lxc-oob-244.sh.
+#
+# It restarts nothing unless you pass -e lxc_passthrough_allow_restart=true, and it fails
+# while a running container differs from its declaration, so a green run means every
+# declared entry is in the running config.
+#
+#   cd ansible
+#   ansible-playbook playbooks/configure-lxc-passthrough.yml --check
+#   ansible-playbook playbooks/configure-lxc-passthrough.yml
+
+# A pattern that matches nothing exits 0, so name the node every declaration needs.
+# Add a node here when lxc_passthrough_declared names one.
+- name: Assert the play will reach every node a declaration names
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  vars:
+    lxc_passthrough_expected_nodes: [pve03]
+  tasks:
+    - name: Every declared node is in the pattern
+      ansible.builtin.assert:
+        that: lxc_passthrough_expected_nodes | difference(_matched) | length == 0
+        fail_msg: >-
+          The pattern `proxmox:pve_new` misses
+          {{ lxc_passthrough_expected_nodes | difference(_matched) | join(', ') }}. It matched
+          {{ _matched | join(', ') or 'nothing' }}. Fix the pattern in this playbook.
+        success_msg: "Will converge: {{ _matched | join(', ') }}"
+      vars:
+        _matched: "{{ (groups.get('proxmox', []) + groups.get('pve_new', [])) | unique | sort }}"
+
+- name: Converge LXC passthrough on the Proxmox nodes
+  hosts: proxmox:pve_new
+  become: true
+  gather_facts: false
+
+  roles:
+    - lxc-passthrough
