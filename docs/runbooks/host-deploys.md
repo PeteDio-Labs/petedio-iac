@@ -1,9 +1,9 @@
 # Host deploys from GitHub Actions
 
-Six host configurations deploy from a `deploy-<name>.yml` workflow instead of a script that an
+Eight host configurations deploy from a `deploy-<name>.yml` workflow instead of a script that an
 operator runs. Each workflow logs in to Vault through GitHub OIDC, reads only that deploy's
 records, signs a 30-minute SSH certificate for one principal, and connects to one host with it.
-None of these six deploys reads the shared `kv/iac/lxc-ssh` key. `deploy-claude-247.sh`, `deploy-pete-bot.sh`, `deploy-media-dash.sh`, `deploy-search.sh` and `ansible-claude-247.yml` still do. The pattern is the `petedio-search` deploy
+None of these deploys reads the shared `kv/iac/lxc-ssh` key. `deploy-claude-247.sh`, `deploy-pete-bot.sh`, `deploy-media-dash.sh`, `deploy-search.sh` and `ansible-claude-247.yml` still do. The pattern is the `petedio-search` deploy
 (`search-cd`, `search-deploy`, PET-526, PET-771).
 
 | Workflow | Playbook | Host | Vault role (OIDC) | SSH principal |
@@ -15,6 +15,7 @@ None of these six deploys reads the shared `kv/iac/lxc-ssh` key. `deploy-claude-
 | `deploy-codex-248.yml` | `configure-codex.yml` | `codex-248` | `deploy-codex-248` | `deploy-codex-248` |
 | `deploy-backup-store.yml` | `configure-backup-store.yml` | `pve01`, `pve02`, `pve03` | `deploy-backup-store` | `deploy-backup-store` |
 | `deploy-staging-249.yml` | `configure-staging.yml` | `staging-249` | `deploy-staging-249` | `deploy-staging-249` |
+| `deploy-uptime-kuma.yml` | `configure-pete-pi.yml` | `pete-pi` | `deploy-uptime-kuma` | `deploy-uptime-kuma`, as `pedro` |
 
 `ansible-claude-247.yml` already deploys `claude-247`'s identities. It still reads the shared
 key. Moving it to a `deploy-claude-247` principal is a separate change.
@@ -57,6 +58,16 @@ Do these in order, once.
 
 `backup-store` signs its own `deploy-backup-store` principal, not `lab-runner`, so a dispatch never gets the principal that `lab-action.yml` gates behind the `lab-write` tap. Step 2 lists it on the nodes.
 
+## Deploy Uptime Kuma to pete-pi
+
+`deploy-uptime-kuma.yml` is the one deploy that waits for approval. Its job uses the `lab-write` environment, so you approve each run in a browser on the run page. Pete-pi is the fault-study instrument and the Vault unseal watcher, so a person decides when it converges.
+
+The Pi is a Raspberry Pi with no node to `pct exec` through. The certificate's principal is `deploy-uptime-kuma`, and the Pi lists it in `/etc/ssh/auth_principals/pedro`, so the job logs in as `pedro` with no stored key. To set that up once, run `scripts/trust-ssh-ca-pete-pi.sh` from the Mac or claude-247. It writes three files on the Pi, never edits `authorized_keys`, and prints the `sshd -T` read-back.
+
+The job reads `kv/services/uptime-kuma` and `kv/services/pete-bot`, and fails when either is absent. `deploy-uptime-kuma.sh` allowed a missing bearer token and provisioned monitors that alert nobody (PET-374), so the workflow does not. `kv/services/backup-health` stays optional. The first seed of `kv/services/uptime-kuma` still needs the Keychain root token, so run `deploy-uptime-kuma.sh` once on a fresh Vault.
+
+The host key check is off, as for the five guest deploys, because the runner pins no key for the Pi. The runner's `lab-updates` still skips pi1, because that script does not sign this certificate.
+
 ## What a deploy writes
 
 The play configures the host as before. Secrets travel in an extra-vars file in a `0700`
@@ -78,7 +89,7 @@ failure. The Vault token is revoked as soon as the certificate is signed.
 | Script | Why it stays |
 |---|---|
 | `deploy-vault-unseal.sh` | The Vault unseal key lives in the Mac Keychain. A runner or Vault cannot hold the key that opens Vault. |
-| `deploy-uptime-kuma.sh` | The target, `pete-pi`, is a Raspberry Pi that no node reaches with `pct exec`, and it logs in as `pedro` with its own key. The first run also seeds `kv/services/uptime-kuma` from the Keychain root token. It needs a decision on how a runner reaches the Pi. |
+| `deploy-uptime-kuma.sh` | The first seed of `kv/services/uptime-kuma` needs the Keychain root token, and the Keychain mirror of the password is the break-glass copy. A repeat deploy runs from `deploy-uptime-kuma.yml`. |
 
 ## Related
 
