@@ -1,0 +1,126 @@
+---
+- name: Read the container config, pending changes included ({{ lxc_passthrough_vmid }})
+  ansible.builtin.command: pct config {{ lxc_passthrough_vmid }}
+  register: lxc_passthrough_conf
+  changed_when: false
+  check_mode: false
+
+- name: Read the container state ({{ lxc_passthrough_vmid }})
+  ansible.builtin.command: pct status {{ lxc_passthrough_vmid }}
+  register: lxc_passthrough_status
+  changed_when: false
+  check_mode: false
+
+- name: Read each host mount point ({{ lxc_passthrough_vmid }})
+  ansible.builtin.command: mountpoint -q {{ item | quote }}
+  loop: "{{ lxc_passthrough_ct.host_mounts | default([]) }}"
+  register: lxc_passthrough_host_mounts
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Refuse to bind a path that is not mounted on the node ({{ lxc_passthrough_vmid }})
+  ansible.builtin.assert:
+    that: item.rc == 0
+    fail_msg: "{{ item.item }} is not a mount point on {{ inventory_hostname }}. Fix the mount before the bind."
+  loop: "{{ lxc_passthrough_host_mounts.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Resolve the render node ({{ lxc_passthrough_vmid }})
+  ansible.builtin.command: readlink -f {{ lxc_passthrough_ct.render.by_path | quote }}
+  register: lxc_passthrough_render
+  changed_when: false
+  check_mode: false
+  when: lxc_passthrough_ct.render is defined
+
+- name: Refuse a render node that is not the declared GPU ({{ lxc_passthrough_vmid }})
+  ansible.builtin.assert:
+    that: lxc_passthrough_render.stdout | trim == lxc_passthrough_ct.render.expect
+    fail_msg: >-
+      {{ lxc_passthrough_ct.render.by_path }} resolves to
+      '{{ lxc_passthrough_render.stdout | trim }}', not {{ lxc_passthrough_ct.render.expect }}.
+      Check lspci, then update the declaration.
+  when: lxc_passthrough_ct.render is defined
+
+# pct prints one `key: value` line per setting. Matching the whole line, key included,
+# keeps a value that sits under another key from passing as this one.
+- name: Start with no differing entries ({{ lxc_passthrough_vmid }})
+  ansible.builtin.set_fact:
+    lxc_passthrough_differs: []
+
+- name: Find the entries that differ ({{ lxc_passthrough_vmid }})
+  ansible.builtin.set_fact:
+    lxc_passthrough_differs: "{{ lxc_passthrough_differs + [item] }}"
+  loop: "{{ lxc_passthrough_ct.entries | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: "(item.key ~ ': ' ~ item.value) not in lxc_passthrough_conf.stdout_lines"
+
+- name: Stop the container to add its entries ({{ lxc_passthrough_vmid }})
+  ansible.builtin.command: pct stop {{ lxc_passthrough_vmid }}
+  when:
+    - lxc_passthrough_differs | length > 0
+    - "'running' in lxc_passthrough_status.stdout"
+    - lxc_passthrough_allow_restart | bool
+    - not ansible_check_mode
+  changed_when: true
+
+- name: Set each entry that differs ({{ lxc_passthrough_vmid }})
+  ansible.builtin.command:
+    argv:
+      - pct
+      - set
+      - "{{ lxc_passthrough_vmid }}"
+      - "--{{ item.key }}"
+      - "{{ item.value }}"
+  loop: "{{ lxc_passthrough_differs }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: >-
+    not ('running' in lxc_passthrough_status.stdout
+         and item.key is match('^mp[0-9]+$')
+         and not (lxc_passthrough_allow_restart | bool))
+  changed_when: true
+
+- name: Start the container again ({{ lxc_passthrough_vmid }})
+  ansible.builtin.command: pct start {{ lxc_passthrough_vmid }}
+  when:
+    - lxc_passthrough_differs | length > 0
+    - "'running' in lxc_passthrough_status.stdout"
+    - lxc_passthrough_allow_restart | bool
+    - not ansible_check_mode
+  changed_when: true
+
+# A stopped container takes the entries at its next start, and a running one only after a
+# restart. `--current` shows what the container runs now.
+- name: Read the running config ({{ lxc_passthrough_vmid }})
+  ansible.builtin.command: pct config {{ lxc_passthrough_vmid }} --current
+  register: lxc_passthrough_current
+  changed_when: false
+  check_mode: false
+
+- name: Start with no undone entries ({{ lxc_passthrough_vmid }})
+  ansible.builtin.set_fact:
+    lxc_passthrough_undone: []
+
+- name: Find declared entries missing from the running config ({{ lxc_passthrough_vmid }})
+  ansible.builtin.set_fact:
+    lxc_passthrough_undone: "{{ lxc_passthrough_undone + [item] }}"
+  loop: "{{ lxc_passthrough_ct.entries | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: "(item.key ~ ': ' ~ item.value) not in lxc_passthrough_current.stdout_lines"
+
+- name: Assert the container holds every declared entry ({{ lxc_passthrough_vmid }})
+  ansible.builtin.assert:
+    that: lxc_passthrough_undone | length == 0
+    success_msg: >-
+      CT {{ lxc_passthrough_vmid }} holds {{ lxc_passthrough_ct.entries | length }}
+      declared entries in its running config.
+    fail_msg: >-
+      CT {{ lxc_passthrough_vmid }} differs from its declaration:
+      {{ lxc_passthrough_undone | map(attribute='key') | join(', ') }}. A mount point
+      applies only while the container is stopped and a device only at start. Under
+      --check nothing was written. Re-run with -e lxc_passthrough_allow_restart=true in
+      a window you picked.

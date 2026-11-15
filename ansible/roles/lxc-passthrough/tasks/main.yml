@@ -1,0 +1,38 @@
+---
+# Converge `mpN` and `devN` for each declared container on this node, then re-read the
+# running config and fail while any running container differs. See defaults/main.yml.
+#
+#   ansible-playbook playbooks/configure-lxc-passthrough.yml --check
+#   ansible-playbook playbooks/configure-lxc-passthrough.yml
+#   ansible-playbook playbooks/configure-lxc-passthrough.yml -e lxc_passthrough_allow_restart=true
+
+- name: Look for pct
+  ansible.builtin.stat:
+    path: /usr/sbin/pct
+  register: lxc_passthrough_pct
+  check_mode: false
+
+- name: Assert this host is a Proxmox node
+  ansible.builtin.assert:
+    that: lxc_passthrough_pct.stat.exists
+    fail_msg: >-
+      No /usr/sbin/pct on {{ inventory_hostname }}. This play converges LXC passthrough
+      on a Proxmox node; point it at the node that holds the container.
+
+- name: Converge each container declared for this node
+  ansible.builtin.include_tasks: container.yml
+  vars:
+    lxc_passthrough_vmid: "{{ item.key }}"
+    lxc_passthrough_ct: "{{ item.value }}"
+  loop: "{{ lxc_passthrough_declared | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: item.value.node == inventory_hostname
+
+- name: Say what was examined
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: examined
+      {{ lxc_passthrough_declared | dict2items
+         | selectattr('value.node', 'equalto', inventory_hostname) | list | length }}
+      declared container(s) of {{ lxc_passthrough_declared | length }}.
