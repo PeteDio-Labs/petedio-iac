@@ -382,6 +382,11 @@ resource "vault_policy" "pete_bot_cd" {
     path "kv/data/services/claude-workspace-mirror" {
       capabilities = ["read"]
     }
+
+    # Signs one 30-minute SSH certificate for root on 237, in place of the deploy key (ssh.tf).
+    path "${vault_mount.ssh_client_signer.path}/sign/${vault_ssh_secret_backend_role.pete_bot_deploy.name}" {
+      capabilities = ["update"]
+    }
   EOT
 }
 
