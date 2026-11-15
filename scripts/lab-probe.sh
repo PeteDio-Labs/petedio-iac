@@ -4,6 +4,7 @@
 # instead of handing Pedro a prompt for the Mac.
 #
 #   scripts/lab-probe.sh journal <args>   # unit=lab-agent since=... until=... mode=callers|lines|count
+#   scripts/lab-probe.sh tracerr  <args>   # (mtrace is the same probe, kept as an alias)
 #   scripts/lab-probe.sh mtrace   <args>   # title=<text>   -> tracerr trace_request, as caller lab-agent
 #   scripts/lab-probe.sh media_ask <args> # question=<text> -> lab-agent POST /v1/media/ask
 #   scripts/lab-probe.sh guests           # {"data":{"guests":[{vmid,node,status}]}} for scripts/check-staleness.py
@@ -293,13 +294,20 @@ case "$PROBE" in
   journal)
     only unit since until mode
     need unit; need since; need until
-    [[ "${KV[unit]}" =~ ^(mtrace|pete-bot|lab-agent)$ ]] || die "unit must be mtrace, pete-bot or lab-agent"
+    [[ "${KV[unit]}" =~ ^(tracerr|mtrace|pete-bot|lab-agent)$ ]] || die "unit must be tracerr, mtrace, pete-bot or lab-agent"
+    # tracerr ran as mtrace.service before the rename, and the journal records the unit's real name,
+    # so the window may hold either. Read both for either spelling.
+    case "${KV[unit]}" in
+      tracerr|mtrace) JU="-u tracerr -u mtrace" ;;
+      pete-bot|lab-agent) JU="-u ${KV[unit]}" ;;
+      *) die "unit ${KV[unit]} has no journal mapping" ;;
+    esac
     [[ "${KV[since]}" =~ $TS && "${KV[until]}" =~ $TS ]] || die "since and until must look like 2026-11-07T08:12:00 (UTC)"
     MODE="${KV[mode]:-count}"
     [[ "$MODE" =~ ^(callers|lines|count)$ ]] || die "mode must be callers, lines or count"
     S="${KV[since]/T/ }"; U="${KV[until]/T/ }"
     TMP="$(mktemp)"; trap 'rm -f "$TMP"' EXIT
-    in237 "journalctl -u ${KV[unit]} --since \"$S\" --until \"$U\" --utc --no-pager -o cat" > "$TMP" 2>/dev/null \
+    in237 "journalctl $JU --since \"$S\" --until \"$U\" --utc --no-pager -o cat" > "$TMP" 2>/dev/null \
       || { echo "FAILED: journalctl on 237 failed, so nothing was examined." >&2; exit 1; }
     N="$(wc -l < "$TMP")"
     case "$MODE" in
@@ -335,7 +343,7 @@ case "$PROBE" in
     echo "probe health: read ${#TARGETS[@]} service(s) on 237, $BAD not HTTP 200"
     [ "$BAD" = 0 ] || exit 1 ;;
 
-  mtrace)
+  mtrace|tracerr)
     only title
     need title
     [[ "${KV[title]}" =~ ^[A-Za-z0-9\ :.,\&-]{1,80}$ ]] || die "title may hold letters, digits, space and : . , & - only, up to 80 characters"
@@ -359,5 +367,5 @@ case "$PROBE" in
     echo "probe media_ask: one question answered HTTP ${CODE:-none}, ${#OUT} characters read"
     [ "${CODE:-}" = 200 ] || exit 1 ;;
 
-  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps, prometheus, guest_unit)" ;;
+  *) die "'$PROBE' is not a probe (journal, tracerr, mtrace, media_ask, guests, health, backup_jobs, ollama_ps, prometheus, guest_unit)" ;;
 esac

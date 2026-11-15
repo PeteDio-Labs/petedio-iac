@@ -41,10 +41,10 @@ step "Compiling the binary"
 # `Exec format error` (PET-521). The extra argument is appended to the package's
 # build script.
 ( cd "$SRC" && bun install --frozen-lockfile >/dev/null && bun run build --target=bun-linux-x64 )
-[ -x "$SRC/dist/mtrace" ] || die "bun run build produced no dist/mtrace."
-file -b "$SRC/dist/mtrace" | grep -q '^ELF 64-bit.*x86-64' \
-  || die "dist/mtrace is not a Linux x86-64 binary: $(file -b "$SRC/dist/mtrace")"
-ls -lh "$SRC/dist/mtrace"
+[ -x "$SRC/dist/tracerr" ] || die "bun run build produced no dist/tracerr."
+file -b "$SRC/dist/tracerr" | grep -q '^ELF 64-bit.*x86-64' \
+  || die "dist/tracerr is not a Linux x86-64 binary: $(file -b "$SRC/dist/tracerr")"
+ls -lh "$SRC/dist/tracerr"
 
 step "Reading kv/services/media/dashboard"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -83,7 +83,7 @@ if not cd_pub and os.environ.get("ALLOW_NO_CD_KEY") != "1":
 yaml.safe_dump({
     "media_dash_ssh_private_key": d["ssh_private_key"],
     "media_dash_ssh_public_key": d["ssh_public_key"],
-    "mtrace_caller_tokens": caller_tokens,
+    "tracerr_caller_tokens": caller_tokens,
     # Optional (PET-724): the public half of the media-dash-cd deploy key. Empty skips its tasks.
     # scripts/seed-media-dash-cd-key.sh writes it.
     "media_dash_cd_public_key": cd_pub,
@@ -93,12 +93,12 @@ yaml.safe_dump({
 step "Running configure-media-dash.yml"
 cd "$REPO_ROOT/ansible"
 ansible-playbook playbooks/configure-media-dash.yml \
-  -e media_dash_binary_src="$SRC/dist/mtrace" \
+  -e media_dash_binary_src="$SRC/dist/tracerr" \
   -e "@$TMP/extra.yml" \
   "$@"
 
 step "Confirming the LAN bind refuses this controller"
-# ⚠ THE MAC IS NOT IN mtrace_allow_sources. Only pete-pi-1 (192.168.50.4, the tailnet
+# ⚠ THE MAC IS NOT IN tracerr_allow_sources. Only pete-pi-1 (192.168.50.4, the tailnet
 # subnet router) is allowed, so a successful TCP connect from here means the allowlist
 # did not load, not that everything is fine. The one exception: a controller that itself
 # reaches the LAN through pete-pi-1 (for example, over the tailnet with pete-pi-1 as the
@@ -107,7 +107,7 @@ step "Confirming the LAN bind refuses this controller"
 #
 # Portable background-and-kill instead of `timeout`: macOS's default bash ships with no
 # timeout(1), but /dev/tcp is a bash builtin on both platforms.
-mtrace_probe_open() {
+tracerr_probe_open() {
   local host="$1" port="$2" secs="$3"
   ( exec 3<>"/dev/tcp/${host}/${port}" ) >/dev/null 2>&1 &
   local probe_pid=$!
@@ -123,18 +123,18 @@ mtrace_probe_open() {
 # A controller whose route to 237 runs through a tunnel interface (utun on macOS,
 # tailscale0 on Linux) arrives SNATed as .4, so the probe proves nothing from here.
 # Say so rather than fail a deploy that worked (PET-521).
-mtrace_route_if="$( { route -n get 192.168.50.237 2>/dev/null | awk '/interface:/ {print $2}'; } \
+tracerr_route_if="$( { route -n get 192.168.50.237 2>/dev/null | awk '/interface:/ {print $2}'; } \
   || true)"
-[ -n "$mtrace_route_if" ] || mtrace_route_if="$(ip route get 192.168.50.237 2>/dev/null \
+[ -n "$tracerr_route_if" ] || tracerr_route_if="$(ip route get 192.168.50.237 2>/dev/null \
   | awk '{for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1)}' || true)"
-if [[ "$mtrace_route_if" == utun* || "$mtrace_route_if" == tailscale* ]]; then
-  echo "  skipped: this controller reaches the LAN through $mtrace_route_if, so pete-pi-1"
+if [[ "$tracerr_route_if" == utun* || "$tracerr_route_if" == tailscale* ]]; then
+  echo "  skipped: this controller reaches the LAN through $tracerr_route_if, so pete-pi-1"
   echo "  SNATs it to 192.168.50.4, which the allowlist accepts. Probe from a LAN host"
-  echo "  outside mtrace_allow_sources to check the allowlist."
-elif mtrace_probe_open 192.168.50.237 8237 5; then
+  echo "  outside tracerr_allow_sources to check the allowlist."
+elif tracerr_probe_open 192.168.50.237 8237 5; then
   die "192.168.50.237:8237 accepted a TCP connection from this controller. Either the" \
       "allowlist did not load, or this controller reaches the LAN through pete-pi-1" \
-      "(192.168.50.4) — the one caller mtrace_allow_sources permits."
+      "(192.168.50.4) — the one caller tracerr_allow_sources permits."
 else
-  echo "  refused, as expected from a controller outside mtrace_allow_sources"
+  echo "  refused, as expected from a controller outside tracerr_allow_sources"
 fi

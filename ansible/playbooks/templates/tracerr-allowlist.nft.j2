@@ -1,0 +1,28 @@
+#!/usr/sbin/nft -f
+# tracerr's LAN allowlist. MANAGED BY ANSIBLE — edits here are overwritten.
+#
+# ⚠ ITS OWN TABLE, ON PURPOSE (PET-518). Everything here lives in
+# `table inet tracerr_allow` and nothing else on this node is touched. This does NOT
+# touch /etc/nftables.conf or nftables.service: Debian's default nftables.conf flushes
+# the whole ruleset, and enabling that service would be a node-wide firewall change made
+# as a side effect of one app's deploy. `delete table` at the top makes this file
+# idempotent — re-running it replaces this table and leaves every other table alone.
+#
+# Loaded by tracerr-allowlist.service, which runs BEFORE tracerr.service (see
+# tracerr.service.j2's Requires=/After=), so tracerr never binds tracerr_bind with the port
+# open to the whole LAN, even for one boot.
+table inet tracerr_allow
+delete table inet tracerr_allow
+
+table inet tracerr_allow {
+  chain input {
+    type filter hook input priority filter; policy accept;
+    tcp dport {{ tracerr_port }} iif "lo" accept
+    tcp dport {{ tracerr_port }} ip saddr { {{ tracerr_allow_sources | join(', ') }} } accept
+    tcp dport {{ tracerr_port }} reject with tcp reset
+    # The MCP door's own port: only the tunnel host reaches it (see tracerr_mcp_sources).
+    tcp dport {{ tracerr_mcp_port }} iif "lo" accept
+    tcp dport {{ tracerr_mcp_port }} ip saddr { {{ tracerr_mcp_sources | join(', ') }} } accept
+    tcp dport {{ tracerr_mcp_port }} reject with tcp reset
+  }
+}

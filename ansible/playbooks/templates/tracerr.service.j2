@@ -4,21 +4,21 @@
 # is an SSH key that opens seven containers. ProtectSystem/PrivateTmp/NoNewPrivileges cost
 # nothing here and mean a compromise of the HTTP surface does not become a foothold.
 [Unit]
-Description=mtrace — media stack control surface
+Description=tracerr — media stack control surface
 Documentation=https://github.com/PeteDio-Labs/petedio-media-control
 After=network-online.target
 Wants=network-online.target
-# tracerr now binds mtrace_bind (the LAN), not loopback, so it must never start — or
+# tracerr now binds tracerr_bind (the LAN), not loopback, so it must never start — or
 # restart — before the allowlist that makes that bind safe is loaded (PET-518).
-Requires=mtrace-allowlist.service
-After=mtrace-allowlist.service
+Requires=tracerr-allowlist.service
+After=tracerr-allowlist.service
 
 [Service]
 Type=simple
-User={{ mtrace_user }}
-Group={{ mtrace_group }}
-EnvironmentFile=/etc/mtrace.env
-ExecStart={{ mtrace_bin }} serve
+User={{ tracerr_user }}
+Group={{ tracerr_group }}
+EnvironmentFile=/etc/tracerr.env
+ExecStart={{ tracerr_bin }} serve
 Restart=on-failure
 RestartSec=5s
 
@@ -26,11 +26,11 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths={{ mtrace_dir }}
-# The scheduled search keeps its log in /var/lib/mtrace (MED-12). StateDirectory creates it
+ReadWritePaths={{ tracerr_dir }}
+# The scheduled search keeps its log in /var/lib/tracerr (MED-12). StateDirectory creates it
 # owned by the service user and keeps it writable under ProtectSystem=strict. It is the only
 # state the schedule has: a restart reads it to decide what is due.
-StateDirectory=mtrace
+StateDirectory=tracerr
 StateDirectoryMode=0750
 ProtectKernelTunables=true
 ProtectControlGroups=true
@@ -39,3 +39,6 @@ LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
+# The pre-rename unit name. systemctl resolves it to tracerr.service, so a runbook, a probe or
+# pete-bot's After= that still says mtrace keeps working.
+Alias=mtrace.service

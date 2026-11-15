@@ -415,8 +415,8 @@ template have no sudo unless a play installs it, so the task dies with
 to a nologin account without PAM. Verified on media-dash-237:
 
 ```
-$ runuser -u mtrace -- id
-uid=999(mtrace) gid=991(mtrace) groups=991(mtrace)
+$ runuser -u tracerr -- id
+uid=999(tracerr) gid=991(tracerr) groups=991(tracerr)
 ```
 
 Running the check as root instead is the tempting fix and proves nothing — the point of
@@ -1610,11 +1610,23 @@ the gate, not membership. A stranger who lands a typo fix then runs code on the 
   runner (PET-397). The file itself was removed in PET-888, with the `openfaas-ci` role it
   minted.
 
-## tracerr keeps its mtrace host names
+## tracerr's host names changed from mtrace, and the old names stay as aliases
 
-The service is named `tracerr` (MED-12), but the host side still says `mtrace`. The systemd units
-`mtrace.service` and `mtrace-allowlist.service`, the `mtrace` user, `/opt/mtrace`, `/etc/mtrace.env`,
-`/var/lib/mtrace`, the `mtrace_*` Ansible variables, the Vault key `mtrace_token`, the `mtrace` key in
-`secrets/callers.yml`, the `lab_probe mtrace` target and the Uptime Kuma monitor name did not change.
-A rename of any of them restarts the service or moves state, so each needs its own PR with an alias
-and a check on 237 afterward. To check that the service runs under either name, read `lab_probe mtrace`.
+The host side of tracerr uses the `tracerr` name: the systemd units `tracerr.service` and
+`tracerr-allowlist.service`, the `tracerr` user and group, `/opt/tracerr`, `/etc/tracerr.env`,
+`/etc/tracerr/allowlist.nft`, the nftables table `tracerr_allow`, `/var/lib/tracerr`, the `tracerr_*`
+Ansible variables and the `LAB_TRACERR_*` environment variables.
+
+Aliases keep the old names working. Each unit carries `Alias=mtrace…`, so `systemctl status mtrace`
+resolves. `lab_probe` accepts `tracerr` and `mtrace` for both the trace probe and the journal unit,
+and the journal probe reads both unit names, because the journal records a unit's real name. The play
+still accepts the `mtrace_caller_tokens` extra variable. lab-agent still reads `LAB_MTRACE_*` when
+`LAB_TRACERR_*` is absent, and its env file renders both.
+
+The first run of `configure-media-dash.yml` on a host that still has `mtrace.service` stops the unit,
+renames the group and account, moves `/opt/mtrace` and `/var/lib/mtrace`, and deletes the old files.
+The old `mtrace_allow` table stays loaded until the new table is verified, so the port is never open.
+
+Three names did not change: the Vault key `mtrace_token`, the `mtrace` key in `secrets/callers.yml`
+and the Uptime Kuma monitor name. Each needs its own change, because it is a credential path, a schema
+key or a monitor identity. To check that the service runs after a rename, read `lab_probe tracerr`.

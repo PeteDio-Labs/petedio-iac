@@ -6,19 +6,21 @@
 # ruleset — a node-wide change this app must not make. This unit loads exactly one file
 # and creates exactly one table.
 #
-# ⚠ NO ExecStop, DELIBERATELY. Stopping this unit must never open mtrace_port to the
+# ⚠ NO ExecStop, DELIBERATELY. Stopping this unit must never open tracerr_port to the
 # LAN: tracerr holds an SSH key that is root on six media hosts, so "the allowlist service
-# stopped" must not be a way to remove the allowlist while mtrace.service keeps running.
+# stopped" must not be a way to remove the allowlist while tracerr.service keeps running.
 # The table only goes away if something explicitly flushes it or the host reboots without
 # this unit's [Install] enabled.
 [Unit]
-Description=mtrace LAN allowlist (nftables)
-Before=mtrace.service
+Description=tracerr LAN allowlist (nftables)
+Before=tracerr.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/sbin/nft -f /etc/mtrace/allowlist.nft
+ExecStart=/usr/sbin/nft -f /etc/tracerr/allowlist.nft
 
 [Install]
 WantedBy=multi-user.target
+# The pre-rename unit name, as in tracerr.service.j2.
+Alias=mtrace-allowlist.service

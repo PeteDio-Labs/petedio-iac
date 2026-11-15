@@ -74,7 +74,7 @@ AGENTS_LIST = re.compile(r'^\s*agents\s*=\s*\[([^\]]*)\]', re.M)
 # tracerr's write callers live in the deploy play. callers.yml records each agent's tracerr scope
 # too, so a reader sees it in one place; check() fails when the two disagree.
 MTRACE_PLAY = os.path.join(REPO_ROOT, "ansible", "playbooks", "configure-media-dash.yml")
-MTRACE_WRITERS = re.compile(r'^\s*mtrace_write_callers:\s*\[([^\]]*)\]', re.M)
+MTRACE_WRITERS = re.compile(r'^\s*tracerr_write_callers:\s*\[([^\]]*)\]', re.M)
 
 
 class Fail(Exception):
@@ -172,14 +172,14 @@ def cmd_check(path: str) -> int:
                 problems.append(f"{f}: route lists agent {n!r}, which is not in callers.yml")
     writers = mtrace_writers()
     if writers is None:
-        problems.append(f"{os.path.relpath(MTRACE_PLAY, REPO_ROOT)}: no mtrace_write_callers list found")
+        problems.append(f"{os.path.relpath(MTRACE_PLAY, REPO_ROOT)}: no tracerr_write_callers list found")
     else:
         for n, a in agents.items():
             want = a.get("mtrace", "read") == "write"
             if want != (n in writers):
                 live = "write" if n in writers else "read"
                 problems.append(f"agent {n}: callers.yml says mtrace {a.get('mtrace', 'read')}, "
-                                f"but mtrace_write_callers makes it {live}")
+                                f"but tracerr_write_callers makes it {live}")
     for p in problems:
         print(f"FAIL {p}")
     people = len(data.get("people") or [])
