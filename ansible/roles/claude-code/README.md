@@ -444,6 +444,10 @@ tools are root-owned under `/opt/claude-iac-tools` and linked into `/usr/local/b
 session runs them but cannot replace them. `tasks/iac-tools.yml` carries the design, and
 `tests/claude-iac-tools-pins.yml` fails CI when the role's pins drift from the workflows'.
 
+The same switch installs the AWS CLI v2 at `claude_aws_cli_version`, from AWS's zip installer
+and checked against `claude_aws_cli_sha256`. It installs the binary only and configures no
+credential or profile.
+
 The play does not install the Galaxy collections. To lint the tree the way CI does, run this
 once as `claude` from `ansible/`, which installs them under `~/.ansible/collections`:
 

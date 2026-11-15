@@ -74,7 +74,7 @@ module "cloudflare_ingress" {
           "https://oauth-callbacks.cloudflareaccess.com/cdn-cgi/access/outbound-oauth-callback",
         ]
         access_token_lifetime = "15m"
-        session_duration      = "168h"
+        session_duration      = "720h"
       }
     }
 
@@ -97,7 +97,32 @@ module "cloudflare_ingress" {
           "https://oauth-callbacks.cloudflareaccess.com/cdn-cgi/access/outbound-oauth-callback",
         ]
         access_token_lifetime = "15m"
-        session_duration      = "168h"
+        session_duration      = "720h"
+      }
+    }
+
+    # Media: mtrace on 237 serves /mcp/media on its own MCP port, 8238 (media-control src/mcp.ts), so the
+    # connector URL is https://mcp-media.pdlab.dev/mcp/media. mtrace verifies this Access app's
+    # audience tag and email, and its nftables allowlist on 237 admits only 112 on 8238, and never reaches the API port 8237. The door
+    # lists the read tools only. mtrace stays off the door until mtrace_mcp_access_aud is set to the
+    # media_mcp_subdomain_access_aud output.
+    "mcp-media.pdlab.dev" = {
+      service       = "http://192.168.50.237:8238"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+      # The Muse agents (PET-904). Each sends its service token in Authorization, and mtrace maps
+      # the JWT's client id to the name through mtrace_mcp_access_agents.
+      agents = ["bobbert", "batsy"]
+
+      managed_oauth = {
+        allowed_redirect_uris = [
+          "https://claude.ai/api/mcp/auth_callback",
+          "https://dash.cloudflare.com/${local.cloudflare_account_id}/one/access-controls/ai-controls/mcp-server/oauth-callback/media",
+          "https://oauth-callbacks.cloudflareaccess.com/cdn-cgi/access/outbound-oauth-callback",
+        ]
+        access_token_lifetime = "15m"
+        session_duration      = "720h"
       }
     }
 
@@ -109,6 +134,17 @@ module "cloudflare_ingress" {
     # access_emails is the whole boundary: keep it to Pedro alone.
     "reports.pdlab.dev" = {
       service       = "http://192.168.50.237:3018"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+    }
+
+    # Portfolio staging, a copy of pdlab.dev served by Caddy on staging-249 (LXC 249). A
+    # browser-gated route: Access shows the Authentik login page and the origin checks no JWT,
+    # because it serves only a copy of the public site. The LAN address http://192.168.50.249:8080
+    # stays open as the fallback over Tailscale. access_emails is the whole boundary: keep it to Pedro.
+    "staging.pdlab.dev" = {
+      service       = "http://192.168.50.249:8080"
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["pedelgadillo@gmail.com"]
@@ -190,6 +226,14 @@ import {
 output "lab_mcp_subdomain_access_aud" {
   description = "Access application audience tag for mcp-lab.pdlab.dev (PET-824). lab-agent checks it on the Cf-Access-Jwt-Assertion JWT. Set it as lab_agent_access_aud. It is not a secret."
   value       = module.cloudflare_ingress.access_application_auds["mcp-lab.pdlab.dev"]
+}
+
+# The Access application audience tag for mcp-media.pdlab.dev. mtrace checks it against the `aud`
+# claim of the Cf-Access-Jwt-Assertion JWT. It is an identifier, not a secret.
+# configure-media-dash.yml carries it as mtrace_mcp_access_aud, and the MCP door stays off until it does.
+output "media_mcp_subdomain_access_aud" {
+  description = "Access application audience tag for mcp-media.pdlab.dev. mtrace checks it on the Cf-Access-Jwt-Assertion JWT. Set it as mtrace_mcp_access_aud. It is not a secret."
+  value       = module.cloudflare_ingress.access_application_auds["mcp-media.pdlab.dev"]
 }
 
 # The Access application audience tag for reports.pdlab.dev (PET-868). pete-bot checks it against

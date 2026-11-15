@@ -37,6 +37,26 @@ metric_alerts_rules:
     summary: "Available memory is under 8 percent"
     expr: 'node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.08'
     for_runs: 3
+  # PET-914. A pool on pve02's USB enclosure that is not ONLINE. zpool-autoclear clears a
+  # suspension within a minute or two, so this rule fires only when the clear has not worked.
+  - name: zpool-not-online
+    summary: "A ZFS pool is not ONLINE. Runbook: vault/Incidents/2026-11-08-media-pools-suspended.md"
+    expr: 'node_zfs_zpool_state{state!="online"} == 1'
+    for_runs: 1
+  # zpool-autoclear cleared a pool in the last hour. This is the DM that says the enclosure dropped.
+  - name: zpool-autocleared
+    summary: "zpool-autoclear cleared a suspended pool in the last hour, so the USB enclosure dropped"
+    expr: 'time() - zpool_autoclear_last_clear_timestamp_seconds < 3600'
+    for_runs: 1
+  - name: zpool-autoclear-held
+    summary: "zpool-autoclear hit its hourly limit and stopped clearing. Reboot pve02"
+    expr: 'zpool_autoclear_held == 1'
+    for_runs: 1
+  # The timer runs every minute. A run older than 10 minutes means the recovery is not running.
+  - name: zpool-autoclear-stale
+    summary: "zpool-autoclear has not finished a run in 10 minutes, so no suspended pool gets cleared"
+    expr: 'time() - zpool_autoclear_last_run_timestamp_seconds > 600'
+    for_runs: 2
 
 # Absent by default. The deploy script passes them from kv/services/lab-watchdog, fields
 # discord_bot_token and discord_dm_channel_id. A run without both leaves the file on the host as

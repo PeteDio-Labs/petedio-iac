@@ -52,7 +52,7 @@ printf '%s\n' "$*" >> "$LW_ARGV"
 # curl reads a -K config file; log its content apart from argv, as a real curl would use it.
 prev=""; for a in "$@"; do [ "$prev" = "-K" ] && [ -r "$a" ] && { echo "K-FILE $a" >> "$LW_CFG"; cat "$a" >> "$LW_CFG"; }; prev="$a"; done
 url="${@: -1}"
-case "$*" in *heartbeat*) [ -n "${LW_FAIL_BEAT:-}" ] && exit 22; exit 0 ;; esac
+case "$*" in *heartbeat*) [ -n "${LW_FAIL_BEAT:-}" ] && { echo "curl: (28) Resolving timed out after 10001 milliseconds" >&2; exit 28; }; exit 0 ;; esac
 body=""; while [ $# -gt 0 ]; do case "$1" in -d) body="$2"; shift ;; esac; shift; done
 if [ -n "$body" ]; then
   cat > /dev/null
@@ -179,6 +179,20 @@ check("a failed heartbeat exits non-zero", res.returncode != 0)
 check("a failed heartbeat still posts the DOWN alerts", len(r.posts()) == 2)
 check("no heartbeat file means no beat and a clean exit",
       Rig(TARGETS).run(UP).returncode == 0)
+
+# 8. The outage note (PET-907): failed beats record the first error, and the first good beat carries it.
+r = Rig(TARGETS)
+open(os.path.join(r.tmp, "heartbeat"), "w").write('url = "https://beat.test/"\n')
+r.run(UP, "", fail_beat=True)
+r.run(UP, "", fail_beat=True)
+rec = open(os.path.join(r.tmp, "state", "beat.fail")).read().split()
+check("failed beats record first time, count and error", len(rec) == 3 and rec[1] == "2" and "Resolving" in rec[2], str(rec))
+r.run(UP)
+check("the first good beat carries the note", "X-Outage-Note: first=" in r.argv_text() and "missed=2" in r.argv_text())
+check("the note is cleared after a good beat", not os.path.exists(os.path.join(r.tmp, "state", "beat.fail")))
+open(os.path.join(r.tmp, "argv"), "w").close()
+r.run(UP)
+check("a later beat carries no note", "X-Outage-Note" not in r.argv_text())
 
 print("\n%d failure(s)" % len(failures))
 sys.exit(1 if failures else 0)

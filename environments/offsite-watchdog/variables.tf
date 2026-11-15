@@ -10,9 +10,9 @@ variable "permissions_boundary_arn" {
 }
 
 variable "heartbeat_max_age_seconds" {
-  description = "A heartbeat older than this reads as the lab being down. The lab sends every 2 minutes."
+  description = "A heartbeat older than this reads as the lab being down. The lab sends every 2 minutes. With a 5-minute check and FAIL_THRESHOLD 2, 360 s alerts about 11 to 16 minutes after the last beat."
   type        = number
-  default     = 900
+  default     = 360
 }
 
 variable "check_interval_minutes" {

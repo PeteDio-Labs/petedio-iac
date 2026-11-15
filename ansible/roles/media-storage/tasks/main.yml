@@ -16,6 +16,16 @@
     state: present
   register: zfs_pkg
 
+# Before the health assert below, so the recovery is installed, and runs, on a host whose
+# pools are suspended at the time. That is the state it exists for.
+- name: Install zpool-autoclear
+  ansible.builtin.import_tasks: autoclear.yml
+
+# After the auto-clear, so a link that drops while LPM changes still comes back.
+- name: Turn off USB link power management for the enclosure
+  ansible.builtin.import_tasks: usb-lpm.yml
+  when: media_storage_enclosure_no_lpm | bool
+
 - name: Find which pools already exist
   ansible.builtin.command: zpool list -H -o name
   register: existing_pools
@@ -65,7 +75,8 @@
 # failmode is a POOL property, so it is `zpool set`, not `zfs set`. The zfs form
 # fails with "invalid property" -- and with failed_when:false that failure is
 # swallowed, so the task reports ok while setting nothing.
-- name: Set failmode so a USB hiccup stalls rather than suspends
+# continue does not prevent a suspension (2026-11-13); zpool-autoclear recovers from one.
+- name: Set failmode to return EIO on new writes during a fault
   ansible.builtin.command: "zpool set failmode={{ media_storage_failmode }} {{ item.name }}"
   loop: "{{ media_storage_pools }}"
   loop_control:

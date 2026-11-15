@@ -24,6 +24,7 @@ case "$1" in
     case "$3" in
       *Config.Image*)      cat "$T/image" ;;
       *State.Status*)      cat "$T/status" ;;
+      *PortBindings*)      cat "$T/ports" ;;
       *NetworkSettings*)   echo 172.17.0.9 ;;
       *json*)              cat "$T/cmd.json" ;;
       *range*)             cat "$T/cmd.lines" ;;
@@ -58,7 +59,7 @@ line() { grep -n "$1" "$T/calls" | head -1 | cut -d: -f1; }
 # old <image> <status> <held-port> <token: yes|no>: the running connector as audit-cloudflared-112 found it.
 old() {
   : > "$T/calls"; rm -rf "$T/etc" "$T/final_pub"
-  echo "$1" > "$T/image"; echo "$2" > "$T/status"; echo "$3" > "$T/held"
+  echo "$1" > "$T/image"; echo "$2" > "$T/status"; echo "$3" > "$T/held"; echo '{}' > "$T/ports"
   if [ "$4" = yes ]; then
     printf '%s\n' tunnel --no-autoupdate --edge-ip-version 4 --protocol quic run --token SECRETTOKENVALUE > "$T/cmd.lines"
     echo '["tunnel","--no-autoupdate","--edge-ip-version","4","--protocol","quic","run","--token","SECRETTOKENVALUE"]' > "$T/cmd.json"
@@ -68,6 +69,7 @@ old() {
 }
 managed() { # a connector already on the managed configuration
   echo '["tunnel","--no-autoupdate","--metrics","0.0.0.0:20241","run"]' > "$T/cmd.json"
+  echo "{\"20241/tcp\":[{\"HostIp\":\"$bind\",\"HostPort\":\"20241\"}]}" > "$T/ports"
   mkdir -p "$T/etc"; echo "TUNNEL_TOKEN=x" > "$envfile"
 }
 
@@ -119,7 +121,16 @@ grep -q '^docker start cloudflared$' "$T/calls" || fail "stopped connector not s
 old "$img" exited none no; managed
 if READY_FINAL=0 run_script >/dev/null 2>&1; then fail "a connector with no ready connection exited zero"; fi
 
-# 8. no token anywhere.
+# 8. the endpoint changed on a managed connector: replace it, do not probe the new endpoint and fail.
+old "$img" running none no; managed
+out=$(sh "$script" "$img" cloudflared "$bind" 20242 "$envfile")
+grep -q 'already converged' <<<"$out" && fail "a changed port reported as converged"
+[ "$(cat "$T/final_pub")" = "$bind:20242:20242" ] || fail "final connector not on the new port"
+old "$img" running none no; managed
+out=$(sh "$script" "$img" cloudflared 192.168.50.113 20241 "$envfile")
+grep -q 'already converged' <<<"$out" && fail "a changed bind reported as converged"
+
+# 9. no token anywhere.
 old "$img" running none no
 if run_script >/dev/null 2>&1; then fail "ran without a token"; fi
 echo "ok: candidate first, upgrade past a held port, failed candidate or final keeps a connector, stopped is not converged"

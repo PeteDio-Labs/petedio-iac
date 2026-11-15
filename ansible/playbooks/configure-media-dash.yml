@@ -127,6 +127,14 @@
     mtrace_user: mtrace
     mtrace_group: mtrace
     mtrace_port: 8237
+    # The scheduled search (MED-12, petedio-media-control#35). Daily it searches titles that
+    # became available in the last 45 days; weekly it searches every available title with no
+    # file, mtrace_search_gap_ms apart, at most mtrace_search_cap per pass. The log lives in
+    # the unit's StateDirectory. Set mtrace_schedule to "off" to stop it.
+    mtrace_schedule: "on"
+    mtrace_search_gap_ms: 30000
+    mtrace_search_cap: 60
+    mtrace_schedule_log: /var/lib/mtrace/schedule.jsonl
     # Controller path to the compiled binary. CI overrides this with the artifact it just
     # built on the runner; the operator's script points it at the local checkout.
     media_dash_binary_src: "{{ lookup('env', 'HOME') }}/petedio/media-control/dist/mtrace"
@@ -141,11 +149,31 @@
     # story.
     mtrace_bind: "192.168.50.237"
     mtrace_allow_sources: ["192.168.50.4"]
+    # The MCP door listens on its own port, so the tunnel host (LXC 112, which carries
+    # mcp-media.pdlab.dev) reaches only that port and never the bearer-gated API on mtrace_port.
+    # The nftables allowlist admits one named host there, never a subnet. The door also checks
+    # the source and an Access JWT.
+    mtrace_mcp_port: 8238
+    mtrace_mcp_sources: ["192.168.50.112"]
+    # The media MCP door (media-control src/mcp.ts). The audience tag is
+    # `terraform output -raw media_mcp_subdomain_access_aud` in environments/homelab, read from
+    # the apply log of 2026-11-10. Not a secret. Empty turns the door off.
+    mtrace_mcp_peer: 192.168.50.112
+    mtrace_mcp_access_team_domain: petedillo-labs.cloudflareaccess.com
+    mtrace_mcp_access_emails: [pedelgadillo@gmail.com]
+    mtrace_mcp_access_aud: "ec3ad851e140e255de2f9f7433f82091d135087e44483c2c80c36ae7da14f7a7"
+    # Agents on the MCP door (PET-904): name -> Cloudflare service-token client id. A client id is
+    # not secret. keys.yml action=list prints it, and a reissue changes it, so update it here then.
+    # The route's `agents` list in environments/homelab/cloudflare-routes.tf names the same agents.
+    mtrace_mcp_access_agents:
+      bobbert: ca14c1dd4db82530a133724cd7945be4.access
+      batsy: d620c3ddbedd7cde30577aeb2f11feb6.access
     # Callers that may use mtrace's write tools (search_missing, blocklist_release,
     # refresh_plex). Every caller not listed stays read-only. Each name must also be a
     # token_<name> field in kv/services/media/dashboard: mtrace stops at startup on one
-    # that is not. lab-agent is deliberately absent.
-    mtrace_write_callers: ["bobbert"]
+    # that is not. lab-agent is deliberately absent. batsy joined on Pedro's word
+    # (2026-11-09, PET-904).
+    mtrace_write_callers: ["bobbert", "batsy"]
 
   pre_tasks:
     - name: Assert the LAN bind and allowlist are sane
@@ -177,6 +205,47 @@
           and pair separators). \A/\Z, not ^/$: Python's $ matches before a trailing
           newline too, which is exactly the byte this assert exists to catch.
       no_log: true
+
+    - name: Assert the scheduled search settings are well formed
+      ansible.builtin.assert:
+        that:
+          - mtrace_schedule in ['on', 'off']
+          - mtrace_search_gap_ms | string is match('\\A[0-9]+\\Z')
+          - mtrace_search_cap | string is match('\\A[1-9][0-9]*\\Z')
+          - mtrace_schedule_log is match('\\A/var/lib/mtrace/[A-Za-z0-9._-]+\\Z')
+        fail_msg: >-
+          mtrace_schedule must be on or off, mtrace_search_gap_ms a number of milliseconds,
+          mtrace_search_cap a positive count, and mtrace_schedule_log a file under
+          /var/lib/mtrace, the only path the unit's StateDirectory makes writable.
+
+    - name: Assert the MCP door's audience tag is empty or well formed
+      ansible.builtin.assert:
+        that:
+          - mtrace_mcp_access_aud | length == 0 or mtrace_mcp_access_aud is match('\\A[0-9a-f]{64}\\Z')
+        fail_msg: >-
+          mtrace_mcp_access_aud must be empty (MCP door off) or the 64-hex audience tag from
+          `terraform output -raw media_mcp_subdomain_access_aud`.
+
+    - name: Assert each MCP door agent is a name and a service-token client id
+      ansible.builtin.assert:
+        that:
+          - mtrace_mcp_access_agents is mapping
+          - mtrace_mcp_access_agents.keys() | reject('match', '\\A[a-z][a-z0-9-]{1,30}\\Z') | list | length == 0
+          - mtrace_mcp_access_agents.values() | reject('match', '\\A[0-9a-f]{32}\\.access\\Z') | list | length == 0
+          - mtrace_mcp_access_agents.values() | unique | list | length == mtrace_mcp_access_agents | length
+        fail_msg: >-
+          mtrace_mcp_access_agents maps an agent name from secrets/callers.yml to its client id,
+          `<32 hex>.access`, from keys.yml action=list. mtrace refuses to start on a malformed list.
+
+    - name: Assert the MCP door has its peer on its allowlist and an email
+      ansible.builtin.assert:
+        that:
+          - mtrace_mcp_peer in mtrace_mcp_sources
+          - mtrace_mcp_access_emails | length > 0
+        fail_msg: >-
+          With mtrace_mcp_access_aud set, mtrace_mcp_peer must be in mtrace_mcp_sources and
+          mtrace_mcp_access_emails must not be empty, or the MCP door is dead or refuses everyone.
+      when: mtrace_mcp_access_aud | length > 0
 
     - name: Assert every write caller holds a token
       ansible.builtin.assert:
@@ -396,6 +465,8 @@
           - (mtrace_port | string) in mtrace_allow_live.stdout
           - "'iif \"lo\" accept' in mtrace_allow_live.stdout"
           - mtrace_allow_sources | select('in', mtrace_allow_live.stdout) | list | length == mtrace_allow_sources | length
+          - (mtrace_mcp_port | string) in mtrace_allow_live.stdout
+          - mtrace_mcp_sources | select('in', mtrace_allow_live.stdout) | list | length == mtrace_mcp_sources | length
           - "'reject' in mtrace_allow_live.stdout"
         fail_msg: >-
           table inet mtrace_allow is not carrying the rules this deploy expects — port

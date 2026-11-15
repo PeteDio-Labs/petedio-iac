@@ -14,6 +14,7 @@ None of these six deploys reads the shared `kv/iac/lxc-ssh` key. `deploy-claude-
 | `deploy-lab-watchdog.yml` | `configure-lab-watchdog.yml` | `claude-247` | `deploy-lab-watchdog` | `deploy-lab-watchdog` |
 | `deploy-codex-248.yml` | `configure-codex.yml` | `codex-248` | `deploy-codex-248` | `deploy-codex-248` |
 | `deploy-backup-store.yml` | `configure-backup-store.yml` | `pve01`, `pve02`, `pve03` | `deploy-backup-store` | `deploy-backup-store` |
+| `deploy-staging-249.yml` | `configure-staging.yml` | `staging-249` | `deploy-staging-249` | `deploy-staging-249` |
 
 `ansible-claude-247.yml` already deploys `claude-247`'s identities. It still reads the shared
 key. Moving it to a `deploy-claude-247` principal is a separate change.
@@ -84,3 +85,13 @@ failure. The Vault token is revoked as soon as the certificate is signed.
 - `docs/runbooks/ssh-ca.md` for the CA and its signing roles.
 - `environments/homelab/vault-config/deploy-hosts.tf` for the roles and policies.
 - `scripts/ci-deploy.py` for what each deploy stages.
+
+## Staging power (CT 249)
+
+`staging-power.yml` starts CT 249 when UI work lands on the `staging` branch of `pdlabs-portfolio`. It stops the container after a promotion to `main` or after 3 hours with no UI commit. It runs every 5 minutes on the LAN runner.
+
+- To force a state, dispatch `staging-power.yml` with `mode` set to `start`, `stop` or `status`.
+- The runner never calls Proxmox directly. It signs a `staging-power` SSH certificate that runs one forced command on pve03, `/usr/local/sbin/staging-power`. That command accepts only `status`, `start` and `stop`, and only for the guest named `staging-249`.
+- The `auto` mode reads `kv/services/staging-app`. If the secret is not seeded, the run fails and stops nothing.
+- Each run prints what it examined: files compared, commits read and the decision.
+- To install the node script, apply `configure-ssh-ca-deploy-hosts.yml` and then `configure-staging-power.yml` through `lab-action.yml`.

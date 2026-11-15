@@ -92,10 +92,27 @@ fi
 # The off-site heartbeat (PET-722): tell the AWS watchdog this host is alive. The config file
 # holds the URL and the secret header, so neither reaches argv. A failed beat exits non-zero.
 BEAT_FILE=/etc/lab-watchdog/heartbeat
+# A failed beat records when the outage began, how many beats failed and the first curl error in
+# $STATE/beat.fail. The first good beat after it carries that note in X-Outage-Note, so the AWS
+# side can say why it went quiet. The note holds only digits, letters and punctuation from curl.
 if [ "$MODE" = run ] && [ -r "$BEAT_FILE" ]; then
-  if ! curl -sS -f -m 10 -o /dev/null -X POST -K "$BEAT_FILE"; then
-    echo "heartbeat to AWS failed" >&2
+  extra=()
+  if [ -r "$STATE/beat.fail" ]; then
+    read -r b_first b_count b_err < "$STATE/beat.fail" || true
+    extra=(-H "X-Outage-Note: first=${b_first:-0};missed=${b_count:-0};err=${b_err:-unknown}")
+  fi
+  if beat_err="$(curl -sS -f -m 10 -o /dev/null -X POST -K "$BEAT_FILE" "${extra[@]}" 2>&1)"; then
+    rm -f "$STATE/beat.fail"
+  else
+    echo "heartbeat to AWS failed: $beat_err" >&2
     RC=1
+    if [ -r "$STATE/beat.fail" ]; then
+      read -r b_first b_count b_err < "$STATE/beat.fail" || true
+      echo "${b_first:-$(date +%s)} $(( ${b_count:-0} + 1 )) ${b_err:-unknown}" > "$STATE/beat.fail"
+    else
+      b_err="$(printf '%s' "$beat_err" | tail -n 1 | tr -c 'A-Za-z0-9 ():._-' '_' | tr ' ' '_' | cut -c1-80)"
+      echo "$(date +%s) 1 ${b_err:-unknown}" > "$STATE/beat.fail"
+    fi
   fi
 fi
 

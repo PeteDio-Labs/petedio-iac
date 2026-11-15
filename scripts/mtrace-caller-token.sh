@@ -5,7 +5,7 @@
 # ⚠ NO CLAUDE SESSION RUNS THIS SCRIPT. Minting or revoking a live credential is the
 # "place a credential by hand" line this repo's rules draw around Pedro: he runs this on
 # the Mac with his own Vault login, the same way he runs scripts/mtrace-caller-token.sh
-# create bobbert or revoke pete-bot from a work-item's plan, never a session relaying it
+# create muse or revoke pete-bot from a work-item's plan, never a session relaying it
 # on his behalf.
 #
 # mtrace's HTTP API used to gate on one shared MEDIA_CONTROL_TOKEN, minted by

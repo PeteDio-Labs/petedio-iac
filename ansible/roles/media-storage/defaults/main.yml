@@ -38,10 +38,39 @@ media_storage_pools:
     # config. That cost real time on 2026-09-04.
     dirs: [completed, incomplete]
 
-# A USB hiccup should stall I/O, not suspend the pool and take the stack down.
+# `continue` returns EIO to a new write instead of blocking it. It does NOT stop a
+# suspension: the enclosure drops on 2026-11-08 and 2026-11-13 suspended both pools
+# with `continue` set. zpool-autoclear below is what brings a pool back.
 media_storage_failmode: continue
 
 # setgid on every directory: new files inherit the group, which is what lets one
 # app read what another wrote. Without it, imports fail on permissions days
 # later, far from the cause.
 media_storage_dir_mode: "2775"
+
+# zpool-autoclear (PET-914). The JMicron enclosure on pve02 drops off USB and returns a
+# second later, and ZFS suspends every pool on it until `zpool clear`, failmode or not.
+# A timer and a udev rule clear a suspended pool once every disk in it answers a read.
+# Past this many clears in an hour, the script holds and tells you to reboot pve02.
+media_storage_autoclear_max_per_hour: 3
+# How long one run waits for the rest of a pool's disks after the first one returns.
+media_storage_autoclear_wait_seconds: 45
+media_storage_autoclear_interval: 1min
+# node-exporter's textfile collector on pve02. metric-alerts reads the metrics from here,
+# so the alert needs no credential on this host.
+media_storage_autoclear_textfile_dir: /var/lib/prometheus/node-exporter
+# The enclosure's USB bridge: JMicron JMS567. Its disks start zpool-autoclear as they
+# reappear, and usb-lpm.yml turns off USB 3 link power management for it.
+media_storage_enclosure_usb_ids:
+  - { vendor: "152d", product: "0567" }
+
+# USB 3 link power management (U1/U2) for the enclosure (PET-914). The bridge dropped off
+# the bus three times with no host error first: 2026-10-23, 11-08 and 11-13. Its link had
+# U1/U2 on, and the USB NIC on the same root hub never dropped, so the fault is this link.
+# `k` is USB_QUIRK_NO_LPM. Set false to leave LPM to the kernel.
+media_storage_enclosure_no_lpm: true
+# The usbcore.quirks value: vendor:product:k for each bridge, comma-separated.
+media_storage_enclosure_no_lpm_quirks: >-
+  {{ media_storage_enclosure_usb_ids | map(attribute='vendor')
+     | zip(media_storage_enclosure_usb_ids | map(attribute='product'))
+     | map('join', ':') | map('regex_replace', '$', ':k') | join(',') }}

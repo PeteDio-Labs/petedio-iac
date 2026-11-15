@@ -2,3 +2,5 @@
 a8ddb8598c9ae6b23192231879e207973a5c8cae:ansible/roles/hashicorp-apt/defaults/main.yml:generic-api-key:20
 # False positive: the unquoted Cloudflare Access audience tag of reports.pdlab.dev, a public identifier. A later commit on the same PR quotes it so the allowlist matches (PET-868).
 dca45c21df6b81cef8b61a03e4fd616155d5ce1a:ansible/playbooks/configure-pete-bot.yml:generic-api-key:106
+# False positive: the Cloudflare Access audience tag of mcp-media.pdlab.dev, a public identifier that appears in every Access JWT. It is the value the media MCP door checks, not a credential.
+13ad6d6037861f994dedd62e81099e8cb78d4ebe:ansible/playbooks/configure-media-dash.yml:generic-api-key:156

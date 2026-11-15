@@ -1,0 +1,218 @@
+# zpool-autoclear.yml — the media-storage role's pool auto-clear against fake pools (PET-914).
+#
+# Runs on localhost, touches nothing outside a temp directory, needs no credential and no
+# ZFS. Run it from `ansible/`:
+#
+#   ansible-playbook tests/zpool-autoclear.yml
+#
+# WHAT THIS EXISTS TO CATCH. The script runs `zpool clear` on pve02 as root, unattended. It
+# must clear a suspended pool once its disks answer, must not clear one while a disk is
+# missing, and must stop after the hourly limit so a failing enclosure ends in a reboot
+# message, not a loop. The fakes stand in for kstat, /dev/disk/by-id and the zpool binary.
+---
+- name: Exercise zpool-autoclear against fake pools
+  hosts: localhost
+  gather_facts: false
+  # ansible.cfg sets become: True. As root, the fakes are unreadable to the lookups.
+  become: false
+  vars:
+    role_dir: "{{ playbook_dir }}/../roles/media-storage"
+    script: "{{ role_dir }}/files/zpool-autoclear.py"
+
+  tasks:
+    - name: Load the role defaults
+      ansible.builtin.include_vars:
+        file: "{{ role_dir }}/defaults/main.yml"
+
+    - name: Make a scratch directory
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: zpool-autoclear
+      register: tmp
+
+    - name: Set the fake paths
+      ansible.builtin.set_fact:
+        t: "{{ tmp.path }}"
+        cfg_path: "{{ tmp.path }}/config.json"
+        all_devices: "{{ media_storage_pools | map(attribute='devices') | flatten }}"
+
+    # The shipped template, rendered from the shipped defaults: the test runs what pve02 gets.
+    - name: Render the shipped config template
+      ansible.builtin.template:
+        src: "{{ role_dir }}/templates/zpool-autoclear.json.j2"
+        dest: "{{ t }}/shipped.json"
+        mode: "0644"
+
+    - name: Check the rendered config names every pool and its disks
+      ansible.builtin.assert:
+        that:
+          - shipped.pools | length == media_storage_pools | length
+          - shipped.pools.media == (media_storage_pools | selectattr('name', 'eq', 'media') | first).devices
+          - shipped.pools.downloads | length == 1
+          - shipped.max_per_hour == 3
+          - shipped.zpool == '/usr/sbin/zpool'
+          - shipped.direct_io
+        quiet: true
+      vars:
+        shipped: "{{ lookup('ansible.builtin.file', t ~ '/shipped.json') | from_json }}"
+
+    - name: Make the fake kstat, disk and state directories
+      ansible.builtin.file:
+        path: "{{ t }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ ['dev', 'state', 'textfile'] + (media_storage_pools | map(attribute='name') | map('regex_replace', '^', 'kstat/') | list) }}"
+
+    - name: Make a fake disk for every device
+      ansible.builtin.copy:
+        content: "{{ 'x' * 8192 }}"
+        dest: "{{ t }}/dev/{{ item }}"
+        mode: "0644"
+      loop: "{{ all_devices }}"
+
+    # Logs each call, and sets the pool ONLINE the way a real clear does.
+    - name: Write a fake zpool binary
+      ansible.builtin.copy:
+        dest: "{{ t }}/zpool"
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          echo "$*" >> "{{ t }}/zpool.log"
+          [ "$1" = clear ] && echo ONLINE > "{{ t }}/kstat/$2/state"
+          exit 0
+
+    - name: Write the test config from the shipped one, with the paths moved to the scratch directory
+      ansible.builtin.copy:
+        dest: "{{ cfg_path }}"
+        mode: "0644"
+        content: >-
+          {{ (lookup('ansible.builtin.file', t ~ '/shipped.json') | from_json) | combine({
+               'wait_seconds': 0, 'kstat_dir': t ~ '/kstat', 'dev_dir': t ~ '/dev',
+               'state_dir': t ~ '/state', 'textfile_dir': t ~ '/textfile', 'zpool': t ~ '/zpool',
+               'lock': t ~ '/lock', 'direct_io': false }) | to_json }}
+
+    # --- Case 1: every pool ONLINE, so nothing is cleared.
+    - name: Set every pool ONLINE
+      ansible.builtin.copy:
+        content: "ONLINE\n"
+        dest: "{{ t }}/kstat/{{ item.name }}/state"
+        mode: "0644"
+      loop: "{{ media_storage_pools }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Run with every pool ONLINE
+      ansible.builtin.command: "python3 {{ script }}"
+      environment:
+        ZPOOL_AUTOCLEAR_CONFIG: "{{ cfg_path }}"
+      register: run1
+      changed_when: false
+
+    - name: Check nothing was cleared and the metrics were written
+      ansible.builtin.assert:
+        that:
+          - not (t ~ '/zpool.log') is exists
+          - "'zpool_autoclear_last_run_timestamp_seconds' in prom"
+          - "'zpool_autoclear_clears_total{zpool=\"media\"} 0' in prom"
+          - "'zpool_autoclear_held{zpool=\"downloads\"} 0' in prom"
+        quiet: true
+      vars:
+        prom: "{{ lookup('ansible.builtin.file', t ~ '/textfile/zpool_autoclear.prom') }}"
+
+    # --- Case 2: media SUSPENDED with every disk present, so it is cleared.
+    - name: Suspend media
+      ansible.builtin.copy:
+        content: "SUSPENDED\n"
+        dest: "{{ t }}/kstat/media/state"
+        mode: "0644"
+
+    - name: Run with media suspended
+      ansible.builtin.command: "python3 {{ script }}"
+      environment:
+        ZPOOL_AUTOCLEAR_CONFIG: "{{ cfg_path }}"
+      register: run2
+      changed_when: false
+
+    - name: Check media was cleared once and downloads was left alone
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.file', t ~ '/zpool.log').splitlines() == ['clear media']
+          - lookup('ansible.builtin.file', t ~ '/kstat/media/state') == 'ONLINE'
+          - "'zpool_autoclear_clears_total{zpool=\"media\"} 1' in prom"
+          - "'zpool_autoclear_clears_total{zpool=\"downloads\"} 0' in prom"
+          - "'The pool is ONLINE' in run2.stdout"
+        fail_msg: "{{ run2.stdout }}"
+        quiet: true
+      vars:
+        prom: "{{ lookup('ansible.builtin.file', t ~ '/textfile/zpool_autoclear.prom') }}"
+
+    # --- Case 3: downloads SUSPENDED with its disk gone, so it is not cleared.
+    - name: Remove the downloads disk
+      ansible.builtin.file:
+        path: "{{ t }}/dev/{{ (media_storage_pools | selectattr('name', 'eq', 'downloads') | first).devices[0] }}"
+        state: absent
+
+    - name: Suspend downloads
+      ansible.builtin.copy:
+        content: "SUSPENDED\n"
+        dest: "{{ t }}/kstat/downloads/state"
+        mode: "0644"
+
+    - name: Run with a downloads disk missing
+      ansible.builtin.command: "python3 {{ script }}"
+      environment:
+        ZPOOL_AUTOCLEAR_CONFIG: "{{ cfg_path }}"
+      register: run3
+      changed_when: false
+
+    - name: Check downloads stayed suspended and uncleared
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.file', t ~ '/zpool.log').splitlines() == ['clear media']
+          - lookup('ansible.builtin.file', t ~ '/kstat/downloads/state') == 'SUSPENDED'
+          - "'does not answer' in run3.stdout"
+        fail_msg: "{{ run3.stdout }}"
+        quiet: true
+
+    # --- Case 4: media keeps suspending. Two more clears reach the limit of 3, then it holds.
+    - name: Suspend media again and run, twice
+      ansible.builtin.shell: |
+        echo SUSPENDED > "{{ t }}/kstat/media/state"
+        ZPOOL_AUTOCLEAR_CONFIG="{{ cfg_path }}" python3 "{{ script }}"
+      loop: [1, 2]
+      changed_when: false
+
+    - name: Suspend media a fourth time
+      ansible.builtin.copy:
+        content: "SUSPENDED\n"
+        dest: "{{ t }}/kstat/media/state"
+        mode: "0644"
+
+    - name: Run past the hourly limit
+      ansible.builtin.command: "python3 {{ script }}"
+      environment:
+        ZPOOL_AUTOCLEAR_CONFIG: "{{ cfg_path }}"
+      register: run4
+      changed_when: false
+
+    - name: Check it held after 3 clears and said to reboot pve02
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.file', t ~ '/zpool.log').splitlines() == ['clear media'] * 3
+          - lookup('ansible.builtin.file', t ~ '/kstat/media/state') == 'SUSPENDED'
+          - "'reboot pve02' in run4.stdout"
+          - "'zpool_autoclear_held{zpool=\"media\"} 1' in prom"
+          - "'zpool_autoclear_clears_total{zpool=\"media\"} 3' in prom"
+        fail_msg: "{{ run4.stdout }}"
+        quiet: true
+      vars:
+        prom: "{{ lookup('ansible.builtin.file', t ~ '/textfile/zpool_autoclear.prom') }}"
+
+    - name: Remove the scratch directory
+      ansible.builtin.file:
+        path: "{{ t }}"
+        state: absent
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "zpool-autoclear: 4 cases passed over {{ media_storage_pools | length }} pools and {{ all_devices | length }} disks."

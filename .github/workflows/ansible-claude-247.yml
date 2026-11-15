@@ -13,7 +13,7 @@
 # schedule or another workflow cannot mint its token.
 #
 # ⚠ NO pull_request TRIGGER, EVER (PET-407). The job runs on the self-hosted runner on the LAN,
-# and petedio-iac is public. ansible-stack.yml explains the exposure in full.
+# and petedio-iac is public. docs/GOTCHAS.md explains the exposure in full (PET-407).
 #
 # This file is pushed from the Mac. petedio-code-247, the App sessions on 247 push with, has
 # no `workflows` permission, so no session on 247 can create or change it.

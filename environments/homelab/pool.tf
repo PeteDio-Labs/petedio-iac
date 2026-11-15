@@ -62,6 +62,7 @@ locals {
     codex      = module.codex.vm_id
     metrics    = module.metrics.vm_id
     ollama     = module.ollama.vm_id
+    staging    = module.staging.vm_id
   } : {}
 
   # LXCs that exist on the cluster but have NO Terraform module here, so there is

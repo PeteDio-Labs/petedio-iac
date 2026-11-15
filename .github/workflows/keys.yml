@@ -1,0 +1,201 @@
+# keys — list, sync and rotate the agents' Cloudflare Access service tokens (PET item: lab access
+# and keys; design https://claude.ai/artifact/6A23RZ9uT4X74qWX5sHBuy).
+#
+#   list    print each agent's owner, Vault version and expiry          no approval
+#   sync    create a token per new agent in secrets/callers.yml and
+#           revoke each token whose agent left it                        lab-write tap
+#   rotate  replace one agent's secret, old one valid for 24 hours       lab-write tap
+#   renew   set one agent's token to 90 days from now, same id and secret lab-write tap
+#   reissue replace a lost token; its id changes, so routes need an apply lab-write tap
+#
+# WHY. Every new caller used to be a Mac prompt: a seed script run with the root Vault token, a
+# redeploy and a pbcopy hand-off. A thread dispatches this workflow instead, and Pedro taps.
+#
+# APPROVAL. The `plan` job reads Vault metadata only and prints what sync or rotate would do, by
+# name, with a digest. The `apply` job waits on the `lab-write` environment, which only Pedro can
+# approve, and refuses unless it computes the same digest. So the tap covers the plan Pedro read.
+#
+# SECURITY. Only main, only workflow_dispatch and only this file mint either Vault role
+# (vault-config/keys.tf); keys-sync also binds environment lab-write. keys-list reads metadata
+# under kv/callers/edge and nothing else. keys-sync also writes there and reads the Cloudflare
+# token at kv/services/keys-cloudflare, which can edit Access service tokens only. The run log is
+# public: scripts/keys.py prints names, versions and dates, masks every secret it receives, and
+# never prints a Cloudflare response body. The owner reads the value from Vault, never from here.
+name: keys
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "list, sync, rotate, renew or reissue"
+        required: true
+        type: choice
+        options:
+          - list
+          - sync
+          - rotate
+          - renew
+          - reissue
+      name:
+        description: "rotate, renew and reissue only: the agent name from secrets/callers.yml"
+        required: false
+        type: string
+        default: ""
+      pet:
+        description: "The PET item this run answers"
+        required: false
+        type: string
+        default: ""
+
+permissions: {}
+
+# Bash, named: the steps use [[ =~ ]] and arrays.
+defaults:
+  run:
+    shell: bash
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  # python:3.12-slim by digest, read on 2026-11-09. PyYAML installs from
+  # scripts/keys-requirements.txt with --require-hashes.
+  PY_IMAGE: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+
+jobs:
+  plan:
+    # The Vault binding is the gate; this line only stops main's copy running on another ref.
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, homelab]
+    permissions:
+      contents: read
+      id-token: write # the OIDC token vault-action exchanges for keys-list
+    timeout-minutes: 10
+    outputs:
+      digest: ${{ steps.plan.outputs.digest }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Say what this run does
+        env:
+          ACTION: ${{ inputs.action }}
+          NAME: ${{ inputs.name }}
+          PET: ${{ inputs.pet }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          # Check every input before anything prints it, so a newline and a ::command:: cannot
+          # reach the log. [[ =~ ]] matches the whole string; grep would test each line alone.
+          case "$ACTION" in
+            rotate|renew|reissue)
+              [[ "$NAME" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || { echo "ABORT: $ACTION needs a valid agent name."; exit 1; } ;;
+            list|sync)
+              [ -z "$NAME" ] || { echo "ABORT: $ACTION takes no name."; exit 1; } ;;
+            *) echo "ABORT: unknown action"; exit 1 ;;
+          esac
+          [[ "$PET" =~ ^(PET-[0-9]{1,6})?$ ]] || { echo "ABORT: pet must look like PET-123."; exit 1; }
+          echo "action=$ACTION name=${NAME:-none} pet=${PET:-none} sha=$GITHUB_SHA actor=$ACTOR"
+          command -v docker >/dev/null || { echo "ABORT: docker is not installed on this runner."; exit 1; }
+
+      - name: Encode Vault CA
+        id: vault_ca
+        run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Vault — keys-list via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: keys-list
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: true
+
+      # The runner has no pip, so the script runs in an official Python image with the repository
+      # mounted read-only, as secrets-register.yml does. The Vault token passes by name.
+      - name: Check, then plan or list
+        id: plan
+        env:
+          ACTION: ${{ inputs.action }}
+          NAME: ${{ inputs.name }}
+        run: |
+          set -o pipefail
+          # The name reaches keys.py as an argument, never as shell source.
+          case "$ACTION" in
+            list)           ARGS=(list) ;;
+            sync)           ARGS=(plan) ;;
+            rotate|renew|reissue) ARGS=(plan "--$ACTION" "$NAME") ;;
+            *) echo "ABORT: unknown action"; exit 1 ;;
+          esac
+          docker run --rm -v "$PWD:/w:ro" -w /w \
+            -e PYTHONDONTWRITEBYTECODE=1 -e VAULT_ADDR -e VAULT_TOKEN \
+            -e VAULT_CACERT=/w/environments/homelab/vault-ca.crt \
+            "$PY_IMAGE" sh -c 'pip install -q --no-cache-dir --require-hashes -r scripts/keys-requirements.txt && python3 scripts/keys.py check && exec python3 scripts/keys.py "$@"' \
+            sh "${ARGS[@]}" \
+            | tee plan.log
+          digest="$(sed -n 's/.*plan-digest \([0-9a-f]\{16\}\)$/\1/p' plan.log | tail -1)"
+          if [ "$ACTION" != list ] && [ -z "$digest" ]; then
+            echo "ABORT: the plan printed no digest, so there is nothing to approve."; exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### keys $ACTION"
+            echo '```'
+            cat plan.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    needs: plan
+    if: github.ref == 'refs/heads/main' && inputs.action != 'list'
+    environment: lab-write
+    concurrency:
+      group: keys
+      cancel-in-progress: false
+    runs-on: [self-hosted, linux, x64, homelab]
+    permissions:
+      contents: read
+      id-token: write # the OIDC token vault-action exchanges for keys-sync
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Encode Vault CA
+        id: vault_ca
+        run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Vault — keys-sync via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: keys-sync
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: true
+
+      - name: Apply the approved plan
+        env:
+          ACTION: ${{ inputs.action }}
+          NAME: ${{ inputs.name }}
+          DIGEST: ${{ needs.plan.outputs.digest }}
+        run: |
+          set -o pipefail
+          printf '%s' "$DIGEST" | grep -Eq '^[0-9a-f]{16}$' || { echo "ABORT: no approved digest."; exit 1; }
+          case "$ACTION" in
+            rotate|renew|reissue)
+              [[ "$NAME" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || { echo "ABORT: $ACTION needs a valid agent name."; exit 1; }
+              ARGS=("$ACTION" "$NAME" --expect "$DIGEST") ;;
+            sync) ARGS=(sync --expect "$DIGEST") ;;
+            *) echo "ABORT: unknown action"; exit 1 ;;
+          esac
+          # GITHUB_ACTIONS reaches the container so keys.py registers each new secret with
+          # ::add-mask:: before anything else prints.
+          docker run --rm -v "$PWD:/w:ro" -w /w \
+            -e PYTHONDONTWRITEBYTECODE=1 -e GITHUB_ACTIONS -e VAULT_ADDR -e VAULT_TOKEN \
+            -e VAULT_CACERT=/w/environments/homelab/vault-ca.crt \
+            "$PY_IMAGE" sh -c 'pip install -q --no-cache-dir --require-hashes -r scripts/keys-requirements.txt && exec python3 scripts/keys.py "$@"' \
+            sh "${ARGS[@]}"

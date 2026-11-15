@@ -1,0 +1,100 @@
+---
+# patch-guests.yml — install pending security updates in every running LXC, one node at a time. (PET-908)
+#
+#   scripts/lab-action.sh playbook_check patch-guests.yml    # simulates each guest; changes nothing
+#   scripts/lab-action.sh playbook_apply patch-guests.yml    # runs `apt-get update` and the upgrades
+#
+# Why this shape. lab-action reaches the nodes and nothing else, so the play runs `pct exec` into
+# each guest, the way audit-cloudflared-112.yml does. The script in files/security-patch.sh does
+# the work, so pi1 and any guest the nodes cannot reach run the same code (docs/runbooks/upgrades.md).
+#
+# What it never does: reboot, `apt autoremove`, or upgrade a package on the hold list (Vault,
+# Postgres, Docker, MinIO, GPU drivers, kernels and Proxmox packages). Those have their own
+# runbooks. A held package is counted in the summary.
+#
+# A check is honest here. The plan task simulates in each guest with `check_mode: false` and
+# reads only. It cannot run `apt-get update`, so a guest with old package lists undercounts; the
+# summary prints the oldest list age.
+#
+# The nodes are not patched here. schedule-node-upgrade.yml owns them, because a node upgrade
+# is gated on a fresh backup.
+
+- name: Patch guests with pending security updates
+  hosts: proxmox:pve_new:pve_gpu
+  become: false
+  gather_facts: false
+  serial: 1
+  vars:
+    # VMIDs to leave alone, for a guest that needs a person present.
+    security_patch_skip_vmids: []
+
+  tasks:
+    - name: List running guests on this node
+      ansible.builtin.command:
+        argv: [pct, list]
+      register: security_patch_list
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Choose the guests to patch
+      ansible.builtin.set_fact:
+        security_patch_ids: >-
+          {{ security_patch_list.stdout_lines[1:]
+             | map('split')
+             | selectattr('1', 'equalto', 'running')
+             | map(attribute='0')
+             | map('int')
+             | reject('in', security_patch_skip_vmids)
+             | list }}
+
+    - name: Simulate the security upgrade in each guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ item }}", --, sh, -s, plan]
+        stdin: "{{ lookup('ansible.builtin.file', 'security-patch.sh') }}"
+      loop: "{{ security_patch_ids }}"
+      register: security_patch_plan
+      changed_when: false
+      failed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Upgrade the security packages in each guest
+      ansible.builtin.command:
+        argv: [pct, exec, "{{ item }}", --, sh, -s, apply]
+        stdin: "{{ lookup('ansible.builtin.file', 'security-patch.sh') }}"
+      loop: "{{ security_patch_ids }}"
+      register: security_patch_apply
+      changed_when: "'patched=0|' not in security_patch_apply.stdout | default('')"
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Read each guest's result
+      ansible.builtin.set_fact:
+        security_patch_rows: >-
+          {{ (security_patch_plan.results if ansible_check_mode else security_patch_apply.results)
+             | map(attribute='stdout') | map('default', '') | map('trim')
+             | map('regex_replace', '(?s)^.*\n', '') | list }}
+        security_patch_rc: >-
+          {{ (security_patch_plan.results if ansible_check_mode else security_patch_apply.results)
+             | map(attribute='rc') | list }}
+
+    - name: Summarise what was examined
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: listed {{ security_patch_list.stdout_lines[1:] | length }} guests,
+          read {{ security_patch_rows | select('match', '^RESULT\|') | list | length }} of
+          {{ security_patch_ids | length }} chosen,
+          skipped {{ security_patch_skip_vmids | length }} by request,
+          {{ security_patch_rows | select('search', 'security=na') | list | length }} with no apt (not patched),
+          {{ security_patch_rows | select('search', 'reboot=yes') | list | length }} need a reboot.
+          Rows by vmid: {{ dict(security_patch_ids | zip(security_patch_rows | map('regex_replace', '^RESULT\|', ''))) }}
+
+    - name: Fail when a guest could not be read or is not clean
+      ansible.builtin.assert:
+        that:
+          - security_patch_rows | select('match', '^RESULT\|') | list | length == security_patch_ids | length
+          - security_patch_rc | select('ne', 0) | list | length == 0
+          - ansible_check_mode or (security_patch_rows | reject('search', 'remaining=0\\|') | reject('search', 'security=na') | list | length == 0)
+        fail_msg: >-
+          A guest returned no RESULT line or a non-zero exit. Read the run log; no guest counts as
+          patched on this node until every chosen guest reports.
+        success_msg: Every chosen guest on {{ inventory_hostname }} reported.

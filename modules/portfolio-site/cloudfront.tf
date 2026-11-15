@@ -1,5 +1,5 @@
 # Distribution shape is chosen so the CloudFront Free flat-rate plan stays available: OAC (not
-# OAI), the AWS managed cache policy and our own response headers policy, headers.tf (no ForwardedValues), one behavior, one function,
+# OAI), the AWS managed cache policy and our own response headers policy, headers.tf (no ForwardedValues), two behaviors (the site and /api/*), one function,
 # no real-time logs. The module attaches no WAF and no plan: see README.md for why.
 
 data "aws_cloudfront_cache_policy" "optimized" {
@@ -58,6 +58,24 @@ resource "aws_cloudfront_distribution" "site" {
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.optimized.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.index_rewrite.arn
+    }
+  }
+
+  # The JSON API. Same origin, cache policy and rewrite function as the site; only the response
+  # headers policy differs, because it adds CORS. Nothing else on the site gets CORS headers.
+  ordered_cache_behavior {
+    path_pattern               = "/api/*"
+    target_origin_id           = "site"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    compress                   = true
+    cache_policy_id            = data.aws_cloudfront_cache_policy.optimized.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.api.id
 
     function_association {
       event_type   = "viewer-request"

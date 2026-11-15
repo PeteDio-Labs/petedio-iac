@@ -50,6 +50,11 @@ VCDIR="$HOMELAB/vault-config"
 
 export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
 export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
+# The script runs `cd "$VCDIR"` below, so a relative path no longer resolves afterwards.
+case "$VAULT_CACERT" in
+  /*) ;;
+  *) VAULT_CACERT="$PWD/$VAULT_CACERT"; export VAULT_CACERT ;;
+esac
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }

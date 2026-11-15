@@ -17,7 +17,7 @@ The AWS docs list what a Free-plan distribution must and must not use. The modul
 
 - OAC, not OAI.
 - The managed cache policy and a custom response headers policy (`headers.tf`: CSP, HSTS, nosniff, frame and referrer policies), no `ForwardedValues`. The docs found do not say whether the Free plan accepts a custom headers policy over the managed one. Check when subscribing; if it refuses, switch back to `Managed-SecurityHeadersPolicy` and lose the CSP.
-- At most 5 cache behaviors (this has 1) and one CloudFront Function.
+- At most 5 cache behaviors (this has 2: the site and `/api/*`) and one CloudFront Function.
 - A WAF web ACL is **required** on a plan. The module attaches none, so subscribing is a
   console step that creates one.
 

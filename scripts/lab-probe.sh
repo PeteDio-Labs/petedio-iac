@@ -8,6 +8,8 @@
 #   scripts/lab-probe.sh media_ask <args> # question=<text> -> lab-agent POST /v1/media/ask
 #   scripts/lab-probe.sh guests           # {"data":{"guests":[{vmid,node,status}]}} for scripts/check-staleness.py
 #   scripts/lab-probe.sh backup_jobs      # the cluster's vzdump jobs: id, schedule, storage, mode, enabled (PET-884)
+#   scripts/lab-probe.sh guest_unit vmid=119   # one fixed unit in one fixed guest: state, port, journal tail (node-exporter on Authentik)
+#   scripts/lab-probe.sh prometheus       # alert rules on metrics-240: metric-alerts rules, Prometheus rules, alerts, targets
 #   scripts/lab-probe.sh ollama_ps        # models loaded in Ollama on CT 246: name, size, VRAM share, expiry
 #   scripts/lab-probe.sh health [service=pete-bot|lab-agent]   # GET /health on 237; both when none is named
 #
@@ -125,6 +127,127 @@ print("probe ollama_ps: %d model(s) loaded on CT 246" % len(m))
   exit 0
 fi
 
+# prometheus reads the alert rules on metrics-240 (PET-914 read-back). Prometheus listens on 127.0.0.1 there,
+# so the script finds the node that holds 240 and runs a fixed Python program inside it over `pct exec`.
+# metric-alerts, not Prometheus, evaluates this lab's rules from /etc/metric-alerts/rules.json, so the
+# probe prints both: those rules with the series each one returns now, Prometheus's own /api/v1/rules
+# and /api/v1/alerts, and the target count. The caller supplies no value. It prints names, counts and
+# health, never an expression's result labels beyond the metric name. A store that answers nothing or a
+# rules file that does not parse fails.
+REMOTE_PROM='import json, re, sys, urllib.parse, urllib.request
+P = "http://127.0.0.1:9090"
+def get(path, **q):
+    u = P + path + ("?" + urllib.parse.urlencode(q) if q else "")
+    with urllib.request.urlopen(u, timeout=15) as r:
+        b = json.load(r)
+    if b.get("status") != "success":
+        sys.exit("FAILED: %s answered status %s" % (path, b.get("status")))
+    return b["data"]
+try:
+    rules = json.load(open("/etc/metric-alerts/rules.json"))
+except (OSError, ValueError) as e:
+    sys.exit("FAILED: /etc/metric-alerts/rules.json did not read: %s" % e)
+if not rules:
+    sys.exit("FAILED: /etc/metric-alerts/rules.json holds no rules, so nothing was examined")
+def metrics(expr):
+    e = re.sub(r"\[[^]]*\]", "", re.sub(r"\{[^}]*\}", "", expr))
+    e = re.sub(r"\b(by|without|on|ignoring)\s*\([^)]*\)", "", e)
+    skip = ("by", "without", "on", "ignoring", "group_left", "group_right", "bool", "and", "or", "unless", "offset", "inf", "nan")
+    return sorted(set(m for m in re.findall(r"[a-zA-Z_:][a-zA-Z0-9_:]*(?![a-zA-Z0-9_:]|\s*\()", e) if m not in skip))
+def labels(m):
+    return ",".join("%s=%s" % (k, str(m[k])[:60]) for k in sorted(m) if k != "__name__") or "no labels"
+firing = 0
+absent = 0
+for r in rules:
+    try:
+        res = get("/api/v1/query", query=r["expr"])["result"]
+        present = []
+        for name in metrics(r["expr"]):
+            c = get("/api/v1/query", query="count(%s)" % name)["result"]
+            n = int(float(c[0]["value"][1])) if c else 0
+            absent += 0 if n else 1
+            present.append("%s=%s" % (name, n if n else "ABSENT"))
+        print("metric-alerts rule %s: in rules.json, for_runs=%s, %d series now, metrics: %s" % (r["name"], r.get("for_runs", 1), len(res), " ".join(present) or "none found"))
+        for x in res[:10]:
+            print("  firing %s: %s" % (r["name"], labels(x["metric"])))
+        firing += 1 if res else 0
+    except Exception as e:
+        print("metric-alerts rule %s: QUERY FAILED: %s" % (r["name"], str(e)[:120]))
+        sys.exit("FAILED: the store did not answer for rule %s" % r["name"])
+groups = get("/api/v1/rules")["groups"]
+nrules = 0
+for g in groups:
+    for r in g["rules"]:
+        nrules += 1
+        print("prometheus rule %s/%s: type=%s health=%s state=%s" % (g["name"], r["name"], r["type"], r.get("health", "?"), r.get("state", "-")))
+alerts = get("/api/v1/alerts")["alerts"]
+for a in alerts:
+    print("prometheus alert %s: %s" % (a["labels"].get("alertname", "?"), a["state"]))
+t = get("/api/v1/targets", state="active")["activeTargets"]
+if not t:
+    sys.exit("FAILED: Prometheus lists no active targets, so the store is not scraping")
+up = sum(1 for x in t if x["health"] == "up")
+for x in t:
+    if x["health"] != "up":
+        print("down target %s %s: %s" % (x["labels"].get("job", "?"), x["labels"].get("instance", "?"), str(x.get("lastError", ""))[:100]))
+print("probe prometheus: read %d metric-alerts rules (%d with series now, %d metrics absent), %d Prometheus rules in %d groups, %d alerts, %d of %d targets up" % (len(rules), firing, absent, nrules, len(groups), len(alerts), up, len(t)))'
+if [ "$PROBE" = prometheus ]; then
+  [ -z "$ARGS" ] || die "prometheus takes no args"
+  PN=""
+  for n in 192.168.50.10 192.168.50.11 192.168.50.12; do
+    if ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$n" 'pct status 240' 2>/dev/null | grep -q 'status: running'; then PN="$n"; break; fi
+  done
+  [ -n "$PN" ] || { echo "FAILED: no node reports LXC 240 running, so nothing was examined." >&2; exit 1; }
+  ssh -o ConnectTimeout=8 -o BatchMode=yes "$PN" 'pct exec 240 -- python3 -c "$(cat)"' <<<"$REMOTE_PROM" \
+    || { echo "FAILED: the Prometheus read on 240 failed, so no rule was confirmed." >&2; exit 1; }
+  exit 0
+fi
+
+# guest_unit reads one fixed systemd unit inside one fixed guest, through the node's `pct exec` (PET-914
+# follow-up: Prometheus could not scrape node-exporter on Authentik, CT 119, while login worked). The caller
+# names a VMID from the table below and nothing else: the unit, the port and every command are fixed. It
+# prints the unit's active state, restart count and start time, whether its port is listening, the last
+# 15 journal lines of the unit (cut to 200 characters), and whether the node holds a Proxmox firewall file
+# for the guest. A unit that is inactive is a valid answer and exits 0; the summary line says so. A guest
+# that is not running, or a read that fails, exits 1.
+REMOTE_UNIT='U="$1"; PT="$2"
+SHOW=$(systemctl show "$U" -p ActiveState -p SubState -p NRestarts -p ActiveEnterTimestamp --no-pager 2>&1); R=$?; echo "$SHOW"; echo "ShowExit=$R"
+SOCK=$(ss -ltn 2>&1); R=$?; echo "SsExit=$R"
+if printf "%s\n" "$SOCK" | grep -q ":$PT "; then echo Listening=yes; else echo Listening=no; fi
+echo ---
+JR=$(journalctl -u "$U" -n 15 --no-pager -o short-iso 2>&1); R=$?; echo "JournalExit=$R"
+printf "%s\n" "$JR"'
+declare -A GU_UNIT=([119]=prometheus-node-exporter)
+declare -A GU_PORT=([119]=9100)
+if [ "$PROBE" = guest_unit ]; then
+  only vmid
+  need vmid
+  [[ "${KV[vmid]}" =~ ^[0-9]{3}$ && -n "${GU_UNIT[${KV[vmid]}]:-}" ]] || die "vmid must be one of: ${!GU_UNIT[*]}"
+  V="${KV[vmid]}"; U="${GU_UNIT[$V]}"; PT="${GU_PORT[$V]}"
+  GN=""
+  for n in 192.168.50.10 192.168.50.11 192.168.50.12; do
+    if ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$n" "pct status $V" 2>/dev/null | grep -q 'status: running'; then GN="$n"; break; fi
+  done
+  [ -n "$GN" ] || { echo "FAILED: no node reports LXC $V running, so nothing was examined." >&2; exit 1; }
+  # The program travels on stdin and takes the unit and port as arguments, both from the table above.
+  # Each read prints its own exit code, so a failed `ss` or `journalctl` cannot read as a closed port
+  # or an empty journal.
+  OUT="$(ssh -o ConnectTimeout=8 -o BatchMode=yes "$GN" "pct exec $V -- sh -s -- $U $PT" <<<"$REMOTE_UNIT")" \
+    || { echo "FAILED: the read inside CT $V failed, so $U was not examined." >&2; exit 1; }
+  FW="$(ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$GN" "if test -f /etc/pve/firewall/$V.fw; then echo present; else echo absent; fi")" \
+    || { echo "FAILED: the node could not say whether a firewall file exists for CT $V." >&2; exit 1; }
+  printf '%s\n' "$OUT" | cut -c1-200
+  echo "FirewallFile=$FW"
+  for k in ShowExit SsExit JournalExit; do
+    [ "$(sed -n "s/^$k=//p" <<<"$OUT" | head -1)" = 0 ] \
+      || { echo "FAILED: $k was not 0 inside CT $V, so $U was only partly examined." >&2; exit 1; }
+  done
+  AS="$(sed -n 's/^ActiveState=//p' <<<"$OUT" | head -1)"; LS="$(sed -n 's/^Listening=//p' <<<"$OUT" | head -1)"
+  [ -n "$AS" ] || { echo "FAILED: no ActiveState came back for $U in CT $V." >&2; exit 1; }
+  echo "probe guest_unit: read $U in CT $V on node $GN: active=$AS, listening on $PT=${LS:-unknown}"
+  exit 0
+fi
+
 # Find the node that holds 237 now; guests move (PET-334).
 NODE=""
 for n in 192.168.50.10 192.168.50.11 192.168.50.12; do
@@ -236,5 +359,5 @@ case "$PROBE" in
     echo "probe media_ask: one question answered HTTP ${CODE:-none}, ${#OUT} characters read"
     [ "${CODE:-}" = 200 ] || exit 1 ;;
 
-  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps)" ;;
+  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps, prometheus, guest_unit)" ;;
 esac

@@ -2,9 +2,8 @@
 # that had no check at all.
 #
 # WHY IT EXISTS. `terraform.yml`'s `validate` job covers Terraform only. Of the other
-# workflows, `ansible-openfaas`, `ansible-palworld` and `ansible-stack` APPLY a named
-# playbook against live hosts — they are deploys, not checks, and `ansible-stack` is a
-# `workflow_call` with no caller for most plays. So until this job, a role could be added,
+# workflows, the `deploy-*` and `ansible-*` ones APPLY a named playbook against live hosts —
+# they are deploys, not checks. So until this job, a role could be added,
 # edited or broken and nothing would look at it. PET-396 merged ~600 lines of Ansible with
 # two defects behind a green tick that only ever examined `.tf` files.
 #

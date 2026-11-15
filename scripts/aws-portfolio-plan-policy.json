@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "PlanReadOnly",
+    "Effect": "Allow",
+    "Action": [
+      "s3:GetBucket*", "s3:ListBucket", "s3:ListAllMyBuckets", "s3:GetAccelerateConfiguration",
+      "s3:GetEncryptionConfiguration", "s3:GetLifecycleConfiguration", "s3:GetReplicationConfiguration",
+      "s3:GetAccountPublicAccessBlock",
+      "cloudfront:Get*", "cloudfront:List*", "cloudfront:DescribeFunction",
+      "acm:Describe*", "acm:Get*", "acm:List*",
+      "iam:Get*", "iam:List*",
+      "sts:GetCallerIdentity"
+    ],
+    "Resource": "*"
+  }]
+}

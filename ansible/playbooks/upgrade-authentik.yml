@@ -1,0 +1,19 @@
+---
+# upgrade-authentik.yml — move Authentik (LXC 119) to authentik_version in roles/authentik. (PET-908)
+#
+#   scripts/lab-action.sh playbook_check upgrade-authentik.yml   # reads the tag and health; changes nothing
+#   scripts/lab-action.sh playbook_apply upgrade-authentik.yml   # backup, then one service at a time
+#
+# 119 is the IdP for every Cloudflare Access route, so the play refuses a jump of more than one
+# minor, refuses an unhealthy stack, takes a vzdump archive and a database dump first, recreates
+# server, worker and ldap one at a time, and restores the compose file when a service does not
+# return healthy. It never reboots the guest. The version to run is one line in the role's defaults.
+#
+# 119 sits on pve03, so the play targets that node and reaches the guest with `pct exec`.
+
+- name: Upgrade Authentik
+  hosts: pve03
+  become: false
+  gather_facts: false
+  roles:
+    - authentik

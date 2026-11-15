@@ -9,8 +9,8 @@
 #
 #   1. The env file: when it is missing, copy the token out of the running container's `--token`
 #      argument into <envfile> (mode 0600). The token never leaves this host and is never printed.
-#   2. Already converged: the image matches, the command has no `--token` and has `--metrics`, the
-#      env file exists, the container runs, and /ready answers. Then change nothing. When the
+#   2. Already converged: the image matches, the command has no `--token` and has `--metrics` on
+#      <port>, the published binding is <bind>:<port>, the env file exists, the container runs, and /ready answers. Then change nothing. When the
 #      configuration matches but the container is stopped or not ready, start it and wait for /ready.
 #      It exits 1 when /ready still does not answer, so a dead tunnel never reports success.
 #   3. Start the candidate <name>-new with `--env-file` and `--metrics`, keeping the old
@@ -52,9 +52,11 @@ wait_ready() {
 cur_image=$(docker inspect --format '{{.Config.Image}}' "$name")
 cur_cmd=$(docker inspect --format '{{json .Config.Cmd}}' "$name")
 cur_state=$(docker inspect --format '{{.State.Status}}' "$name")
+cur_ports=$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$name")
 
 if [ "$cur_image" = "$image" ] && [ -s "$envfile" ] &&
-  ! echo "$cur_cmd" | grep -q '"--token"' && echo "$cur_cmd" | grep -q '"--metrics"'; then
+  ! echo "$cur_cmd" | grep -q '"--token"' && echo "$cur_cmd" | grep -q "\"0.0.0.0:$port\"" &&
+  echo "$cur_ports" | grep -q "\"HostIp\":\"$bind\"" && echo "$cur_ports" | grep -q "\"HostPort\":\"$port\""; then
   if [ "$cur_state" != running ]; then
     docker start "$name" >/dev/null
     say "started $name, it was $cur_state"
