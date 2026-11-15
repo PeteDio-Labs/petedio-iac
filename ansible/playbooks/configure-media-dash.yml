@@ -379,13 +379,18 @@
     # unknown host is a hard failure, and StrictHostKeyChecking=accept-new only helps the
     # first time if something is there to write to. Doing it here means the first real
     # question does not fail on seven unknown hosts.
+    # plex-remote (244) is not scanned here: its sshd is reachable only from pve03, so 237 cannot
+    # scan it. tracerr reaches it with `ssh -J` through pve03 (key from configure-tracerr-plex-remote.yml),
+    # and StrictHostKeyChecking=accept-new records 244's key on first use. pve03's own key is
+    # pre-seeded below, so the jump hop is checked.
     - name: Pre-seed the media hosts' ssh host keys
       ansible.builtin.shell:
         cmd: >-
           ssh-keyscan -T 5 -H
           192.168.50.33 192.168.50.15 192.168.50.16 192.168.50.20
-          192.168.50.21 192.168.86.236
+          192.168.50.21 192.168.86.253 192.168.50.10
           > {{ mtrace_dir }}/.ssh/known_hosts.new
+          && grep -c ssh-ed25519 {{ mtrace_dir }}/.ssh/known_hosts.new
           && mv {{ mtrace_dir }}/.ssh/known_hosts.new {{ mtrace_dir }}/.ssh/known_hosts
       changed_when: true
 
