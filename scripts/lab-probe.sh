@@ -363,9 +363,9 @@ case "$PROBE" in
   schedule)
     only
     # Fixed command. It prints whether /etc/mtrace.env turns the schedule on, the last six `run`
-    # records of /var/lib/mtrace/schedule.jsonl (free-text fields withheld; the record holds no title), and how many title records
+    # records of /var/lib/mtrace/schedule.jsonl (a fixed projection: time, id, phase, counters and whether an error was set; no free text, no title), and how many title records
     # each outcome holds. A title's name never reaches this public log.
-    OUT="$(in237 'F=/var/lib/mtrace/schedule.jsonl; V=$(sed -n "s/^MEDIA_CONTROL_SCHEDULE=//p" /etc/mtrace.env | head -1); case "$V" in on|off) echo "MEDIA_CONTROL_SCHEDULE=$V";; "") echo "MEDIA_CONTROL_SCHEDULE=unset";; *) echo "MEDIA_CONTROL_SCHEDULE=other";; esac; if [ -f "$F" ]; then echo "logfile=present"; grep "\"type\":\"run\"" "$F" | tail -6 | sed -E "s/\"(error|truncated)\":\"([^\"\\\\]|\\\\.)*\"/\"\\1\":\"(text withheld)\"/g" | cut -c1-400; for o in grabbed no_grab error; do echo "titles_$o=$(grep -c "\"outcome\":\"$o\"" "$F")"; done; else echo "logfile=absent"; fi')" \
+    OUT="$(in237 'F=/var/lib/mtrace/schedule.jsonl; V=$(sed -n "s/^MEDIA_CONTROL_SCHEDULE=//p" /etc/mtrace.env | head -1); case "$V" in on|off) echo "MEDIA_CONTROL_SCHEDULE=$V";; "") echo "MEDIA_CONTROL_SCHEDULE=unset";; *) echo "MEDIA_CONTROL_SCHEDULE=other";; esac; if [ -f "$F" ]; then echo "logfile=present"; grep "\"type\":\"run\"" "$F" | tail -6 | while IFS= read -r L; do printf "%s\n" "$L" | grep -oE "\"(ts|runId|run|phase)\":\"[^\"]*\"|\"(searched|errors|grabbed|deferred)\":[0-9]+|\"read\":\{[^}]*\}|\"error\":\"" | tr "\n" " "; echo; done; for o in grabbed no_grab error; do echo "titles_$o=$(grep -c "\"outcome\":\"$o\"" "$F")"; done; else echo "logfile=absent"; fi')" \
       || { echo "FAILED: reading the schedule on 237 failed, so nothing was examined." >&2; exit 1; }
     printf '%s\n' "$OUT"
     ON="$(printf '%s\n' "$OUT" | grep -c '^MEDIA_CONTROL_SCHEDULE=on$' || true)"
