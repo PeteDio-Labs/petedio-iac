@@ -369,7 +369,7 @@ case "$PROBE" in
       || { echo "FAILED: reading the schedule on 237 failed, so nothing was examined." >&2; exit 1; }
     printf '%s\n' "$OUT"
     ON="$(printf '%s\n' "$OUT" | grep -c '^MEDIA_CONTROL_SCHEDULE=on$' || true)"
-    RUNS="$(printf '%s\n' "$OUT" | grep -c '"type":"run"' || true)"
+    RUNS="$(printf '%s\n' "$OUT" | grep -c '"runId"' || true)"
     echo "probe schedule: env on=$ON, $RUNS run record(s) shown"
     [ "$ON" = 1 ] || exit 1 ;;
 
