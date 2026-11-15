@@ -115,6 +115,25 @@
         # operator, and pruning those would lock the lab out of its own media stack.
         exclusive: false
 
+# plex-remote (244) sits on an isolated bridge that only pve03 routes, so tracerr reaches it
+# with `ssh -J root@192.168.50.10` (MED-21). A `restrict` key cannot forward, so this key on
+# pve03 re-enables forwarding for ONE destination, 244's sshd, and nothing else. It still
+# runs no command on the node: `restrict` keeps pty and user-rc off, and the key is bound to
+# 237. Tracerr opens a session on 244 through the forward, not on pve03.
+- name: Authorise mtrace's key to jump through pve03 to plex-remote
+  hosts: media_jump
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install mtrace's public key for root, forwarding to plex-remote's sshd only
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ media_dash_ssh_public_key }}"
+        key_options: 'restrict,port-forwarding,permitopen="10.244.0.244:22",from="192.168.50.237"'
+        state: present
+        exclusive: false
+
 - name: Deploy mtrace on media-dash-237
   hosts: media_dash
   become: true
@@ -372,13 +391,27 @@
     # unknown host is a hard failure, and StrictHostKeyChecking=accept-new only helps the
     # first time if something is there to write to. Doing it here means the first real
     # question does not fail on seven unknown hosts.
+    # plex-remote's sshd is reachable only from pve03, so its key is scanned there. A scan from
+    # 237 would hang on the isolated bridge and leave the entry out.
+    - name: Read plex-remote's host key from pve03
+      ansible.builtin.command:
+        cmd: ssh-keyscan -T 5 -H -t ed25519 10.244.0.244
+      delegate_to: pve03
+      become: true
+      register: mtrace_plex_remote_key
+      changed_when: false
+      check_mode: false # read-only; a keyscan changes nothing, and the pre-seed task below needs its output under --check
+      failed_when: "'ssh-ed25519' not in mtrace_plex_remote_key.stdout"
+
     - name: Pre-seed the media hosts' ssh host keys
       ansible.builtin.shell:
         cmd: >-
-          ssh-keyscan -T 5 -H
+          { ssh-keyscan -T 5 -H
           192.168.50.33 192.168.50.15 192.168.50.16 192.168.50.20
-          192.168.50.21 192.168.86.236
+          192.168.50.21 192.168.86.253 192.168.50.10 ;
+          printf '%s\n' {{ mtrace_plex_remote_key.stdout | quote }} ; }
           > {{ mtrace_dir }}/.ssh/known_hosts.new
+          && grep -c ssh-ed25519 {{ mtrace_dir }}/.ssh/known_hosts.new
           && mv {{ mtrace_dir }}/.ssh/known_hosts.new {{ mtrace_dir }}/.ssh/known_hosts
       changed_when: true
 
