@@ -633,6 +633,28 @@
               search_lab. Deploy with scripts/deploy-pete-bot.sh, which reads
               kv/services/lab-agent-search.
 
+        # Same rule for the Codex review bearer: never render it away. A deploy that could not read
+        # codex_review_bearer_token (a Vault hiccup, or a deploy path that omits it) would switch off
+        # both Codex review tools under a green check.
+        - name: Look for an installed Codex review token
+          ansible.builtin.command: grep -q '^LAB_CODEX_REVIEW_TOKEN=.' {{ lab_agent_env_file | quote }}
+          register: lab_agent_codex_review_installed
+          changed_when: false
+          failed_when: lab_agent_codex_review_installed.rc > 1
+          check_mode: false
+          no_log: true
+          when: lab_agent_env_stat.stat.exists
+
+        - name: Refuse a deploy that would drop the installed Codex review token
+          ansible.builtin.assert:
+            that:
+              - (pete_bot_codex_review_bearer | default('') | length > 0) or (lab_agent_codex_review_installed.rc | default(1)) != 0
+            fail_msg: >-
+              lab-agent's env file holds LAB_CODEX_REVIEW_TOKEN, but this deploy passed no
+              pete_bot_codex_review_bearer, so the render would remove it and the Codex review tools
+              would go dark. Deploy with scripts/deploy-pete-bot.sh, or fix the Vault read of
+              codex_review_bearer_token in pete-bot's deploy.yml.
+
         # Same rule for the media assistant's two credentials (PET-869): never render either away.
         # A deploy that cannot read kv/services/lab-agent-media would turn the media assistant off
         # under a green health check, and the owner's DMs would then be refused without a word.
