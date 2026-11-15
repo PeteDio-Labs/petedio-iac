@@ -11,6 +11,7 @@
 #   scripts/lab-probe.sh guest_unit vmid=119   # one fixed unit in one fixed guest: state, port, journal tail (node-exporter on Authentik)
 #   scripts/lab-probe.sh prometheus       # alert rules on metrics-240: metric-alerts rules, Prometheus rules, alerts, targets
 #   scripts/lab-probe.sh ollama_ps        # models loaded in Ollama on CT 246: name, size, VRAM share, expiry
+#   scripts/lab-probe.sh schedule         # tracerr's scheduled search (MED-12): is it on, and what did its runs read and search
 #   scripts/lab-probe.sh health [service=pete-bot|lab-agent]   # GET /health on 237; both when none is named
 #
 # WHAT RUNS. Each probe is a fixed command. The caller supplies values, never commands: every value
@@ -359,5 +360,18 @@ case "$PROBE" in
     echo "probe media_ask: one question answered HTTP ${CODE:-none}, ${#OUT} characters read"
     [ "${CODE:-}" = 200 ] || exit 1 ;;
 
-  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps, prometheus, guest_unit)" ;;
+  schedule)
+    only
+    # Fixed command. It prints whether /etc/mtrace.env turns the schedule on, the last six `run`
+    # records of /var/lib/mtrace/schedule.jsonl (a fixed projection: time, id, phase, counters and whether an error was set; no free text, no title), and how many title records
+    # each outcome holds. A title's name never reaches this public log.
+    OUT="$(in237 'F=/var/lib/mtrace/schedule.jsonl; V=$(sed -n "s/^MEDIA_CONTROL_SCHEDULE=//p" /etc/mtrace.env | head -1); case "$V" in on|off) echo "MEDIA_CONTROL_SCHEDULE=$V";; "") echo "MEDIA_CONTROL_SCHEDULE=unset";; *) echo "MEDIA_CONTROL_SCHEDULE=other";; esac; if [ -f "$F" ]; then echo "logfile=present"; grep "\"type\":\"run\"" "$F" | tail -6 | while IFS= read -r L; do printf "%s\n" "$L" | grep -oE "\"(ts|runId|run|phase)\":\"[^\"]*\"|\"(searched|errors|grabbed|deferred)\":[0-9]+|\"read\":\{[^}]*\}|\"error\":\"" | tr "\n" " "; echo; done; for o in grabbed no_grab error; do echo "titles_$o=$(grep -c "\"outcome\":\"$o\"" "$F")"; done; else echo "logfile=absent"; fi')" \
+      || { echo "FAILED: reading the schedule on 237 failed, so nothing was examined." >&2; exit 1; }
+    printf '%s\n' "$OUT"
+    ON="$(printf '%s\n' "$OUT" | grep -c '^MEDIA_CONTROL_SCHEDULE=on$' || true)"
+    RUNS="$(printf '%s\n' "$OUT" | grep -c '"type":"run"' || true)"
+    echo "probe schedule: env on=$ON, $RUNS run record(s) shown"
+    [ "$ON" = 1 ] || exit 1 ;;
+
+  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps, prometheus, guest_unit, schedule)" ;;
 esac
