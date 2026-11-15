@@ -52,19 +52,3 @@ all:
         plex-gpu:                                      # 236, pve02, .86 only (PET-504)
           ansible_host: 192.168.86.253
           mtrace_key_sources: ["192.168.50.237", "192.168.86.44"]
-        # plex-remote (244), the remote-user Plex that carries 236's old identity (MED-11).
-        # It sits on the isolated bridge vmbr244, which only pve03 routes, so Ansible reaches it
-        # through pve03 as petedio-media-iac does. A forwarded connection reaches 244's sshd from
-        # pve03's bridge address, 10.244.0.1, so that is the only source its key accepts.
-        plex-remote:
-          ansible_host: 10.244.0.244
-          ansible_ssh_common_args: >-
-            -o ProxyCommand="ssh -W %h:%p -o BatchMode=yes -i {{ ansible_ssh_private_key_file }} root@192.168.50.10"
-          mtrace_key_sources: ["10.244.0.1"]
-
-    # pve03 as tracerr's jump host to plex-remote. Not in media_read: that group also receives the
-    # media-dash-cd deploy key, which must not reach a Proxmox node. pve03's own entry, and its
-    # connection variables, are in inventory/pve03.yml.
-    media_jump:
-      hosts:
-        pve03: {}
