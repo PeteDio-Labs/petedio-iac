@@ -138,9 +138,13 @@ here, and never add `iam:*` or drop the boundary condition.
 ## Budget and anomaly permissions
 
 `budgets.tf` (PET-803) manages two budgets and a Cost Anomaly Detection monitor. The apply user
-needs these actions, which the inline policy above does not grant. Add them as a second statement
-before the first apply. Budget actions take a budget ARN; the `ce:` anomaly actions do not support
-resource scoping for monitors that do not exist yet, so they use `*`.
+needs actions that the inline policy above does not grant. **Do not add them to the inline policy.**
+IAM caps all of a user's inline policies at 2,048 bytes, and the merged document is 2,076 (PET-907).
+Put them in a customer-managed policy named `petedio-watchdog-budgets` (6,144-byte limit) and attach
+it to `petedio-terraform-watchdog`. An admin identity, not the apply user, creates and attaches it:
+the apply user holds no `iam:AttachUserPolicy`, so it cannot change its own grants. Budget actions take
+a budget ARN; the `ce:` anomaly actions do not support resource scoping for monitors that do not exist
+yet, so they use `*`. The policy document is these two statements:
 
 ```json
 {"Effect": "Allow",
@@ -155,6 +159,10 @@ resource scoping for monitors that do not exist yet, so they use `*`.
             "ce:ListTagsForResource"],
  "Resource": "*"}
 ```
+
+Create it with `aws iam create-policy --policy-name petedio-watchdog-budgets --policy-document file://<doc>`,
+where the document wraps the two statements in `{"Version": "2012-10-17", "Statement": [ ... ]}`, then run
+`aws iam attach-user-policy --user-name petedio-terraform-watchdog --policy-arn <arn>`.
 
 Pass `-var 'budget_alert_emails=["you@example.com"]'` on each plan and apply. Both budgets exclude
 credits from the calculation, so they track gross spend. `petedio-monthly-5usd` stays hand-made.
