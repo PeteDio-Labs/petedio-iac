@@ -29,3 +29,5 @@ restart-guests.yml
 configure-media-storage.yml
 # The on-demand staging command on pve03 (staging-power.yml).
 configure-staging-power.yml
+# tracerr's jump to plex-remote 244 (MED-21). Reads the public key from 237; places no secret.
+configure-tracerr-plex-remote.yml
