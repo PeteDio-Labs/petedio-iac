@@ -1,0 +1,83 @@
+---
+# configure-backup-plex-remote.yml — move plex-remote (244) from pve03's nightly backup to
+# the weekly job in environments/homelab/backup.tf (MED-11).
+#
+# pve03's 02:45 job is hand-made and covers all guests except 247. This play adds 244 to that
+# job's exclude list. It finds the job by node and schedule, never by id, and it changes
+# nothing when 244 is already excluded. It fails when it finds no job or more than one, so
+# a changed schedule cannot make it edit the wrong job.
+#
+# Run it after the apply that creates plex-remote-weekly: 244 must not be left with no job.
+# The play checks for that job before it excludes anything.
+#
+#   playbook_check, then playbook_apply (lab-write tap) from lab-action.yml.
+
+- name: Exclude plex-remote from pve03's nightly backup
+  hosts: pve_new
+  become: true
+  gather_facts: false
+
+  vars:
+    nightly_schedule: "02:45"
+    plex_remote_vmid: "244"
+    weekly_job_id: plex-remote-weekly
+
+  tasks:
+    - name: Read the cluster backup jobs
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/backup --output-format json
+      register: backup_jobs_raw
+      changed_when: false
+      check_mode: false # lab-action: read-only
+
+    - name: Pick the nightly job and the weekly job
+      ansible.builtin.set_fact:
+        backup_jobs: "{{ backup_jobs_raw.stdout | from_json }}"
+        nightly_jobs: >-
+          {{ (backup_jobs_raw.stdout | from_json)
+             | selectattr('node', 'defined') | selectattr('node', 'equalto', 'pve03')
+             | selectattr('schedule', 'equalto', nightly_schedule) | list }}
+        weekly_jobs: >-
+          {{ (backup_jobs_raw.stdout | from_json)
+             | selectattr('id', 'equalto', weekly_job_id) | list }}
+
+    - name: Check that exactly one nightly job matched
+      ansible.builtin.assert:
+        that: nightly_jobs | length == 1
+        fail_msg: >-
+          Found {{ nightly_jobs | length }} pve03 job(s) at {{ nightly_schedule }} out of
+          {{ backup_jobs | length }} read. Nothing was changed.
+
+    - name: Check that the weekly job exists before 244 leaves the nightly job
+      ansible.builtin.assert:
+        that: weekly_jobs | length == 1
+        fail_msg: >-
+          {{ weekly_job_id }} is not in the {{ backup_jobs | length }} job(s) read. Apply the
+          Terraform change first, or 244 would have no backup. Nothing was changed.
+      when: not ansible_check_mode
+
+    - name: Work out the exclude list
+      ansible.builtin.set_fact:
+        nightly_id: "{{ nightly_jobs[0].id }}"
+        current_exclude: "{{ (nightly_jobs[0].exclude | default('')) | string | split(',') | select | list }}"
+
+    - name: Exclude 244 from the nightly job
+      ansible.builtin.command:
+        cmd: >-
+          pvesh set /cluster/backup/{{ nightly_id }}
+          --exclude {{ (current_exclude + [plex_remote_vmid]) | unique | sort | join(',') }}
+      when: plex_remote_vmid not in current_exclude
+      changed_when: true
+
+    - name: Read the job back
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/backup/{{ nightly_id }} --output-format json
+      register: nightly_after
+      changed_when: false
+      check_mode: false # lab-action: read-only
+
+    - name: Report what the nightly job covers
+      ansible.builtin.debug:
+        msg: >-
+          Nightly job covers all guests except {{ (nightly_after.stdout | from_json).exclude | default('none') }}.
+          Read {{ backup_jobs | length }} job(s); weekly job present: {{ weekly_jobs | length == 1 }}.
