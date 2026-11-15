@@ -31,3 +31,5 @@ configure-media-storage.yml
 configure-staging-power.yml
 # tracerr's jump to plex-remote 244 (MED-21). Reads the public key from 237; places no secret.
 configure-tracerr-plex-remote.yml
+# Moves plex-remote 244 from pve03's nightly backup to the weekly job (MED-11).
+configure-backup-plex-remote.yml
