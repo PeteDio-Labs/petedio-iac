@@ -89,14 +89,14 @@ failure. The Vault token is revoked as soon as the certificate is signed.
 ## pete-bot deploy (media-dash-237)
 
 The pete-bot repo's `deploy.yml` runs on every push to its `main`, not from a dispatch here. It
-signs a 30-minute SSH certificate for the `pete-bot-deploy` principal and connects to `media-dash-237`
+signs a 30-minute SSH certificate for the `deploy-pete-bot` principal and connects to `media-dash-237`
 with it. It no longer reads `deploy_ssh_private_key` from `kv/services/pete-bot`.
 
 To set it up, do these in order before you merge the pete-bot change:
 
-1. Apply `vault-config`, which adds the `pete-bot-deploy` signing role and lets `pete-bot-cd` sign it.
+1. Apply `vault-config`, which adds the `deploy-pete-bot` signing role and lets `pete-bot-cd` sign it. The name follows the `deploy-<name>` pattern that `scripts/vault-config-guard.py` allows, so the gated `vault-config-apply.yml` can take it. If the guard refuses the plan, run `scripts/apply-vault-config.sh` on the Mac.
 2. Dispatch `lab-action.yml` with `action=playbook_apply` and `target=configure-ssh-ca-deploy-hosts.yml`.
-   The play now also trusts the CA on 237 and lists `pete-bot-deploy` in root's principals file.
+   The play now also trusts the CA on 237 and lists `deploy-pete-bot` in root's principals file.
 3. Merge the pete-bot change. The next push to its `main` is the first certificate login to 237.
 
 A merge before steps 1 and 2 fails the deploy at the signing step, not silently. `configure-pete-bot.yml`

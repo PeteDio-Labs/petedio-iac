@@ -198,7 +198,7 @@ resource "vault_ssh_secret_backend_role" "search_deploy" {
   }
 }
 
-# pete-bot-deploy (PET-375 follow-up): the pete-bot repo's deploy.yml job on runner 232 or 233 signs a
+# deploy-pete-bot (PET-375 follow-up): the pete-bot repo's deploy.yml job on runner 232 or 233 signs a
 # fresh key per run and connects to media-dash-237 as root with it, so the deploy stops reading the
 # long-lived deploy_ssh_private_key from kv/services/pete-bot. Only 237 lists this principal in
 # root's principals file (host_vars/media-dash-237.yml), so the certificate opens that one host.
@@ -206,14 +206,14 @@ resource "vault_ssh_secret_backend_role" "search_deploy" {
 # minutes, and there is no pty and no forwarding.
 resource "vault_ssh_secret_backend_role" "pete_bot_deploy" {
   backend  = vault_mount.ssh_client_signer.path
-  name     = "pete-bot-deploy"
+  name     = "deploy-pete-bot"
   key_type = "ca"
 
   depends_on = [vault_policy.breakglass_247]
 
   allow_user_certificates = true
-  allowed_users           = "pete-bot-deploy"
-  default_user            = "pete-bot-deploy"
+  allowed_users           = "deploy-pete-bot"
+  default_user            = "deploy-pete-bot"
   allow_user_key_ids      = false
 
   allowed_extensions = ""
