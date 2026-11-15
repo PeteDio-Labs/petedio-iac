@@ -100,6 +100,9 @@ PB_DESK_APP_PEM="$(field desk_app_pem)"
 # Optional (PET-701): a read-only Plane token for the scheduled reports. With it and the desk
 # App, the reports turn on. scripts/seed-pete-bot-plane-key.sh writes it.
 PB_PLANE_API_KEY="$(field plane_api_key)"
+# Optional: the bearer for /v1/codex-review and lab-agent's Codex tools. scripts/seed-pete-bot-codex-review-token.sh
+# writes it. Absent leaves both off.
+PB_CODEX_REVIEW_BEARER="$(field codex_review_bearer_token)"
 # Optional (PET-724): the public half of the pete-bot-cd deploy key. The play authorizes it
 # for root on 237 only. scripts/seed-pete-bot-cd-key.sh writes it.
 PB_CD_PUBLIC_KEY="$(field deploy_ssh_public_key)"
@@ -229,7 +232,7 @@ LAB_GH_APP_ID="$LAB_GH_APP_ID" LAB_GH_INSTALL_ID="$LAB_GH_INSTALL_ID" LAB_GH_APP
 LAB_PVE_ID="$LAB_PVE_ID" LAB_PVE_SECRET="$LAB_PVE_SECRET" LAB_PVE_ENDPOINT="$LAB_PVE_ENDPOINT" \
 LAB_PVE_CA="$LAB_PVE_CA" LAB_PLANE_TOKEN="$LAB_PLANE_TOKEN" LAB_SEARCH_TOKEN="$LAB_SEARCH_TOKEN" \
 LAB_MTRACE_TOKEN="$LAB_MTRACE_TOKEN" LAB_BAZARR_KEY="$LAB_BAZARR_KEY" \
-PB_CD_PUBLIC_KEY="$PB_CD_PUBLIC_KEY" \
+PB_CD_PUBLIC_KEY="$PB_CD_PUBLIC_KEY" PB_CODEX_REVIEW_BEARER="$PB_CODEX_REVIEW_BEARER" \
 python3 -c '
 import json, os
 json.dump({
@@ -239,6 +242,7 @@ json.dump({
     "pete_bot_owner_user_id":    os.environ["PB_OWNER"],
     "pete_bot_alert_bearer":     os.environ["PB_BEARER"],
     "pete_bot_notify_bearer":    os.environ["PB_NOTIFY_BEARER"],
+    "pete_bot_codex_review_bearer": os.environ.get("PB_CODEX_REVIEW_BEARER", ""),
     "pete_bot_github_updates_token": os.environ.get("PB_UPDATES_TOKEN", ""),
     "pete_bot_desk_app_id":          os.environ.get("PB_DESK_APP_ID", ""),
     "pete_bot_desk_installation_id": os.environ.get("PB_DESK_INSTALLATION_ID", ""),
