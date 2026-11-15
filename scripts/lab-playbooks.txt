@@ -33,3 +33,5 @@ configure-staging-power.yml
 configure-tracerr-plex-remote.yml
 # Moves plex-remote 244 from pve03's nightly backup to the weekly job (MED-11).
 configure-backup-plex-remote.yml
+# The backup store and each node's backup job (MED-11). Every check_mode: false task in its tree only reads.
+configure-backup-store.yml

@@ -34,7 +34,7 @@
     cmd: pvesh get /cluster/backup --output-format json
   register: backup_store_jobs_raw
   changed_when: false
-  check_mode: false
+  check_mode: false  # lab-action: read-only
 
 - name: Decide what this node's job should look like
   ansible.builtin.set_fact:
@@ -102,7 +102,7 @@
     cmd: pvesh get /cluster/backup --output-format json
   register: backup_store_jobs_after
   changed_when: false
-  check_mode: false
+  check_mode: false  # lab-action: read-only
 
 - name: Show it
   ansible.builtin.debug:

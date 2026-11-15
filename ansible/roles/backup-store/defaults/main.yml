@@ -127,7 +127,7 @@ backup_store_jobs:
     # the only lever is leaving it out. Only put a VMID here when losing it entirely is
     # acceptable, and say why:
     #
-    #   247 claude-247 — rebuilt end to end by claude.tf + roles/claude-code. Its repos
+    #   247 claude-247 — rebuilt end to end by claude.tf + the Claude Code role. Its repos
     #     are clones of GitHub main and its one unique file (~/.claude/.credentials.json)
     #     is recovered by an interactive /login that no restore avoids. Against that, the
     #     nightly stop kills whatever Remote Control session is in flight, which is the
