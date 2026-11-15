@@ -21,13 +21,17 @@
 
 - name: Converge each container declared for this node
   ansible.builtin.include_tasks: container.yml
+  # Ansible renders these vars lazily, inside container.yml's own loops. With the default
+  # loop_var, an inner `item` (mp0, dev0) replaced the VMID, and `pct set mp0` failed after
+  # `pct stop 244` had run (MED-11, 2026-11-15). A named loop_var keeps the outer value.
   vars:
-    lxc_passthrough_vmid: "{{ item.key }}"
-    lxc_passthrough_ct: "{{ item.value }}"
+    lxc_passthrough_vmid: "{{ lxc_passthrough_entry.key }}"
+    lxc_passthrough_ct: "{{ lxc_passthrough_entry.value }}"
   loop: "{{ lxc_passthrough_declared | dict2items }}"
   loop_control:
-    label: "{{ item.key }}"
-  when: item.value.node == inventory_hostname
+    loop_var: lxc_passthrough_entry
+    label: "{{ lxc_passthrough_entry.key }}"
+  when: lxc_passthrough_entry.value.node == inventory_hostname
 
 - name: Say what was examined
   ansible.builtin.debug:
