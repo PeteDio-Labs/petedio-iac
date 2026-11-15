@@ -273,7 +273,10 @@ uptime_kuma_monitors:
   - name: media-stack
     type: keyword
     url: "http://192.168.50.237:8237/health/stack"
-    keyword: '"ok": true'
+    # Kuma 2.0.2 stringifies a parsed JSON body before it matches the keyword, so it sees the
+    # compact form. mtrace pretty-prints, and the raw bytes read `"ok": true` with a space.
+    # Match the compact form: a spaced keyword read DOWN against a healthy stack (MED-13).
+    keyword: '"ok":true'
     interval: 300
     max_retries: 2
     retry_interval: 120
