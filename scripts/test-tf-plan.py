@@ -338,6 +338,15 @@ def find_pr_case():
     return "number=7" in got and "skip=false" in got
 
 
+def workflow_artifact_case():
+    """The plan step must keep plan files out of the PR's tree: a checked-in plan.json keeps its mode."""
+    wf = open(os.path.join(os.path.dirname(HERE), ".github/workflows/terraform-plan-pr.yml")).read()
+    step = wf[wf.index("      - name: Plan\n"):wf.index("      - name: Say the plan did not run")]
+    bad = [w for w in ("> plan.json", "> plan.log", "-out=tfplan", "plan.log:") if w in step.replace("sed 's/^/plan.log: /'", "")]
+    return not bad and "mktemp -d" in step and "chmod 700" in step
+
+
+results.append(check("plan files go to a private directory outside the PR tree", workflow_artifact_case(), True))
 results.append(check("find-pr picks the triggering PR at this head", find_pr_case(), True))
 results.append(check("another user's marked comment is not edited", gh_case(), "POST"))
 sys.exit(0 if all(results) else 1)
