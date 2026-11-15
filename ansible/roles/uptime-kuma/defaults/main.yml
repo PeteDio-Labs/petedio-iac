@@ -273,7 +273,7 @@ uptime_kuma_monitors:
   - name: media-stack
     type: keyword
     url: "http://192.168.50.237:8237/health/stack"
-    keyword: '"ok": true'
+    keyword: '"ok":true'   # mtrace answers compact JSON; a space here never matches (MED-13)
     interval: 300
     max_retries: 2
     retry_interval: 120
