@@ -33,7 +33,7 @@ HOSTS=(
   "radarr 192.168.50.16"
   "prowlarr 192.168.50.20"
   "qbittorrent-vpn 192.168.50.21"
-  "plex-gpu 192.168.86.236"
+  "plex-gpu 192.168.86.253"
   "media-dash-237 192.168.50.237"
 )
 

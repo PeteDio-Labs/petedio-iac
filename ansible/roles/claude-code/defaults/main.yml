@@ -624,7 +624,7 @@ claude_ops_ssh_targets:
   - { name: radarr, host: 192.168.50.16, key: "{{ claude_ops_media_ssh_key }}" }           # 105
   - { name: prowlarr, host: 192.168.50.20, key: "{{ claude_ops_media_ssh_key }}" }         # 109
   - { name: qbittorrent-vpn, host: 192.168.50.21, key: "{{ claude_ops_media_ssh_key }}" }  # 110
-  - { name: plex-gpu, host: 192.168.86.236, key: "{{ claude_ops_media_ssh_key }}" }        # 236, .86 only
+  - { name: plex-gpu, host: 192.168.86.253, key: "{{ claude_ops_media_ssh_key }}" }        # 236, .86 only
   - { name: media-dash-237, host: 192.168.50.237, key: "{{ claude_ops_media_ssh_key }}" }  # 237, mtrace
 
 # Generated on this host, as claude-ops, like claude_ops_ssh_key (PET-725).
