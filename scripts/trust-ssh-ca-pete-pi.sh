@@ -13,6 +13,9 @@
 # gates the drop-in, and a rejected drop-in is removed before sshd reloads. The script then proves
 # the result by reading sshd's effective config and the listener count.
 #
+# ansible/inventory/host_vars/pete-pi.yml declares the same state for roles/ssh-ca, so a later
+# configure-ssh-ca.yml run on this host keeps these files.
+#
 # PRINCIPAL SCOPE. AuthorizedPrincipalsFile applies to every user, so root and other accounts on the
 # Pi get no principals file and trust no certificate. Only pedro lists a principal.
 #
@@ -33,8 +36,8 @@ command -v curl >/dev/null || die "curl not in PATH"
 echo "== Vault: read the SSH CA public key"
 CA_KEY="$(curl -fsS --cacert "$CA_CERT" "$VAULT_ADDR/v1/ssh-client-signer/public_key" | tr -d '\r')" \
   || die "could not read the CA key. Is Vault sealed?"
-printf '%s\n' "$CA_KEY" | grep -Eq '^ssh-ed25519 [A-Za-z0-9+/=]+( [^ ]+)?$' \
-  || die "Vault returned no usable ssh-ed25519 CA key."
+[ "$(printf '%s\n' "$CA_KEY" | wc -l)" -eq 1 ] && printf '%s\n' "$CA_KEY" | grep -Eq '^ssh-ed25519 [A-Za-z0-9+/=]+$' \
+  || die "Vault returned no usable one-line ssh-ed25519 CA key with no comment."
 echo "  read one ssh-ed25519 key"
 
 echo "== pete-pi: trust the CA and list $PRINCIPAL for pedro"
