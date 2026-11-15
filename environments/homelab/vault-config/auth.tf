@@ -494,3 +494,28 @@ resource "vault_jwt_auth_backend_role" "deploy_terraform_plan" {
   token_ttl      = 900
   token_max_ttl  = 900
 }
+
+# deploy-media-plan: petedio-media-iac's terraform-plan-pr.yml role. It plans a same-repo pull
+# request's media Terraform on the homelab runner and comments the result.
+#
+# ⚠ BOUND TO THE WORKFLOW AND THE EVENT, as deploy-terraform-plan is. workflow_run runs main's copy
+# of the file, so a pull request cannot change which code mints this role. The role reads only
+# kv/iac/minio and kv/iac/proxmox (policies.tf). The gated apply's guard allowlists petedio-iac
+# alone, so a Mac `apply-vault-config.sh` creates this role.
+resource "vault_jwt_auth_backend_role" "deploy_media_plan" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "deploy-media-plan"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository   = var.media_repo
+    ref          = "refs/heads/main"
+    event_name   = "workflow_run"
+    workflow_ref = "${var.media_repo}/.github/workflows/terraform-plan-pr.yml@refs/heads/main"
+  }
+  token_policies = [vault_policy.deploy_media_plan.name]
+  token_ttl      = 900
+  token_max_ttl  = 900
+}

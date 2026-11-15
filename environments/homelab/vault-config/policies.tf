@@ -725,3 +725,22 @@ resource "vault_policy" "claude_ops" {
     }
   EOT
 }
+
+# deploy-media-plan: what petedio-media-iac's terraform-plan-pr.yml may read. The MinIO keys for the
+# state backend and the Proxmox API token, and nothing else. It has no read of kv/iac/lxc-ssh (root
+# on every LXC): the plan uses a placeholder public key, because modules/proxmox-lxc ignores changes
+# to initialization[0].user_account. Add a path here only with a comment naming the plan step that
+# reads it.
+resource "vault_policy" "deploy_media_plan" {
+  name = "deploy-media-plan"
+
+  policy = <<-EOT
+    path "kv/data/iac/minio" {
+      capabilities = ["read"]
+    }
+
+    path "kv/data/iac/proxmox" {
+      capabilities = ["read"]
+    }
+  EOT
+}

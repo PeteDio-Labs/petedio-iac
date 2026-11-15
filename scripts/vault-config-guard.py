@@ -55,6 +55,7 @@ PINNED_POLICIES = {
         "kv/data/iac/minio", "kv/data/iac/proxmox", "kv/data/iac/cloudflare", "kv/data/iac/authentik",
         "kv/data/admin/postgres", "kv/data/db/plane", "kv/data/services/water-fast",
     },
+    "deploy-media-plan": {"kv/data/iac/minio", "kv/data/iac/proxmox"},
 }
 ALLOWED_REPOS = {"PeteDio-Labs/petedio-iac"}
 SUB_OK = re.compile(r"^repo:PeteDio-Labs(@\d+)?/[a-z0-9-]+(@\d+)?:(ref:refs/heads/main|pull_request)$")
