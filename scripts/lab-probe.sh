@@ -17,7 +17,7 @@
 # must match a strict pattern below, and the remote text carries only base64 or an allowlisted
 # word, so no value reaches a shell as code.
 #
-# CREDENTIALS. None is placed. `tracerr` and `media_ask` read lab-agent's own tracerr token and ask
+# CREDENTIALS. None is placed. The `mtrace` probe and `media_ask` read lab-agent's own tracerr token and ask
 # port from /etc/lab-agent/lab-agent.env inside 237, as root, in one remote command. The token
 # never leaves 237 and never reaches this script's output. The caller shows in tracerr's journal as
 # `lab-agent`, which is the same caller the media assistant uses.
@@ -257,7 +257,7 @@ done
 in237() { ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$NODE" "pct exec 237 -- sh -c '$1'"; }
 
 # 237 has no curl, so an HTTP call goes through bash's /dev/tcp. The script travels on stdin and
-# takes the base64 body and the kind (tracerr or ask) as arguments, so no value is shell source.
+# takes the base64 body and the kind (mtrace or ask) as arguments, so no value is shell source.
 # It reads the token from lab-agent.env as root, sends it only to its own socket, and prints the
 # response body and a final "HTTP <code>" line.
 REMOTE_POST='set -u
