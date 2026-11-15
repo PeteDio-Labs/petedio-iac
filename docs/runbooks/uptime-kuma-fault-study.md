@@ -1,5 +1,7 @@
 # Uptime Kuma on Pete-Pi — the fault-injection study instrument
 
+> **Correction 2026-11-15.** `zot-registry` and `nfs-pve02` left the declared list and sit in `uptime_kuma_retired_monitors`, so the next deploy deletes them. Paused monitors showed as "no beats" in `lab_overview` every day. Any mention of them below is history. `bazarr` is declared, and it is in the `pve03-nightly-backup` window.
+
 > **Corrected 2026-09-10 (PET-385).** The nodes are pve02 and pve03; pve01 died on 2026-09-03. Plex is probed at `192.168.86.236` (plex-gpu, `.86` only since PET-504); 103 at `.86.140` is gone. The role declares 23 monitors, 21 active, plus two backup push monitors (`zot-registry` and `nfs-pve02` disabled 2026-09-04), and since PET-374 every one notifies through pete-bot. From the rack loss until 2026-09-22, the six-hourly backup skipped every run, because the rack loss took the pve02 export it mounted. PET-386 moved the store to ollama-host, which the backup section describes.
 
 Uptime Kuma on Pete-Pi is the measurement apparatus for a controlled

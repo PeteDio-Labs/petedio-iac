@@ -105,6 +105,11 @@ uptime_kuma_notifications: >-
 # have the next deploy delete it. Remove the name once a deploy has retired it.
 uptime_kuma_retired_monitors:
   - usaa   # PET-590: LXC 238 destroyed
+  # The zot and NFS pair studied a dependency that no longer exists. Both were provisioned
+  # as paused (active: false), so Kuma showed them as "no beats" and lab_overview listed them
+  # as needing attention every day. Remove these two names after a deploy has retired them.
+  - zot-registry
+  - nfs-pve02
 
 # ------------------------------------------------------------------ monitors --
 # EVERY target is a raw IP. A monitor that resolved a name would go DOWN during
@@ -116,31 +121,10 @@ uptime_kuma_retired_monitors:
 # 403 to a non-browser client, which would read as a permanent DOWN and poison
 # the baseline before the study started.
 uptime_kuma_monitors:
-  # -- the cross-node pair. Deliberately TWO monitors, never one. --------------
-  # zot's blob store is an NFS mount from pve02, so stopping nfs-server on pve02
-  # breaks a registry running on pve01. Cause and symptom sit on different hosts
-  # and that gap is the object of study; collapsing these would erase it.
-  # /v2/_catalog is used rather than /v2/ on purpose — it reads the storage
-  # layer, so the NFS fault actually surfaces here. /v2/ answers from memory and
-  # would stay green through the outage.
-  # ⚠ BOTH DISABLED 2026-09-04. The pair studied a cross-node dependency that no
-  # longer exists: registry-106 died with pve01 and is not restored, and pve02
-  # serves no media export now that the pools are local ZFS. Left here as the
-  # record of the design; re-enable together, never one alone, if the registry
-  # comes back on a different node than its blob store.
-  - name: zot-registry
-    type: http
-    url: "https://192.168.50.111/v2/_catalog"
-    ignore_tls: true          # LE cert is for docker.pdlab.dev; we dial by IP
-    active: false
-    description: "OCI registry. Was LXC 106 on pve01; blob store was NFS from pve02."
-
-  - name: nfs-pve02
-    type: port
-    hostname: "192.168.50.11"
-    port: 2049
-    active: false
-    description: "The NFS export zot depended on. The CAUSE side of the pair."
+  # The zot-registry and nfs-pve02 pair left this list: registry-106 died with pve01 and
+  # pve02 serves no NFS export. They are in uptime_kuma_retired_monitors above. If a registry
+  # returns on a different node than its blob store, declare both again, never one alone.
+  # /v2/_catalog reads the storage layer; /v2/ answers from memory and hides an NFS fault.
 
   # -- Vault: sealed must read as DOWN, not as an error ------------------------
   # /v1/sys/health answers 200 unsealed-active and 503 sealed. Accepting only
@@ -210,6 +194,12 @@ uptime_kuma_monitors:
   - name: prowlarr
     type: http
     url: "http://192.168.50.20:9696/"
+  # Bazarr (222, pve03) ran with no monitor (PET-852). Port 6767 comes from
+  # bazarr_port in petedio-media-iac. /ping answers 200 without a login.
+  - name: bazarr
+    type: http
+    url: "http://192.168.50.222:6767/ping"
+    description: "Bazarr subtitles on 222. Liveness only; its Sonarr and Radarr links are not read."
   - name: qbittorrent
     type: http
     url: "http://192.168.50.21:8080/"
@@ -404,6 +394,7 @@ uptime_kuma_maintenances:
       - seerr          # 101
       - flaresolverr   # 102
       - sonarr         # 104
+      - bazarr         # 222
       - radarr         # 105
       - prowlarr       # 109
       - authentik      # 119

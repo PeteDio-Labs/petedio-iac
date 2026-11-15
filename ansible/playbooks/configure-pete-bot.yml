@@ -70,7 +70,11 @@
     # no-CI list below, and its tier-2 paths (Terraform, workflows, guards) wait for a tap.
     # petedio-media-iac joined on 2026-11-15 (PET-867): its PRs had no reviewer because the desk
     # skipped the repo. It runs PR CI, so it stays off the no-CI list below.
-    pete_bot_desk_repos: petedio-workspace,petedio-vault,petedio-pm,petedio-iac,petedio-media-iac
+    # petedio-media-control and petedio-search joined on 2026-11-15 (Pedro): their open PRs sat
+    # 8 days with no reviewer. Both run PR CI. pete-bot (the desk reviewing its own code),
+    # petedio-usaa, pdlabs-portfolio (UI goes through staging on Pedro's word) and toonish-ui
+    # (kit merges are batched until Pedro approves) stay off until Pedro decides each one.
+    pete_bot_desk_repos: petedio-workspace,petedio-vault,petedio-pm,petedio-iac,petedio-media-iac,petedio-media-control,petedio-search
     # The Codex-out fallback (PET-751, Pedro 2026-11-07). When the Codex queue fails or stays
     # silent for two hours, tier 0 merges on CI and tier 1 on CI plus a clean Qwen review from
     # this Ollama. A Qwen answer can only hold a PR. Tier 2 never falls back. Empty turns it off.
