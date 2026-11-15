@@ -127,6 +127,14 @@
     mtrace_user: mtrace
     mtrace_group: mtrace
     mtrace_port: 8237
+    # The scheduled search (MED-12, petedio-media-control#35). Daily it searches titles that
+    # became available in the last 45 days; weekly it searches every available title with no
+    # file, mtrace_search_gap_ms apart, at most mtrace_search_cap per pass. The log lives in
+    # the unit's StateDirectory. Set mtrace_schedule to "off" to stop it.
+    mtrace_schedule: "on"
+    mtrace_search_gap_ms: 30000
+    mtrace_search_cap: 60
+    mtrace_schedule_log: /var/lib/mtrace/schedule.jsonl
     # Controller path to the compiled binary. CI overrides this with the artifact it just
     # built on the runner; the operator's script points it at the local checkout.
     media_dash_binary_src: "{{ lookup('env', 'HOME') }}/petedio/media-control/dist/mtrace"
@@ -197,6 +205,18 @@
           and pair separators). \A/\Z, not ^/$: Python's $ matches before a trailing
           newline too, which is exactly the byte this assert exists to catch.
       no_log: true
+
+    - name: Assert the scheduled search settings are well formed
+      ansible.builtin.assert:
+        that:
+          - mtrace_schedule in ['on', 'off']
+          - mtrace_search_gap_ms | string is match('\\A[0-9]+\\Z')
+          - mtrace_search_cap | string is match('\\A[1-9][0-9]*\\Z')
+          - mtrace_schedule_log is match('\\A/var/lib/mtrace/[A-Za-z0-9._-]+\\Z')
+        fail_msg: >-
+          mtrace_schedule must be on or off, mtrace_search_gap_ms a number of milliseconds,
+          mtrace_search_cap a positive count, and mtrace_schedule_log a file under
+          /var/lib/mtrace, the only path the unit's StateDirectory makes writable.
 
     - name: Assert the MCP door's audience tag is empty or well formed
       ansible.builtin.assert:

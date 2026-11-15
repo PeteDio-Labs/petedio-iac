@@ -27,6 +27,11 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths={{ mtrace_dir }}
+# The scheduled search keeps its log in /var/lib/mtrace (MED-12). StateDirectory creates it
+# owned by the service user and keeps it writable under ProtectSystem=strict. It is the only
+# state the schedule has: a restart reads it to decide what is due.
+StateDirectory=mtrace
+StateDirectoryMode=0750
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
