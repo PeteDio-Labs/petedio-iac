@@ -318,7 +318,7 @@
     - name: Revoke every pete-bot-cd deploy key from root's authorized_keys
       ansible.builtin.replace:
         path: /root/.ssh/authorized_keys
-        regexp: '(?m)^[^\n]* pete-bot-cd[ \t]*\n'
+        regexp: '(?m)^[^\n]* pete-bot-cd[ \t]*(?:\n|\Z)'
         replace: ""
 
     - name: Check that no pete-bot-cd key is authorized
