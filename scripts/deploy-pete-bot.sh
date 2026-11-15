@@ -103,14 +103,6 @@ PB_PLANE_API_KEY="$(field plane_api_key)"
 # Optional: the bearer for /v1/codex-review and lab-agent's Codex tools. scripts/seed-pete-bot-codex-review-token.sh
 # writes it. Absent leaves both off.
 PB_CODEX_REVIEW_BEARER="$(field codex_review_bearer_token)"
-# Optional (PET-724): the public half of the pete-bot-cd deploy key. The play authorizes it
-# for root on 237 only. scripts/seed-pete-bot-cd-key.sh writes it.
-PB_CD_PUBLIC_KEY="$(field deploy_ssh_public_key)"
-# An empty key must not pass silently: the play would skip installing it, and the CD deploy
-# that reads it would later fail. ALLOW_NO_CD_KEY=1 deploys without it on purpose.
-if [ -z "$PB_CD_PUBLIC_KEY" ] && [ "${ALLOW_NO_CD_KEY:-}" != 1 ]; then
-  die "deploy_ssh_public_key is empty. Run scripts/seed-pete-bot-cd-key.sh, then run this again. ALLOW_NO_CD_KEY=1 skips the key on purpose."
-fi
 unset SNAPSHOT
 
 # Optional (PET-670): lab-agent's two paths, read whole, like the one above. A path Vault
@@ -232,7 +224,7 @@ LAB_GH_APP_ID="$LAB_GH_APP_ID" LAB_GH_INSTALL_ID="$LAB_GH_INSTALL_ID" LAB_GH_APP
 LAB_PVE_ID="$LAB_PVE_ID" LAB_PVE_SECRET="$LAB_PVE_SECRET" LAB_PVE_ENDPOINT="$LAB_PVE_ENDPOINT" \
 LAB_PVE_CA="$LAB_PVE_CA" LAB_PLANE_TOKEN="$LAB_PLANE_TOKEN" LAB_SEARCH_TOKEN="$LAB_SEARCH_TOKEN" \
 LAB_MTRACE_TOKEN="$LAB_MTRACE_TOKEN" LAB_BAZARR_KEY="$LAB_BAZARR_KEY" \
-PB_CD_PUBLIC_KEY="$PB_CD_PUBLIC_KEY" PB_CODEX_REVIEW_BEARER="$PB_CODEX_REVIEW_BEARER" \
+PB_CODEX_REVIEW_BEARER="$PB_CODEX_REVIEW_BEARER" \
 python3 -c '
 import json, os
 json.dump({
@@ -258,7 +250,6 @@ json.dump({
     "lab_agent_pve_endpoint":        os.environ.get("LAB_PVE_ENDPOINT", ""),
     "lab_agent_pve_ca_pem":          os.environ.get("LAB_PVE_CA", ""),
     "pete_bot_plane_api_key":        os.environ.get("PB_PLANE_API_KEY", ""),
-    "pete_bot_cd_public_key":        os.environ.get("PB_CD_PUBLIC_KEY", ""),
     "lab_agent_plane_token":         os.environ.get("LAB_PLANE_TOKEN", ""),
     "lab_agent_search_token":        os.environ.get("LAB_SEARCH_TOKEN", ""),
     "lab_agent_mtrace_token":        os.environ.get("LAB_MTRACE_TOKEN", ""),
