@@ -85,6 +85,11 @@
     # petedio-cloud-threads[bot] authors every cloud thread's PR (PET-644). Without it here,
     # the desk skips them all and each one waits for Pedro (Pedro, 2026-10-19).
     pete_bot_desk_authors: petedillo,petedio-cloud-threads[bot]
+    # Logins whose `Claude review: <verdict> at <sha>` line is the desk's required review for tier 0
+    # and 1 (pete-bot's DESK_CLAUDE_REVIEWERS). Cloud threads post under petedillo's connector
+    # identity (Pedro chose this list, 2026-11-15). Tier 2 and any PR with a Codex second opinion
+    # still need Codex. Empty keeps the Codex-only gate.
+    pete_bot_desk_claude_reviewers: petedillo
     pete_bot_codex_host: 192.168.50.248
     pete_bot_desk_ready: >-
       {{ (pete_bot_desk_app_id | default('') | string | length > 0)
@@ -217,6 +222,10 @@
           - pete_bot_notify_bearer is defined and pete_bot_notify_bearer | length > 0
           # The point of a second token (PET-584): a session host must not hold the alert one.
           - pete_bot_notify_bearer != pete_bot_alert_bearer
+          # The Codex review bearer opens /v1/codex-review alone. Empty is allowed: the route then
+          # refuses every request and lab-agent offers neither Codex tool.
+          - (pete_bot_codex_review_bearer | default('')) | length == 0
+              or (pete_bot_codex_review_bearer not in [pete_bot_alert_bearer, pete_bot_notify_bearer])
         fail_msg: >-
           Missing secret extra-vars, or the notify bearer equals the alert bearer. Run
           scripts/deploy-pete-bot.sh, which resolves them from kv/services/pete-bot and
