@@ -357,13 +357,13 @@ resource "vault_policy" "pete_bot_cd" {
       capabilities = ["read"]
     }
 
-    # The Plane token for lab-agent's plane_item tool (PET-672). Optional: an absent path
+    # The Plane token for lab-agent's get_plane_item tool (PET-672). Optional: an absent path
     # leaves the tool off.
     path "kv/data/services/lab-agent-plane" {
       capabilities = ["read"]
     }
 
-    # lab-agent's petedio-search bearer, for the search_lab tool (PET-745). Optional: an
+    # lab-agent's petedio-search bearer, for the search_knowledge tool (PET-745). Optional: an
     # absent path leaves the tool off. A copy of one caller token, so pete-bot-cd never reads
     # kv/services/search itself.
     path "kv/data/services/lab-agent-search" {
@@ -390,7 +390,7 @@ resource "vault_policy" "pete_bot_cd" {
   EOT
 }
 
-# lab-agent-presence: what lab-agent's vault_presence tool may read (PET-667, PET-670).
+# lab-agent-presence: what lab-agent's check_secrets tool may read (PET-667, PET-670).
 # KV v2 METADATA under services/, and nothing under kv/data/. It can show that a secret
 # exists, its versions and when each was written. It cannot read a value or a field name.
 #

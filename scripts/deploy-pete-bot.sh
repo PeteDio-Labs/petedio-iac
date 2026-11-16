@@ -132,10 +132,10 @@ SNAPSHOT="$(read_optional kv/services/claude-workspace-mirror)"
 LAB_GH_APP_ID="$(field app_id 2>/dev/null || true)"
 LAB_GH_INSTALL_ID="$(field installation_id 2>/dev/null || true)"
 LAB_GH_APP_PEM="$(field app_pem 2>/dev/null || true)"
-# Optional (PET-672): the Plane token for plane_item. Absent leaves the tool off.
+# Optional (PET-672): the Plane token for get_plane_item. Absent leaves the tool off.
 SNAPSHOT="$(read_optional kv/services/lab-agent-plane)"
 LAB_PLANE_TOKEN="$(field token 2>/dev/null || true)"
-# Optional (PET-745): the petedio-search bearer for search_lab. Absent leaves the tool off.
+# Optional (PET-745): the petedio-search bearer for search_knowledge. Absent leaves the tool off.
 SNAPSHOT="$(read_optional kv/services/lab-agent-search)"
 LAB_SEARCH_TOKEN="$(field token 2>/dev/null || true)"
 # Optional (PET-869): the media assistant's tracerr caller token and Bazarr key. Absent leaves it off.
@@ -155,14 +155,14 @@ else
   echo "  scheduled reports: no plane_api_key, so they stay off (run scripts/seed-pete-bot-plane-key.sh)"
 fi
 if [ -n "$LAB_PLANE_TOKEN" ]; then
-  echo "  lab-agent: Plane token present, so plane_item is offered"
+  echo "  lab-agent: Plane token present, so get_plane_item is offered"
 else
-  echo "  lab-agent: kv/services/lab-agent-plane is not seeded, so plane_item is off"
+  echo "  lab-agent: kv/services/lab-agent-plane is not seeded, so get_plane_item is off"
 fi
 if [ -n "$LAB_SEARCH_TOKEN" ]; then
-  echo "  lab-agent: search token present, so search_lab is offered"
+  echo "  lab-agent: search token present, so search_knowledge is offered"
 else
-  echo "  lab-agent: kv/services/lab-agent-search is not seeded, so search_lab is off"
+  echo "  lab-agent: kv/services/lab-agent-search is not seeded, so search_knowledge is off"
 fi
 if [ -n "$LAB_MTRACE_TOKEN" ]; then
   echo "  media assistant: mtrace token present, so POST /v1/media/ask and the DM handler are on"

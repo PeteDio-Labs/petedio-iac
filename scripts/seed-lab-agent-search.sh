@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# seed-lab-agent-search.sh — give lab-agent's search_lab tool its petedio-search token (PET-745).
+# seed-lab-agent-search.sh — give lab-agent's search_knowledge tool its petedio-search token (PET-745).
 #
 # WHAT IT WRITES. kv/services/lab-agent-search, field `token`: a copy of `token_lab-agent` from
 # kv/services/search, the caller bearer that `search-secrets.sh create lab-agent` mints. Nothing
 # is typed or prompted for. A separate path, so pete-bot-cd reads this one token and never the
 # whole search secret (which holds every caller's bearer and the Plane key). An absent path just
-# leaves search_lab off.
+# leaves search_knowledge off.
 #
 # THE ORDER, on a first seed:
 #   1. scripts/search-secrets.sh create lab-agent, then scripts/deploy-search.sh
@@ -142,5 +142,5 @@ unset NEW CUR SNAPSHOT
 step "Done"
 cat <<'NOTE'
   Next: run scripts/deploy-pete-bot.sh, or merge the next change to pete-bot's main.
-  Proof: ask /lab "where is the runbook for restoring vzdump archives". The answer cites a search_lab ref.
+  Proof: ask /lab "where is the runbook for restoring vzdump archives". The answer cites a search_knowledge ref.
 NOTE

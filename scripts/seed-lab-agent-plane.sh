@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# seed-lab-agent-plane.sh — give lab-agent's plane_item tool its Plane token (PET-672).
+# seed-lab-agent-plane.sh — give lab-agent's get_plane_item tool its Plane token (PET-672).
 #
 # WHAT IT WRITES. kv/services/lab-agent-plane, field `token`: a copy of `api_key` from
 # kv/services/plane-claude, the personal access token of the dedicated Claude Plane user that
 # PET-660 creates. Nothing is typed or prompted for. A separate path, not a field on
 # kv/services/lab-agent, because the deploy reads a present path whole: a path without the
-# field would fail it, while an absent path just leaves plane_item off.
+# field would fail it, while an absent path just leaves get_plane_item off.
 #
 # ⚠ PLANE CE CANNOT SCOPE A TOKEN. The copy holds whatever the Claude Plane user may do.
-# lab-agent's plane_item makes only GET calls and a test asserts that, but the token does not
+# lab-agent's get_plane_item makes only GET calls and a test asserts that, but the token does not
 # enforce it. Keep the user a Member with no admin role.
 #
 # THE ORDER, on a first seed:

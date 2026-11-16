@@ -134,7 +134,7 @@
     #   lab_agent_github_installation_id, lab_agent_github_app_pem.
     # Optional on its own, and not one of the values lab_agent_ready counts (PET-672):
     #   lab_agent_plane_token, from kv/services/lab-agent-plane. Without it lab-agent runs
-    #   with no plane_item tool.
+    #   with no get_plane_item tool.
     # The backend answering /lab is qwen3 on the 3060 Ti lane of ollama-246, the Ollama LXC on pve01
     # since PET-528 (PET-742, PET-743). The Anthropic gateway is retired (PET-744). lab-agent's
     # /health fails when the model is missing: `ollama pull qwen3:8b` on :11434.
@@ -571,7 +571,7 @@
 
         # ⚠ NEVER REMOVE AN INSTALLED PLANE TOKEN (PET-672). A deploy path that does not read
         # kv/services/lab-agent-plane renders the env file without LAB_PLANE_TOKEN, and lab-agent
-        # restarts with no plane_item under a green health check. Fail instead, and name the fix.
+        # restarts with no get_plane_item under a green health check. Fail instead, and name the fix.
         - name: Find lab-agent's installed environment file
           ansible.builtin.stat:
             path: "{{ lab_agent_env_file }}"
@@ -593,7 +593,7 @@
             fail_msg: >-
               lab-agent's env file holds LAB_PLANE_TOKEN, but this deploy passed no
               lab_agent_plane_token, so the render would remove it and lab-agent would lose
-              plane_item. Deploy with scripts/deploy-pete-bot.sh, which reads
+              get_plane_item. Deploy with scripts/deploy-pete-bot.sh, which reads
               kv/services/lab-agent-plane. A deploy-on-merge run needs pete-bot's deploy.yml
               to read that path too.
 
@@ -614,7 +614,7 @@
             fail_msg: >-
               lab-agent's env file holds LAB_SEARCH_TOKEN, but this deploy passed no
               lab_agent_search_token, so the render would remove it and lab-agent would lose
-              search_lab. Deploy with scripts/deploy-pete-bot.sh, which reads
+              search_knowledge. Deploy with scripts/deploy-pete-bot.sh, which reads
               kv/services/lab-agent-search.
 
         # Same rule for the Codex review bearer: never render it away. A deploy that could not read

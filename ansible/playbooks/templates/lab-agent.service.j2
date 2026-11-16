@@ -39,7 +39,7 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
-# AF_UNIX for systemd's bus, which the systemd_status tool reads.
+# AF_UNIX for systemd's bus, which the check_services tool reads.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 # The one writable path: the three clones. Same reason as pete-bot's StateDirectory=.
