@@ -223,6 +223,25 @@ def stage_staging() -> dict:
     return {"staging_app_id": app_id, "staging_installation_id": inst, "staging_app_pem": pem}
 
 
+def stage_uptime_kuma() -> dict:
+    admin = kv("services/uptime-kuma", True)
+    user, password = need(admin, "services/uptime-kuma", "admin_user", "admin_password")
+    if len(password) < 12:
+        raise Abort("kv/services/uptime-kuma admin_password is shorter than the role's assert allows.")
+    # Required, unlike deploy-uptime-kuma.sh: without the bearer the play provisions monitors that
+    # alert nobody (PET-374), and a green deploy must not mean that.
+    bearer = need(kv("services/pete-bot", True), "services/pete-bot", "alert_bearer_token")[0]
+    # Optional, as in the script: a node with no token gets no backups-<node> monitor.
+    tokens = kv("services/backup-health", False)
+    print("backup push monitors: " + (", ".join("backups-" + n for n in sorted(tokens)) or "none"))
+    return {
+        "uptime_kuma_admin_user": user,
+        "uptime_kuma_admin_password": password,
+        "uptime_kuma_pete_bot_bearer": bearer,
+        "uptime_kuma_backup_push_tokens": tokens,
+    }
+
+
 DEPLOYS = {
     "plane": {
         "playbook": "configure-plane.yml",
@@ -259,6 +278,14 @@ DEPLOYS = {
         "ssh_role": "deploy-staging-249",
         "hosts": {"staging-249"},
         "stage": stage_staging,
+    },
+    # pete-pi logs in as pedro, not root: the Pi lists the principal in auth_principals/pedro.
+    "uptime-kuma": {
+        "playbook": "configure-pete-pi.yml",
+        "ssh_role": "deploy-uptime-kuma",
+        "ssh_user": "pedro",
+        "hosts": {"pete-pi"},
+        "stage": stage_uptime_kuma,
     },
     # The nodes list the deploy-backup-store principal (group_vars, written by
     # configure-ssh-ca-deploy-hosts.yml). The node host keys are pinned on the runner, so it checks
@@ -306,7 +333,8 @@ def run_ansible(spec: dict, workdir: pathlib.Path) -> None:
     if pinned:
         mounts += ["-v", f"{pinned}:{pinned}:ro"]
     # -i names the inventory directory. ansible-playbook exits 0 on a play that matches no host,
-    # so the script below fails first unless the play lists hosts. The root user is explicit
+    # so the script below fails first unless the play lists hosts. The user is explicit (root unless the spec
+    # names ssh_user)
     # because the inventory's user and key path do not exist in the container.
     script = (
         "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && "
@@ -314,7 +342,7 @@ def run_ansible(spec: dict, workdir: pathlib.Path) -> None:
         "ansible-galaxy collection install -r requirements.yml && "
         f"echo '--- targets ---' && ansible-playbook -i inventory/ {play} --list-hosts && echo '--- targets end ---' && "
         f"exec ansible-playbook -i inventory/ {play} -e @/ci/extra.json "
-        "-e ansible_user=root -e ansible_ssh_private_key_file=/ci/key"
+        f"-e ansible_user={spec.get('ssh_user', 'root')} -e ansible_ssh_private_key_file=/ci/key"
     )
     cmd = [
         "docker", "run", "--rm", "--network", "host", *mounts, "-w", "/ansible",

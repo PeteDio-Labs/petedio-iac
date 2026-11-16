@@ -8,8 +8,8 @@
 # (search-cd, search-deploy) applied to the hosts below.
 #
 # WHAT IS NOT HERE. claude-247 already deploys through ansible-claude-247.yml (claude-247-deploy,
-# ssh.tf is unchanged for it). uptime-kuma and vault-unseal stay by hand: docs/runbooks/host-deploys.md
-# says why.
+# ssh.tf is unchanged for it). vault-unseal stays by hand: docs/runbooks/host-deploys.md says why.
+# uptime-kuma deploys from deploy-uptime-kuma.yml and logs in to pete-pi as `pedro`.
 #
 # ONE APPLY. Every role, policy and signing role below lands in one `apply-vault-config.sh` run.
 # Each host must also trust the CA and list its principal before a workflow can log in. Run
@@ -63,6 +63,18 @@ locals {
     "staging-249" = {
       kv   = ["services/staging-app"]
       sign = "deploy-staging-249"
+    }
+    # Uptime Kuma on pete-pi (PET-849). The certificate's principal is deploy-uptime-kuma. The Pi
+    # lists it in /etc/ssh/auth_principals/pedro (scripts/trust-ssh-ca-pete-pi.sh), so the job logs
+    # in as pedro and no static key exists for the runner. The three records are the ones
+    # scripts/deploy-uptime-kuma.sh read.
+    "uptime-kuma" = {
+      kv = [
+        "services/uptime-kuma",
+        "services/pete-bot",
+        "services/backup-health",
+      ]
+      sign = "deploy-uptime-kuma"
     }
   }
 
