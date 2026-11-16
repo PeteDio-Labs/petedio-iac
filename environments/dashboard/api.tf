@@ -50,7 +50,7 @@ resource "aws_iam_role" "fn" {
 
 data "aws_iam_policy_document" "fn" {
   statement {
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:BatchGetItem"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
     resources = [aws_dynamodb_table.dash.arn]
   }
   statement {
