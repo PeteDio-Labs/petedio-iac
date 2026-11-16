@@ -74,6 +74,8 @@ resource "aws_cloudfront_origin_access_control" "site" {
 }
 
 locals {
+  lab_fallback = var.lab_access_client_id != null && var.lab_access_client_secret != null
+
   csp = join("; ", [
     "default-src 'self'",
     "script-src 'self'",
@@ -158,6 +160,52 @@ resource "aws_cloudfront_distribution" "site" {
     }
   }
 
+  # On-prem fallback (pete-bot on 237 through its Cloudflare tunnel). Present only when the
+  # Access service token exists. The header names are Cloudflare Access's own.
+  dynamic "origin" {
+    for_each = local.lab_fallback ? [1] : []
+    content {
+      domain_name = var.lab_origin_hostname
+      origin_id   = "lab"
+
+      custom_origin_config {
+        http_port              = 80
+        https_port             = 443
+        origin_protocol_policy = "https-only"
+        origin_ssl_protocols   = ["TLSv1.2"]
+        origin_read_timeout    = 10
+      }
+
+      custom_header {
+        name  = "CF-Access-Client-Id"
+        value = var.lab_access_client_id
+      }
+      custom_header {
+        name  = "CF-Access-Client-Secret"
+        value = var.lab_access_client_secret
+      }
+    }
+  }
+
+  # CloudFront fails over per request on these statuses or a timeout. Only GET and HEAD can use
+  # an origin group, so the read route has its own behavior and every write stays on the API.
+  dynamic "origin_group" {
+    for_each = local.lab_fallback ? [1] : []
+    content {
+      origin_id = "api-with-lab"
+
+      failover_criteria {
+        status_codes = [500, 502, 503, 504]
+      }
+      member {
+        origin_id = "api"
+      }
+      member {
+        origin_id = "lab"
+      }
+    }
+  }
+
   default_cache_behavior {
     target_origin_id           = "spa"
     viewer_protocol_policy     = "redirect-to-https"
@@ -166,6 +214,21 @@ resource "aws_cloudfront_distribution" "site" {
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.optimized.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+  }
+
+  dynamic "ordered_cache_behavior" {
+    for_each = local.lab_fallback ? [1] : []
+    content {
+      path_pattern               = "/api/dashboard"
+      target_origin_id           = "api-with-lab"
+      viewer_protocol_policy     = "https-only"
+      allowed_methods            = ["GET", "HEAD"]
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = true
+      cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
+      origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+      response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+    }
   }
 
   # The data API. Never cached: the SPA decides stale from the stored checkedAt, and a cached

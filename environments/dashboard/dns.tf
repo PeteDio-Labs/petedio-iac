@@ -98,19 +98,6 @@ resource "aws_route53_record" "primary_aaaa" {
   }
 }
 
-# The SECONDARY record is the on-prem fallback. It stays off until README.md's open question is
-# answered, because a CNAME to a Cloudflare-proxied name does not terminate TLS for this hostname.
-resource "aws_route53_record" "secondary" {
-  count = var.attach_domain && var.lab_fallback_target != null ? 1 : 0
-
-  zone_id        = aws_route53_zone.failover.zone_id
-  name           = var.hostname
-  type           = "CNAME"
-  set_identifier = "lab"
-  ttl            = 60
-  records        = [var.lab_fallback_target]
-
-  failover_routing_policy {
-    type = "SECONDARY"
-  }
-}
+# There is no SECONDARY record. The on-prem fallback sits behind CloudFront as an origin group
+# (web.tf), because a CNAME to a Cloudflare-proxied name cannot terminate TLS for this hostname.
+# Route 53 flips only when CloudFront itself is unreachable, and then has no target to flip to.

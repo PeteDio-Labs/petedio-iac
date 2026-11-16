@@ -13,7 +13,7 @@ The app code is in `petedio-labs/pete-bot` under `dashboard/`. This root owns ex
 | API | HTTP API + one Lambda (`nodejs22.x`, arm64) | Stub handler until the deploy ships `handler.mjs`. |
 | Sign-in | Cognito user pool, one admin-created user, optional TOTP | Does not use Authentik, the first failover service. |
 | DNS | Route 53 zone for `failover.pdlab.dev` | Cloudflare keeps `pdlab.dev` and delegates this subdomain. |
-| Failover | Health check and a PRIMARY alias for `dash.failover.pdlab.dev` | The SECONDARY record waits on the open question below. |
+| Failover | Health check and a PRIMARY alias for `dash.failover.pdlab.dev`, plus a CloudFront origin group to the lab | The origin group stays off until the Access service token exists. |
 | Principals | `petedio-dash-ingest`, `petedio-dash-deploy` IAM users | No access keys in Terraform. A script that Pedro runs makes each key. |
 
 Routes (from the dashboard thread's contract): `GET /api/health` (public), `GET /api/dashboard` and `POST /api/switch` (Cognito JWT), `POST /api/ingest/status` and `POST /api/ingest/section` (IAM, SigV4). Callers sign ingest requests against the `api_endpoint` output directly, not through CloudFront, because SigV4 signs the `Host` header.
@@ -40,15 +40,16 @@ Nothing runs from CI. Apply from the Mac or 247 with the account's admin profile
 
 ## On-prem fallback: where TLS ends
 
-A failover pair needs a SECONDARY target that can answer for `dash.failover.pdlab.dev` over HTTPS. The lab has no inbound port, and its only public path is a Cloudflare tunnel. Cloudflare serves a hostname only when the name sits in its own zone, so a CNAME from the Route 53 name to `reports.pdlab.dev` fails the TLS handshake. The SECONDARY record therefore stays off (`lab_fallback_target = null`).
+Pedro chose a CloudFront origin group on 2026-11-16. A Route 53 secondary cannot work: the lab has no inbound port, and Cloudflare serves a hostname only when its own zone holds it, so a CNAME to a proxied name fails the TLS handshake.
 
-Options, with a recommendation:
+So the hostname always terminates at CloudFront with the ACM certificate. `GET /api/dashboard` uses an origin group: the API first, then `reports.pdlab.dev` (pete-bot on 237 through its tunnel) on a 500, 502, 503, 504 or timeout. Only GET and HEAD can use an origin group, so `POST /api/switch` and ingest stay on the API.
 
-1. **CloudFront origin group (recommended).** The hostname always terminates at CloudFront with the ACM certificate. A second distribution origin points at `reports.pdlab.dev` through a Cloudflare Access service token, and CloudFront fails over per request on 5xx or timeout. This works when the lab is down and needs no Route 53 flip for the dashboard. Route 53 still carries the generic per-service pair (Authentik next) and the health checks.
-2. **Cloudflare Load Balancing.** Pools for AWS and the tunnel, health-checked, with Access in front. It costs about $5 a month (estimate) and keeps the failover at Cloudflare, so a Cloudflare outage removes it.
-3. **Move the apex to Route 53.** Closes the Cloudflare-DNS gap but moves all DNS. Pedro's call.
+The fallback turns on when `lab_access_client_id` and `lab_access_client_secret` are both set. CloudFront sends them as Cloudflare Access service-token headers. Route 53 carries the PRIMARY health-checked alias and no SECONDARY record, and stays the pattern for later services such as Authentik.
 
-This root builds the parts all three share. Option 1 adds a second origin and an origin group to `web.tf` and a Cloudflare Access service token.
+Two things this needs and does not do:
+
+- **A service-token policy** on the `reports.pdlab.dev` Access app. `modules/cloudflare-ingress` supports email policies only, so it needs a `non_identity` policy and a token resource. That is a separate PR in `environments/homelab`.
+- **The token itself.** Pedro creates it and supplies it through a gitignored tfvars file. The values reach Terraform state, so the policy allows that one app only.
 
 ## Open items
 

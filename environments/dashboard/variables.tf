@@ -38,14 +38,28 @@ variable "attach_domain" {
   default     = false
 }
 
-variable "lab_fallback_target" {
+variable "lab_origin_hostname" {
+  description = "Public name of the on-prem dashboard, served through the Cloudflare tunnel and gated by Access."
+  type        = string
+  default     = "reports.pdlab.dev"
+}
+
+variable "lab_access_client_id" {
   description = <<-EOT
-    DNS name of the on-prem fallback, for the SECONDARY failover record. Null creates no secondary
-    record and no lab health check. The design question this waits on is in README.md,
-    "On-prem fallback: where TLS ends".
+    Client id of a Cloudflare Access service token that CloudFront sends to the on-prem origin.
+    Null leaves the fallback off. Supply it from a gitignored tfvars file or TF_VAR_ that a script
+    reads from Vault; it reaches state, so the token's Access policy must allow only that one app.
   EOT
   type        = string
   default     = null
+  sensitive   = true
+}
+
+variable "lab_access_client_secret" {
+  description = "Secret half of the Access service token. Null leaves the fallback off."
+  type        = string
+  default     = null
+  sensitive   = true
 }
 
 variable "operator_email" {
