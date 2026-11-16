@@ -51,6 +51,10 @@ Two things this needs and does not do:
 - **A service-token policy** on the `reports.pdlab.dev` Access app. `modules/cloudflare-ingress` supports email policies only, so it needs a `non_identity` policy and a token resource. That is a separate PR in `environments/homelab`.
 - **The token itself.** Pedro creates it and supplies it through a gitignored tfvars file. The values reach Terraform state, so the policy allows that one app only.
 
+## Conditional: Tailscale Funnel
+
+Pedro decided on 2026-11-16 not to forward a port: the Google Wifi router would hold it open, and Plex already exposes one. If the failover drill shows the origin group cannot reach the lab, add Tailscale Funnel as a last-resort path. This is not built and waits on a failed drill.
+
 ## Open items
 
 - `GET /api/health` is a route here and a handler requirement for the dashboard thread: it must read one DynamoDB item and answer `{"ok":true}` or fail.
