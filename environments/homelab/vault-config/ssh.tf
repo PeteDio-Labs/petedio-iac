@@ -198,6 +198,41 @@ resource "vault_ssh_secret_backend_role" "search_deploy" {
   }
 }
 
+# deploy-pete-bot (PET-375 follow-up): the pete-bot repo's deploy.yml job on runner 232 or 233 signs a
+# fresh key per run and connects to media-dash-237 as root with it, so the deploy stops reading the
+# long-lived deploy_ssh_private_key from kv/services/pete-bot. Only 237 lists this principal in
+# root's principals file (host_vars/media-dash-237.yml), so the certificate opens that one host.
+# Same shape as search-deploy above: source-address pins it to the two runners, the TTL is 30
+# minutes, and there is no pty and no forwarding.
+resource "vault_ssh_secret_backend_role" "pete_bot_deploy" {
+  backend  = vault_mount.ssh_client_signer.path
+  name     = "deploy-pete-bot"
+  key_type = "ca"
+
+  depends_on = [vault_policy.breakglass_247]
+
+  allow_user_certificates = true
+  allowed_users           = "deploy-pete-bot"
+  default_user            = "deploy-pete-bot"
+  allow_user_key_ids      = false
+
+  allowed_extensions = ""
+  default_extensions = {}
+
+  allowed_critical_options = "petedio-no-overrides"
+  default_critical_options = {
+    "source-address" = "192.168.50.232/32,192.168.50.233/32"
+  }
+
+  ttl     = "1800"
+  max_ttl = "1800"
+
+  allowed_user_key_config {
+    type    = "ed25519"
+    lengths = [0]
+  }
+}
+
 # Signs one role and reads nothing else. Attach it to the login that a role's caller uses. The
 # collector's AppRole on 237 lands with PET-770, bound to 237's /32 like ansible-247.
 resource "vault_policy" "ssh_sign_inventory_read" {

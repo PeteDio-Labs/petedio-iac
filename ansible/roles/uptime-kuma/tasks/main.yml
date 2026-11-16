@@ -310,12 +310,29 @@
 # it must not land in a playbook log or a CI transcript. Print everything except
 # the key, then surface the key on its own with no_log lifted only for the single
 # run that created it.
+# Check mode skips the command above, so kuma_provision has no stdout to parse. The reconcile
+# cannot be previewed against the live instance, so print what the role declares instead.
+# Compare it with lab_kuma_status by hand: this lists the declared set, not the delta.
+- name: Report the declared monitors, retirements and maintenance windows (check mode)
+  when: ansible_check_mode
+  ansible.builtin.debug:
+    msg:
+      - "check mode: the reconcile command did not run, so no monitor change is previewed"
+      - "monitors declared ({{ declared | length }}): {{ declared | sort | join(', ') }}"
+      - "monitors to retire if present: {{ uptime_kuma_retired_monitors | join(', ') }}"
+      - "maintenance windows declared: {{ uptime_kuma_maintenances | map(attribute='title') | join(', ') }}"
+  vars:
+    declared: "{{ (uptime_kuma_monitors + (uptime_kuma_push_declared | default([]))) | map(attribute='name') | list }}"
+
 - name: Report what the reconcile did
+  when: not ansible_check_mode
   ansible.builtin.debug:
     msg: "{{ kuma_provision.stdout | from_json | dict2items | rejectattr('key', 'eq', 'api_key') | items2dict }}"
 
 - name: Store the freshly minted metrics API key
-  when: (kuma_provision.stdout | from_json).api_key is defined
+  when:
+    - not ansible_check_mode
+    - (kuma_provision.stdout | from_json).api_key is defined
   ansible.builtin.copy:
     content: "{{ (kuma_provision.stdout | from_json).api_key }}"
     dest: "{{ uptime_kuma_dir }}/.metrics-api-key"
@@ -323,7 +340,9 @@
   no_log: true
 
 - name: Say where the key went
-  when: (kuma_provision.stdout | from_json).api_key is defined
+  when:
+    - not ansible_check_mode
+    - (kuma_provision.stdout | from_json).api_key is defined
   ansible.builtin.debug:
     msg: >-
       A metrics API key was minted. Kuma shows it once only. It is written to

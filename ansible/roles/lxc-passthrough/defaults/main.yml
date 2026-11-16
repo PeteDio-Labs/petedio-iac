@@ -1,0 +1,48 @@
+---
+# lxc-passthrough — declare the bind mounts and device nodes of a container, which
+# Terraform cannot set. MED-14.
+#
+# WHY ANSIBLE AND NOT TERRAFORM. Proxmox accepts `mpN:` bind mounts and `devN:` entries
+# only from root@pam, the check that also keeps `features` out of Terraform's reach.
+# petedio-media-iac's `modules/proxmox-lxc` keeps both fields in `ignore_changes`, so a
+# plan reads clean whether they are there or not. `lxc-oob-244.sh` set them by hand for
+# plex-remote 244; this role replaces it. Nesting for 244 is in `lxc-features`, and the
+# boot order is in `lxc-startup`.
+#
+# Why not `lxc-gpu`: it passes NVIDIA nodes at mode 0666 and sets no gid, and 244's
+# Intel Iris Xe node needs `gid=44,mode=0660` and a check that the node is the Iris Xe.
+#
+# WHAT IT DOES NOT DO. It never restarts a container unless `lxc_passthrough_allow_restart`
+# is true. Proxmox adds a mount point only while the container is stopped, and a device
+# only at start. The play sets the entries, re-reads the running config, and fails while
+# a running container differs from its declaration.
+
+# Keys are quoted VMID strings, as in lxc-features. Each entry:
+#   node        the Proxmox node that holds the container. Other nodes skip it.
+#   host_mounts paths that must be mount points on the node. A bind of an unmounted
+#               path ships an empty library into the guest and every check still passes.
+#   render      optional: a /dev/dri/by-path link and the node it must resolve to. It
+#               stops a wrong GPU from passing as the right one.
+#   entries     config key -> exact value. `pct config` is read as written, so write the
+#               value in the form Proxmox stores it.
+lxc_passthrough_declared:
+  # plex-remote on pve03 (MED-11). The library is read-only because this server only
+  # serves it: Sonarr and Radarr write it, and plex-gpu 236 owns any edit Plex makes.
+  # shared=1 matches bazarr 222, because /mnt/media exists on both nodes.
+  #
+  # renderD129, NOT renderD128. On pve03 renderD128 is the RTX 3050 on nouveau, which has
+  # no usable hardware encode. gid 44 is `video` inside the container, the group the Plex
+  # package puts its service user in, as on 236.
+  "244":
+    node: pve03
+    host_mounts: [/mnt/media]
+    render:
+      by_path: /dev/dri/by-path/pci-0000:00:02.0-render
+      expect: /dev/dri/renderD129
+    entries:
+      mp0: /mnt/media,mp=/mnt/media,ro=1,shared=1
+      dev0: /dev/dri/renderD129,gid=44,mode=0660
+
+# Stop a running container to apply a change, then start it. Leave false to fail with the
+# pending change named, and pick a window with whoever streams from it.
+lxc_passthrough_allow_restart: false

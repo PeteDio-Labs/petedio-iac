@@ -12,6 +12,7 @@ The gate is deny by default:
   * Only a create or update. Any delete or replace is refused.
   * Only the types in ALLOWED_TYPES. Any other type is refused.
   * Never a protected address, such as the apply role itself or the break-glass policy.
+  * A policy name must be one the apply token can write: deploy-*, plane-ci or secrets-register.
   * A policy may not touch sys/, auth/ or identity/, grant sudo, or open a whole mount.
   * A JWT role may not attach a privileged policy, and must bind a repository, sub or workflow_ref.
   * A policy may grant only read and list on kv/(services|db)/<name>, plus ssh signing for deploy-*.
@@ -34,6 +35,9 @@ PROTECTED_ADDR = re.compile(
 # A JWT role may attach only these policies, or the policies it already had. The set is an
 # allowlist: a policy added to vault-config later is not attachable until a reviewed PR lists it.
 ROLE_POLICY_ALLOW = re.compile(r"^(plane-ci|secrets-register|deploy-[a-z0-9-]+)$")
+# The names the apply token may write (vault-config-apply.tf, sys/policies/acl/...). A name outside
+# this set plans "ok" and then fails 403 mid-apply, after the earlier changes already landed.
+POLICY_NAME_WRITABLE = re.compile(r"^(plane-ci|secrets-register|deploy-[a-z0-9-]+)$")
 SSH_ROLE_NAME = re.compile(r"^deploy-[a-z0-9-]+$")
 SSH_SIGN_PATH = re.compile(r"^ssh-client-signer/sign/deploy-[a-z0-9-]+$")
 PRIVILEGED_POLICIES = {
@@ -55,6 +59,7 @@ PINNED_POLICIES = {
         "kv/data/iac/minio", "kv/data/iac/proxmox", "kv/data/iac/cloudflare", "kv/data/iac/authentik",
         "kv/data/admin/postgres", "kv/data/db/plane", "kv/data/services/water-fast",
     },
+    "deploy-media-plan": {"kv/data/iac/minio", "kv/data/iac/proxmox"},
 }
 ALLOWED_REPOS = {"PeteDio-Labs/petedio-iac"}
 SUB_OK = re.compile(r"^repo:PeteDio-Labs(@\d+)?/[a-z0-9-]+(@\d+)?:(ref:refs/heads/main|pull_request)$")
@@ -211,6 +216,11 @@ def examine(plan):
             if has_unknown(unknown.get(attr)):
                 why.append(f"{attr} is unknown until apply, so the guard cannot read it")
         if not why and typ == "vault_policy":
+            if not POLICY_NAME_WRITABLE.match(str(after.get("name") or "")):
+                why.append(
+                    f"policy name {after.get('name')!r} is outside what the apply token may write "
+                    "(deploy-*, plane-ci, secrets-register); use scripts/apply-vault-config.sh"
+                )
             if after.get("name") in PRIVILEGED_POLICIES:
                 why.append(f"policy {after.get('name')} is privileged; change it with scripts/apply-vault-config.sh")
             why += policy_problems(after.get("policy"), after.get("name"))

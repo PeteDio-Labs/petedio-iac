@@ -10,7 +10,7 @@
 # TWO PINNED INSTANCES, ONE GPU EACH (kept from the fleet-era PET-132 layout and the resume
 # builder's P1 retune). :11434 on the RTX 3060 Ti is the QUALITY lane; :11435 on the GTX
 # 1660 SUPER carries embeddings. What they serve (PET-525, 2026-09-26): qwen3-embedding:0.6b
-# stays resident on :11435, and :11434 holds no resident model. mtrace and the pete-pi lab
+# stays resident on :11435, and :11434 holds no resident model. tracerr and the pete-pi lab
 # digest used qwen3:8b on :11434 until PET-525 removed both uses; the model stays pulled.
 # The resume builder's qwen3.5:9b / qwen3.5:4b lanes were declared here until 2026-09-10 —
 # the app lost its host on 2026-08-24 (PET-307, PET-387 decides its future) and both

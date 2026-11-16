@@ -14,7 +14,7 @@
 # re-embeds only the chunks that changed. WAL mode lets both open the file at once, and
 # serve reloads its in-memory copy when refresh bumps the generation counter.
 #
-# THE PLAY COPIES A COMPILED BINARY and never builds on the target, as mtrace does
+# THE PLAY COPIES A COMPILED BINARY and never builds on the target, as tracerr does
 # (configure-media-dash.yml). scripts/deploy-search.sh builds it with
 # `--target=bun-linux-x64`.
 #

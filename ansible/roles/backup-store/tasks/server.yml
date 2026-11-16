@@ -3,19 +3,19 @@
   ansible.builtin.command: vgs --noheadings --units g -o vg_free --nosuffix {{ backup_store_vg }}
   register: backup_vg_free
   changed_when: false
-  check_mode: false
+  check_mode: false  # lab-action: read-only
 
 - name: See what already exists
   ansible.builtin.stat:
     path: "/dev/{{ backup_store_vg }}/{{ backup_store_lv }}"
   register: backup_lv_dev
-  check_mode: false
+  check_mode: false  # lab-action: read-only
 
 - name: Read the root volume's current size
   ansible.builtin.command: lvs --noheadings --units g -o lv_size --nosuffix {{ backup_store_vg }}/{{ backup_store_root_lv }}
   register: backup_root_now
   changed_when: false
-  check_mode: false
+  check_mode: false  # lab-action: read-only
 
 # Only assert on space still to be claimed. The first version compared free space
 # against the FULL requirement every run, so once the volume existed the guard
@@ -195,7 +195,7 @@
   register: backup_ufw
   changed_when: false
   failed_when: false
-  check_mode: false
+  check_mode: false  # lab-action: read-only
 
 - name: Open NFS to the Proxmox nodes only
   when: "'Status: active' in (backup_ufw.stdout | default(''))"

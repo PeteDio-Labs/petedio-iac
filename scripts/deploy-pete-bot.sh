@@ -7,7 +7,7 @@
 # a play cannot perform for itself.
 #
 # ⚠ ONE VAULT PATH. Every credential pete-bot uses is at kv/services/pete-bot. It no
-# longer reads kv/services/media/dashboard, because it no longer calls mtrace (PET-518).
+# longer reads kv/services/media/dashboard, because it no longer calls tracerr (PET-518).
 #
 # Usage:
 #   ./scripts/deploy-pete-bot.sh              # build, then deploy
@@ -100,14 +100,9 @@ PB_DESK_APP_PEM="$(field desk_app_pem)"
 # Optional (PET-701): a read-only Plane token for the scheduled reports. With it and the desk
 # App, the reports turn on. scripts/seed-pete-bot-plane-key.sh writes it.
 PB_PLANE_API_KEY="$(field plane_api_key)"
-# Optional (PET-724): the public half of the pete-bot-cd deploy key. The play authorizes it
-# for root on 237 only. scripts/seed-pete-bot-cd-key.sh writes it.
-PB_CD_PUBLIC_KEY="$(field deploy_ssh_public_key)"
-# An empty key must not pass silently: the play would skip installing it, and the CD deploy
-# that reads it would later fail. ALLOW_NO_CD_KEY=1 deploys without it on purpose.
-if [ -z "$PB_CD_PUBLIC_KEY" ] && [ "${ALLOW_NO_CD_KEY:-}" != 1 ]; then
-  die "deploy_ssh_public_key is empty. Run scripts/seed-pete-bot-cd-key.sh, then run this again. ALLOW_NO_CD_KEY=1 skips the key on purpose."
-fi
+# Optional: the bearer for /v1/codex-review and lab-agent's Codex tools. scripts/seed-pete-bot-codex-review-token.sh
+# writes it. Absent leaves both off.
+PB_CODEX_REVIEW_BEARER="$(field codex_review_bearer_token)"
 unset SNAPSHOT
 
 # Optional (PET-670): lab-agent's two paths, read whole, like the one above. A path Vault
@@ -143,7 +138,7 @@ LAB_PLANE_TOKEN="$(field token 2>/dev/null || true)"
 # Optional (PET-745): the petedio-search bearer for search_lab. Absent leaves the tool off.
 SNAPSHOT="$(read_optional kv/services/lab-agent-search)"
 LAB_SEARCH_TOKEN="$(field token 2>/dev/null || true)"
-# Optional (PET-869): the media assistant's mtrace caller token and Bazarr key. Absent leaves it off.
+# Optional (PET-869): the media assistant's tracerr caller token and Bazarr key. Absent leaves it off.
 SNAPSHOT="$(read_optional kv/services/lab-agent-media)"
 LAB_MTRACE_TOKEN="$(field mtrace_token 2>/dev/null || true)"
 LAB_BAZARR_KEY="$(field bazarr_key 2>/dev/null || true)"
@@ -229,7 +224,7 @@ LAB_GH_APP_ID="$LAB_GH_APP_ID" LAB_GH_INSTALL_ID="$LAB_GH_INSTALL_ID" LAB_GH_APP
 LAB_PVE_ID="$LAB_PVE_ID" LAB_PVE_SECRET="$LAB_PVE_SECRET" LAB_PVE_ENDPOINT="$LAB_PVE_ENDPOINT" \
 LAB_PVE_CA="$LAB_PVE_CA" LAB_PLANE_TOKEN="$LAB_PLANE_TOKEN" LAB_SEARCH_TOKEN="$LAB_SEARCH_TOKEN" \
 LAB_MTRACE_TOKEN="$LAB_MTRACE_TOKEN" LAB_BAZARR_KEY="$LAB_BAZARR_KEY" \
-PB_CD_PUBLIC_KEY="$PB_CD_PUBLIC_KEY" \
+PB_CODEX_REVIEW_BEARER="$PB_CODEX_REVIEW_BEARER" \
 python3 -c '
 import json, os
 json.dump({
@@ -239,6 +234,7 @@ json.dump({
     "pete_bot_owner_user_id":    os.environ["PB_OWNER"],
     "pete_bot_alert_bearer":     os.environ["PB_BEARER"],
     "pete_bot_notify_bearer":    os.environ["PB_NOTIFY_BEARER"],
+    "pete_bot_codex_review_bearer": os.environ.get("PB_CODEX_REVIEW_BEARER", ""),
     "pete_bot_github_updates_token": os.environ.get("PB_UPDATES_TOKEN", ""),
     "pete_bot_desk_app_id":          os.environ.get("PB_DESK_APP_ID", ""),
     "pete_bot_desk_installation_id": os.environ.get("PB_DESK_INSTALLATION_ID", ""),
@@ -254,7 +250,6 @@ json.dump({
     "lab_agent_pve_endpoint":        os.environ.get("LAB_PVE_ENDPOINT", ""),
     "lab_agent_pve_ca_pem":          os.environ.get("LAB_PVE_CA", ""),
     "pete_bot_plane_api_key":        os.environ.get("PB_PLANE_API_KEY", ""),
-    "pete_bot_cd_public_key":        os.environ.get("PB_CD_PUBLIC_KEY", ""),
     "lab_agent_plane_token":         os.environ.get("LAB_PLANE_TOKEN", ""),
     "lab_agent_search_token":        os.environ.get("LAB_SEARCH_TOKEN", ""),
     "lab_agent_mtrace_token":        os.environ.get("LAB_MTRACE_TOKEN", ""),

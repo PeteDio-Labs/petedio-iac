@@ -127,12 +127,16 @@ backup_store_jobs:
     # the only lever is leaving it out. Only put a VMID here when losing it entirely is
     # acceptable, and say why:
     #
-    #   247 claude-247 — rebuilt end to end by claude.tf + roles/claude-code. Its repos
+    #   247 claude-247 — rebuilt end to end by claude.tf + the Claude Code role. Its repos
     #     are clones of GitHub main and its one unique file (~/.claude/.credentials.json)
     #     is recovered by an interactive /login that no restore avoids. Against that, the
     #     nightly stop kills whatever Remote Control session is in flight, which is the
     #     single thing the host exists to provide (PET-396, PET-403).
-    exclude: [247]
+    #   244 plex-remote — backed up by the weekly job plex-remote-weekly instead (MED-11,
+    #     environments/homelab/backup.tf). It is left out here, not unprotected. Leaving it
+    #     off this list lets the play below reset the live exclude list to 247 alone and put
+    #     244 back in the nightly stop, which is what happened on 2026-11-15.
+    exclude: [244, 247]
     # The longest the job may run, in minutes. Uptime Kuma silences pve03's guests from
     # 02:40 to 03:15 (uptime_kuma_maintenances in roles/uptime-kuma, PET-635). The
     # 06:00 backup-health run fails when a run took longer than this, which leaves a

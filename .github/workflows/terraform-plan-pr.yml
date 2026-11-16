@@ -293,16 +293,20 @@ jobs:
           set -euo pipefail
           # Main's lock file replaces the PR's, and init may not change it.
           cp "$GITHUB_WORKSPACE/environments/homelab/.terraform.lock.hcl" .terraform.lock.hcl
-          # plan.json holds sensitive inputs. Keep it owner-only; the cleanup step deletes it.
+          # The plan, its JSON and its log hold sensitive inputs. Write them to a fresh mode-0700
+          # directory outside the PR's tree. A file the PR checked in with the same name (plan.json)
+          # would keep its readable mode, because umask applies to new files only.
           umask 077
+          PLAN_DIR=$(mktemp -d "$RUNNER_TEMP/tfplan.XXXXXX")
+          chmod 700 "$PLAN_DIR"
           terraform init -input=false -lockfile=readonly
-          terraform plan -input=false -no-color -lock=false -out=tfplan > plan.log 2>&1 || {
-            { grep -m1 'Error:' plan.log || true; } | cut -c1-100 | sed 's/^/plan.log: /'
+          terraform plan -input=false -no-color -lock=false -out="$PLAN_DIR/tfplan" > "$PLAN_DIR/plan.log" 2>&1 || {
+            { grep -m1 'Error:' "$PLAN_DIR/plan.log" || true; } | cut -c1-100 | sed 's/^/plan.log: /'
             echo "::error::terraform plan failed (first error above)"; exit 1; }
-          terraform show -json tfplan > plan.json
+          terraform show -json "$PLAN_DIR/tfplan" > "$PLAN_DIR/plan.json"
           SRC=0
           {
-            python3 -I "$GITHUB_WORKSPACE/scripts/tf-plan-summary.py" plan.json || SRC=$?
+            python3 -I "$GITHUB_WORKSPACE/scripts/tf-plan-summary.py" "$PLAN_DIR/plan.json" || SRC=$?
             echo; echo "_Plan of the merge of this pull request (head \`${HEAD_SHA:0:7}\`) into main, with \`-lock=false\`. Nothing was applied._"
           } > "$GITHUB_WORKSPACE/comment.md"
           # A summary that read nothing is a failure, and its text stays in the comment.
@@ -341,4 +345,4 @@ jobs:
       - name: Remove plan files
         if: always()
         shell: bash
-        run: rm -rf pr comment.md body.md
+        run: rm -rf pr comment.md body.md "$RUNNER_TEMP"/tfplan.*

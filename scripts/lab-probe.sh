@@ -1,29 +1,30 @@
 #!/usr/bin/env bash
-# lab-probe — run one read-only probe inside LXC 237 (pete-bot, lab-agent, mtrace) from the
+# lab-probe — run one read-only probe inside LXC 237 (pete-bot, lab-agent, tracerr) from the
 # homelab runner (PET-878, PET-879; extends PET-861). A thread dispatches it through lab-action.yml
 # instead of handing Pedro a prompt for the Mac.
 #
 #   scripts/lab-probe.sh journal <args>   # unit=lab-agent since=... until=... mode=callers|lines|count
-#   scripts/lab-probe.sh mtrace  <args>   # title=<text>   -> mtrace trace_request, as caller lab-agent
+#   scripts/lab-probe.sh mtrace   <args>   # title=<text>   -> tracerr trace_request, as caller lab-agent
 #   scripts/lab-probe.sh media_ask <args> # question=<text> -> lab-agent POST /v1/media/ask
 #   scripts/lab-probe.sh guests           # {"data":{"guests":[{vmid,node,status}]}} for scripts/check-staleness.py
 #   scripts/lab-probe.sh backup_jobs      # the cluster's vzdump jobs: id, schedule, storage, mode, enabled (PET-884)
 #   scripts/lab-probe.sh guest_unit vmid=119   # one fixed unit in one fixed guest: state, port, journal tail (node-exporter on Authentik)
 #   scripts/lab-probe.sh prometheus       # alert rules on metrics-240: metric-alerts rules, Prometheus rules, alerts, targets
 #   scripts/lab-probe.sh ollama_ps        # models loaded in Ollama on CT 246: name, size, VRAM share, expiry
+#   scripts/lab-probe.sh schedule         # tracerr's scheduled search (MED-12): is it on, and what did its runs read and search
 #   scripts/lab-probe.sh health [service=pete-bot|lab-agent]   # GET /health on 237; both when none is named
 #
 # WHAT RUNS. Each probe is a fixed command. The caller supplies values, never commands: every value
 # must match a strict pattern below, and the remote text carries only base64 or an allowlisted
 # word, so no value reaches a shell as code.
 #
-# CREDENTIALS. None is placed. `mtrace` and `media_ask` read lab-agent's own mtrace token and ask
+# CREDENTIALS. None is placed. The `mtrace` probe and `media_ask` read lab-agent's own tracerr token and ask
 # port from /etc/lab-agent/lab-agent.env inside 237, as root, in one remote command. The token
-# never leaves 237 and never reaches this script's output. The caller shows in mtrace's journal as
+# never leaves 237 and never reaches this script's output. The caller shows in tracerr's journal as
 # `lab-agent`, which is the same caller the media assistant uses.
 #
 # WHAT IT PRINTS. The run log is public. `journal` prints counts and distinct `caller=` values by
-# default; `lines` prints only lines matching a fixed phrase, cut to 300 characters. `mtrace` and
+# default; `lines` prints only lines matching a fixed phrase, cut to 300 characters. `tracerr` and
 # `media_ask` print the reply, cut to 2000 characters, which names the titles in it. The last line
 # is a summary that says what was examined, so an empty window reads as `0 lines`, never as a pass.
 #
@@ -359,5 +360,18 @@ case "$PROBE" in
     echo "probe media_ask: one question answered HTTP ${CODE:-none}, ${#OUT} characters read"
     [ "${CODE:-}" = 200 ] || exit 1 ;;
 
-  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps, prometheus, guest_unit)" ;;
+  schedule)
+    only
+    # Fixed command. It prints whether /etc/mtrace.env turns the schedule on, the last six `run`
+    # records of /var/lib/mtrace/schedule.jsonl (a fixed projection: time, id, phase, counters and whether an error was set; no free text, no title), and how many title records
+    # each outcome holds. A title's name never reaches this public log.
+    OUT="$(in237 'F=/var/lib/mtrace/schedule.jsonl; V=$(sed -n "s/^MEDIA_CONTROL_SCHEDULE=//p" /etc/mtrace.env | head -1); case "$V" in on|off) echo "MEDIA_CONTROL_SCHEDULE=$V";; "") echo "MEDIA_CONTROL_SCHEDULE=unset";; *) echo "MEDIA_CONTROL_SCHEDULE=other";; esac; if [ -f "$F" ]; then echo "logfile=present"; grep "\"type\":\"run\"" "$F" | tail -6 | while IFS= read -r L; do printf "%s\n" "$L" | grep -oE "\"(ts|runId|run|phase)\":\"[^\"]*\"|\"(searched|errors|grabbed|deferred)\":[0-9]+|\"read\":\{[^}]*\}|\"error\":\"" | tr "\n" " "; echo; done; for o in grabbed no_grab error; do echo "titles_$o=$(grep -c "\"outcome\":\"$o\"" "$F")"; done; else echo "logfile=absent"; fi')" \
+      || { echo "FAILED: reading the schedule on 237 failed, so nothing was examined." >&2; exit 1; }
+    printf '%s\n' "$OUT"
+    ON="$(printf '%s\n' "$OUT" | grep -c '^MEDIA_CONTROL_SCHEDULE=on$' || true)"
+    RUNS="$(printf '%s\n' "$OUT" | grep -c '"runId"' || true)"
+    echo "probe schedule: env on=$ON, $RUNS run record(s) shown"
+    [ "$ON" = 1 ] || exit 1 ;;
+
+  *) die "'$PROBE' is not a probe (journal, mtrace, media_ask, guests, health, backup_jobs, ollama_ps, prometheus, guest_unit, schedule)" ;;
 esac

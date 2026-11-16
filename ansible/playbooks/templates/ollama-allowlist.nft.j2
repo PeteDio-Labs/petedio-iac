@@ -3,7 +3,7 @@
 #
 # It replaces the ufw rules the bare-metal ollama-host carried: every port below accepted
 # only from the homelab LAN. A Debian LXC has no ufw, so this container keeps the same
-# boundary with nftables, the way media-dash-237 guards mtrace (mtrace-allowlist.nft.j2).
+# boundary with nftables, the way media-dash-237 guards tracerr (mtrace-allowlist.nft.j2).
 #
 # ⚠ ITS OWN TABLE, ON PURPOSE. Everything lives in `table inet ollama_allow`. This file
 # never touches /etc/nftables.conf or nftables.service, whose default ruleset flushes

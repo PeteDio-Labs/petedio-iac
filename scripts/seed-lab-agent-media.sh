@@ -9,7 +9,7 @@
 #                 tools and no subtitle action. The key comes from $BAZARR_API_KEY, or this
 #                 script reads it over SSH from Bazarr's config.yaml (see BAZARR_SSH below).
 # Nothing is typed or prompted for. A separate path, so pete-bot-cd reads these two values and
-# never the whole mtrace secret (which holds every caller's bearer and the SSH deploy key).
+# never the whole tracerr secret (which holds every caller's bearer and the SSH deploy key).
 #
 # THE ORDER, on a first seed:
 #   1. scripts/mtrace-caller-token.sh create lab-agent, then scripts/deploy-media-dash.sh

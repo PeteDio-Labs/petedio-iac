@@ -86,6 +86,24 @@ failure. The Vault token is revoked as soon as the certificate is signed.
 - `environments/homelab/vault-config/deploy-hosts.tf` for the roles and policies.
 - `scripts/ci-deploy.py` for what each deploy stages.
 
+## pete-bot deploy (media-dash-237)
+
+The pete-bot repo's `deploy.yml` runs on every push to its `main`, not from a dispatch here. It
+signs a 30-minute SSH certificate for the `deploy-pete-bot` principal and connects to `media-dash-237`
+with it. It no longer reads `deploy_ssh_private_key` from `kv/services/pete-bot`.
+
+To set it up, do these in order before you merge the pete-bot change:
+
+1. Apply `vault-config`, which adds the `deploy-pete-bot` signing role and lets `pete-bot-cd` sign it. The name follows the `deploy-<name>` pattern that `scripts/vault-config-guard.py` allows, so the gated `vault-config-apply.yml` can take it. If the guard refuses the plan, run `scripts/apply-vault-config.sh` on the Mac.
+2. Dispatch `lab-action.yml` with `action=playbook_apply` and `target=configure-ssh-ca-deploy-hosts.yml`.
+   The play now also trusts the CA on 237 and lists `deploy-pete-bot` in root's principals file.
+3. Merge the pete-bot change. The next push to its `main` is the first certificate login to 237.
+
+A merge before steps 1 and 2 fails the deploy at the signing step, not silently. `configure-pete-bot.yml`
+revokes every `pete-bot-cd` key on 237, so reverting the pete-bot change does not restore the old login.
+To roll back, restore the key by hand on 237 or fix the certificate path. Pedro deletes the old key
+fields from Vault after the revoke has run.
+
 ## Staging power (CT 249)
 
 `staging-power.yml` starts CT 249 when UI work lands on the `staging` branch of `pdlabs-portfolio`. It stops the container after a promotion to `main` or after 3 hours with no UI commit. It runs every 5 minutes on the LAN runner.

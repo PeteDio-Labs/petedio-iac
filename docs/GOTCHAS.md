@@ -480,7 +480,7 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   A check that tests for the full flag reports a failure that will not happen.
 
 - **Defer before doing slow work.** Discord kills an interaction unacknowledged for three
-  seconds; `deferReply` buys fifteen minutes. mtrace crosses six hosts over SSH, so
+  seconds; `deferReply` buys fifteen minutes. tracerr crosses six hosts over SSH, so
   without the defer the user sees "The application did not respond" while the work
   succeeds unseen.
 
@@ -1609,3 +1609,12 @@ the gate, not membership. A stranger who lands a typo fix then runs code on the 
   deleted because `ansible-validate.yml` already syntax-checks every playbook on a hosted
   runner (PET-397). The file itself was removed in PET-888, with the `openfaas-ci` role it
   minted.
+
+## tracerr keeps its mtrace host names
+
+The service is named `tracerr` (MED-12), but the host side still says `mtrace`. The systemd units
+`mtrace.service` and `mtrace-allowlist.service`, the `mtrace` user, `/opt/mtrace`, `/etc/mtrace.env`,
+`/var/lib/mtrace`, the `mtrace_*` Ansible variables, the Vault key `mtrace_token`, the `mtrace` key in
+`secrets/callers.yml`, the `lab_probe mtrace` target and the Uptime Kuma monitor name did not change.
+A rename of any of them restarts the service or moves state, so each needs its own PR with an alias
+and a check on 237 afterward. To check that the service runs under either name, read `lab_probe mtrace`.

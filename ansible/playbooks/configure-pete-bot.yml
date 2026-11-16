@@ -1,12 +1,12 @@
 ---
-# configure-pete-bot.yml — install pete-bot on media-dash-237, beside mtrace (PET-375).
+# configure-pete-bot.yml — install pete-bot on media-dash-237, beside tracerr (PET-375).
 #
 # WHAT IT IS. A Discord surface and nothing else. POST /v1/alert takes an Uptime Kuma
 # webhook and DMs the owner, editing the original message when the service recovers, and
 # /update starts the media-updates workflow. It holds no tools of its own.
 #
-# ⚠ IT NO LONGER TALKS TO MTRACE (PET-518). /ask, DM forwarding and the /status mtrace
-# line are gone, so this play passes no mtrace token or URL. Don't add one back: mtrace
+# ⚠ IT NO LONGER TALKS TO MTRACE (PET-518). /ask, DM forwarding and the /status tracerr
+# line are gone, so this play passes no tracerr token or URL. Don't add one back: tracerr
 # gives each caller its own token, and Pete Bot isn't a caller.
 #
 # WHY IT LIVES HERE. A Discord bot needs only an OUTBOUND websocket, so co-locating it
@@ -56,11 +56,6 @@
     # (scripts/seed-pete-bot-desk-app.sh). Without all three the desk stays off, whatever
     # pete_bot_desk_mode says, so a deploy before the seed changes nothing.
     pete_bot_conf_dir: /etc/pete-bot
-    # The public half of the pete-bot-cd deploy key (PET-724), from kv/services/pete-bot field
-    # deploy_ssh_public_key (scripts/seed-pete-bot-cd-key.sh). Empty skips the tasks. The
-    # GitHub deploy connects with the private half, so this grants root on this host only,
-    # never on another LXC.
-    pete_bot_cd_public_key: ""
     # dry-run approves and merges nothing, and DMs each merge it would make (Pedro,
     # 2026-10-16). Moving to `on` is a decision, so it is a reviewed change to this line.
     # Pedro moved it to `on` on 2026-10-19, after the desk queued Codex with its own key
@@ -85,6 +80,11 @@
     # petedio-cloud-threads[bot] authors every cloud thread's PR (PET-644). Without it here,
     # the desk skips them all and each one waits for Pedro (Pedro, 2026-10-19).
     pete_bot_desk_authors: petedillo,petedio-cloud-threads[bot]
+    # Logins whose `Claude review: <verdict> at <sha>` line is the desk's required review for tier 0
+    # and 1 (pete-bot's DESK_CLAUDE_REVIEWERS). Cloud threads post under petedillo's connector
+    # identity (Pedro chose this list, 2026-11-15). Tier 2 and any PR with a Codex second opinion
+    # still need Codex. Empty keeps the Codex-only gate.
+    pete_bot_desk_claude_reviewers: petedillo
     pete_bot_codex_host: 192.168.50.248
     pete_bot_desk_ready: >-
       {{ (pete_bot_desk_app_id | default('') | string | length > 0)
@@ -95,7 +95,7 @@
     # pete_bot_plane_api_key (scripts/seed-pete-bot-plane-key.sh). Without both, the reports
     # stay off, so a deploy before the seed changes nothing.
     pete_bot_reports_repos: "petedio-iac,petedio-workspace,petedio-vault,petedio-pm,pete-bot,\
-      petedio-media-control,petedio-media-iac,petedio-palworld-panel,skills"
+      petedio-media-control,petedio-media-iac,skills"
     # Written by collect-cve-inventory.yml. The directory is root:pete-bot 0750, so the unit's
     # Group= reads it, and ProtectSystem=strict leaves it readable.
     pete_bot_cve_snapshot: /var/lib/cve-inventory/cve-inventory.json
@@ -217,6 +217,10 @@
           - pete_bot_notify_bearer is defined and pete_bot_notify_bearer | length > 0
           # The point of a second token (PET-584): a session host must not hold the alert one.
           - pete_bot_notify_bearer != pete_bot_alert_bearer
+          # The Codex review bearer opens /v1/codex-review alone. Empty is allowed: the route then
+          # refuses every request and lab-agent offers neither Codex tool.
+          - (pete_bot_codex_review_bearer | default('')) | length == 0
+              or (pete_bot_codex_review_bearer not in [pete_bot_alert_bearer, pete_bot_notify_bearer])
         fail_msg: >-
           Missing secret extra-vars, or the notify bearer equals the alert bearer. Run
           scripts/deploy-pete-bot.sh, which resolves them from kv/services/pete-bot and
@@ -308,40 +312,23 @@
         - not (lab_agent_ready | bool)
 
   tasks:
-    - name: Authorize the pete-bot-cd deploy key for root on this host only
-      ansible.posix.authorized_key:
-        user: root
-        key: "{{ pete_bot_cd_public_key }}"
-        comment: pete-bot-cd
-        state: present
-      when: pete_bot_cd_public_key | length > 0
-
-    # authorized_key with state: present adds a key and never removes another, so a rotated
-    # key would stay authorized as root. Drop every other pete-bot-cd line and keep the
-    # operator key, which carries a different comment.
-    - name: Remove superseded pete-bot-cd deploy keys
+    # The long-lived pete-bot-cd deploy key is retired: the GitHub deploy signs a 30-minute
+    # SSH certificate instead (PET-922). Revoke every pete-bot-cd line on each run, so a host
+    # that still carries the key loses it.
+    - name: Revoke every pete-bot-cd deploy key from root's authorized_keys
       ansible.builtin.replace:
         path: /root/.ssh/authorized_keys
-        regexp: '(?m)^ssh-ed25519 (?!{{ pete_bot_cd_public_key.split()[1] | regex_escape }}[ \t])\S+ pete-bot-cd[ \t]*\n'
+        regexp: '(?m)^[^\n]* pete-bot-cd[ \t]*(?:\n|\Z)'
         replace: ""
-      when: pete_bot_cd_public_key | length > 0
 
-    - name: Check that exactly one pete-bot-cd key is authorized, and it is the current one
+    - name: Check that no pete-bot-cd key is authorized
       ansible.builtin.shell:
-        cmd: set -o pipefail; grep -E ' pete-bot-cd[[:space:]]*$' /root/.ssh/authorized_keys | awk '{print $2}'
+        cmd: set -o pipefail; grep -cE ' pete-bot-cd[[:space:]]*$' /root/.ssh/authorized_keys || true
         executable: /bin/bash
-      register: pete_bot_cd_authorized
+      register: pete_bot_cd_remaining
       changed_when: false
-      check_mode: false # read-only; the `when` below still skips it under --check, so a --check run examines nothing here
-      failed_when: pete_bot_cd_authorized.stdout_lines != [pete_bot_cd_public_key.split()[1]]
-      when: pete_bot_cd_public_key | length > 0 and not ansible_check_mode
-
-    - name: Say that no pete-bot-cd key is managed when the public key is empty
-      ansible.builtin.debug:
-        msg: >-
-          pete_bot_cd_public_key is empty, so this run neither authorizes nor revokes a
-          pete-bot-cd key on this host. Run scripts/seed-pete-bot-cd-key.sh.
-      when: pete_bot_cd_public_key | length == 0
+      check_mode: false # read-only, so a --check run still examines the file
+      failed_when: pete_bot_cd_remaining.stdout | trim != "0"
 
     - name: Create the service account
       ansible.builtin.user:
@@ -358,7 +345,7 @@
         owner: root
         group: "{{ pete_bot_user }}"
         mode: "0750"
-      # ⚠ owner root, not the service account. mtrace's directory is owned by its own
+      # ⚠ owner root, not the service account. tracerr's directory is owned by its own
       # service user, which lets that process replace the root-owned binary it runs.
       # Nothing here needs to write, so nothing here can.
 
@@ -623,6 +610,28 @@
               lab_agent_search_token, so the render would remove it and lab-agent would lose
               search_lab. Deploy with scripts/deploy-pete-bot.sh, which reads
               kv/services/lab-agent-search.
+
+        # Same rule for the Codex review bearer: never render it away. A deploy that could not read
+        # codex_review_bearer_token (a Vault hiccup, or a deploy path that omits it) would switch off
+        # both Codex review tools under a green check.
+        - name: Look for an installed Codex review token
+          ansible.builtin.command: grep -q '^LAB_CODEX_REVIEW_TOKEN=.' {{ lab_agent_env_file | quote }}
+          register: lab_agent_codex_review_installed
+          changed_when: false
+          failed_when: lab_agent_codex_review_installed.rc > 1
+          check_mode: false
+          no_log: true
+          when: lab_agent_env_stat.stat.exists
+
+        - name: Refuse a deploy that would drop the installed Codex review token
+          ansible.builtin.assert:
+            that:
+              - (pete_bot_codex_review_bearer | default('') | length > 0) or (lab_agent_codex_review_installed.rc | default(1)) != 0
+            fail_msg: >-
+              lab-agent's env file holds LAB_CODEX_REVIEW_TOKEN, but this deploy passed no
+              pete_bot_codex_review_bearer, so the render would remove it and the Codex review tools
+              would go dark. Deploy with scripts/deploy-pete-bot.sh, or fix the Vault read of
+              codex_review_bearer_token in pete-bot's deploy.yml.
 
         # Same rule for the media assistant's two credentials (PET-869): never render either away.
         # A deploy that cannot read kv/services/lab-agent-media would turn the media assistant off

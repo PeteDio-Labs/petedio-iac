@@ -52,7 +52,7 @@
   ansible.builtin.command: df -BG --output=avail /
   register: backup_root_avail
   changed_when: false
-  check_mode: false
+  check_mode: false  # lab-action: read-only
 
 - name: Decide whether this node needs a dedicated volume for the tmpdir
   ansible.builtin.set_fact:

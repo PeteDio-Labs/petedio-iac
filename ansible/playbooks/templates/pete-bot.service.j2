@@ -1,7 +1,7 @@
 # {{ ansible_managed }}
-# pete-bot (PET-375). Answers /ask by asking mtrace, and DMs Uptime Kuma's alerts.
+# pete-bot (PET-375). Answers /ask by asking tracerr, and DMs Uptime Kuma's alerts.
 #
-# It holds a Discord bot token and mtrace's API token, so the sandbox is not decoration.
+# It holds a Discord bot token and tracerr's API token, so the sandbox is not decoration.
 # It needs no inbound LAN access: Discord is an OUTBOUND websocket, and Kuma reaches
 # /v1/alert over loopback from the same host.
 [Unit]
@@ -22,7 +22,7 @@ Requires=weekly-dash-allowlist.service
 #
 # Without them, Restart=on-failure with a 5s delay respawns forever and the unit never
 # reaches the failed state, so systemctl is-failed and anything watching it stay green
-# while the process crashes every five seconds. mtrace shipped without this.
+# while the process crashes every five seconds. tracerr shipped without this.
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
@@ -47,7 +47,7 @@ LockPersonality=true
 # and its recovery still edits the original DM instead of orphaning it and posting the UP
 # separately.
 #
-# ⚠ StateDirectory, NOT ReadWritePaths over the app dir. mtrace's unit does the latter,
+# ⚠ StateDirectory, NOT ReadWritePaths over the app dir. tracerr's unit does the latter,
 # which lets the service account replace the root-owned binary it executes. systemd
 # creates /var/lib/pete-bot, chowns it to User= and makes it writable under
 # ProtectSystem=strict — nothing else on the filesystem becomes writable.
