@@ -70,6 +70,10 @@
     # petedio-usaa, pdlabs-portfolio (UI goes through staging on Pedro's word) and toonish-ui
     # (kit merges are batched until Pedro approves) stay off until Pedro decides each one.
     pete_bot_desk_repos: petedio-workspace,petedio-vault,petedio-pm,petedio-iac,petedio-media-iac,petedio-media-control,petedio-search
+    # Repos a thread may ask Codex to review (request_codex_review) where the desk never decides or
+    # merges. pete-bot is here because its PRs need a second opinion, and its own merges stay off the
+    # desk. A repo needs the desk App installed on it, because the request reads the PR through it.
+    pete_bot_desk_review_only_repos: pete-bot
     # The Codex-out fallback (PET-751, Pedro 2026-11-07). When the Codex queue fails or stays
     # silent for two hours, tier 0 merges on CI and tier 1 on CI plus a clean Qwen review from
     # this Ollama. A Qwen answer can only hold a PR. Tier 2 never falls back. Empty turns it off.
