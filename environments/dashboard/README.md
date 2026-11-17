@@ -35,7 +35,7 @@ Nothing runs from CI. Apply from the Mac or 247 with the account's admin profile
 1. **Phase 1.** `terraform apply -var aws_profile=<profile>` with `attach_domain = false`. This creates the whole stack on the `cloudfront.net` URL and the Route 53 zone.
 2. **Delegation.** Add one NS record per `name_servers` output for `failover.pdlab.dev` to `environments/homelab` (Cloudflare), DNS only. Apply that through the normal merge.
 3. **Phase 2.** Set `attach_domain = true` and apply. The apply waits for ACM to validate through the delegation, then aliases the distribution and creates the health check.
-4. **Keys.** Pedro runs the key scripts for `petedio-dash-ingest` and `petedio-dash-deploy` (a later PR). No session places a credential.
+4. **Keys.** Pedro runs `bash scripts/dashboard-deploy-key.sh --profile <profile>`, which puts the `petedio-dash-deploy` key in the `dashboard-aws` environment of the pete-bot repo (restrict that environment to `main` first). The `petedio-dash-ingest` key script is a later PR. No session places a credential.
 5. **Code.** The deploy workflow syncs `dashboard/dist/` (without `fixtures/`) to the bucket, invalidates `/*` and runs `aws lambda update-function-code`.
 
 ## On-prem fallback: where TLS ends

@@ -56,4 +56,17 @@ eq(sp.newest_ui_commit(log[:1]), None, "only sync commits: none")
 eq(sp.newest_ui_commit([]), None, "empty log")
 eq(sp.newest_ui_commit([{"sha": "e" * 40, "author": None, "commit": {"message": "UI fix"}}])["sha"], "e" * 40, "author may be null")
 
+# Dashboard staging shares the container (combine and dashboard_pending_from_files).
+eq(sp.dashboard_pending_from_files([{"filename": "dashboard/src/app.ts"}]), True, "dashboard file differs")
+eq(sp.dashboard_pending_from_files([{"filename": "src/other.ts"}]), False, "only other paths differ")
+eq(sp.dashboard_pending_from_files([{"filename": "x"}] * sp.PAGE), True, "a full page counts as pending")
+eq(sp.dashboard_pending_from_files([]), False, "no files: promoted")
+eq(sp.combine([(False, None), (False, None)]), (False, None), "nothing pending")
+eq(sp.combine([(True, FRESH), (False, FRESH)]), (True, FRESH), "one pending")
+eq(sp.combine([(False, FRESH), (True, STALE)]), (True, STALE), "a recent push on a promoted site is ignored")
+eq(sp.combine([(True, STALE), (True, FRESH)]), (True, FRESH), "newest pending push wins")
+eq(sp.combine([(True, None), (False, FRESH)]), (True, None), "pending with no push time")
+eq(sp.decide(*sp.combine([(False, FRESH), (True, STALE)]), NOW, True)[0], "stop", "promoted site's push does not hold the box up")
+eq(sp.decide(*sp.combine([(True, STALE), (True, FRESH)]), NOW, False)[0], "start", "dashboard work starts the box")
+
 print(f"staging-power: {checked} checks passed")
