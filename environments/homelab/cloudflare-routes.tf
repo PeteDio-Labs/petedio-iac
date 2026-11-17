@@ -64,6 +64,8 @@ module "cloudflare_ingress" {
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["pedelgadillo@gmail.com"]
+      # The upstream Access session. The 24h default signs the portal out of this server daily.
+      session_duration = "720h"
 
       managed_oauth = {
         # The Zero Trust dashboard's admin sign-in ("Authenticate server") redirects here (PET-839).
@@ -87,6 +89,8 @@ module "cloudflare_ingress" {
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["pedelgadillo@gmail.com"]
+      # The upstream Access session. The 24h default signs the portal out of this server daily.
+      session_duration = "720h"
 
       managed_oauth = {
         # The Zero Trust dashboard's admin sign-in ("Authenticate server") redirects here (PET-839).
@@ -111,6 +115,8 @@ module "cloudflare_ingress" {
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["pedelgadillo@gmail.com"]
+      # The upstream Access session. The 24h default signs the portal out of this server daily.
+      session_duration = "720h"
       # The Muse agents (PET-904). Each sends its service token in Authorization, and tracerr maps
       # the JWT's client id to the name through mtrace_mcp_access_agents.
       agents = ["bobbert", "batsy"]
