@@ -90,6 +90,10 @@ resource "cloudflare_zero_trust_access_policy" "mcp_portal" {
   name       = "mcp.pdlab.dev - allow Pedro"
   decision   = "allow"
   include    = [{ email = { email = "pedelgadillo@gmail.com" } }]
+
+  # A policy session beats the application session, and the provider defaults it to 24h.
+  # Match the portal and server apps below.
+  session_duration = "720h"
 }
 
 resource "cloudflare_zero_trust_access_application" "mcp_server" {
@@ -104,6 +108,10 @@ resource "cloudflare_zero_trust_access_application" "mcp_server" {
   type         = "mcp"
   destinations = [{ type = "via_mcp_server_portal", mcp_server_id = each.value }]
   policies     = [{ id = cloudflare_zero_trust_access_policy.mcp_portal.id }]
+
+  # Unset, Access signs Pedro out after 24h and the connector asks him to sign in again.
+  # 720h matches the managed OAuth session in cloudflare-routes.tf.
+  session_duration = "720h"
 }
 
 resource "cloudflare_zero_trust_access_application" "mcp_portal" {
@@ -112,6 +120,10 @@ resource "cloudflare_zero_trust_access_application" "mcp_portal" {
   type       = "mcp_portal"
   domain     = "mcp.pdlab.dev"
   policies   = [{ id = cloudflare_zero_trust_access_policy.mcp_portal.id }]
+
+  # Unset, Access signs Pedro out of the portal after 24h, which is the daily connector
+  # sign-in. 720h matches the managed OAuth session in cloudflare-routes.tf.
+  session_duration = "720h"
 }
 
 # The portal hostname resolves to Cloudflare's MCP gateway, proxied. It waits for the Access
