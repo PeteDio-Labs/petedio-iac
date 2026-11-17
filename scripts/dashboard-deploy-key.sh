@@ -11,7 +11,7 @@
 #   bash scripts/dashboard-deploy-key.sh --profile dreamitshipit --rotate # replace the key
 #   bash scripts/dashboard-deploy-key.sh --profile dreamitshipit --check  # read only
 #   bash scripts/dashboard-deploy-key.sh --profile dreamitshipit --reset  # delete every key, make a new one
-# Add --vault to also write kv/services/dashboard-deploy (needs `vault login`).
+# The key lives in GitHub only. It is not copied to Vault.
 #
 # The key goes from `aws iam create-access-key` straight into `gh secret set` as environment
 # secrets on the repo's `dashboard-aws` environment, which only `main` may deploy to. The script
@@ -29,7 +29,6 @@ user="petedio-dash-deploy"
 env_name="dashboard-aws"
 profile=""
 mode="create"
-use_vault=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -37,7 +36,6 @@ while [ $# -gt 0 ]; do
     --rotate) mode="rotate"; shift ;;
     --reset) mode="reset"; shift ;;
     --check) mode="check"; shift ;;
-    --vault) use_vault=1; shift ;;
     --user) [ $# -ge 2 ] || { echo "--user needs a value." >&2; exit 2; }; user="$2"; shift 2 ;;
     --repo) [ $# -ge 2 ] || { echo "--repo needs a value." >&2; exit 2; }; repo="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -47,7 +45,6 @@ done
 
 for c in aws gh python3; do command -v "$c" >/dev/null || { echo "$c is not installed." >&2; exit 1; }; done
 gh auth status >/dev/null 2>&1 || { echo "gh is not signed in." >&2; exit 1; }
-[ "$use_vault" -eq 0 ] || command -v vault >/dev/null || { echo "vault is not installed." >&2; exit 1; }
 
 awsx() { aws --profile "$profile" "$@"; }
 
@@ -148,12 +145,6 @@ fail=0
 printf '%s' "$key_id" | gh secret set AWS_ACCESS_KEY_ID --env "$env_name" --repo "$repo" || fail=1
 printf '%s' "$secret" | gh secret set AWS_SECRET_ACCESS_KEY --env "$env_name" --repo "$repo" || fail=1
 
-if [ "$use_vault" -eq 1 ] && [ "$fail" -eq 0 ]; then
-  # printf, not a here-string: a here-string appends a newline to the secret.
-  printf '%s' "$secret" \
-    | python3 -c 'import json,sys; print(json.dumps({"access_key_id": sys.argv[1], "secret_access_key": sys.stdin.read()}))' "$key_id" \
-    | vault kv put kv/services/dashboard-deploy - >/dev/null || fail=1
-fi
 unset secret
 
 if [ "$fail" -ne 0 ]; then
