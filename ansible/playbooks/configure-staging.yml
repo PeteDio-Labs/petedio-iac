@@ -32,6 +32,8 @@
   vars:
     staging_base: /srv/staging
     staging_port: 8080
+    dashboard_staging_base: /srv/dashboard-staging
+    dashboard_staging_port: 8081
     staging_bun_version: "1.4.4"
     # From the release's SHASUMS256.txt (bun-linux-x64.zip), read on 2026-11-13.
     staging_bun_sha256: bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c
@@ -275,6 +277,26 @@
               file_server
             }
           }
+
+          # The lab dashboard's fixtures-only build. A single-page app, so an unknown path
+          # returns index.html. /health answers for the staging-power and Kuma probes.
+          :{{ dashboard_staging_port }} {
+            root * {{ dashboard_staging_base }}/current
+            header X-Robots-Tag "noindex, nofollow"
+            header Cache-Control "no-store"
+            handle /__staging.json {
+              root * {{ dashboard_staging_base }}
+              rewrite * /status.json
+              file_server
+            }
+            handle /health {
+              respond `{"ok":true}` 200
+            }
+            handle {
+              try_files {path} /index.html
+              file_server
+            }
+          }
       notify: Restart Caddy
 
     - name: Enable and start Caddy
@@ -308,6 +330,103 @@
       ansible.builtin.command: systemctl start staging-sync.service
       changed_when: false
       when: staging_app_pem | length > 0
+
+    # ── Dashboard staging (:8081) ─────────────────────────────────────────────────────────────
+    # A second site on the same host: the lab dashboard's fixtures-only build. The host pulls a
+    # public release asset that pete-bot's CI publishes, so no branch code runs here and no
+    # credential is needed. The checksum file travels beside the asset.
+    - name: Create the dashboard staging directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - "{{ dashboard_staging_base }}"
+        - "{{ dashboard_staging_base }}/releases"
+        - "{{ dashboard_staging_base }}/releases/placeholder"
+
+    - name: Write the placeholder page that serves until the first publish
+      ansible.builtin.copy:
+        dest: "{{ dashboard_staging_base }}/releases/placeholder/index.html"
+        force: false
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          <!doctype html><title>dashboard staging</title><p>No build yet. See /__staging.json.
+
+    - name: Look for the dashboard current link
+      ansible.builtin.stat:
+        path: "{{ dashboard_staging_base }}/current"
+        follow: false
+      register: dashboard_current
+
+    - name: Point the dashboard current link at the placeholder until a publish replaces it
+      ansible.builtin.file:
+        src: "{{ dashboard_staging_base }}/releases/placeholder"
+        dest: "{{ dashboard_staging_base }}/current"
+        state: link
+      when: not dashboard_current.stat.exists
+
+    - name: Install the dashboard sync script
+      ansible.builtin.copy:
+        src: files/dashboard-staging-sync.sh
+        dest: /usr/local/sbin/dashboard-staging-sync
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the dashboard sync service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/dashboard-staging-sync.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by configure-staging.yml. Do not edit by hand.
+          [Unit]
+          Description=Publish the dashboard staging build
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/dashboard-staging-sync
+          TimeoutStartSec=300
+      register: dashboard_sync_unit
+
+    - name: Install the dashboard sync timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/dashboard-staging-sync.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by configure-staging.yml. Do not edit by hand.
+          [Unit]
+          Description=Check the dashboard staging release every minute
+
+          [Timer]
+          OnBootSec=1min
+          OnUnitActiveSec=1min
+          AccuracySec=5s
+
+          [Install]
+          WantedBy=timers.target
+      register: dashboard_sync_timer
+
+    - name: Reload systemd for the dashboard sync units
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: dashboard_sync_unit.changed or dashboard_sync_timer.changed
+
+    - name: Enable the dashboard sync timer
+      ansible.builtin.systemd:
+        name: dashboard-staging-sync.timer
+        enabled: true
+        state: started
 
   handlers:
     - name: Restart Caddy

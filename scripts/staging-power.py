@@ -7,7 +7,12 @@ Run by .github/workflows/staging-power.yml on the LAN runner, every 5 minutes (a
 dispatch with a forced mode. The container serves the portfolio's `staging` branch, so it should run
 only while UI work is pending on that branch.
 
-AUTO decides from GitHub, with the read-only staging App (kv/services/staging-app):
+The container also serves the lab dashboard's fixtures-only site (:8081). AUTO treats pete-bot's
+`dashboard-staging` branch the same way, read without a token because the repository is public: it
+is pending when the branch differs from main under dashboard/. The box runs when ANY site is
+pending and recent (combine()).
+
+AUTO decides the portfolio from GitHub, with the read-only staging App (kv/services/staging-app):
   pending  the `staging` branch differs from `main` outside .github. A squash-merge of staging into
            main ("send it") makes the content equal, so pending turns false and the box stops.
   recent   the newest commit on `staging` that the sync bot did not write is under IDLE_HOURS old.
@@ -44,6 +49,11 @@ NODE_KNOWN_HOSTS = os.environ.get("LAB_KNOWN_HOSTS", "/etc/ssh/lab-node-known-ho
 SSH_ROLE = "staging-power"
 REPO = "PeteDio-Labs/pdlabs-portfolio"
 IDLE_HOURS = 3.0
+# The dashboard staging site shares the container. pete-bot is a public repository, so its branch
+# is read without a token (60 requests an hour per address; a 5-minute schedule makes 24).
+DASH_REPO = "petedio-labs/pete-bot"
+DASH_BRANCH = "dashboard-staging"
+DASH_PATH = "dashboard/"
 SYNC_BOT = "github-actions[bot]"
 SYNC_SUBJECT = "Merge main into staging"
 
@@ -77,6 +87,27 @@ def newest_ui_commit(commits: list[dict]) -> dict | None:
             continue
         return c
     return None
+
+
+def dashboard_pending_from_files(files: list[dict]) -> bool:
+    """True when the dashboard branch differs from main under dashboard/. A full page counts as
+    pending, for the same reason as pending_from_files."""
+    if any(f.get("filename", "").startswith(DASH_PATH) for f in files):
+        return True
+    return len(files) >= PAGE
+
+
+def combine(states: list[tuple[bool, dt.datetime | None]]) -> tuple[bool, dt.datetime | None]:
+    """Fold per-site (pending, newest push) pairs into the one pair decide() takes.
+
+    The container should run when ANY site has pending work and a recent push. So the pair is
+    pending when any site is, and its time is the newest push among the pending sites only: a
+    recent push on a promoted site must not keep the box up."""
+    pend = [t for p, t in states if p]
+    if not pend:
+        return False, None
+    times = [t for t in pend if t is not None]
+    return True, (max(times) if times else None)
 
 
 def decide(pending: bool, last_ui_at: dt.datetime | None, now: dt.datetime, running: bool) -> tuple[str, str]:
@@ -165,18 +196,22 @@ def app_token(app_id: str, installation_id: str, pem: str, workdir: pathlib.Path
     return token
 
 
-def github(method: str, path: str, token: str, scheme: str = "token", body: dict | None = None):
+def github(method: str, path: str, token: str | None, scheme: str = "token", body: dict | None = None, missing_ok: bool = False):
+    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    if token:
+        headers["Authorization"] = f"{scheme} {token}"
     req = urllib.request.Request(
         "https://api.github.com" + path,
         data=json.dumps(body).encode() if body is not None else None,
         method=method,
-        headers={"Authorization": f"{scheme} {token}", "Accept": "application/vnd.github+json",
-                 "X-GitHub-Api-Version": "2022-11-28"},
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as err:
+        if err.code == 404 and missing_ok:
+            return None
         raise Abort(f"GitHub answered {err.code} for {method} {path}: {err.read(200).decode(errors='replace')}")
     except (urllib.error.URLError, OSError) as err:
         raise Abort(f"cannot reach GitHub for {method} {path}: {err}")
@@ -193,6 +228,23 @@ def read_branch_state(token: str) -> tuple[bool, dt.datetime | None, str]:
         when = dt.datetime.fromisoformat(ui["commit"]["committer"]["date"].replace("Z", "+00:00"))
         sha = ui["sha"][:7]
     detail = f"compare main...staging: status {cmp_.get('status')}, {len(cmp_.get('files', []))} file(s); newest UI commit {sha}"
+    return pending, when, detail
+
+
+def read_dashboard_state() -> tuple[bool, dt.datetime | None, str]:
+    """Same read for the dashboard-staging branch of pete-bot, with no token. A missing branch is
+    not pending: it means nobody has pushed dashboard work. Any other failure aborts the run."""
+    cmp_ = github("GET", f"/repos/{DASH_REPO}/compare/main...{DASH_BRANCH}?per_page={PAGE}", None, missing_ok=True)
+    if cmp_ is None:
+        return False, None, f"{DASH_REPO} has no {DASH_BRANCH} branch"
+    pending = dashboard_pending_from_files(cmp_.get("files", []))
+    commits = github("GET", f"/repos/{DASH_REPO}/commits?sha={DASH_BRANCH}&per_page=1", None) or []
+    when = None
+    sha = "none"
+    if commits:
+        when = dt.datetime.fromisoformat(commits[0]["commit"]["committer"]["date"].replace("Z", "+00:00"))
+        sha = commits[0]["sha"][:7]
+    detail = f"compare main...{DASH_BRANCH} in {DASH_REPO}: status {cmp_.get('status')}, {len(cmp_.get('files', []))} file(s); tip {sha}"
     return pending, when, detail
 
 
@@ -231,7 +283,10 @@ def main(argv: list[str]) -> int:
             if not str(data.get(k, "")).strip():
                 raise Abort(f"kv/services/staging-app lacks {k}.")
         token = app_token(str(data["app_id"]), str(data["installation_id"]), str(data["app_pem"]), workdir)
-        pending, last_ui, detail = read_branch_state(token)
+        p_pending, p_last, p_detail = read_branch_state(token)
+        d_pending, d_last, d_detail = read_dashboard_state()
+        pending, last_ui = combine([(p_pending, p_last), (d_pending, d_last)])
+        detail = f"portfolio: {p_detail} (pending={p_pending}); dashboard: {d_detail} (pending={d_pending})"
         now = dt.datetime.now(dt.timezone.utc)
         action, reason = decide(pending, last_ui, now, running)
         if action != "none":

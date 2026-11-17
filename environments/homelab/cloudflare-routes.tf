@@ -156,6 +156,16 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com"]
     }
 
+    # Lab dashboard staging: the fixtures-only build on staging-249's :8081 site. Same boundary as
+    # staging.pdlab.dev: Access with the Authentik login and Pedro's email. The origin serves
+    # synthetic data and holds no secret.
+    "staging-dash.pdlab.dev" = {
+      service       = "http://192.168.50.249:8081"
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+    }
+
     # Tom's Plane MCP (PET-610), a copy of mcp-plane.pdlab.dev with a different origin port and email.
     # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
     # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same
