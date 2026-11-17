@@ -88,6 +88,10 @@ resource "cloudflare_zero_trust_access_policy" "route" {
   name       = "${each.key} — allow"
   decision   = "allow"
 
+  # A policy session beats the application session, and the provider defaults it to 24h.
+  # Match the route's own duration so a longer app session is not cut short.
+  session_duration = each.value.session_duration
+
   # Precedence: explicit emails (one or more people) > email domain > everyone. Provider v5
   # uses attribute syntax ({ email = { email = ... } }), not v4's nested include {} blocks.
   include = length(each.value.access_emails) > 0 ? [
