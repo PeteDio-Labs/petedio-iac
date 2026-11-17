@@ -181,6 +181,17 @@ jobs:
         working-directory: environments/homelab/vault-config
         run: terraform validate
 
+      # environments/dashboard is the AWS root of the lab dashboard (own state, applied by hand as a
+      # host step). `terraform validate` is not recursive, so validate it explicitly, with the same
+      # hosted, credential-free posture. Without this step nothing in CI reads the root.
+      - name: Init dashboard root (no backend)
+        working-directory: environments/dashboard
+        run: terraform init -input=false -backend=false
+
+      - name: Validate dashboard root
+        working-directory: environments/dashboard
+        run: terraform validate
+
   # --- Privileged apply ---------------------------------------------------------------
   # Self-hosted, INSIDE the homelab. Runs ONLY on push to main (post-merge, trusted code) and
   # is gated behind the hosted `validate` job. The only job that mints Vault creds + touches
