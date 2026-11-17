@@ -8,9 +8,9 @@ dispatch with a forced mode. The container serves the portfolio's `staging` bran
 only while UI work is pending on that branch.
 
 The container also serves the lab dashboard's fixtures-only site (:8081). AUTO treats pete-bot's
-`dashboard-staging` branch the same way, read without a token because the repository is public: it
-is pending when the branch differs from main under dashboard/. The box runs when ANY site is
-pending and recent (combine()).
+`dashboard-staging` release, read without a token because the repository is public: the site is
+pending while the release holds an asset, and its clock is the asset's update time. The box runs
+when ANY site is pending and recent (combine()).
 
 AUTO decides the portfolio from GitHub, with the read-only staging App (kv/services/staging-app):
   pending  the `staging` branch differs from `main` outside .github. A squash-merge of staging into
@@ -49,11 +49,10 @@ NODE_KNOWN_HOSTS = os.environ.get("LAB_KNOWN_HOSTS", "/etc/ssh/lab-node-known-ho
 SSH_ROLE = "staging-power"
 REPO = "PeteDio-Labs/pdlabs-portfolio"
 IDLE_HOURS = 3.0
-# The dashboard staging site shares the container. pete-bot is a public repository, so its branch
-# is read without a token (60 requests an hour per address; a 5-minute schedule makes 24).
+# The dashboard staging site shares the container. pete-bot is a public repository, so its release
+# is read without a token (60 requests an hour per address; a 5-minute schedule makes 12).
 DASH_REPO = "petedio-labs/pete-bot"
-DASH_BRANCH = "dashboard-staging"
-DASH_PATH = "dashboard/"
+DASH_TAG = "dashboard-staging"
 SYNC_BOT = "github-actions[bot]"
 SYNC_SUBJECT = "Merge main into staging"
 
@@ -87,14 +86,6 @@ def newest_ui_commit(commits: list[dict]) -> dict | None:
             continue
         return c
     return None
-
-
-def dashboard_pending_from_files(files: list[dict]) -> bool:
-    """True when the dashboard branch differs from main under dashboard/. A full page counts as
-    pending, for the same reason as pending_from_files."""
-    if any(f.get("filename", "").startswith(DASH_PATH) for f in files):
-        return True
-    return len(files) >= PAGE
 
 
 def combine(states: list[tuple[bool, dt.datetime | None]]) -> tuple[bool, dt.datetime | None]:
@@ -231,21 +222,24 @@ def read_branch_state(token: str) -> tuple[bool, dt.datetime | None, str]:
     return pending, when, detail
 
 
+def newest_asset_time(release: dict) -> dt.datetime | None:
+    """When the release's newest asset was updated, or None when it holds no asset."""
+    times = [dt.datetime.fromisoformat(a["updated_at"].replace("Z", "+00:00"))
+             for a in release.get("assets", []) if a.get("updated_at")]
+    return max(times) if times else None
+
+
 def read_dashboard_state() -> tuple[bool, dt.datetime | None, str]:
-    """Same read for the dashboard-staging branch of pete-bot, with no token. A missing branch is
-    not pending: it means nobody has pushed dashboard work. Any other failure aborts the run."""
-    cmp_ = github("GET", f"/repos/{DASH_REPO}/compare/main...{DASH_BRANCH}?per_page={PAGE}", None, missing_ok=True)
-    if cmp_ is None:
-        return False, None, f"{DASH_REPO} has no {DASH_BRANCH} branch"
-    pending = dashboard_pending_from_files(cmp_.get("files", []))
-    commits = github("GET", f"/repos/{DASH_REPO}/commits?sha={DASH_BRANCH}&per_page=1", None) or []
-    when = None
-    sha = "none"
-    if commits:
-        when = dt.datetime.fromisoformat(commits[0]["commit"]["committer"]["date"].replace("Z", "+00:00"))
-        sha = commits[0]["sha"][:7]
-    detail = f"compare main...{DASH_BRANCH} in {DASH_REPO}: status {cmp_.get('status')}, {len(cmp_.get('files', []))} file(s); tip {sha}"
-    return pending, when, detail
+    """Read pete-bot's `dashboard-staging` release, with no token. The site is pending while the
+    release holds an asset, and the clock is that asset's update time, so the box stays up for
+    IDLE_HOURS after each publish and no longer. A missing release or one with no asset is not
+    pending: there is nothing to serve. Any other failure aborts the run."""
+    rel = github("GET", f"/repos/{DASH_REPO}/releases/tags/{DASH_TAG}", None, missing_ok=True)
+    if rel is None:
+        return False, None, f"{DASH_REPO} has no {DASH_TAG} release"
+    when = newest_asset_time(rel)
+    n = len(rel.get("assets", []))
+    return when is not None, when, f"release {DASH_TAG} in {DASH_REPO}: {n} asset(s), newest updated {when.isoformat() if when else 'never'}"
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────────────────────

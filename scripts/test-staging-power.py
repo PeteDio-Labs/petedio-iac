@@ -56,11 +56,11 @@ eq(sp.newest_ui_commit(log[:1]), None, "only sync commits: none")
 eq(sp.newest_ui_commit([]), None, "empty log")
 eq(sp.newest_ui_commit([{"sha": "e" * 40, "author": None, "commit": {"message": "UI fix"}}])["sha"], "e" * 40, "author may be null")
 
-# Dashboard staging shares the container (combine and dashboard_pending_from_files).
-eq(sp.dashboard_pending_from_files([{"filename": "dashboard/src/app.ts"}]), True, "dashboard file differs")
-eq(sp.dashboard_pending_from_files([{"filename": "src/other.ts"}]), False, "only other paths differ")
-eq(sp.dashboard_pending_from_files([{"filename": "x"}] * sp.PAGE), True, "a full page counts as pending")
-eq(sp.dashboard_pending_from_files([]), False, "no files: promoted")
+# Dashboard staging shares the container (newest_asset_time and combine).
+eq(sp.newest_asset_time({"assets": []}), None, "release with no asset")
+eq(sp.newest_asset_time({}), None, "release without an assets key")
+eq(sp.newest_asset_time({"assets": [{"updated_at": "2026-11-17T10:00:00Z"}, {"updated_at": "2026-11-17T12:00:00Z"}]}),
+   dt.datetime(2026, 11, 17, 12, 0, tzinfo=dt.timezone.utc), "newest asset wins")
 eq(sp.combine([(False, None), (False, None)]), (False, None), "nothing pending")
 eq(sp.combine([(True, FRESH), (False, FRESH)]), (True, FRESH), "one pending")
 eq(sp.combine([(False, FRESH), (True, STALE)]), (True, STALE), "a recent push on a promoted site is ignored")
