@@ -90,6 +90,10 @@ resource "cloudflare_zero_trust_access_policy" "mcp_portal" {
   name       = "mcp.pdlab.dev - allow Pedro"
   decision   = "allow"
   include    = [{ email = { email = "pedelgadillo@gmail.com" } }]
+
+  # A policy session beats the application session, and the provider defaults it to 24h.
+  # Match the portal and server apps below.
+  session_duration = "720h"
 }
 
 resource "cloudflare_zero_trust_access_application" "mcp_server" {
