@@ -75,6 +75,9 @@ resource "aws_cognito_user" "operator" {
   user_pool_id = aws_cognito_user_pool.this.id
   username     = var.operator_email
 
+  # AdminCreateUser defaults to SMS, and this user has no phone number.
+  desired_delivery_mediums = ["EMAIL"]
+
   attributes = {
     email          = var.operator_email
     email_verified = true

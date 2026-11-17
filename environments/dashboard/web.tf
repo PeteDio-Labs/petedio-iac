@@ -74,7 +74,9 @@ resource "aws_cloudfront_origin_access_control" "site" {
 }
 
 locals {
-  lab_fallback = var.lab_access_client_id != null && var.lab_access_client_secret != null
+  # The fallback needs all three: both Access token halves, and the flag that says the lab verifies
+  # the viewer's Cognito JWT itself. The service token proves only that CloudFront called.
+  lab_fallback = var.lab_access_client_id != null && var.lab_access_client_secret != null && var.lab_verifies_viewer_jwt
 
   csp = join("; ", [
     "default-src 'self'",
@@ -130,6 +132,25 @@ resource "aws_cloudfront_response_headers_policy" "security" {
       override = true
     }
   }
+}
+
+# The SPA has one HTML file, so a deep link must return it. The rewrite runs on the SPA behavior
+# only, so /api/* keeps its own status codes and error bodies. A path with an extension passes
+# through, so a missing asset stays a 403 or 404 instead of becoming HTML.
+resource "aws_cloudfront_function" "spa_rewrite" {
+  name    = "${var.name}-spa-rewrite"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var request = event.request;
+      var last = request.uri.split('/').pop();
+      if (!last.includes('.')) {
+        request.uri = '/index.html';
+      }
+      return request;
+    }
+  EOT
 }
 
 resource "aws_cloudfront_distribution" "site" {
@@ -214,6 +235,11 @@ resource "aws_cloudfront_distribution" "site" {
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.optimized.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.spa_rewrite.arn
+    }
   }
 
   dynamic "ordered_cache_behavior" {
@@ -243,22 +269,6 @@ resource "aws_cloudfront_distribution" "site" {
     cache_policy_id            = data.aws_cloudfront_cache_policy.disabled.id
     origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
-  }
-
-  # A private bucket answers 403 for a missing key. The SPA has one HTML file, so a deep link
-  # returns it with 200 and the client router takes over.
-  custom_error_response {
-    error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 10
-  }
-
-  custom_error_response {
-    error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 10
   }
 
   restrictions {

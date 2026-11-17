@@ -62,6 +62,17 @@ variable "lab_access_client_secret" {
   sensitive   = true
 }
 
+variable "lab_verifies_viewer_jwt" {
+  description = <<-EOT
+    Set true only after pete-bot verifies the viewer's Cognito JWT (the Authorization header that
+    CloudFront forwards) on the fallback path. An Access service token proves that CloudFront
+    called the lab, not who the viewer is, so without this check an unsigned request would read the
+    dashboard whenever the API fails over. Keep false until that code is merged and deployed.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "operator_email" {
   description = "Email of the one Cognito user. Cognito mails the temporary password to it. Supply it in a gitignored tfvars file."
   type        = string

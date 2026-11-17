@@ -44,7 +44,7 @@ Pedro chose a CloudFront origin group on 2026-11-16. A Route 53 secondary cannot
 
 So the hostname always terminates at CloudFront with the ACM certificate. `GET /api/dashboard` uses an origin group: the API first, then `reports.pdlab.dev` (pete-bot on 237 through its tunnel) on a 500, 502, 503, 504 or timeout. Only GET and HEAD can use an origin group, so `POST /api/switch` and ingest stay on the API.
 
-The fallback turns on when `lab_access_client_id` and `lab_access_client_secret` are both set. CloudFront sends them as Cloudflare Access service-token headers. Route 53 carries the PRIMARY health-checked alias and no SECONDARY record, and stays the pattern for later services such as Authentik.
+The fallback turns on only when `lab_access_client_id`, `lab_access_client_secret` and `lab_verifies_viewer_jwt` are all set. The last one records that pete-bot verifies the viewer's Cognito JWT on the fallback path: the service token proves only that CloudFront called, so without that check an unsigned request would read the dashboard whenever the API fails over. CloudFront sends them as Cloudflare Access service-token headers. Route 53 carries the PRIMARY health-checked alias and no SECONDARY record, and stays the pattern for later services such as Authentik.
 
 Two things this needs and does not do:
 
