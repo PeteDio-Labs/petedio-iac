@@ -8,11 +8,10 @@ The `pedro` OIDC role grants the `keys-list` policy (`vault-config/keys.tf`). Th
 
 ## Set up
 
-1. In the Authentik dashboard, create the provider and application by hand: slug `vault`, confidential client, implicit consent, scopes `openid email profile`, and the redirect URIs listed in `scripts/seed-vault-oidc.sh`. Check `https://auth.pdlab.dev/application/o/vault/.well-known/openid-configuration`.
-2. Merge the PR. The apply-on-merge job creates the route.
-3. On the Mac, run `scripts/apply-vault-config.sh` to mount `auth/oidc` and create the `pedro` role.
-4. On the Mac, run `scripts/seed-vault-oidc.sh`. It writes `auth/oidc/config` from the client id and secret and prints no secret.
-5. Sign in at `vault.pdlab.dev` with method OIDC, or run `vault login -method=oidc role=pedro`.
+1. Merge the PR. The apply-on-merge job creates the route.
+2. On the Mac, run `scripts/apply-vault-config.sh` to mount `auth/oidc` and create the `pedro` role.
+3. On the Mac, run `scripts/seed-vault-oidc.sh`. It creates the Authentik `vault` provider and application through the API, with the bootstrap token from `kv/services/authentik`, then writes `auth/oidc/config` from the client it reads back. It prints no secret and creates nothing if the application exists. If the bootstrap token no longer works, make the app by hand (slug `vault`, confidential, implicit consent, scopes `openid email profile`, the redirect URIs in the script) and pass `VAULT_OIDC_CLIENT_ID` and `VAULT_OIDC_CLIENT_SECRET`.
+4. Sign in at `vault.pdlab.dev` with method OIDC, or run `vault login -method=oidc role=pedro`.
 
 ## If it breaks
 

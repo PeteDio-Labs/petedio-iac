@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# seed-vault-oidc.sh — write Vault's auth/oidc/config from the hand-created Authentik "vault"
-# application (PET-946). Run it once, after scripts/apply-vault-config.sh has mounted the method
-# (environments/homelab/vault-config/oidc.tf) and before anyone signs in at vault.pdlab.dev.
+# seed-vault-oidc.sh — create Authentik's "vault" application over its API and write Vault's
+# auth/oidc/config from it, in one run (PET-946). Run it once, after
+# scripts/apply-vault-config.sh has mounted the method (environments/homelab/vault-config/oidc.tf)
+# and before anyone signs in at vault.pdlab.dev.
 #
-# WHY MANUAL: like the cloudflare-access app (reseed-authentik-oidc-vault.sh), the Authentik
-# provider and application are created BY HAND in the Authentik dashboard on LXC 119. Slug `vault`,
-# confidential client, implicit consent, scopes `openid email profile`, and these redirect URIs:
-#   https://vault.pdlab.dev/ui/vault/auth/oidc/oidc/callback
-#   http://localhost:8250/oidc/callback
-# Confirm the app answers before you seed:
-#   curl https://auth.pdlab.dev/application/o/vault/.well-known/openid-configuration
+# The Authentik call uses the bootstrap token at kv/services/authentik (key bootstrap_token), read
+# with the Vault token below. It creates one OAuth2 provider and one application, slug `vault`:
+# confidential client, implicit consent, scopes openid/email/profile, RS256 signing, and the
+# redirect URIs for the Vault page and the CLI. If the application already exists, it reads the
+# client back and creates nothing. It does not touch any other Authentik object.
 #
-# Idempotent. Prints no secrets, and the secret never appears in an argument list or in state.
+# If the bootstrap token no longer works, set VAULT_OIDC_CLIENT_ID and VAULT_OIDC_CLIENT_SECRET
+# from an app you made by hand (same slug and redirect URIs), and the script skips Authentik.
+#
+# Idempotent. Prints no secret, and the secret never appears in an argument list or in state.
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt.
-#   OIDC creds:  $VAULT_OIDC_CLIENT_ID / $VAULT_OIDC_CLIENT_SECRET, else prompt (secret not echoed)
+#   Authentik:   $AUTHENTIK_URL (default https://auth.pdlab.dev)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,7 +25,8 @@ HOMELAB="$REPO_ROOT/environments/homelab"
 export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
 export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
-DISCOVERY_URL="${VAULT_OIDC_DISCOVERY_URL:-https://auth.pdlab.dev/application/o/vault/}"
+export AUTHENTIK_URL="${AUTHENTIK_URL:-https://auth.pdlab.dev}"
+APP_SLUG="vault"
 
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -44,23 +47,93 @@ vault auth list -format=json | python3 -c 'import json,sys; sys.exit(0 if "oidc/
 vault read -format=json auth/oidc/role/pedro >/dev/null 2>&1 \
   || die "role pedro is missing. Apply vault-config first: scripts/apply-vault-config.sh"
 
-step "Reading the Authentik client"
-CLIENT_ID="${VAULT_OIDC_CLIENT_ID:-}"
-CLIENT_SECRET="${VAULT_OIDC_CLIENT_SECRET:-}"
-[ -n "$CLIENT_ID" ] || read -r -p "Authentik client id for the vault app: " CLIENT_ID
-[ -n "$CLIENT_SECRET" ] || { read -r -s -p "Authentik client secret (hidden): " CLIENT_SECRET; printf '\n'; }
-[ -n "$CLIENT_ID" ] && [ -n "$CLIENT_SECRET" ] || die "client id and secret are both required."
+if [ -n "${VAULT_OIDC_CLIENT_ID:-}" ] && [ -n "${VAULT_OIDC_CLIENT_SECRET:-}" ]; then
+  step "Using the client from the environment (Authentik skipped)"
+  CONFIG_SOURCE=env
+else
+  step "Creating or reading the Authentik application"
+  CONFIG_SOURCE=authentik
+  AK_TOKEN="$(vault kv get -field=bootstrap_token kv/services/authentik 2>/dev/null || true)"
+  [ -n "$AK_TOKEN" ] || die "kv/services/authentik has no bootstrap_token. Set VAULT_OIDC_CLIENT_ID and VAULT_OIDC_CLIENT_SECRET from a hand-made app instead."
+  export AK_TOKEN
+fi
 
 step "Writing auth/oidc/config"
 # The JSON goes through stdin, so the secret never appears in a process list.
-CLIENT_ID="$CLIENT_ID" CLIENT_SECRET="$CLIENT_SECRET" DISCOVERY_URL="$DISCOVERY_URL" python3 -c '
-import json, os
-print(json.dumps({
-    "oidc_discovery_url": os.environ["DISCOVERY_URL"],
-    "oidc_client_id": os.environ["CLIENT_ID"],
-    "oidc_client_secret": os.environ["CLIENT_SECRET"],
-    "default_role": "pedro",
-}))' | vault write auth/oidc/config - >/dev/null
+CONFIG_SOURCE="$CONFIG_SOURCE" APP_SLUG="$APP_SLUG" python3 - <<'PY' | vault write auth/oidc/config - >/dev/null
+import json, os, re, ssl, sys, urllib.error, urllib.request
+
+def out(client_id, client_secret):
+    base = os.environ["AUTHENTIK_URL"].rstrip("/")
+    print(json.dumps({
+        "oidc_discovery_url": f"{base}/application/o/{os.environ['APP_SLUG']}/",
+        "oidc_client_id": client_id,
+        "oidc_client_secret": client_secret,
+        "default_role": "pedro",
+    }))
+
+if os.environ["CONFIG_SOURCE"] == "env":
+    out(os.environ["VAULT_OIDC_CLIENT_ID"], os.environ["VAULT_OIDC_CLIENT_SECRET"])
+    sys.exit(0)
+
+base = os.environ["AUTHENTIK_URL"].rstrip("/")
+slug = os.environ["APP_SLUG"]
+token = os.environ["AK_TOKEN"]
+
+def api(method, path, body=None):
+    req = urllib.request.Request(
+        f"{base}/api/v3{path}", method=method,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=ssl.create_default_context()) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        # Print the status and Authentik's reason, never the request (it holds the token).
+        sys.exit(f"Authentik {method} {path} -> HTTP {e.code}: {e.read().decode()[:300]}")
+
+version = api("GET", "/admin/version/")["version_current"]
+apps = api("GET", f"/core/applications/?slug={slug}")["results"]
+print(f"authentik {version}; application {slug!r} exists: {bool(apps)}", file=sys.stderr)
+
+if apps:
+    provider_pk = apps[0]["provider"]
+    if provider_pk is None:
+        sys.exit(f"application {slug!r} has no provider; fix it in Authentik, then run again.")
+else:
+    def one(path, what):
+        rows = api("GET", path)["results"]
+        if len(rows) != 1:
+            sys.exit(f"expected exactly one {what}, found {len(rows)}")
+        return rows[0]["pk"]
+
+    flow = one("/flows/instances/?slug=default-provider-authorization-implicit-consent", "implicit-consent flow")
+    scopes = [one(f"/propertymappings/provider/scope/?managed=goauthentik.io/providers/oauth2/scope-{s}", f"scope {s}")
+              for s in ("openid", "email", "profile")]
+    key = one("/crypto/certificatekeypairs/?has_key=true&name=authentik%20Self-signed%20Certificate", "signing key")
+
+    uris = ["https://vault.pdlab.dev/ui/vault/auth/oidc/oidc/callback", "http://localhost:8250/oidc/callback"]
+    year, minor = (int(x) for x in re.match(r"(\d+)\.(\d+)", version).groups())
+    if (year, minor) >= (2025, 10):
+        redirect = [{"matching_mode": "strict", "url": u} for u in uris]
+    else:
+        # Before 2025.10 the field is one string of regular expressions, one per line.
+        redirect = "\n".join(re.escape(u) for u in uris)
+
+    provider = api("POST", "/providers/oauth2/", {
+        "name": "Vault", "authorization_flow": flow, "client_type": "confidential",
+        "redirect_uris": redirect, "property_mappings": scopes, "signing_key": key,
+        "sub_mode": "user_email", "include_claims_in_id_token": True,
+    })
+    provider_pk = provider["pk"]
+    api("POST", "/core/applications/", {"name": "Vault", "slug": slug, "provider": provider_pk})
+    print("created the provider and application", file=sys.stderr)
+
+p = api("GET", f"/providers/oauth2/{provider_pk}/")
+if not p.get("client_id") or not p.get("client_secret"):
+    sys.exit("Authentik returned no client id or secret for the provider.")
+out(p["client_id"], p["client_secret"])
+PY
 
 step "Read-back"
 vault read -format=json auth/oidc/config | python3 -c '
