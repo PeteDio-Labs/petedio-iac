@@ -98,6 +98,6 @@ resource "aws_route53_record" "primary_aaaa" {
   }
 }
 
-# There is no SECONDARY record. The on-prem fallback sits behind CloudFront as an origin group
+# There is no SECONDARY record. The Lab fallback sits behind CloudFront as an origin group
 # (web.tf), because a CNAME to a Cloudflare-proxied name cannot terminate TLS for this hostname.
 # Route 53 flips only when CloudFront itself is unreachable, and then has no target to flip to.

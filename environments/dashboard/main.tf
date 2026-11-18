@@ -1,6 +1,6 @@
 # Lab dashboard, AWS side (primary). S3 + CloudFront serve the SPA, HTTP API + Lambda + DynamoDB
 # serve the data, Cognito signs you in without Authentik, and Route 53 holds the failover pair on a
-# delegated subdomain. pete-bot on 237 stays the warm on-prem fallback.
+# delegated subdomain. pete-bot on 237 stays the warm Lab fallback.
 #
 # Apply by hand from the Mac or 247 as a host step, after Pedro says go. Nothing here runs from CI.
 # Rollout order and the cost estimate are in README.md.

@@ -1,6 +1,6 @@
 # Lab dashboard, AWS side
 
-Terraform for the AWS primary of the lab dashboard. The SPA, API and sign-in live here. pete-bot on 237 stays the warm on-prem fallback.
+Terraform for the AWS primary of the lab dashboard. The SPA, API and sign-in live here. pete-bot on 237 stays the warm Lab fallback.
 
 The app code is in `petedio-labs/pete-bot` under `dashboard/`. This root owns existence and permissions. It never owns code: a deploy user ships the SPA and the Lambda bundle.
 
@@ -38,7 +38,7 @@ Nothing runs from CI. Apply from the Mac or 247 with the account's admin profile
 4. **Keys.** Pedro runs `bash scripts/dashboard-deploy-key.sh --profile <profile>`, which puts the `petedio-dash-deploy` key in the `dashboard-aws` environment of the pete-bot repo (restrict that environment to `main` first). The `petedio-dash-ingest` key script is a later PR. No session places a credential.
 5. **Code.** The deploy workflow syncs `dashboard/dist/` (without `fixtures/`) to the bucket, invalidates `/*` and runs `aws lambda update-function-code`.
 
-## On-prem fallback: where TLS ends
+## Lab fallback: where TLS ends
 
 Pedro chose a CloudFront origin group on 2026-11-16. A Route 53 secondary cannot work: the lab has no inbound port, and Cloudflare serves a hostname only when its own zone holds it, so a CNAME to a proxied name fails the TLS handshake.
 
