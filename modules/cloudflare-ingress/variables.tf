@@ -71,6 +71,10 @@ variable "routes" {
     agents           = optional(list(string), [])
     session_duration = optional(string, "24h")
 
+    # Browser origins that may call this gated route with the viewer's Access cookie (CORS).
+    # Empty (the default) leaves cors_headers unset, so every other app plans unchanged.
+    cors_allowed_origins = optional(list(string), [])
+
     # Omit entirely for ordinary browser-gated apps (the default): a null here
     # leaves oauth_configuration unset, which is the pre-Managed-OAuth behaviour.
     managed_oauth = optional(object({

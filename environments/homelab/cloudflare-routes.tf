@@ -143,6 +143,10 @@ module "cloudflare_ingress" {
       access        = true
       allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
       access_emails = ["pedelgadillo@gmail.com"]
+      # The dashboard on staging-dash.pdlab.dev reads GET /api/dashboard here with Pedro's own
+      # Access cookie. The two hosts share the site pdlab.dev, so the cookie is sent. No token
+      # is stored anywhere, and the JWT check on 237 still runs.
+      cors_allowed_origins = ["https://staging-dash.pdlab.dev"]
     }
 
     # Portfolio staging, a copy of pdlab.dev served by Caddy on staging-249 (LXC 249). A
