@@ -54,10 +54,12 @@
 
     - name: Require that the unseal units are gone
       ansible.builtin.assert:
+        # Check mode removes nothing, so a host that still has the timer would fail here.
         that:
           - unseal_unit_files.results | map(attribute='stat.exists') | select | list | length == 0
         fail_msg: "A vault-unseal unit file is still on {{ inventory_hostname }}."
         success_msg: "vault-unseal.timer and vault-unseal.service are gone ({{ unseal_unit_files.results | length }} paths checked)."
+      when: not ansible_check_mode
 
   handlers:
     - name: Reload systemd
