@@ -27,3 +27,7 @@ jobs:
         run: python3 scripts/test-keys.py
       - name: Drive the seed script's scope probes against fake answers
         run: bash scripts/test-seed-keys-probe.sh
+      - name: Drive the Vault OIDC seed against a fake Vault
+        run: bash scripts/test-seed-vault-oidc.sh
+      - name: Drive the Authentik token seed against fake ssh, Vault and curl
+        run: bash scripts/test-seed-authentik-api-token.sh
