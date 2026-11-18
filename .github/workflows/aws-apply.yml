@@ -42,7 +42,7 @@ on:
         type: boolean
         default: false
       pet:
-        description: "The PET item this run answers, for example PET-941"
+        description: "The PET item this run answers, for example PET-942"
         required: false
         type: string
         default: ""

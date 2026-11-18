@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # seed-aws-ci.sh — create the IAM users that aws-apply.yml plans and applies with, and store their
-# keys in Vault (PET-941).
+# keys in Vault (PET-942).
 #
 # WHY A SCRIPT, NOT TERRAFORM. The users below are what Terraform runs as, so no apply of theirs
 # can exist before they do. The account's service control policy also denies an IAM OIDC provider

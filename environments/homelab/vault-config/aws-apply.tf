@@ -1,4 +1,4 @@
-# deploy-aws-plan and deploy-aws-apply: what aws-apply.yml may read (PET-941).
+# deploy-aws-plan and deploy-aws-apply: what aws-apply.yml may read (PET-942).
 #
 # The workflow plans and applies one AWS root, environments/dashboard or environments/portfolio
 # (account 847547470418). The account's service control policy denies an OIDC provider, so a job
