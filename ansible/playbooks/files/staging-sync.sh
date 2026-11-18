@@ -100,11 +100,14 @@ unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 token resp jwt
 rm -rf "$work/src/.git"
 chown -R "$BUILD_USER:$BUILD_USER" "$work"
 
+# The build names itself: BUILD_ENV and BUILD_SHA make the portfolio draw its staging build chip.
+# $tip is the commit this run cloned, so the chip names what is built, not what was asked for.
 # Branch code runs only here, as an unprivileged user with no access to the App key, in a transient
 # systemd service. The service's control group ends with the build, so no child outlives it.
 systemd-run --quiet --wait --collect --pipe \
   -p User="$BUILD_USER" -p NoNewPrivileges=yes -p WorkingDirectory="$work/src" \
   -p Environment="HOME=$work/home" -p Environment="PATH=/usr/local/bin:/usr/bin:/bin" \
+  -p Environment="BUILD_ENV=staging" -p Environment="BUILD_SHA=$tip" \
   bash -c 'mkdir -p "$HOME" && bun install --frozen-lockfile && bun run build' \
   || fail "bun install or bun run build failed for $tip"
 
