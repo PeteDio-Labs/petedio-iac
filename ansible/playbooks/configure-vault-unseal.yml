@@ -44,15 +44,20 @@
     - name: Reload systemd before the read-back
       ansible.builtin.meta: flush_handlers
 
-    - name: Read the services systemd knows
-      ansible.builtin.service_facts:
+    - name: Look for the unseal unit files
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ item }}"
+      loop:
+        - vault-unseal.timer
+        - vault-unseal.service
+      register: unseal_unit_files
 
-    - name: Require that the unseal timer is gone
+    - name: Require that the unseal units are gone
       ansible.builtin.assert:
         that:
-          - "'vault-unseal.timer' not in ansible_facts.services"
-        fail_msg: "vault-unseal.timer is still known to systemd on {{ inventory_hostname }}."
-        success_msg: "vault-unseal.timer is gone ({{ ansible_facts.services | length }} services read)."
+          - unseal_unit_files.results | map(attribute='stat.exists') | select | list | length == 0
+        fail_msg: "A vault-unseal unit file is still on {{ inventory_hostname }}."
+        success_msg: "vault-unseal.timer and vault-unseal.service are gone ({{ unseal_unit_files.results | length }} paths checked)."
 
   handlers:
     - name: Reload systemd
