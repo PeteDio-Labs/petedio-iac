@@ -22,6 +22,7 @@ restore-test-backup.yml
 grant-iac-backup-storage.yml
 audit-cloudflared-112.yml
 patch-kev-nodes.yml
+configure-cloudflared-112.yml
 patch-guests.yml
 upgrade-authentik.yml
 restart-guests.yml

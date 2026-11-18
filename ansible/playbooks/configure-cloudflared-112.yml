@@ -1,0 +1,100 @@
+---
+# configure-cloudflared-112.yml — pin the cloudflared connector on LXC 112, take its token out of
+# argv, and serve metrics (PET-768, PET-718).
+#
+#   scripts/lab-action.sh playbook_check configure-cloudflared-112.yml   # no approval; prints the plan
+#   scripts/lab-action.sh playbook_apply configure-cloudflared-112.yml   # after Pedro's lab-write tap
+#
+# audit-cloudflared-112.yml read the live host on 2026-11-07: one connector, image
+# cloudflare/cloudflared:2026.10.4, restart unless-stopped, bridge network, and the tunnel token in
+# the command line (`run --token <value>`), so `docker inspect` and `ps` show it. No metrics port.
+# Seven stopped containers sit beside it. No compose file or unit owns any of this.
+#
+# This play replaces the connector with one that has:
+#   - the image pinned by `cloudflared_image` (a version bump is a one-line pull request),
+#   - the token in /etc/cloudflared/tunnel.env (mode 0600) and passed with `--env-file`,
+#   - `--metrics` on `cloudflared_metrics_bind:cloudflared_metrics_port`, so Prometheus can scrape
+#     `/metrics` and anything can read `/ready`.
+#
+# The change is not a restart. files/cloudflared-converge.sh starts the new connector beside the old
+# one, waits for `/ready` on it, hands the stable metrics port to a final connector, and keeps the old one as `cloudflared-prev` for a
+# rollback. When the new connector never reports ready, the old one keeps running and the play fails.
+#
+# The play places no credential from outside the host: when the env file is missing, the script
+# copies the token the running connector already holds, on the guest, and prints nothing of it.
+# Tested by scripts/test-cloudflared-converge.sh.
+#
+# NOT DONE HERE, by choice: the seven stopped containers (one is named cloudflared-old-2026.3.0 and
+# uses `:latest`) and the Prometheus scrape job. Both are separate, smaller changes.
+
+- name: Converge cloudflared on LXC 112
+  hosts: pve03
+  gather_facts: false
+  vars:
+    cf_vmid: 112
+    cf_name: cloudflared
+    cloudflared_image: cloudflare/cloudflared:2026.10.4
+    cloudflared_metrics_bind: 192.168.50.112
+    cloudflared_metrics_port: 20241
+    cloudflared_env_file: /etc/cloudflared/tunnel.env
+
+  tasks:
+    # check_mode: false so a check reads the live state. It prints the image, the restart policy, and
+    # how many `--token` arguments the command holds, never the command itself.
+    - name: Read what the connector runs now
+      ansible.builtin.command:
+        argv:
+          - pct
+          - exec
+          - "{{ cf_vmid }}"
+          - --
+          - sh
+          - -c
+          - >-
+            docker inspect --format '{% raw %}image={{.Config.Image}} restart={{.HostConfig.RestartPolicy.Name}}
+            state={{.State.Status}}{% endraw %}' {{ cf_name }};
+            echo token_args=$(docker inspect --format '{% raw %}{{json .Config.Cmd}}{% endraw %}' {{ cf_name }}
+            | grep -o '"--token"' | wc -l);
+            echo metrics_args=$(docker inspect --format '{% raw %}{{json .Config.Cmd}}{% endraw %}' {{ cf_name }}
+            | grep -o '"--metrics"' | wc -l);
+            echo env_file=$(test -s {{ cloudflared_env_file }} && echo present || echo missing)
+      register: cf_now
+      changed_when: false
+      check_mode: false  # lab-action: read-only
+
+    - name: Say what the apply would change
+      ansible.builtin.debug:
+        msg:
+          - "now: {{ cf_now.stdout_lines }}"
+          - >-
+            wanted: image={{ cloudflared_image }}, token in {{ cloudflared_env_file }},
+            metrics on {{ cloudflared_metrics_bind }}:{{ cloudflared_metrics_port }}
+          - "A check skips the converge task below, so read the lines above, not a changed count."
+
+    - name: Fail when the read returned nothing
+      ansible.builtin.assert:
+        that: cf_now.stdout_lines | select('match', '^image=') | list | length == 1
+        fail_msg: "Read no connector named {{ cf_name }} on {{ cf_vmid }}; nothing to converge."
+
+    - name: Start the new connector, wait for ready, then stop the old one
+      ansible.builtin.command:
+        argv:
+          - pct
+          - exec
+          - "{{ cf_vmid }}"
+          - --
+          - sh
+          - -s
+          - --
+          - "{{ cloudflared_image }}"
+          - "{{ cf_name }}"
+          - "{{ cloudflared_metrics_bind }}"
+          - "{{ cloudflared_metrics_port }}"
+          - "{{ cloudflared_env_file }}"
+        stdin: "{{ lookup('ansible.builtin.file', 'cloudflared-converge.sh') }}"
+      register: cf_converge
+      changed_when: "'already converged' not in cf_converge.stdout"
+
+    - name: Report the converge result
+      ansible.builtin.debug:
+        var: cf_converge.stdout_lines
