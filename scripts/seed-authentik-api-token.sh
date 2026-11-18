@@ -4,9 +4,11 @@
 # WHY. scripts/seed-vault-oidc.sh calls Authentik's API. The bootstrap_token at
 # kv/services/authentik answers `403 Token invalid/expired`, so the seed has no working
 # credential. This script mints one that works and stores it where the seed reads it:
-#   kv/services/authentik-api, key api_token
-# It does not use kv/services/authentik: the claude-ops policy reads that path, and an Authentik
-# admin token must not reach it.
+#   kv/admin/authentik-api, key api_token
+# It does not use kv/services/*: the ansible policy reads every path there (and kv/iac/*), the
+# claude-ops policy reads kv/services/authentik, and an Authentik admin token must reach none of
+# them. kv/admin/* is the prefix no broad policy reads (PET-702): only the root token does, and
+# this script and seed-vault-oidc.sh both run with it.
 #
 # HOW. Authentik's own shell mints the token, so no existing token is needed. The script SSHes to
 # pve03, runs `docker compose exec server ak shell -c <code>` in LXC 119 through `pct exec`, and
@@ -38,7 +40,7 @@ export VAULT_CACERT="${VAULT_CACERT:-$HOMELAB/vault-ca.crt}"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 AUTHENTIK_URL="${AUTHENTIK_URL:-https://auth.pdlab.dev}"
 AUTHENTIK_USER="${AUTHENTIK_USER:-akadmin}"
-VAULT_PATH="kv/services/authentik-api"
+VAULT_PATH="kv/admin/authentik-api"
 TOKEN_ID="vault-oidc-seed"
 
 PVE03="root@192.168.50.10"

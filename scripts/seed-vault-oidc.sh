@@ -4,7 +4,7 @@
 # scripts/apply-vault-config.sh has mounted the method (environments/homelab/vault-config/oidc.tf)
 # and before anyone signs in with OIDC.
 #
-# The Authentik call uses the API token at kv/services/authentik-api (key api_token), read
+# The Authentik call uses the API token at kv/admin/authentik-api (key api_token), read
 # with the Vault token below. scripts/seed-authentik-api-token.sh mints it: run that first. It creates one OAuth2 provider and one application, slug `vault`:
 # confidential client, implicit consent, scopes openid/email/profile, RS256 signing, and the
 # redirect URIs for the Vault page and the CLI (Authentik 2024.12 or later). If the application already exists, it reads the
@@ -57,8 +57,8 @@ if [ -n "${VAULT_OIDC_CLIENT_ID:-}" ] && [ -n "${VAULT_OIDC_CLIENT_SECRET:-}" ];
 else
   step "Creating or reading the Authentik application"
   CONFIG_SOURCE=authentik
-  AK_TOKEN="$(vault kv get -field=api_token kv/services/authentik-api 2>/dev/null || true)"
-  [ -n "$AK_TOKEN" ] || die "kv/services/authentik-api has no api_token. Run scripts/seed-authentik-api-token.sh first, or set VAULT_OIDC_CLIENT_ID and VAULT_OIDC_CLIENT_SECRET from a hand-made app."
+  AK_TOKEN="$(vault kv get -field=api_token kv/admin/authentik-api 2>/dev/null || true)"
+  [ -n "$AK_TOKEN" ] || die "kv/admin/authentik-api has no api_token. Run scripts/seed-authentik-api-token.sh first, or set VAULT_OIDC_CLIENT_ID and VAULT_OIDC_CLIENT_SECRET from a hand-made app."
   export AK_TOKEN
 fi
 
