@@ -10,8 +10,9 @@ The `pedro` OIDC role grants the `keys-list` policy (`vault-config/keys.tf`). Th
 
 1. Merge the PR.
 2. On the Mac, run `scripts/apply-vault-config.sh` to mount `auth/oidc` and create the `pedro` role.
-3. On the Mac, run `scripts/seed-vault-oidc.sh`. It creates the Authentik `vault` provider and application through the API, with the bootstrap token from `kv/services/authentik`, then writes `auth/oidc/config` from the client it reads back. It prints no secret and creates nothing if the application exists. If the bootstrap token no longer works, make the app by hand (slug `vault`, confidential, implicit consent, scopes `openid email profile`, the redirect URIs in the script) and pass `VAULT_OIDC_CLIENT_ID` and `VAULT_OIDC_CLIENT_SECRET`.
-4. Sign in at `https://192.168.50.223:8200` with method OIDC, or run `vault login -method=oidc role=pedro`.
+3. On the Mac, run `scripts/seed-authentik-api-token.sh`. The `bootstrap_token` at `kv/services/authentik` is rejected by Authentik (`403 Token invalid/expired`), so this script mints a working one. It SSHes to pve03, runs Authentik's own `ak shell` in LXC 119 to create an API token for `akadmin`, writes it to `kv/services/authentik-api` (key `api_token`), and proves it with one call to the Authentik API. The key never appears in an argument or in the output. A re-run replaces the token.
+4. On the Mac, run `scripts/seed-vault-oidc.sh`. It reads `api_token`, creates the Authentik `vault` provider and application through the API, then writes `auth/oidc/config` from the client it reads back. It prints no secret and creates nothing if the application exists. If Authentik still refuses the token, make the app by hand (slug `vault`, confidential, implicit consent, scopes `openid email profile`, the redirect URIs in the script) and pass `VAULT_OIDC_CLIENT_ID` and `VAULT_OIDC_CLIENT_SECRET`. The last lines of the output are a read-back: a discovery URL, `client id set : True` and `default role  : pedro`.
+5. Sign in at `https://192.168.50.223:8200` with method OIDC, or run `vault login -method=oidc role=pedro`.
 
 ## If it breaks
 

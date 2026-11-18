@@ -4,14 +4,18 @@
 # scripts/apply-vault-config.sh has mounted the method (environments/homelab/vault-config/oidc.tf)
 # and before anyone signs in with OIDC.
 #
-# The Authentik call uses the bootstrap token at kv/services/authentik (key bootstrap_token), read
-# with the Vault token below. It creates one OAuth2 provider and one application, slug `vault`:
+# The Authentik call uses the API token at kv/services/authentik-api (key api_token), read
+# with the Vault token below. scripts/seed-authentik-api-token.sh mints it: run that first. It creates one OAuth2 provider and one application, slug `vault`:
 # confidential client, implicit consent, scopes openid/email/profile, RS256 signing, and the
 # redirect URIs for the Vault page and the CLI (Authentik 2024.12 or later). If the application already exists, it reads the
 # client back and creates nothing. It does not touch any other Authentik object.
 #
-# If the bootstrap token no longer works, set VAULT_OIDC_CLIENT_ID and VAULT_OIDC_CLIENT_SECRET
-# from an app you made by hand (same slug and redirect URIs), and the script skips Authentik.
+# If Authentik refuses the token, set VAULT_OIDC_CLIENT_ID and VAULT_OIDC_CLIENT_SECRET from an
+# app you made by hand (same slug and redirect URIs), and the script skips Authentik.
+#
+# Bash 3.2 (the Mac's /bin/bash) matches quotes inside a heredoc that sits in $( ), so the Python
+# lives in a function and the command substitution only calls it. The bash32 check in CI parses
+# this file with a real bash 3.2 (.github/workflows/bash32.yml).
 #
 # Idempotent. Prints no secret, and the secret never appears in an argument list or in state.
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt.
@@ -53,15 +57,17 @@ if [ -n "${VAULT_OIDC_CLIENT_ID:-}" ] && [ -n "${VAULT_OIDC_CLIENT_SECRET:-}" ];
 else
   step "Creating or reading the Authentik application"
   CONFIG_SOURCE=authentik
-  AK_TOKEN="$(vault kv get -field=bootstrap_token kv/services/authentik 2>/dev/null || true)"
-  [ -n "$AK_TOKEN" ] || die "kv/services/authentik has no bootstrap_token. Set VAULT_OIDC_CLIENT_ID and VAULT_OIDC_CLIENT_SECRET from a hand-made app instead."
+  AK_TOKEN="$(vault kv get -field=api_token kv/services/authentik-api 2>/dev/null || true)"
+  [ -n "$AK_TOKEN" ] || die "kv/services/authentik-api has no api_token. Run scripts/seed-authentik-api-token.sh first, or set VAULT_OIDC_CLIENT_ID and VAULT_OIDC_CLIENT_SECRET from a hand-made app."
   export AK_TOKEN
 fi
 
 step "Writing auth/oidc/config"
-# The JSON goes through stdin, so the secret never appears in a process list.
-# Capture the JSON first, so a failed Authentik call is the only error shown.
-OIDC_CONFIG_JSON="$(CONFIG_SOURCE="$CONFIG_SOURCE" APP_SLUG="$APP_SLUG" python3 - <<'PY'
+# The JSON goes through stdin, so the secret never appears in a process list. The Python is in a
+# function (see the header), and the JSON is captured before vault write, so a failed Authentik
+# call is the only error shown.
+make_config() {
+CONFIG_SOURCE="$CONFIG_SOURCE" APP_SLUG="$APP_SLUG" python3 - <<'PY'
 import json, os, re, ssl, sys, urllib.error, urllib.request
 
 def out(client_id, client_secret):
@@ -94,6 +100,8 @@ def api(method, path, body=None):
     except urllib.error.HTTPError as e:
         # Print the status and Authentik's reason, never the request (it holds the token).
         sys.exit(f"Authentik {method} {path} -> HTTP {e.code}: {e.read().decode()[:300]}")
+    except urllib.error.URLError as e:
+        sys.exit(f"Authentik {method} {path} -> no answer from {base}: {e.reason}")
 
 version = api("GET", "/admin/version/")["version_current"]
 apps = api("GET", f"/core/applications/?slug={slug}")["results"]
@@ -146,7 +154,9 @@ if not p.get("client_id") or not p.get("client_secret"):
     sys.exit("Authentik returned no client id or secret for the provider.")
 out(p["client_id"], p["client_secret"])
 PY
-)"
+}
+OIDC_CONFIG_JSON="$(make_config)" || die "could not build the OIDC config; nothing was written to Vault."
+[ -n "$OIDC_CONFIG_JSON" ] || die "the OIDC config came back empty; nothing was written to Vault."
 printf '%s' "$OIDC_CONFIG_JSON" | vault write auth/oidc/config - >/dev/null
 
 step "Read-back"

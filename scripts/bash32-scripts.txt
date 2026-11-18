@@ -1,0 +1,8 @@
+# Scripts the Mac runs under its /bin/bash 3.2.57. .github/workflows/bash32.yml parses each one
+# with /bin/bash -n on a macOS runner. One path per line, relative to the repo root. Add a script
+# here when Pedro or a Mac session runs it. A script on this list must stay bash 3.2 compatible:
+# no heredoc inside $( ), no declare -A, no mapfile, no ${var,,}.
+scripts/seed-vault-oidc.sh
+scripts/seed-authentik-api-token.sh
+scripts/test-seed-vault-oidc.sh
+scripts/test-seed-authentik-api-token.sh

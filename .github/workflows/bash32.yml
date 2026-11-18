@@ -1,0 +1,54 @@
+# bash32: parse the scripts the Mac runs with a real bash 3.2, and run their fake-driven tests
+# under it (PET-946). The Mac's /bin/bash is 3.2.57 and ubuntu-latest has bash 5, so a script can
+# pass every other check and still die on the Mac with "unexpected EOF". GitHub-hosted, no
+# credentials, no network beyond checkout. Each step's last line says what it read, and a run
+# that read nothing is red.
+name: bash32
+
+on:
+  pull_request: {}
+
+permissions: {}
+
+jobs:
+  parse:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Require a real bash 3.2
+        run: |
+          v="$(/bin/bash --version | head -n 1)"
+          echo "$v"
+          case "$v" in
+            *"version 3.2."*) echo "bash32: /bin/bash is 3.2, as the Mac's is." ;;
+            *) echo "::error::/bin/bash on this runner is not 3.2, so this check would prove nothing."; exit 1 ;;
+          esac
+      - name: Prove the check can fail (the canary must be rejected)
+        run: |
+          if /bin/bash -n scripts/testdata/bash32-canary.sh 2>/dev/null; then
+            echo "::error::/bin/bash -n accepted the canary that broke seed-vault-oidc.sh on the Mac. The check cannot catch that bug."
+            exit 1
+          fi
+          echo "bash32: /bin/bash -n rejected the canary, as it must."
+      - name: Parse every listed script with /bin/bash -n
+        run: |
+          n=0
+          bad=0
+          while IFS= read -r f; do
+            case "$f" in ""|"#"*) continue ;; esac
+            [ -f "$f" ] || { echo "::error::$f is listed in scripts/bash32-scripts.txt and does not exist"; bad=$((bad + 1)); continue; }
+            n=$((n + 1))
+            if /bin/bash -n "$f"; then echo "ok   $f"; else echo "::error::/bin/bash -n failed on $f"; bad=$((bad + 1)); fi
+          done < scripts/bash32-scripts.txt
+          echo "bash32: parsed $n scripts with /bin/bash 3.2, $bad failed."
+          [ "$n" -gt 0 ] && [ "$bad" -eq 0 ]
+      - name: Run the fake-driven seed tests under bash 3.2
+        env:
+          TEST_BASH: /bin/bash
+        run: |
+          /bin/bash scripts/test-seed-vault-oidc.sh
+          /bin/bash scripts/test-seed-authentik-api-token.sh
