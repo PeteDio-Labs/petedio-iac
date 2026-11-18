@@ -170,6 +170,18 @@ module "cloudflare_ingress" {
       access_emails = ["pedelgadillo@gmail.com"]
     }
 
+    # Vault's web sign-in (PET-946). Two gates stand in front of Vault's own login: Cloudflare
+    # Access with the Authentik login and Pedro's email, then Vault's Authentik OIDC method.
+    # Vault serves its own self-signed certificate, so the origin check is off. Vault still seals
+    # and checks every token itself. access_emails is the whole outer boundary: keep it to Pedro.
+    "vault.pdlab.dev" = {
+      service       = "https://192.168.50.223:8200"
+      no_tls_verify = true
+      access        = true
+      allowed_idps  = [cloudflare_zero_trust_access_identity_provider.authentik.id]
+      access_emails = ["pedelgadillo@gmail.com"]
+    }
+
     # Tom's Plane MCP (PET-610), a copy of mcp-plane.pdlab.dev with a different origin port and email.
     # The origin is the :8791 site of the same Caddy shim, which swaps in Tom's PAT from
     # kv/services/plane-tom, so every call acts as Tom and Plane enforces his roles. The same
