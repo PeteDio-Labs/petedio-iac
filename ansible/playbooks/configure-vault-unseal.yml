@@ -1,25 +1,54 @@
 ---
-# configure-vault-unseal.yml — put the Vault unseal watcher on pete-pi-1 (PET-373).
+# configure-vault-unseal.yml — retire the Vault unseal watcher on pete-pi-1 (PET-373 undone by KMS).
 #
-# Vault seals every time LXC 223 restarts, and 223 restarts nightly: pve03's vzdump
-# job runs in `mode: stop` because its guests sit on a directory store. That is the
-# right trade and is not changing until pve03 gets snapshot-capable storage, so the
-# unsealing has to be reliable instead.
+# Vault on 223 unseals itself through AWS KMS (docs/runbooks/vault-kms-seal.md), so the Pi's
+# five-minute timer has nothing to do. A Vault on an auto-seal cannot take a Shamir key as an
+# unseal key; the key is a recovery key now. This play stops the timer, removes its unit and
+# script, and removes the key copy, so no machine in the lab holds one. The Mac Keychain item
+# `vault-unseal-key` stays as the record.
 #
-# The watcher used to be a launchd agent on the Mac. macOS does not fire interval
-# jobs while asleep, so on 2026-09-09 Vault stayed sealed from 02:48 to 12:22 and the
-# nightly infra-reconcile failed. The pi is always on.
+# The play keeps its old file name so a runbook that names it still finds it. It is operator-run:
+# the runner does not reach pete-pi-1 (PET-849).
 #
-# ⚠ OPERATOR-RUN, AND THAT IS DELIBERATE. No apply-on-merge workflow calls this play,
-# because the unseal key lives in the Mac Keychain and must not reach a CI runner.
-# `ansible-stack.yml` could run it, and giving it the key is the reason not to.
-#
-# Usage:
-#   scripts/deploy-vault-unseal.sh            # reads the Keychain, then runs this
-#   scripts/deploy-vault-unseal.sh --check    # dry run
+#   cd ansible && ansible-playbook playbooks/configure-vault-unseal.yml --check --diff
+#   cd ansible && ansible-playbook playbooks/configure-vault-unseal.yml
 
-- name: Install the Vault unseal watcher (pete-pi-1)
+- name: Retire the Vault unseal watcher (pete-pi-1)
   hosts: pete_pi
   become: true
-  roles:
-    - vault-unseal
+  tasks:
+    - name: Stop and disable the unseal timer
+      ansible.builtin.systemd_service:
+        name: vault-unseal.timer
+        enabled: false
+        state: stopped
+      register: vault_unseal_timer_off
+      # A host that never had the timer reports "Could not find"; that is already the goal.
+      failed_when: >-
+        vault_unseal_timer_off.failed | default(false)
+        and 'Could not find' not in (vault_unseal_timer_off.msg | default(''))
+
+    - name: Remove the unseal units, script, log and key copy
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/vault-unseal.timer
+        - /etc/systemd/system/vault-unseal.service
+        - /usr/local/bin/vault-unseal
+        - /etc/vault-unseal
+        - /var/log/vault-unseal.log
+      notify: Reload systemd
+
+    - name: Read back that the timer is gone
+      ansible.builtin.command:
+        cmd: systemctl list-unit-files vault-unseal.timer --no-legend
+      register: vault_unseal_left
+      changed_when: false
+      failed_when: vault_unseal_left.stdout | length > 0
+      # An empty list is the pass. Anything printed means the unit survived.
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true

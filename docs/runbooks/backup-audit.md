@@ -12,7 +12,7 @@ To read the state, dispatch `lab-action.yml` with `action=playbook_check` and
 The play fails when any of these does not hold:
 
 - Every node that hosts a guest has an enabled cluster backup job.
-- Every guest, except the VMIDs excluded on purpose (247), has an archive on the share younger
+- Every guest, except the VMIDs excluded on purpose (223, 247), has an archive on the share younger
   than 30 hours.
 - The last `vault-snapshot.service` run on LXC 223 succeeded and left a snapshot younger than
   30 hours.
