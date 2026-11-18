@@ -39,14 +39,14 @@ variable "attach_domain" {
 }
 
 variable "lab_origin_hostname" {
-  description = "Public name of the on-prem dashboard, served through the Cloudflare tunnel and gated by Access."
+  description = "Public name of the Lab dashboard, served through the Cloudflare tunnel and gated by Access."
   type        = string
   default     = "reports.pdlab.dev"
 }
 
 variable "lab_access_client_id" {
   description = <<-EOT
-    Client id of a Cloudflare Access service token that CloudFront sends to the on-prem origin.
+    Client id of a Cloudflare Access service token that CloudFront sends to the Lab origin.
     Null leaves the fallback off. Supply it from a gitignored tfvars file or TF_VAR_ that a script
     reads from Vault; it reaches state, so the token's Access policy must allow only that one app.
   EOT

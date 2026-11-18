@@ -181,7 +181,7 @@ resource "aws_cloudfront_distribution" "site" {
     }
   }
 
-  # On-prem fallback (pete-bot on 237 through its Cloudflare tunnel). Present only when the
+  # Lab fallback (pete-bot on 237 through its Cloudflare tunnel). Present only when the
   # Access service token exists. The header names are Cloudflare Access's own.
   dynamic "origin" {
     for_each = local.lab_fallback ? [1] : []
