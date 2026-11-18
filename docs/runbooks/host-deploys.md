@@ -88,7 +88,7 @@ failure. The Vault token is revoked as soon as the certificate is signed.
 
 | Script | Why it stays |
 |---|---|
-| `deploy-vault-unseal.sh` | The Vault unseal key lives in the Mac Keychain. A runner or Vault cannot hold the key that opens Vault. |
+| `deploy-vault-seal.sh` | The AWS key that opens Vault's KMS seal lives in the Mac Keychain. A runner or Vault cannot hold the key that opens Vault. |
 | `deploy-uptime-kuma.sh` | The first seed of `kv/services/uptime-kuma` needs the Keychain root token, and the Keychain mirror of the password is the break-glass copy. A repeat deploy runs from `deploy-uptime-kuma.yml`. |
 
 ## Related

@@ -4,10 +4,6 @@ Vault on 223 unseals itself through one AWS KMS key. No unseal key sits on the P
 223. This runbook covers the one-time migration from the Shamir seal, the restart proof, and the
 retirement of the two watchers.
 
-> I could not read HashiCorp's seal-migration page when I wrote this. The steps follow the
-> documented `-migrate` flow for Vault 1.x. Check each result against the expected output below, and
-> stop at the first difference.
-
 ## What changes
 
 | Before | After |
@@ -18,6 +14,17 @@ retirement of the two watchers.
 
 The AWS user can encrypt, decrypt and describe one key, and only from the lab's public address.
 `scripts/seed-vault-kms.sh` documents the policies.
+
+## Who holds the recovery key
+
+The Mac Keychain item `vault-unseal-key` is the recovery key and the emergency key. It is one
+share with a threshold of one. It does **not** unseal Vault, because KMS does that. It makes a new
+root token with `vault operator generate-root`, and a migration back to Shamir needs it. The Pi
+file `/etc/vault-unseal/unseal-key` is a second copy, left in place so that losing the Mac does
+not lose the recovery key. Delete the Pi copy only after a second copy exists that does not depend
+on the Mac, such as a password manager entry.
+
+The emergency brake is separate: disabling the KMS key stops Vault from unsealing again.
 
 ## Known limits
 
@@ -35,20 +42,21 @@ The AWS user can encrypt, decrypt and describe one key, and only from the lab's 
 
 ## Steps
 
-Run these from the Mac, in order, with the lab network reachable. Vault is unavailable for a few
-minutes between steps 3 and 5.
+The 2026-11-18 migration ran these steps from the Mac, with the lab network reachable. Vault is
+unavailable for a few seconds at step 3.
 
 1. **Create the key and the user.**
    `./scripts/seed-vault-kms.sh --profile <admin profile>`
-   Expect `stored vault-seal-aws-key-id and vault-seal-aws-secret` and a key id.
-2. **Confirm a fresh backup first.** Check that the newest object in the `vault-snapshots` bucket
-   is under 24 hours old, or run `systemctl start vault-snapshot.service` on 223 and read its log.
+   Expect `stored vault-seal-aws-key-id and vault-seal-aws-secret` and a key id. The script waits
+   for AWS to register the new user: it retries the key policy up to 6 times, 10 seconds apart.
+2. **Confirm a fresh backup.** Check that the newest object in the `vault-snapshots` bucket is
+   under 24 hours old, or run `systemctl start vault-snapshot.service` on 223 and read its log.
    The migration rewrites how the root key is stored, so a snapshot is the way back.
-   **Stop both watchers**, so neither sends a plain unseal during the migration.
-   On the Pi: `sudo systemctl stop vault-unseal.timer`. On the Mac: `pet-secrets watch uninstall`.
-3. **Write the migration config.**
-   `./scripts/deploy-vault-seal.sh --key-id <key id> --migrating`
-   Expect the play to restart Vault, and `vault status` to show `Sealed true`.
+3. **Write the KMS seal config.**
+   `./scripts/deploy-vault-seal.sh --key-id <key id>`
+   Expect the play to restart Vault, and `/v1/sys/seal-status` to show
+   `"type":"awskms","sealed":true,"migration":true`. Do not add a `seal "shamir"` block: Vault 2.0.1
+   refuses `disabled = "true"`.
 4. **Migrate.** Send the existing unseal key with `migrate` set. Read it from the Keychain, never
    from argv:
    ```bash
@@ -57,25 +65,26 @@ minutes between steps 3 and 5.
      | curl -sS --cacert environments/homelab/vault-ca.crt --request PUT --data @- \
          https://192.168.50.223:8200/v1/sys/unseal
    ```
-   Expect `"sealed":false` and `"migration":false` in the answer, and then:
-   `vault status` reports `Seal Type awskms` and `Recovery Seal Type shamir`.
-5. **Remove the disabled Shamir block.**
-   `./scripts/deploy-vault-seal.sh --key-id <key id>`
-6. **Prove the restart.** On 223 run `systemctl restart vault`. Within about 30 seconds
+   Expect `"sealed":false`. Then `vault status` reports `Seal Type awskms` and
+   `Recovery Seal Type shamir`.
+5. **Rerun the deploy.** `./scripts/deploy-vault-seal.sh --key-id <key id>` must report
+   `changed=0`, and `seal-status` must show `"migration":false`.
+6. **Retire the watchers.** On the Mac, `pet-secrets watch uninstall`. On the Pi, run
+   `cd ansible && ansible-playbook playbooks/configure-vault-unseal.yml`. It stops the timer and
+   removes the unit, the script and the log. It leaves `/etc/vault-unseal/unseal-key` and the
+   Keychain items `vault-unseal-key` and `vault-root-token`: the unseal key is now a recovery key,
+   and these are its two copies.
+7. **Prove the restart.** On 223 run `systemctl restart vault`. Within about 10 seconds
    `curl --cacert environments/homelab/vault-ca.crt https://192.168.50.223:8200/v1/sys/seal-status`
    must show `"sealed":false` with no watcher running. If it stays sealed, read `journalctl -u vault`
    on 223. A KMS denial names the address AWS saw.
-7. **Retire the watchers.** Disable the Pi timer and delete `/etc/vault-unseal/unseal-key` on the
-   Pi. Keep the Keychain items `vault-unseal-key` and `vault-root-token`: the unseal key is now a
-   recovery key.
-8. **Confirm the alert.** Stop Vault for 11 minutes in a test, or read the `vault` monitor
-   settings, and confirm Uptime Kuma marks a sealed Vault as down. A sealed Vault answers
-   `/v1/sys/health` with 503.
+8. **Confirm the alert.** A sealed Vault answers `/v1/sys/health` with 503, so the Uptime Kuma
+   `vault` monitor goes down. Check its settings once.
 
-Follow-up PRs: put 223 in `backup_store_jobs[].exclude`, and remove the `vault-unseal` role.
+The nightly stop-backup no longer includes 223 (`backup_store_jobs[].exclude`).
 
 ## Roll back
 
-Before step 5, remove `vault_awskms_key_id` from the extra-vars and rerun `configure-vault.yml`.
-After the migration finishes, moving back to Shamir is another `-migrate` run, and it needs KMS
+Before step 4, rerun `configure-vault.yml` without the key id and unseal with the Shamir key.
+After the migration finishes, moving back to Shamir is another migrate run, and it needs KMS
 reachable.

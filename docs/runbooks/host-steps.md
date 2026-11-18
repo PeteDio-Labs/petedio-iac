@@ -75,11 +75,11 @@ first (`vault-breakglass` on 247).
 
 ## Vault is sealed
 
-- **Precondition:** none. Vault restarts nightly and seals; the unseal watcher on the Pi
-  (`deploy-vault-unseal.sh`) unseals it within minutes.
+- **Precondition:** none. Vault unseals itself through AWS KMS on every start
+  (`docs/runbooks/vault-kms-seal.md`). No watcher runs.
 - **Command:** `curl -s --cacert environments/homelab/vault-ca.crt https://192.168.50.223:8200/v1/sys/seal-status`
 - **Expected:** `"sealed": false`.
-- **Bad:** `"sealed": true` for more than 10 minutes. Unsealing needs the key. The Mac's Keychain holds the record of truth, and the Pi holds a copy for its timer. Follow `vault/Systems/vault-and-secrets.md`.
+- **Bad:** `"sealed": true` for more than 10 minutes. Read `journalctl -u vault` on 223: a KMS denial names the address AWS saw. If the home address changed, run `scripts/seed-vault-kms.sh --profile <profile> --update-ip`.
 
 ## Rotate the MinIO root password on 221 (`rotate-minio-221-root.sh`)
 

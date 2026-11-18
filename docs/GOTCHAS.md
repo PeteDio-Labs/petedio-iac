@@ -484,7 +484,27 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
   without the defer the user sees "The application did not respond" while the work
   succeeds unseen.
 
-## Vault seals every night, and two watchers open it (PET-373)
+## Vault unseals itself through AWS KMS (replaces the PET-373 watchers)
+
+- **Vault 223 holds no unseal key.** Its `seal "awskms"` stanza names one KMS key, and a start
+  reopens it in about four seconds. The Pi timer and the Mac launchd agent are retired. The
+  Shamir key is a recovery key now: it can create a root token and cannot unseal. The Mac Keychain
+  item `vault-unseal-key` is the emergency key; the Pi file is a second copy. The procedure
+  is `docs/runbooks/vault-kms-seal.md`; the history of the watchers is in the PET-373 notes in
+  the vault repo and in `vault/Incidents/2026-09-09-vault-sealed-nine-hours.md`.
+- **`seal "shamir" { disabled = "true" }` is refused by Vault 2.0.1** ("shamir seals cannot be
+  set disabled"). The Shamir to KMS migration needs only the `seal "awskms"` stanza, then one
+  `PUT /v1/sys/unseal` with `migrate: true`. An attempt with the disabled block failed on
+  2026-11-18 and left Vault down for about six minutes until the Mac watcher reopened it.
+- **The AWS user is pinned to the lab's public address.** A new address leaves a restarted Vault
+  sealed. The fix is `scripts/seed-vault-kms.sh --update-ip`.
+- **The first restart after the migration logs one `value has no key-id in common` warning.**
+  It is the seal generation moving to 1. A second restart does not log it.
+- **Unseal over the HTTP API, never `vault operator unseal`**, for a recovery path that needs
+  one. That command takes a positional `[KEY]` and has no stdin convention, so piping to it
+  passes the literal `-` and fails with an error that reads like a bad key.
+
+### History: the nightly seal and the two watchers (PET-373)
 
 - **223 restarts nightly, so Vault seals nightly.** pve03's `vzdump` job runs at 02:45
   in `mode: stop`, so every guest on the node stops and starts. Vault comes back sealed

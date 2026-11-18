@@ -6,16 +6,14 @@
 # calls configure-vault.yml with these values.
 #
 #   --key-id ID    the KMS key id printed by seed-vault-kms.sh (required)
-#   --migrating    keep the old Shamir seal declared as disabled, for `vault operator unseal -migrate`
 #   anything else is passed to ansible-playbook, for example --check
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ANSIBLE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/ansible"
-KEY_ID=""; MIGRATING=false; PASS=()
+KEY_ID=""; PASS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --key-id) KEY_ID="${2:?--key-id needs a value}"; shift 2 ;;
-    --migrating) MIGRATING=true; shift ;;
     *) PASS+=("$1"); shift ;;
   esac
 done
@@ -27,7 +25,7 @@ SK="$(security find-generic-password -s vault-seal-aws-secret -w 2>/dev/null || 
 [ -n "$AK" ] && [ -n "$SK" ] || die "Keychain items vault-seal-aws-key-id and vault-seal-aws-secret not found. Run scripts/seed-vault-kms.sh first."
 umask 077
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-python3 -c 'import json,sys;a=sys.stdin.read().split("\n");json.dump({"vault_awskms_key_id":sys.argv[2],"vault_awskms_access_key_id":a[0],"vault_awskms_secret_access_key":a[1],"vault_seal_migrating":sys.argv[3]=="true"},open(sys.argv[1],"w"))' \
-  "$TMP/extra.json" "$KEY_ID" "$MIGRATING" <<<"$AK"$'\n'"$SK"
+python3 -c 'import json,sys;a=sys.stdin.read().split("\n");json.dump({"vault_awskms_key_id":sys.argv[2],"vault_awskms_access_key_id":a[0],"vault_awskms_secret_access_key":a[1]},open(sys.argv[1],"w"))' \
+  "$TMP/extra.json" "$KEY_ID" <<<"$AK"$'\n'"$SK"
 cd "$ANSIBLE_DIR"
 ansible-playbook playbooks/configure-vault.yml -e "@$TMP/extra.json" ${PASS[@]+"${PASS[@]}"}

@@ -83,7 +83,7 @@ runs on pi1, so check the Kuma page loads afterwards.
 ## Upgrade Vault (223)
 
 Planned. A Vault upgrade restarts the service, which seals it. The playbook upgrades the
-package, then runs the unseal step in `configure-vault-unseal.yml`, and fails until
+package, then waits for the KMS auto-unseal, and fails until
 `vault status` reports `Sealed false`. It takes a snapshot first (`vault-snapshot.yml`).
 
 ## Upgrade the media apps

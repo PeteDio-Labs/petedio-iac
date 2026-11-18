@@ -80,7 +80,16 @@ step "Write the key policy and the user policy"
 KEY_POLICY="$(jq -n --arg acct "$ACCT" --arg user "$USER_ARN" '{Version:"2012-10-17",Statement:[
   {Sid:"AccountAdmin",Effect:"Allow",Principal:{AWS:("arn:aws:iam::"+$acct+":root")},Action:"kms:*",Resource:"*"},
   {Sid:"VaultSealUse",Effect:"Allow",Principal:{AWS:$user},Action:["kms:Encrypt","kms:Decrypt","kms:DescribeKey"],Resource:"*"}]}')"
-aws_ kms put-key-policy --key-id "$KEY_ID" --policy-name default --policy "$KEY_POLICY"
+# A new IAM user takes a few seconds to reach KMS: the first PutKeyPolicy can fail with
+# MalformedPolicyDocumentException ("invalid principals"). Retry that error and no other.
+for attempt in 1 2 3 4 5 6; do
+  if OUT="$(aws_ kms put-key-policy --key-id "$KEY_ID" --policy-name default --policy "$KEY_POLICY" 2>&1)"; then break; fi
+  case "$OUT" in
+    *MalformedPolicyDocumentException*) [ "$attempt" -lt 6 ] || die "key policy still rejected after 6 tries: $OUT"
+      echo "IAM user not visible to KMS yet (try $attempt of 6); waiting 10 s"; sleep 10 ;;
+    *) die "$OUT" ;;
+  esac
+done
 USER_POLICY="$(jq -n --arg arn "$KEY_ARN" --arg ip "$SOURCE_IP" '{Version:"2012-10-17",Statement:[
   {Effect:"Allow",Action:["kms:Encrypt","kms:Decrypt","kms:DescribeKey"],Resource:$arn,
    Condition:{IpAddress:{"aws:SourceIp":($ip+"/32")}}}]}')"
