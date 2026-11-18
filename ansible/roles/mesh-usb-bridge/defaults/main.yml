@@ -6,6 +6,10 @@
 # Plex (236) — the capability lost when pve01 died and mesh-vxlan (superseded,
 # see that role) lost its anchor. See vault/Systems/plex-on-the-mesh.md.
 
+# The port name is any interface the node reports, so the same role serves a USB adapter
+# on pve02 (enx<MAC>, which changes if the adapter is swapped) and the PCIe i226 NIC on
+# pve-media (enp<bus>s<slot>, MED-6). The role fails if the name is not on the node.
+# pve-media sets its own value in inventory/pve-media.yml.
 mesh_usb_interface: enx00e04c6861be
 mesh_usb_bridge: vmbr2
 
