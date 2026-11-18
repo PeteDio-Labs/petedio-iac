@@ -2,7 +2,7 @@
 # seed-vault-oidc.sh — create Authentik's "vault" application over its API and write Vault's
 # auth/oidc/config from it, in one run (PET-946). Run it once, after
 # scripts/apply-vault-config.sh has mounted the method (environments/homelab/vault-config/oidc.tf)
-# and before anyone signs in at vault.pdlab.dev.
+# and before anyone signs in with OIDC.
 #
 # The Authentik call uses the bootstrap token at kv/services/authentik (key bootstrap_token), read
 # with the Vault token below. It creates one OAuth2 provider and one application, slug `vault`:
@@ -151,4 +151,4 @@ d = json.load(sys.stdin)["data"]
 print("discovery url :", d.get("oidc_discovery_url"))
 print("client id set :", bool(d.get("oidc_client_id")))
 print("default role  :", d.get("default_role"))'
-printf '\nDone. No secret was printed. Sign in at https://vault.pdlab.dev with method OIDC.\n'
+printf '\nDone. No secret was printed. Sign in at https://192.168.50.223:8200 with method OIDC.\n'
