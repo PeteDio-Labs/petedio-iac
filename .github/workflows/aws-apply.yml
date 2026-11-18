@@ -4,19 +4,21 @@
 # WHY. These roots had no CI path, so an apply meant a Mac session with an admin profile. A thread
 # dispatches this workflow and reads the run log.
 #
-# NO STORED AWS KEY. Each job gets a GitHub OIDC token and assumes an AWS role with it:
-#   plan   -> petedio-ci-<root>-plan   (ReadOnlyAccess). Trusts main, any job.
-#   apply  -> petedio-ci-<root>-apply  (writes that root's resources only). Trusts the `lab-write`
-#             environment only, so AWS refuses the role until Pedro approves the apply job. The
-#             dashboard role creates IAM entities only under a permissions boundary. The portfolio
-#             role creates none, so a change that needs IAM falls back to the Mac.
-# scripts/aws-ci-bootstrap.sh creates the roles once, with an AWS admin profile.
+# STORED KEYS, RELEASED BY THE TAP. The account's service control policy denies an IAM OIDC
+# provider (PET-816), so a job cannot assume a role. Each root has two IAM users whose keys sit in
+# Vault:
+#   plan   -> petedio-ci-<root>-plan   (ReadOnlyAccess). Vault role deploy-aws-plan, any dispatch on main.
+#   apply  -> petedio-ci-<root>-apply  (writes only that root's named resources). Vault role
+#             deploy-aws-apply, bound to the `lab-write` environment, so Vault refuses the key
+#             until Pedro approves the apply job.
+# scripts/seed-aws-ci.sh creates the users and places the keys; Pedro runs it.
 #
-# LIMIT. AWS trusts the environment name, not this file. Any job on main that Pedro approves in
-# `lab-write` could assume the apply role. The boundary caps what that role can create.
-#
+# LIMIT. A leaked Vault token with the apply role could read an apply key. The role lasts 45
+# minutes and exists only inside an approved job. The apply user's policy names each root's
+# resources, so the key cannot touch the rest of the account.
 # GATE. The apply job re-plans and applies the saved plan only if its digest matches the digest
-# the plan job printed. Only `main` runs: the Vault role binds ref, event and this file.
+# the plan job printed. The digest covers each change's address, instance key and values, so a
+# different change cannot pass. Only `main` runs: the Vault roles bind ref, event and this file.
 name: aws-apply
 
 on:
@@ -76,26 +78,27 @@ jobs:
         working-directory: environments/homelab
         shell: bash
         run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
-      - name: Vault — deploy-aws-apply via OIDC
+      - name: Vault — keys via OIDC login
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
           method: jwt
           path: jwt-github
-          role: deploy-aws-apply
+          role: deploy-aws-plan
           jwtGithubAudience: https://github.com/PeteDio-Labs
           caCertificate: ${{ steps.vault_ca.outputs.b64 }}
           exportToken: false
           secrets: |
             kv/data/iac/minio access_key | MINIO_KEY ;
-            kv/data/iac/minio secret_key | MINIO_SECRET
+            kv/data/iac/minio secret_key | MINIO_SECRET ;
+            kv/data/services/aws-ci/${{ inputs.root }}-plan aws_access_key_id | AWS_CI_KEY ;
+            kv/data/services/aws-ci/${{ inputs.root }}-plan aws_secret_access_key | AWS_CI_SECRET
       - name: Plan the root
         id: plan
         working-directory: environments/${{ inputs.root }}
         shell: bash
         env:
           ROOT: ${{ inputs.root }}
-          ROLE: petedio-ci-${{ inputs.root }}-plan
           ATTACH: ${{ inputs.attach_domain }}
           PET: ${{ inputs.pet }}
         run: ../../scripts/aws-apply-run.sh plan
@@ -123,7 +126,7 @@ jobs:
         working-directory: environments/homelab
         shell: bash
         run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
-      - name: Vault — deploy-aws-apply via OIDC
+      - name: Vault — keys via OIDC login
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
@@ -135,13 +138,14 @@ jobs:
           exportToken: false
           secrets: |
             kv/data/iac/minio access_key | MINIO_KEY ;
-            kv/data/iac/minio secret_key | MINIO_SECRET
+            kv/data/iac/minio secret_key | MINIO_SECRET ;
+            kv/data/services/aws-ci/${{ inputs.root }}-apply aws_access_key_id | AWS_CI_KEY ;
+            kv/data/services/aws-ci/${{ inputs.root }}-apply aws_secret_access_key | AWS_CI_SECRET
       - name: Apply the root
         working-directory: environments/${{ inputs.root }}
         shell: bash
         env:
           ROOT: ${{ inputs.root }}
-          ROLE: petedio-ci-${{ inputs.root }}-apply
           ATTACH: ${{ inputs.attach_domain }}
           PET: ${{ inputs.pet }}
           EXPECT_DIGEST: ${{ needs.plan.outputs.digest }}

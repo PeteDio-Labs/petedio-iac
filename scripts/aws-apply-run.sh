@@ -4,32 +4,23 @@
 #          digest and the change count to $GITHUB_OUTPUT.
 #   apply  Plans again, refuses unless its digest equals $EXPECT_DIGEST, applies the saved plan,
 #          then reads the outputs back.
-# Needs: MINIO_KEY, MINIO_SECRET, ROLE, ATTACH, and the GitHub OIDC request variables.
+# Needs: MINIO_KEY, MINIO_SECRET, AWS_CI_KEY, AWS_CI_SECRET, ROOT and ATTACH.
 # Every failure exits non-zero, and every success line says what was examined.
 set -euo pipefail
 umask 077
 MODE="${1:?plan or apply}"
-: "${AWS_ACCOUNT:?}" "${BOUNDARY_ARN:?}" "${ROLE:?}" "${ROOT:?}"
-for v in MINIO_KEY MINIO_SECRET ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN; do
+: "${AWS_ACCOUNT:?}" "${BOUNDARY_ARN:?}" "${ROOT:?}"
+for v in MINIO_KEY MINIO_SECRET AWS_CI_KEY AWS_CI_SECRET; do
   [ -n "${!v:-}" ] || { echo "ABORT: $v is empty."; exit 1; }
 done
 T="$RUNNER_TEMP/aws-$ROOT-$MODE"
 rm -rf "$T"; mkdir -p "$T"
 trap 'rm -rf "$T"' EXIT
 
-# The S3 backend reads AWS_ACCESS_KEY_ID for MinIO, so the AWS role comes from a named profile.
+# The S3 backend reads AWS_ACCESS_KEY_ID for MinIO, so the AWS key comes from a named profile.
 printf 'access_key = "%s"\nsecret_key = "%s"\n' "$MINIO_KEY" "$MINIO_SECRET" > "$T/backend.hcl"
-curl -sS --fail -m 20 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-  "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r .value > "$T/oidc-token"
-[ -s "$T/oidc-token" ] && [ "$(cat "$T/oidc-token")" != null ] || { echo "ABORT: GitHub gave no OIDC token."; exit 1; }
-cat > "$T/aws-config" <<CFG
-[profile dash]
-role_arn = arn:aws:iam::${AWS_ACCOUNT}:role/${ROLE}
-web_identity_token_file = $T/oidc-token
-role_session_name = ${ROOT}-${MODE}-${GITHUB_RUN_ID:-local}
-region = us-east-2
-CFG
-export AWS_CONFIG_FILE="$T/aws-config" AWS_SHARED_CREDENTIALS_FILE=/dev/null
+printf '[dash]\naws_access_key_id = %s\naws_secret_access_key = %s\n' "$AWS_CI_KEY" "$AWS_CI_SECRET" > "$T/aws-credentials"
+export AWS_SHARED_CREDENTIALS_FILE="$T/aws-credentials" AWS_CONFIG_FILE=/dev/null AWS_REGION=us-east-2
 export TF_DATA_DIR="$T/tfdata"
 export TF_PLUGIN_CACHE_DIR="${RUNNER_TOOL_CACHE:-$HOME/.cache}/tf-plugin-cache"
 mkdir -p "$TF_PLUGIN_CACHE_DIR"
@@ -41,7 +32,7 @@ case "$ROOT" in
   portfolio) VARS=(-var aws_profile=dash) ;;
   *) echo "ABORT: unknown root $ROOT."; exit 1 ;;
 esac
-echo "aws-$ROOT-$MODE: pet=${PET:-none} sha=$GITHUB_SHA role=$ROLE attach_domain=${ATTACH:-false}"
+echo "aws-$ROOT-$MODE: pet=${PET:-none} sha=$GITHUB_SHA attach_domain=${ATTACH:-false}"
 
 terraform init -input=false -backend-config="$T/backend.hcl" >"$T/init.log" 2>&1 \
   || { scrub < "$T/init.log" | tail -n 20; echo "ABORT: terraform init failed."; exit 1; }
@@ -66,7 +57,9 @@ if [ "$ROOT" = portfolio ] && [ "$prior" -eq 0 ]; then echo "ABORT: the plan rea
 echo "$ROOT plan: read $prior resource(s) from state"
 changes="$(wc -l < "$T/changes.txt" | tr -d ' ')"
 del="$(grep -c 'delete' "$T/changes.txt" || true)"
-digest="$(sha256sum "$T/changes.txt" | cut -c1-16)"
+# The digest covers each change's full address (instance key included), actions and values, so two
+# plans that differ only in a value or an instance cannot match. It is hashed here and never printed.
+digest="$(jq -S -c '[(.resource_changes // [])[] | select(.change.actions != ["no-op"] and .change.actions != ["read"]) | {a: .address, x: .change.actions, b: .change.before, f: .change.after, u: .change.after_unknown}] | sort_by(.a)' "$T/plan.json" | sha256sum | cut -c1-16)"
 echo "$ROOT plan: $total resource(s) examined, $changes with a change, $del with a delete, digest $digest (terraform exit $rc)"
 if [ "$MODE" = plan ]; then
   { echo "digest=$digest"; echo "changes=$changes"; } >> "$GITHUB_OUTPUT"

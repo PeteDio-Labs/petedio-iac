@@ -1,14 +1,32 @@
-# deploy-aws-apply: what aws-apply.yml may read (PET-941 follow-up).
+# deploy-aws-plan and deploy-aws-apply: what aws-apply.yml may read (PET-941).
 #
 # The workflow plans and applies one AWS root, environments/dashboard or environments/portfolio
-# (account 847547470418). It needs the
-# MinIO key for the Terraform state and nothing else from Vault: the AWS side uses a short-lived
-# role from GitHub OIDC, so no AWS key is stored here.
+# (account 847547470418). The account's service control policy denies an OIDC provider, so a job
+# cannot assume an AWS role. It reads an IAM user's key from Vault instead.
 #
-# BINDING. The role names the repository, main, workflow_dispatch and that one workflow file, as
-# the other deploy-* roles do. Vault cannot tell the plan job from the apply job. The apply job
-# gets its AWS write role only after Pedro approves the `lab-write` environment, because the AWS
-# role trusts that environment and no other.
+# Two roles keep the write keys behind Pedro's tap:
+#   deploy-aws-plan   reads the state key and the two read-only plan keys. Any dispatch of the
+#                     workflow on main gets it.
+#   deploy-aws-apply  reads the state key and the two apply (write) keys. It is also bound to the
+#                     `lab-write` environment, so Vault refuses it until Pedro approves the job.
+# Each is bound to the repository, main, workflow_dispatch and the one workflow file, never to
+# `sub` alone.
+resource "vault_policy" "deploy_aws_plan" {
+  name = "deploy-aws-plan"
+
+  policy = <<-EOT
+    path "kv/data/iac/minio" {
+      capabilities = ["read"]
+    }
+    path "kv/data/services/aws-ci/dashboard-plan" {
+      capabilities = ["read"]
+    }
+    path "kv/data/services/aws-ci/portfolio-plan" {
+      capabilities = ["read"]
+    }
+  EOT
+}
+
 resource "vault_policy" "deploy_aws_apply" {
   name = "deploy-aws-apply"
 
@@ -16,7 +34,30 @@ resource "vault_policy" "deploy_aws_apply" {
     path "kv/data/iac/minio" {
       capabilities = ["read"]
     }
+    path "kv/data/services/aws-ci/dashboard-apply" {
+      capabilities = ["read"]
+    }
+    path "kv/data/services/aws-ci/portfolio-apply" {
+      capabilities = ["read"]
+    }
   EOT
+}
+
+resource "vault_jwt_auth_backend_role" "deploy_aws_plan" {
+  backend           = vault_jwt_auth_backend.github.path
+  role_name         = "deploy-aws-plan"
+  role_type         = "jwt"
+  user_claim        = "actor"
+  bound_audiences   = [var.github_oidc_audience]
+  bound_claims_type = "string"
+  bound_claims = {
+    repository   = var.github_repo
+    ref          = "refs/heads/main"
+    event_name   = "workflow_dispatch"
+    workflow_ref = "${var.github_repo}/.github/workflows/aws-apply.yml@refs/heads/main"
+  }
+  token_policies = [vault_policy.deploy_aws_plan.name]
+  token_ttl      = 2700
 }
 
 resource "vault_jwt_auth_backend_role" "deploy_aws_apply" {
@@ -31,6 +72,7 @@ resource "vault_jwt_auth_backend_role" "deploy_aws_apply" {
     ref          = "refs/heads/main"
     event_name   = "workflow_dispatch"
     workflow_ref = "${var.github_repo}/.github/workflows/aws-apply.yml@refs/heads/main"
+    environment  = "lab-write"
   }
   token_policies = [vault_policy.deploy_aws_apply.name]
   token_ttl      = 2700
