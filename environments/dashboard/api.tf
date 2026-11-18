@@ -142,6 +142,9 @@ resource "aws_apigatewayv2_route" "this" {
   authorizer_id      = each.value == "JWT" ? aws_apigatewayv2_authorizer.cognito.id : null
 }
 
+# Access logging on the stage needs logs:CreateLogDelivery and logs:PutResourcePolicy, which take only
+# Resource "*" and the second edits an account-wide policy. The CI apply user does not hold them
+# (PET-942), so the stage has no access log. The group stays so a later grant can attach it.
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/apigateway/${var.name}"
   retention_in_days = 14
@@ -155,14 +158,6 @@ resource "aws_apigatewayv2_stage" "default" {
   default_route_settings {
     throttling_rate_limit  = var.throttle_rate
     throttling_burst_limit = var.throttle_burst
-  }
-
-  access_log_settings {
-    destination_arn = aws_cloudwatch_log_group.api.arn
-    format = jsonencode({
-      requestId = "$context.requestId", routeKey = "$context.routeKey", status = "$context.status",
-      ip        = "$context.identity.sourceIp", latency = "$context.responseLatency",
-    })
   }
 }
 
