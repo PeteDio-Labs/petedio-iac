@@ -6,7 +6,7 @@
 # staging-249 runs only while UI work is pending on the portfolio's `staging` branch.
 # .github/workflows/staging-power.yml starts and stops it through scripts/staging-power.py, which signs a
 # `staging-power` SSH certificate. The Vault role fixes that certificate's command to the script
-# this play installs, and the script accepts only status, start and stop for container 249
+# this play installs, and the script accepts only status, start, stop and teardown for container 249
 # (files/staging-power-node.sh). Nothing else can run under that principal.
 #
 # ⚠ THE PRINCIPAL IS ALSO LISTED IN group_vars (ssh_ca_root_extra_principals) AND WRITTEN BY

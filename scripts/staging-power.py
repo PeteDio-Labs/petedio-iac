@@ -102,14 +102,19 @@ def combine(states: list[tuple[bool, dt.datetime | None]]) -> tuple[bool, dt.dat
 
 
 def decide(pending: bool, last_ui_at: dt.datetime | None, now: dt.datetime, running: bool) -> tuple[str, str]:
-    """(action, reason). action is start, stop or none."""
+    """(action, reason). action is start, stop, teardown or none.
+
+    teardown is a stop for a promoted site: nothing is pending, so the work was merged into main
+    (or the release is gone). The node resets both sites to their placeholder before it shuts the
+    box down. stop is the idle timeout: the pending work is still unmerged, so its content stays."""
     recent = last_ui_at is not None and (now - last_ui_at) < dt.timedelta(hours=IDLE_HOURS)
     want = pending and recent
     if want and not running:
         return "start", "UI work is pending and the newest staging push is under %gh old" % IDLE_HOURS
     if not want and running:
-        why = "nothing is pending on staging" if not pending else "no staging push for %gh or more" % IDLE_HOURS
-        return "stop", why
+        if not pending:
+            return "teardown", "nothing is pending on staging, so the work is merged"
+        return "stop", "no staging push for %gh or more" % IDLE_HOURS
     return "none", "container already %s" % ("running" if running else "stopped")
 
 
@@ -138,8 +143,8 @@ def vault(method: str, path: str, body: dict | None = None) -> dict | None:
 
 
 def node(word: str, workdir: pathlib.Path) -> str:
-    """Run status, start or stop on the node. Returns the script's one-line answer."""
-    assert word in ("status", "start", "stop")
+    """Run status, start, stop or teardown on the node. Returns the script's one-line answer."""
+    assert word in ("status", "start", "stop", "teardown")
     key = workdir / "key"
     if not key.exists():
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", SSH_ROLE, "-f", str(key)], check=True)
