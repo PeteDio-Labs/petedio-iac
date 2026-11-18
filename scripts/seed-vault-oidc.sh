@@ -60,7 +60,8 @@ fi
 
 step "Writing auth/oidc/config"
 # The JSON goes through stdin, so the secret never appears in a process list.
-CONFIG_SOURCE="$CONFIG_SOURCE" APP_SLUG="$APP_SLUG" python3 - <<'PY' | vault write auth/oidc/config - >/dev/null
+# Capture the JSON first, so a failed Authentik call is the only error shown.
+OIDC_CONFIG_JSON="$(CONFIG_SOURCE="$CONFIG_SOURCE" APP_SLUG="$APP_SLUG" python3 - <<'PY'
 import json, os, re, ssl, sys, urllib.error, urllib.request
 
 def out(client_id, client_secret):
@@ -84,7 +85,9 @@ def api(method, path, body=None):
     req = urllib.request.Request(
         f"{base}/api/v3{path}", method=method,
         data=None if body is None else json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                 # Cloudflare blocks Python's default urllib agent with error 1010.
+                 "User-Agent": "petedio-seed-vault-oidc"})
     try:
         with urllib.request.urlopen(req, timeout=30, context=ssl.create_default_context()) as r:
             return json.load(r)
@@ -143,6 +146,8 @@ if not p.get("client_id") or not p.get("client_secret"):
     sys.exit("Authentik returned no client id or secret for the provider.")
 out(p["client_id"], p["client_secret"])
 PY
+)"
+printf '%s' "$OIDC_CONFIG_JSON" | vault write auth/oidc/config - >/dev/null
 
 step "Read-back"
 vault read -format=json auth/oidc/config | python3 -c '
