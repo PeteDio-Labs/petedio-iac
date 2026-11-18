@@ -41,13 +41,18 @@
         - /var/log/vault-unseal.log
       notify: Reload systemd
 
-    - name: Read back that the timer is gone
-      ansible.builtin.command:
-        cmd: systemctl list-unit-files vault-unseal.timer --no-legend
-      register: vault_unseal_left
-      changed_when: false
-      failed_when: vault_unseal_left.stdout | length > 0
-      # An empty list is the pass. Anything printed means the unit survived.
+    - name: Reload systemd before the read-back
+      ansible.builtin.meta: flush_handlers
+
+    - name: Read the services systemd knows
+      ansible.builtin.service_facts:
+
+    - name: Require that the unseal timer is gone
+      ansible.builtin.assert:
+        that:
+          - "'vault-unseal.timer' not in ansible_facts.services"
+        fail_msg: "vault-unseal.timer is still known to systemd on {{ inventory_hostname }}."
+        success_msg: "vault-unseal.timer is gone ({{ ansible_facts.services | length }} services read)."
 
   handlers:
     - name: Reload systemd
