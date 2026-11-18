@@ -15,6 +15,17 @@ retirement of the two watchers.
 The AWS user can encrypt, decrypt and describe one key, and only from the lab's public address.
 `scripts/seed-vault-kms.sh` documents the policies.
 
+## Who holds the recovery key
+
+The Mac Keychain item `vault-unseal-key` is the recovery key and the emergency key. It is one
+share with a threshold of one. It does **not** unseal Vault, because KMS does that. It makes a new
+root token with `vault operator generate-root`, and a migration back to Shamir needs it. The Pi
+file `/etc/vault-unseal/unseal-key` is a second copy, left in place so that losing the Mac does
+not lose the recovery key. Delete the Pi copy only after a second copy exists that does not depend
+on the Mac, such as a password manager entry.
+
+The emergency brake is separate: disabling the KMS key stops Vault from unsealing again.
+
 ## Known limits
 
 - **A restart needs AWS and the internet.** With either missing, Vault stays sealed. Recovery keys

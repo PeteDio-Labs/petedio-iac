@@ -488,7 +488,8 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
 
 - **Vault 223 holds no unseal key.** Its `seal "awskms"` stanza names one KMS key, and a start
   reopens it in about four seconds. The Pi timer and the Mac launchd agent are retired. The
-  Shamir key is a recovery key now: it can create a root token and cannot unseal. The procedure
+  Shamir key is a recovery key now: it can create a root token and cannot unseal. The Mac Keychain
+  item `vault-unseal-key` is the emergency key; the Pi file is a second copy. The procedure
   is `docs/runbooks/vault-kms-seal.md`; the history of the watchers is in the PET-373 notes in
   the vault repo and in `vault/Incidents/2026-09-09-vault-sealed-nine-hours.md`.
 - **`seal "shamir" { disabled = "true" }` is refused by Vault 2.0.1** ("shamir seals cannot be
