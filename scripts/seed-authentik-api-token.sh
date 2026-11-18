@@ -16,8 +16,10 @@
 # stdout only: it is never an argument on any hop and never printed. It then goes to Vault on
 # stdin, and the script reads it back from Vault and proves it against the Authentik API.
 #
-# The token belongs to $AUTHENTIK_USER (default akadmin), has intent `api`, and does not expire.
-# Each run deletes the token with the same identifier and mints a new one, so a re-run rotates it.
+# The token belongs to $AUTHENTIK_USER (default akadmin), has intent `api`, and expires after 24
+# hours (Pedro, 2026-11-18): the seed needs it once. Sign-in through Authentik does not use it, so
+# nothing breaks when it dies. To run the seed again later, run this script again. Each run deletes
+# the token with the same identifier and mints a new one.
 #
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt.
 #   SSH:         $PVE_SSH_KEY (default ~/.ssh/id_ed25519_proxmox_pedro), root@pve03
@@ -62,6 +64,8 @@ esac
 mint_code() {
 cat <<'PY'
 import os
+from datetime import timedelta
+from django.utils.timezone import now
 from authentik.core.models import Token, TokenIntents, User
 user = User.objects.get(username=os.environ["AK_MINT_USER"])
 Token.objects.filter(identifier=os.environ["AK_MINT_ID"]).delete()
@@ -69,8 +73,9 @@ token = Token.objects.create(
     identifier=os.environ["AK_MINT_ID"],
     intent=TokenIntents.INTENT_API,
     user=user,
-    expiring=False,
-    description="Vault OIDC seed (PET-946). Minted by scripts/seed-authentik-api-token.sh.",
+    expiring=True,
+    expires=now() + timedelta(hours=24),
+    description="Vault OIDC seed (PET-946). Expires after 24 hours. Minted by scripts/seed-authentik-api-token.sh.",
 )
 print("MINTED_TOKEN_KEY=" + token.key)
 PY
@@ -125,4 +130,4 @@ case "$CODE" in
 esac
 
 printf '\n\033[32mSeeded %s (api_token, user %s). No secret was printed.\033[0m\n' "$VAULT_PATH" "$AUTHENTIK_USER"
-printf 'Next: ./scripts/seed-vault-oidc.sh\n'
+printf 'The token expires in 24 hours. Next: ./scripts/seed-vault-oidc.sh\n'

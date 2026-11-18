@@ -43,6 +43,8 @@ case "$remote" in
     printf '%s' "$b64" | base64 -d > "$FAKE_DIR/mint.py" || exit 1
     python3 -c 'import sys; compile(open(sys.argv[1]).read(), "mint.py", "exec")' "$FAKE_DIR/mint.py" || exit 1
     grep -q INTENT_API "$FAKE_DIR/mint.py" || exit 1
+    grep -q 'expiring=True' "$FAKE_DIR/mint.py" || exit 1
+    grep -q 'timedelta(hours=24)' "$FAKE_DIR/mint.py" || exit 1
     echo "some warning from ak"
     [ "${FAKE_NO_MARKER:-0}" = 1 ] || echo "MINTED_TOKEN_KEY=$FAKE_KEY" ;;
   *) echo "unexpected remote: $remote" >&2; exit 1 ;;
