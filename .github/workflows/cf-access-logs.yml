@@ -1,0 +1,101 @@
+# cf-access-logs — read Cloudflare's Access authentication logs for one window and print a summary.
+#
+# WHY. When the PD Lab connector signs Pedro out, the cause shows in Cloudflare's Access logs: which
+# app refused, and when. A thread dispatches this workflow and reads the run log, so Pedro does not
+# open the dashboard.
+#
+# SECURITY. Only main, only workflow_dispatch and only this file mint the cf-logs-read Vault role
+# (vault-config/cf-logs.tf). It reads kv/services/cloudflare-logs, a Cloudflare token with
+# Account > Access: Audit Logs > Read only. The run log is public: scripts/cf-access-logs.py prints
+# the app hostname, action, allowed flag, identity provider name and time, and never an email, an
+# IP address, a ray id or a response body. It reads, and nothing else changes.
+name: cf-access-logs
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Window start, UTC, like 2026-11-18T05:30:00Z"
+        required: true
+        type: string
+      until:
+        description: "Window end, UTC, like 2026-11-18T07:00:00Z"
+        required: true
+        type: string
+      app:
+        description: "Optional hostname fragment to keep, like mcp or mcp-plane"
+        required: false
+        type: string
+        default: ""
+      pet:
+        description: "The PET item this run answers"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token vault-action exchanges for cf-logs-read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+
+jobs:
+  read:
+    # The Vault binding is the gate; this line only stops main's copy running on another ref.
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, homelab]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Say what this run does
+        env:
+          SINCE: ${{ inputs.since }}
+          UNTIL: ${{ inputs.until }}
+          APP: ${{ inputs.app }}
+          PET: ${{ inputs.pet }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          # Check every input before anything prints it, so a newline and a ::command:: cannot
+          # reach the log. [[ =~ ]] matches the whole string.
+          iso='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+          [[ "$SINCE" =~ $iso && "$UNTIL" =~ $iso ]] || { echo "ABORT: since and until must look like 2026-11-18T05:30:00Z."; exit 1; }
+          [[ "$APP" =~ ^[a-z0-9.-]{0,60}$ ]] || { echo "ABORT: app must be a hostname fragment."; exit 1; }
+          [[ "$PET" =~ ^(PET-[0-9]{1,6})?$ ]] || { echo "ABORT: pet must look like PET-123."; exit 1; }
+          echo "since=$SINCE until=$UNTIL app=${APP:-any} pet=${PET:-none} sha=$GITHUB_SHA actor=$ACTOR"
+          command -v python3 >/dev/null || { echo "ABORT: python3 is not installed on this runner."; exit 1; }
+
+      - name: Encode Vault CA
+        id: vault_ca
+        run: echo "b64=$(base64 -w0 environments/homelab/vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Vault — cf-logs-read via OIDC
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: cf-logs-read
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: true
+
+      - name: Read the logs
+        env:
+          SINCE: ${{ inputs.since }}
+          UNTIL: ${{ inputs.until }}
+          APP: ${{ inputs.app }}
+        run: |
+          set -euo pipefail
+          python3 -I scripts/cf-access-logs.py --since "$SINCE" --until "$UNTIL" --app "$APP"
+          # Revoke the Vault token, which has no other use.
+          curl -sS --fail --cacert "$VAULT_CACERT" -m 10 -o /dev/null -H "X-Vault-Token: $VAULT_TOKEN" \
+            -X POST "$VAULT_ADDR/v1/auth/token/revoke-self" || echo "note: revoke-self failed; the token expires in 10 minutes."
