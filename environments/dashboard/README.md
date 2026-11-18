@@ -30,7 +30,7 @@ Expect about $2 a month. The credit budget in `environments/offsite-watchdog/bud
 
 ## Apply order (host step, after Pedro says go)
 
-Nothing runs from CI. Apply from the Mac or 247 with the account's admin profile.
+Phase 1 and phase 2 ran through `aws-apply.yml` (`root=dashboard`), which waits on the `lab-write` approval (PET-942). The commands below describe what each phase does.
 
 1. **Phase 1.** `terraform apply -var aws_profile=<profile>` with `attach_domain = false`. This creates the whole stack on the `cloudfront.net` URL and the Route 53 zone.
 2. **Delegation.** Add one NS record per `name_servers` output for `failover.pdlab.dev` to `environments/homelab` (Cloudflare), DNS only. Apply that through the normal merge.
@@ -59,4 +59,3 @@ Pedro decided on 2026-11-16 not to forward a port: the Google Wifi router would 
 
 - `GET /api/health` is a route here and a handler requirement for the dashboard thread: it must read one DynamoDB item and answer `{"ok":true}` or fail.
 - The Cloudflare NS delegation lands in `environments/homelab`, in its own PR, after phase 1.
-- A plan-only CI job for this root (like `portfolio-plan.yml`) needs a read-only AWS key that Pedro seeds.
