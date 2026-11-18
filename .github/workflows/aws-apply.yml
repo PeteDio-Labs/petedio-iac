@@ -1,27 +1,36 @@
-# dashboard-apply: plan and apply environments/dashboard (AWS account 847547470418) from CI.
+# aws-apply: plan and apply an AWS root (environments/dashboard or environments/portfolio, account
+# 847547470418) from CI.
 #
-# WHY. This root had no CI path, so an apply meant a Mac session with an admin profile. A thread
+# WHY. These roots had no CI path, so an apply meant a Mac session with an admin profile. A thread
 # dispatches this workflow and reads the run log.
 #
 # NO STORED AWS KEY. Each job gets a GitHub OIDC token and assumes an AWS role with it:
-#   plan   -> petedio-dashboard-ci-plan   (ReadOnlyAccess). Trusts main, any job.
-#   apply  -> petedio-dashboard-ci-apply  (writes the dashboard's resources only, under a
-#             permissions boundary). Trusts the `lab-write` environment only, so AWS refuses the
-#             role until Pedro approves the apply job.
-# scripts/dashboard-aws-bootstrap.sh creates both roles once, with an AWS admin profile.
+#   plan   -> petedio-ci-<root>-plan   (ReadOnlyAccess). Trusts main, any job.
+#   apply  -> petedio-ci-<root>-apply  (writes that root's resources only). Trusts the `lab-write`
+#             environment only, so AWS refuses the role until Pedro approves the apply job. The
+#             dashboard role creates IAM entities only under a permissions boundary. The portfolio
+#             role creates none, so a change that needs IAM falls back to the Mac.
+# scripts/aws-ci-bootstrap.sh creates the roles once, with an AWS admin profile.
 #
 # LIMIT. AWS trusts the environment name, not this file. Any job on main that Pedro approves in
 # `lab-write` could assume the apply role. The boundary caps what that role can create.
 #
 # GATE. The apply job re-plans and applies the saved plan only if its digest matches the digest
 # the plan job printed. Only `main` runs: the Vault role binds ref, event and this file.
-name: dashboard-apply
+name: aws-apply
 
 on:
   workflow_dispatch:
     inputs:
+      root:
+        description: "Which AWS root to plan or apply"
+        required: true
+        type: choice
+        options:
+          - dashboard
+          - portfolio
       attach_domain:
-        description: "Phase 2: attach dash.failover.pdlab.dev. Set it only after the NS delegation is merged."
+        description: "Dashboard only. Phase 2: attach dash.failover.pdlab.dev, after the NS delegation is merged."
         required: false
         type: boolean
         default: false
@@ -67,28 +76,29 @@ jobs:
         working-directory: environments/homelab
         shell: bash
         run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
-      - name: Vault — deploy-dashboard-ci via OIDC
+      - name: Vault — deploy-aws-apply via OIDC
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
           method: jwt
           path: jwt-github
-          role: deploy-dashboard-ci
+          role: deploy-aws-apply
           jwtGithubAudience: https://github.com/PeteDio-Labs
           caCertificate: ${{ steps.vault_ca.outputs.b64 }}
           exportToken: false
           secrets: |
             kv/data/iac/minio access_key | MINIO_KEY ;
             kv/data/iac/minio secret_key | MINIO_SECRET
-      - name: Plan environments/dashboard
+      - name: Plan the root
         id: plan
-        working-directory: environments/dashboard
+        working-directory: environments/${{ inputs.root }}
         shell: bash
         env:
-          ROLE: petedio-dashboard-ci-plan
+          ROOT: ${{ inputs.root }}
+          ROLE: petedio-ci-${{ inputs.root }}-plan
           ATTACH: ${{ inputs.attach_domain }}
           PET: ${{ inputs.pet }}
-        run: ../../scripts/dashboard-apply-run.sh plan
+        run: ../../scripts/aws-apply-run.sh plan
 
   apply:
     needs: plan
@@ -113,25 +123,26 @@ jobs:
         working-directory: environments/homelab
         shell: bash
         run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
-      - name: Vault — deploy-dashboard-ci via OIDC
+      - name: Vault — deploy-aws-apply via OIDC
         uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
         with:
           url: https://192.168.50.223:8200
           method: jwt
           path: jwt-github
-          role: deploy-dashboard-ci
+          role: deploy-aws-apply
           jwtGithubAudience: https://github.com/PeteDio-Labs
           caCertificate: ${{ steps.vault_ca.outputs.b64 }}
           exportToken: false
           secrets: |
             kv/data/iac/minio access_key | MINIO_KEY ;
             kv/data/iac/minio secret_key | MINIO_SECRET
-      - name: Apply environments/dashboard
-        working-directory: environments/dashboard
+      - name: Apply the root
+        working-directory: environments/${{ inputs.root }}
         shell: bash
         env:
-          ROLE: petedio-dashboard-ci-apply
+          ROOT: ${{ inputs.root }}
+          ROLE: petedio-ci-${{ inputs.root }}-apply
           ATTACH: ${{ inputs.attach_domain }}
           PET: ${{ inputs.pet }}
           EXPECT_DIGEST: ${{ needs.plan.outputs.digest }}
-        run: ../../scripts/dashboard-apply-run.sh apply
+        run: ../../scripts/aws-apply-run.sh apply

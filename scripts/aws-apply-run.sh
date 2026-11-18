@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Plan or apply environments/dashboard for dashboard-apply.yml. Run from that directory.
+# Plan or apply an AWS root for aws-apply.yml. Run from that directory.
 #   plan   Plans, prints addresses and counts (never attribute values), and writes the plan
 #          digest and the change count to $GITHUB_OUTPUT.
 #   apply  Plans again, refuses unless its digest equals $EXPECT_DIGEST, applies the saved plan,
@@ -9,11 +9,11 @@
 set -euo pipefail
 umask 077
 MODE="${1:?plan or apply}"
-: "${AWS_ACCOUNT:?}" "${BOUNDARY_ARN:?}" "${ROLE:?}"
+: "${AWS_ACCOUNT:?}" "${BOUNDARY_ARN:?}" "${ROLE:?}" "${ROOT:?}"
 for v in MINIO_KEY MINIO_SECRET ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN; do
   [ -n "${!v:-}" ] || { echo "ABORT: $v is empty."; exit 1; }
 done
-T="$RUNNER_TEMP/dashboard-$MODE"
+T="$RUNNER_TEMP/aws-$ROOT-$MODE"
 rm -rf "$T"; mkdir -p "$T"
 trap 'rm -rf "$T"' EXIT
 
@@ -26,7 +26,7 @@ cat > "$T/aws-config" <<CFG
 [profile dash]
 role_arn = arn:aws:iam::${AWS_ACCOUNT}:role/${ROLE}
 web_identity_token_file = $T/oidc-token
-role_session_name = dashboard-${MODE}-${GITHUB_RUN_ID:-local}
+role_session_name = ${ROOT}-${MODE}-${GITHUB_RUN_ID:-local}
 region = us-east-2
 CFG
 export AWS_CONFIG_FILE="$T/aws-config" AWS_SHARED_CREDENTIALS_FILE=/dev/null
@@ -36,8 +36,12 @@ mkdir -p "$TF_PLUGIN_CACHE_DIR"
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
 
 scrub() { sed -E 's/(key|secret|token)[^ ]*/[redacted]/Ig'; }
-VARS=(-var aws_profile=dash -var "attach_domain=${ATTACH:-false}" -var "permissions_boundary_arn=$BOUNDARY_ARN")
-echo "dashboard-$MODE: pet=${PET:-none} sha=$GITHUB_SHA role=$ROLE attach_domain=${ATTACH:-false}"
+case "$ROOT" in
+  dashboard) VARS=(-var aws_profile=dash -var "attach_domain=${ATTACH:-false}" -var "permissions_boundary_arn=$BOUNDARY_ARN") ;;
+  portfolio) VARS=(-var aws_profile=dash) ;;
+  *) echo "ABORT: unknown root $ROOT."; exit 1 ;;
+esac
+echo "aws-$ROOT-$MODE: pet=${PET:-none} sha=$GITHUB_SHA role=$ROLE attach_domain=${ATTACH:-false}"
 
 terraform init -input=false -backend-config="$T/backend.hcl" >"$T/init.log" 2>&1 \
   || { scrub < "$T/init.log" | tail -n 20; echo "ABORT: terraform init failed."; exit 1; }
@@ -55,10 +59,15 @@ jq -r '(.resource_changes // [])[] | select(.change.actions != ["no-op"] and .ch
 head -n 80 "$T/changes.txt"
 total="$(jq '[(.resource_changes // [])[]] | length' "$T/plan.json")"
 [ "$total" -gt 0 ] || { echo "ABORT: the plan lists 0 resources, so it examined nothing."; exit 1; }
+prior="$(jq '[(.prior_state.values.root_module // {}) | .. | objects | select(has("address") and has("mode")) | .address] | length' "$T/plan.json")"
+# An empty prior state reads as "create everything". Dashboard has never applied, so only
+# portfolio must already have state.
+if [ "$ROOT" = portfolio ] && [ "$prior" -eq 0 ]; then echo "ABORT: the plan read 0 resources from state, so it compared nothing. Check the backend key."; exit 1; fi
+echo "$ROOT plan: read $prior resource(s) from state"
 changes="$(wc -l < "$T/changes.txt" | tr -d ' ')"
 del="$(grep -c 'delete' "$T/changes.txt" || true)"
 digest="$(sha256sum "$T/changes.txt" | cut -c1-16)"
-echo "dashboard plan: $total resource(s) examined, $changes with a change, $del with a delete, digest $digest (terraform exit $rc)"
+echo "$ROOT plan: $total resource(s) examined, $changes with a change, $del with a delete, digest $digest (terraform exit $rc)"
 if [ "$MODE" = plan ]; then
   { echo "digest=$digest"; echo "changes=$changes"; } >> "$GITHUB_OUTPUT"
   exit 0
@@ -74,5 +83,5 @@ scrub < "$T/apply.log" | tail -n 3
 terraform output -json > "$T/out.json"
 n="$(jq 'keys | length' "$T/out.json")"
 [ "$n" -gt 0 ] || { echo "ABORT: the apply finished but the root has 0 outputs."; exit 1; }
-echo "dashboard apply: read back $n output(s):"
+echo "$ROOT apply: read back $n output(s):"
 jq -r 'to_entries[] | select(.value.sensitive | not) | "\(.key) = \(.value.value | tostring | .[0:120])"' "$T/out.json"

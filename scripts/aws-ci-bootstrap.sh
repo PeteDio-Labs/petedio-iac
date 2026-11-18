@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Create the AWS side of dashboard-apply.yml, once (PET-941).
+# Create the AWS side of aws-apply.yml, once (PET-941).
 #
 # Run it from a Mac with an AWS admin profile for account 847547470418:
-#   bash scripts/dashboard-aws-bootstrap.sh --profile <admin-profile>
+#   bash scripts/aws-ci-bootstrap.sh --profile <admin-profile>
 # Run it again to update the policies. It places no secret: GitHub proves who it is with an
 # OIDC token, so AWS holds no key for the workflow.
 #
 # It creates, if missing:
 #   - the GitHub OIDC identity provider
 #   - petedio-dashboard-boundary   (permissions boundary for everything the apply creates)
-#   - petedio-dashboard-ci-plan    (ReadOnlyAccess; trusts main)
-#   - petedio-dashboard-ci-apply   (dashboard writes; trusts the `lab-write` environment only)
+#   - petedio-ci-dashboard-plan / -apply   (dashboard stack)
+#   - petedio-ci-portfolio-plan / -apply   (portfolio site stack; no IAM writes)
+# Each plan role has ReadOnlyAccess and trusts main. Each apply role trusts the `lab-write`
+# environment only. The offsite-watchdog root stays as it is: it already applies with its own
+# boundary-limited IAM user whose key lives in Vault.
 set -uo pipefail
 PROFILE=""
 while [ $# -gt 0 ]; do
@@ -75,9 +78,11 @@ role() { # name, sub
     echo "created: role $1"
   fi
 }
-role petedio-dashboard-ci-plan  "repo:$REPO:ref:refs/heads/main" || { echo "ABORT: plan role failed."; exit 1; }
-role petedio-dashboard-ci-apply "repo:$REPO:environment:lab-write" || { echo "ABORT: apply role failed."; exit 1; }
-aws iam attach-role-policy --role-name petedio-dashboard-ci-plan --policy-arn arn:aws:iam::aws:policy/ReadOnlyAccess || { echo "ABORT: attach failed."; exit 1; }
+for r in dashboard portfolio; do
+  role "petedio-ci-$r-plan"  "repo:$REPO:ref:refs/heads/main" || { echo "ABORT: $r plan role failed."; exit 1; }
+  role "petedio-ci-$r-apply" "repo:$REPO:environment:lab-write" || { echo "ABORT: $r apply role failed."; exit 1; }
+  aws iam attach-role-policy --role-name "petedio-ci-$r-plan" --policy-arn arn:aws:iam::aws:policy/ReadOnlyAccess || { echo "ABORT: attach failed."; exit 1; }
+done
 
 cat > "$T/apply.json" <<JSON
 {"Version":"2012-10-17","Statement":[
@@ -91,5 +96,16 @@ cat > "$T/apply.json" <<JSON
  {"Sid":"NoDeletes","Effect":"Deny","Action":["iam:DeleteUser","iam:DeleteRole","iam:DeleteOpenIDConnectProvider","iam:DeletePolicy","dynamodb:DeleteTable","s3:DeleteBucket","route53:DeleteHostedZone"],"Resource":"*"}
 ]}
 JSON
-aws iam put-role-policy --role-name petedio-dashboard-ci-apply --policy-name apply --policy-document "file://$T/apply.json" || { echo "ABORT: apply policy failed."; exit 1; }
-echo "done: provider, boundary, 2 roles. Policies are set. Tell the thread: bootstrap finished."
+aws iam put-role-policy --role-name petedio-ci-dashboard-apply --policy-name apply --policy-document "file://$T/apply.json" || { echo "ABORT: dashboard apply policy failed."; exit 1; }
+
+# Portfolio: the site's services only, no IAM writes, no deletes. An IAM change in this root
+# needs the Mac.
+cat > "$T/portfolio.json" <<JSON
+{"Version":"2012-10-17","Statement":[
+ {"Sid":"Read","Effect":"Allow","Action":["iam:Get*","iam:List*","sts:GetCallerIdentity"],"Resource":"*"},
+ {"Sid":"Services","Effect":"Allow","Action":["s3:*","cloudfront:*","acm:*"],"Resource":"*"},
+ {"Sid":"NoDeletes","Effect":"Deny","Action":["s3:DeleteBucket","cloudfront:DeleteDistribution","acm:DeleteCertificate"],"Resource":"*"}
+]}
+JSON
+aws iam put-role-policy --role-name petedio-ci-portfolio-apply --policy-name apply --policy-document "file://$T/portfolio.json" || { echo "ABORT: portfolio apply policy failed."; exit 1; }
+echo "done: provider, boundary, 4 roles, 2 apply policies. Tell the thread: bootstrap finished."
