@@ -112,7 +112,7 @@ else:
               for s in ("openid", "email", "profile")]
     key = one("/crypto/certificatekeypairs/?has_key=true&name=authentik%20Self-signed%20Certificate", "signing key")
 
-    uris = ["https://vault.pdlab.dev/ui/vault/auth/oidc/oidc/callback", "http://localhost:8250/oidc/callback"]
+    uris = ["https://192.168.50.223:8200/ui/vault/auth/oidc/oidc/callback", "https://vault.pdlab.dev/ui/vault/auth/oidc/oidc/callback", "http://localhost:8250/oidc/callback"]
     # From 2024.12 the field is a list of {matching_mode, url} objects, and the provider needs an
     # invalidation flow (checked against the 2024.12.5 serializers). Strict matching: exact URLs.
     year, minor = (int(x) for x in re.match(r"(\d+)\.(\d+)", version).groups())

@@ -1,6 +1,6 @@
 # Authentik sign-in for Vault's web page and CLI (PET-946).
 #
-# Pedro signs in to vault.pdlab.dev through Authentik and gets a token that can only list and read
+# Pedro signs in to Vault's page through Authentik and gets a token that can only list and read
 # the metadata under kv/callers/edge: the `keys-list` policy (keys.tf), which holds no secret value.
 # The root token stays the break-glass login. This role never grants root, and it never reads a
 # kv/data path. Widen the policy in keys.tf, in its own PR, if the page needs more.
@@ -33,6 +33,7 @@ resource "vault_jwt_auth_backend_role" "pedro_oidc" {
   oidc_scopes  = ["openid", "email", "profile"]
 
   allowed_redirect_uris = [
+    "https://192.168.50.223:8200/ui/vault/auth/oidc/oidc/callback",
     "https://vault.pdlab.dev/ui/vault/auth/oidc/oidc/callback",
     "http://localhost:8250/oidc/callback",
   ]
