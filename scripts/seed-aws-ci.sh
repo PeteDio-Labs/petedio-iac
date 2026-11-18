@@ -11,6 +11,10 @@
 #   petedio-ci-<root>-plan    ReadOnlyAccess. Key -> kv/services/aws-ci/<root>-plan
 #   petedio-ci-<root>-apply   an inline policy that names that root's resources.
 #                             Key -> kv/services/aws-ci/<root>-apply
+# plus a MinIO service account for the Terraform state, in the same Vault entry: read-only on
+# tfstate/<root>/* for plan, read and write there for apply. Neither is the shared kv/iac/minio key.
+# MinIO admin credentials are used here only and never written to Vault:
+# $MINIO_ROOT_USER/$MINIO_ROOT_PASSWORD, else $MINIO_CREDS_FILE, else a prompt.
 # and the permissions boundary petedio-dashboard-boundary, which the dashboard apply must attach
 # to every IAM user or role it creates.
 #
@@ -43,12 +47,14 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ACCT="847547470418"
 BND="arn:aws:iam::$ACCT:policy/petedio-dashboard-boundary"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
+MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://192.168.50.221:9000}"
+MINIO_CREDS_FILE="${MINIO_CREDS_FILE:-$HOME/petedio/.secrets/minio-221.txt}"
 export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
 export VAULT_CACERT="${VAULT_CACERT:-$REPO_ROOT/environments/homelab/vault-ca.crt}"
 
 step(){ printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
 die(){ printf '\033[1;31mABORT: %s\033[0m\n' "$*" >&2; exit 1; }
-for t in aws vault jq; do command -v "$t" >/dev/null || die "$t not in PATH."; done
+for t in aws vault jq mc; do command -v "$t" >/dev/null || die "$t not in PATH."; done
 aws_(){ aws --profile "$PROFILE" --no-cli-pager "$@"; }
 
 step "AWS"
@@ -66,10 +72,28 @@ vault token lookup >/dev/null 2>&1 || die "the Vault token is invalid, or Vault 
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
+step "MinIO admin (used here only, never written to Vault)"
+MROOT_U="${MINIO_ROOT_USER:-}"; MROOT_P="${MINIO_ROOT_PASSWORD:-}"
+if { [ -z "$MROOT_U" ] || [ -z "$MROOT_P" ]; } && [ -f "$MINIO_CREDS_FILE" ]; then
+  cred(){ python3 "$SCRIPT_DIR/minio-cred.py" "$MINIO_CREDS_FILE" "$1" || true; }
+  [ -n "$MROOT_U" ] || MROOT_U="$(cred ROOT_USER)"
+  [ -n "$MROOT_P" ] || MROOT_P="$(cred ROOT_PASSWORD)"
+fi
+[ -n "$MROOT_U" ] || read -rp "  MinIO admin user: " MROOT_U
+[ -n "$MROOT_P" ] || { read -rsp "  MinIO admin password (hidden): " MROOT_P; echo; }
+mkdir -p "$TMP/mc"
+m(){ mc --config-dir "$TMP/mc" "$@"; }
+# `mc alias set` reads both keys from stdin, and printf is a builtin, so neither reaches argv.
+printf '%s\n%s\n' "$MROOT_U" "$MROOT_P" | m alias set adm "$MINIO_ENDPOINT" --api s3v4 --path auto >/dev/null 2>&1 \
+  && m ls adm >/dev/null 2>&1 \
+  || die "$MINIO_ENDPOINT rejected the admin credential, or it is unreachable (is this machine on the .50 LAN?)."
+echo "  authenticated (user length ${#MROOT_U})"
+
 # ── Policies ─────────────────────────────────────────────────────────────────────────────────
-# Every Resource below names a root's own resources. Three services cannot be named before the
+# Every Resource below names a root's own resources. Some services cannot be named before the
 # resource exists, because AWS generates the identifier, so those are scoped to the account and
-# region instead. Each is called out where it appears.
+# region instead. A few create actions accept only Resource "*" (CreateNeedsStar); the deny list
+# and the workflow's refusal of any delete bound what they can do. Each is called out where it appears.
 cat > "$TMP/boundary.json" <<JSON
 {"Version":"2012-10-17","Statement":[
  {"Effect":"Allow","Action":["dynamodb:GetItem","dynamodb:PutItem","dynamodb:Query"],"Resource":"arn:aws:dynamodb:*:$ACCT:table/dash"},
@@ -84,6 +108,7 @@ JSON
 cat > "$TMP/dashboard-apply.json" <<JSON
 {"Version":"2012-10-17","Statement":[
  {"Sid":"Read","Effect":"Allow","Action":["iam:Get*","iam:List*","sts:GetCallerIdentity","s3:ListAllMyBuckets","route53:Get*","route53:List*","acm:Describe*","acm:List*","acm:Get*","cloudfront:Get*","cloudfront:List*","logs:DescribeLogGroups","logs:ListTagsForResource","logs:ListTagsLogGroup","apigateway:GET","cognito-idp:Describe*","cognito-idp:List*","cognito-idp:Get*","lambda:Get*","lambda:List*","dynamodb:Describe*","dynamodb:List*"],"Resource":"*"},
+ {"Sid":"CreateNeedsStar","Effect":"Allow","Action":["cloudfront:CreateDistribution","cloudfront:CreateOriginAccessControl","cloudfront:CreateFunction","cloudfront:CreateResponseHeadersPolicy","cloudfront:TagResource","cognito-idp:CreateUserPool","route53:CreateHostedZone","route53:CreateHealthCheck","acm:RequestCertificate"],"Resource":"*"},
  {"Sid":"Bucket","Effect":"Allow","Action":"s3:*","Resource":["arn:aws:s3:::petedio-dash-site-$ACCT","arn:aws:s3:::petedio-dash-site-$ACCT/*"]},
  {"Sid":"Lambda","Effect":"Allow","Action":"lambda:*","Resource":"arn:aws:lambda:us-east-2:$ACCT:function:petedio-dash-*"},
  {"Sid":"Table","Effect":"Allow","Action":"dynamodb:*","Resource":["arn:aws:dynamodb:us-east-2:$ACCT:table/dash","arn:aws:dynamodb:us-east-2:$ACCT:table/dash/*"]},
@@ -105,6 +130,7 @@ JSON
 cat > "$TMP/portfolio-apply.json" <<JSON
 {"Version":"2012-10-17","Statement":[
  {"Sid":"Read","Effect":"Allow","Action":["iam:Get*","iam:List*","sts:GetCallerIdentity","s3:ListAllMyBuckets","acm:Describe*","acm:List*","acm:Get*","cloudfront:Get*","cloudfront:List*"],"Resource":"*"},
+ {"Sid":"CreateNeedsStar","Effect":"Allow","Action":["cloudfront:CreateDistribution","cloudfront:CreateOriginAccessControl","cloudfront:CreateFunction","cloudfront:CreateResponseHeadersPolicy","cloudfront:TagResource","acm:RequestCertificate"],"Resource":"*"},
  {"Sid":"Bucket","Effect":"Allow","Action":"s3:*","Resource":["arn:aws:s3:::petedio-portfolio-site-$ACCT","arn:aws:s3:::petedio-portfolio-site-$ACCT/*"]},
  {"Sid":"CloudFrontAccountScoped","Effect":"Allow","Action":"cloudfront:*","Resource":"arn:aws:cloudfront::$ACCT:*"},
  {"Sid":"Certificates","Effect":"Allow","Action":"acm:*","Resource":"arn:aws:acm:us-east-1:$ACCT:certificate/*"},
@@ -142,14 +168,26 @@ mint(){ # $1 root, $2 kind (plan|apply)
   aws_ iam create-access-key --user-name "$user" --output json > "$TMP/key.json"
   new="$(jq -r '.AccessKey.AccessKeyId' "$TMP/key.json")"
   jq '{aws_access_key_id: .AccessKey.AccessKeyId, aws_secret_access_key: .AccessKey.SecretAccessKey}' "$TMP/key.json" > "$TMP/data.json"
-  vault kv put "$kv" @"$TMP/data.json" >/dev/null || die "Vault write failed. Delete key $new on $user in IAM; old keys are unchanged."
-  [ "$(vault kv get -field=aws_access_key_id "$kv")" = "$new" ] || die "Vault read-back for $kv does not match. Stop; do not revoke anything."
+  local oldm macc
+  oldm="$(vault kv get -field=minio_access_key "$kv" 2>/dev/null || true)"
+  if [ "$kind" = plan ]; then
+    printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::tfstate"]},{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::tfstate/%s/*"]}]}' "$root" > "$TMP/minio-policy.json"
+  else
+    printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::tfstate"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::tfstate/%s/*"]}]}' "$root" > "$TMP/minio-policy.json"
+  fi
+  m admin user svcacct add --policy "$TMP/minio-policy.json" --json adm "$MROOT_U" > "$TMP/minio-key.json"
+  macc="$(jq -r '.accessKey // empty' "$TMP/minio-key.json")"
+  [ -n "$macc" ] && [ -n "$(jq -r '.secretKey // empty' "$TMP/minio-key.json")" ] || die "could not mint or parse the MinIO service account. Delete key $new on $user in IAM."
+  jq -n --slurpfile a "$TMP/key.json" --slurpfile mk "$TMP/minio-key.json" '{aws_access_key_id: $a[0].AccessKey.AccessKeyId, aws_secret_access_key: $a[0].AccessKey.SecretAccessKey, minio_access_key: $mk[0].accessKey, minio_secret_key: $mk[0].secretKey}' > "$TMP/data.json"
+  vault kv put "$kv" @"$TMP/data.json" >/dev/null || die "Vault write failed. Delete key $new on $user in IAM and service account $macc in MinIO; old credentials are unchanged."
+  [ "$(vault kv get -field=aws_access_key_id "$kv")" = "$new" ] && [ "$(vault kv get -field=minio_access_key "$kv")" = "$macc" ] || die "Vault read-back for $kv does not match. Stop; do not revoke anything."
   echo "  stored in $kv and read back (values not shown)"
   for k in $old; do [ "$k" = "$new" ] || aws_ iam delete-access-key --user-name "$user" --access-key-id "$k"; done
-  rm -f "$TMP/key.json" "$TMP/data.json"
+  if [ -n "$oldm" ] && [ "$oldm" != "$macc" ]; then m admin user svcacct rm adm "$oldm" >/dev/null 2>&1 || echo "  could not remove the old MinIO service account $oldm; remove it by hand"; fi
+  rm -f "$TMP/key.json" "$TMP/data.json" "$TMP/minio-key.json"
 }
 for root in dashboard portfolio; do mint "$root" plan; mint "$root" apply; done
 
 step "Done"
-echo "  4 IAM users and the boundary policy exist, and Vault holds 4 keys under kv/services/aws-ci/."
+echo "  4 IAM users, 4 MinIO service accounts and the boundary policy exist, and Vault holds 4 entries under kv/services/aws-ci/."
 echo "  Tell the thread: seed finished. No value was printed."

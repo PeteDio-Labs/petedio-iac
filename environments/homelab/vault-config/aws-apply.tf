@@ -5,19 +5,18 @@
 # cannot assume an AWS role. It reads an IAM user's key from Vault instead.
 #
 # Two roles keep the write keys behind Pedro's tap:
-#   deploy-aws-plan   reads the state key and the two read-only plan keys. Any dispatch of the
+#   deploy-aws-plan   reads the two read-only plan entries: an AWS read-only key and a MinIO service
+#                     account that reads one root's state only. Any dispatch of the
 #                     workflow on main gets it.
-#   deploy-aws-apply  reads the state key and the two apply (write) keys. It is also bound to the
+#   deploy-aws-apply  reads the two apply entries: an AWS write key and a MinIO service account that
+#                     writes one root's state only. It is also bound to the
 #                     `lab-write` environment, so Vault refuses it until Pedro approves the job.
-# Each is bound to the repository, main, workflow_dispatch and the one workflow file, never to
+# Neither reads the shared kv/iac/minio key, which can overwrite any root's state. Each is bound to the repository, main, workflow_dispatch and the one workflow file, never to
 # `sub` alone.
 resource "vault_policy" "deploy_aws_plan" {
   name = "deploy-aws-plan"
 
   policy = <<-EOT
-    path "kv/data/iac/minio" {
-      capabilities = ["read"]
-    }
     path "kv/data/services/aws-ci/dashboard-plan" {
       capabilities = ["read"]
     }
@@ -31,9 +30,6 @@ resource "vault_policy" "deploy_aws_apply" {
   name = "deploy-aws-apply"
 
   policy = <<-EOT
-    path "kv/data/iac/minio" {
-      capabilities = ["read"]
-    }
     path "kv/data/services/aws-ci/dashboard-apply" {
       capabilities = ["read"]
     }

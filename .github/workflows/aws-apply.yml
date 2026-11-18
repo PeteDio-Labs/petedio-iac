@@ -89,8 +89,8 @@ jobs:
           caCertificate: ${{ steps.vault_ca.outputs.b64 }}
           exportToken: false
           secrets: |
-            kv/data/iac/minio access_key | MINIO_KEY ;
-            kv/data/iac/minio secret_key | MINIO_SECRET ;
+            kv/data/services/aws-ci/${{ inputs.root }}-plan minio_access_key | MINIO_KEY ;
+            kv/data/services/aws-ci/${{ inputs.root }}-plan minio_secret_key | MINIO_SECRET ;
             kv/data/services/aws-ci/${{ inputs.root }}-plan aws_access_key_id | AWS_CI_KEY ;
             kv/data/services/aws-ci/${{ inputs.root }}-plan aws_secret_access_key | AWS_CI_SECRET
       - name: Plan the root
@@ -137,8 +137,8 @@ jobs:
           caCertificate: ${{ steps.vault_ca.outputs.b64 }}
           exportToken: false
           secrets: |
-            kv/data/iac/minio access_key | MINIO_KEY ;
-            kv/data/iac/minio secret_key | MINIO_SECRET ;
+            kv/data/services/aws-ci/${{ inputs.root }}-apply minio_access_key | MINIO_KEY ;
+            kv/data/services/aws-ci/${{ inputs.root }}-apply minio_secret_key | MINIO_SECRET ;
             kv/data/services/aws-ci/${{ inputs.root }}-apply aws_access_key_id | AWS_CI_KEY ;
             kv/data/services/aws-ci/${{ inputs.root }}-apply aws_secret_access_key | AWS_CI_SECRET
       - name: Apply the root
