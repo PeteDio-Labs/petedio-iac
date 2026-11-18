@@ -27,6 +27,12 @@ The AWS user can encrypt, decrypt and describe one key, and only from the lab's 
 - **Disabling the KMS key stops Vault from unsealing.** That is also the emergency brake for a
   suspected compromise. A scheduled deletion destroys the data, so never delete the key.
 
+- **The AWS account must outlive the credits.** The key costs about $1 a month after 2027-04-20.
+  Closing or suspending the account stops Vault from unsealing.
+- **The key policy does not deny `DisableKey` or `ScheduleKeyDeletion` to the account admin on
+  purpose.** `DisableKey` is the emergency brake. The seal user cannot call either one, because its
+  policy names three actions only.
+
 ## Steps
 
 Run these from the Mac, in order, with the lab network reachable. Vault is unavailable for a few
@@ -35,7 +41,10 @@ minutes between steps 3 and 5.
 1. **Create the key and the user.**
    `./scripts/seed-vault-kms.sh --profile <admin profile>`
    Expect `stored vault-seal-aws-key-id and vault-seal-aws-secret` and a key id.
-2. **Stop both watchers**, so neither sends a plain unseal during the migration.
+2. **Confirm a fresh backup first.** Check that the newest object in the `vault-snapshots` bucket
+   is under 24 hours old, or run `systemctl start vault-snapshot.service` on 223 and read its log.
+   The migration rewrites how the root key is stored, so a snapshot is the way back.
+   **Stop both watchers**, so neither sends a plain unseal during the migration.
    On the Pi: `sudo systemctl stop vault-unseal.timer`. On the Mac: `pet-secrets watch uninstall`.
 3. **Write the migration config.**
    `./scripts/deploy-vault-seal.sh --key-id <key id> --migrating`
