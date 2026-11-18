@@ -53,7 +53,7 @@ resource "vault_jwt_auth_backend_role" "deploy_aws_plan" {
     workflow_ref = "${var.github_repo}/.github/workflows/aws-apply.yml@refs/heads/main"
   }
   token_policies = [vault_policy.deploy_aws_plan.name]
-  token_ttl      = 2700
+  token_ttl      = 900
 }
 
 resource "vault_jwt_auth_backend_role" "deploy_aws_apply" {
@@ -71,5 +71,5 @@ resource "vault_jwt_auth_backend_role" "deploy_aws_apply" {
     environment  = "lab-write"
   }
   token_policies = [vault_policy.deploy_aws_apply.name]
-  token_ttl      = 2700
+  token_ttl      = 900
 }

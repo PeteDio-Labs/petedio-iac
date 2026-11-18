@@ -5,11 +5,13 @@
 # WHY A SCRIPT, NOT TERRAFORM. The users below are what Terraform runs as, so no apply of theirs
 # can exist before they do. The account's service control policy also denies an IAM OIDC provider
 # (PET-816), so a job cannot assume a role and needs a stored key. The script is the smallest
-# imperative residue: it creates users, policies and keys, and nothing else.
+# imperative residue: it creates users, policies and keys, and nothing else. A Terraform root for
+# the users would still need these keys placed in Vault, and a key made by Terraform sits in its
+# state, so the script keeps users, policies and keys together, as seed-aws-portfolio-plan.sh does.
 #
 # Per root (dashboard, portfolio) it creates:
 #   petedio-ci-<root>-plan    ReadOnlyAccess. Key -> kv/services/aws-ci/<root>-plan
-#   petedio-ci-<root>-apply   an inline policy that names that root's resources.
+#   petedio-ci-<root>-apply   a managed policy of the same name that names that root's resources.
 #                             Key -> kv/services/aws-ci/<root>-apply
 # plus a MinIO service account for the Terraform state, in the same Vault entry: read-only on
 # tfstate/<root>/* for plan, read and write there for apply. Neither is the shared kv/iac/minio key.
@@ -156,7 +158,16 @@ mint(){ # $1 root, $2 kind (plan|apply)
   if [ "$kind" = plan ]; then
     aws_ iam attach-user-policy --user-name "$user" --policy-arn arn:aws:iam::aws:policy/ReadOnlyAccess
   else
-    aws_ iam put-user-policy --user-name "$user" --policy-name apply --policy-document "file://$TMP/$root-apply.json"
+    # A managed policy, not an inline one: an IAM user's inline policies share a 2,048-character
+    # limit, and the dashboard policy is larger. A managed policy allows 6,144.
+    local parn="arn:aws:iam::$ACCT:policy/petedio-ci-$root-apply" v
+    if aws_ iam get-policy --policy-arn "$parn" >/dev/null 2>&1; then
+      for v in $(aws_ iam list-policy-versions --policy-arn "$parn" --query 'Versions[?!IsDefaultVersion].VersionId' --output text); do aws_ iam delete-policy-version --policy-arn "$parn" --version-id "$v"; done
+      aws_ iam create-policy-version --policy-arn "$parn" --policy-document "file://$TMP/$root-apply.json" --set-as-default >/dev/null
+    else
+      aws_ iam create-policy --policy-name "petedio-ci-$root-apply" --policy-document "file://$TMP/$root-apply.json" >/dev/null
+    fi
+    aws_ iam attach-user-policy --user-name "$user" --policy-arn "$parn"
   fi
   echo "  policy set"
   if [ "$ROTATE" -eq 0 ] && vault kv get -field=aws_access_key_id "$kv" >/dev/null 2>&1; then

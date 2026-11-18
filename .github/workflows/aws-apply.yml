@@ -13,8 +13,8 @@
 #             until Pedro approves the apply job.
 # scripts/seed-aws-ci.sh creates the users and places the keys; Pedro runs it.
 #
-# LIMIT. A leaked Vault token with the apply role could read an apply key. The role lasts 45
-# minutes and exists only inside an approved job. The apply user's policy names each root's
+# LIMIT. A leaked Vault token with the apply role could read an apply key. The token lasts 15
+# minutes, and a job reads its keys once at login. The apply user's policy names each root's
 # resources, so the key cannot touch the rest of the account.
 # GATE. The apply job re-plans and applies the saved plan only if its digest matches the digest
 # the plan job printed. The digest covers each change's address, instance key and values, so a
