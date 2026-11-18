@@ -29,6 +29,7 @@ One page per workflow in `.github/workflows/`. Each page lists the trigger, the 
 ## Lab actions
 
 - [`lab-action`](lab-action.md)
+- [`cf-access-logs`](cf-access-logs.md)
 - [`keys`](keys.md)
 - [`branch-cleanup`](branch-cleanup.md)
 - [`staging-power`](staging-power.md)
