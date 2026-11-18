@@ -161,6 +161,17 @@ resource "cloudflare_zero_trust_access_application" "route" {
   allowed_idps              = each.value.allowed_idps
   auto_redirect_to_identity = length(each.value.allowed_idps) > 0
 
+  # CORS for a route another of our pages calls from the browser. The origins are named, never
+  # "all", and credentials are allowed so the viewer's own Access cookie rides along. Null when
+  # the route names no origin.
+  cors_headers = length(each.value.cors_allowed_origins) > 0 ? {
+    allowed_origins   = each.value.cors_allowed_origins
+    allowed_methods   = ["GET", "OPTIONS"]
+    allowed_headers   = ["accept", "content-type"]
+    allow_credentials = true
+    max_age           = 600
+  } : null
+
   # v5 `policies` is a list of objects (ListNestedAttribute), not bare IDs. A bare-string
   # element passes `terraform validate` (the for_each .id is unknown at validate time) but
   # FAILS the apply plan with "object required, but have string". Use the { id = ... } form.
