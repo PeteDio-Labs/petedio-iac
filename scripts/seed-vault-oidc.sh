@@ -7,7 +7,7 @@
 # The Authentik call uses the bootstrap token at kv/services/authentik (key bootstrap_token), read
 # with the Vault token below. It creates one OAuth2 provider and one application, slug `vault`:
 # confidential client, implicit consent, scopes openid/email/profile, RS256 signing, and the
-# redirect URIs for the Vault page and the CLI. If the application already exists, it reads the
+# redirect URIs for the Vault page and the CLI (Authentik 2024.12 or later). If the application already exists, it reads the
 # client back and creates nothing. It does not touch any other Authentik object.
 #
 # If the bootstrap token no longer works, set VAULT_OIDC_CLIENT_ID and VAULT_OIDC_CLIENT_SECRET
@@ -113,15 +113,24 @@ else:
     key = one("/crypto/certificatekeypairs/?has_key=true&name=authentik%20Self-signed%20Certificate", "signing key")
 
     uris = ["https://vault.pdlab.dev/ui/vault/auth/oidc/oidc/callback", "http://localhost:8250/oidc/callback"]
+    # From 2024.12 the field is a list of {matching_mode, url} objects, and the provider needs an
+    # invalidation flow (checked against the 2024.12.5 serializers). Strict matching: exact URLs.
     year, minor = (int(x) for x in re.match(r"(\d+)\.(\d+)", version).groups())
-    if (year, minor) >= (2025, 10):
-        redirect = [{"matching_mode": "strict", "url": u} for u in uris]
-    else:
-        # Before 2025.10 the field is one string of regular expressions, one per line.
-        redirect = "\n".join(re.escape(u) for u in uris)
+    if (year, minor) < (2024, 12):
+        sys.exit(f"authentik {version} predates 2024.12; this script writes the 2024.12+ provider shape.")
+    redirect = [{"matching_mode": "strict", "url": u} for u in uris]
+
+    inv = None
+    for inv_slug in ("default-provider-invalidation-flow", "default-invalidation-flow"):
+        rows = api("GET", f"/flows/instances/?slug={inv_slug}")["results"]
+        if len(rows) == 1:
+            inv = rows[0]["pk"]
+            break
+    if inv is None:
+        sys.exit("no default invalidation flow found (tried default-provider-invalidation-flow, default-invalidation-flow).")
 
     provider = api("POST", "/providers/oauth2/", {
-        "name": "Vault", "authorization_flow": flow, "client_type": "confidential",
+        "name": "Vault", "authorization_flow": flow, "invalidation_flow": inv, "client_type": "confidential",
         "redirect_uris": redirect, "property_mappings": scopes, "signing_key": key,
         "sub_mode": "user_email", "include_claims_in_id_token": True,
     })
