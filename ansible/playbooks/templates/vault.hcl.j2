@@ -23,8 +23,8 @@ listener "tcp" {
 
 api_addr     = "https://192.168.50.223:8200"
 cluster_addr = "https://192.168.50.223:8201"
-
 {% if vault_awskms_key_id is defined %}
+
 # Auto-unseal through AWS KMS (docs/runbooks/vault-kms-seal.md). The credentials are not here:
 # /etc/vault.d/awskms.env holds them and the vault.service drop-in loads it. The IAM user can
 # only use this one key, and only from the lab's public address.

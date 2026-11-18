@@ -95,8 +95,10 @@ if security find-generic-password -s "$ID_ITEM" >/dev/null 2>&1; then
 else
   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
   aws_ iam create-access-key --user-name "$USER_NAME" > "$TMP/k.json"
-  security add-generic-password -a vault-223 -s "$ID_ITEM" -w "$(jq -r .AccessKey.AccessKeyId "$TMP/k.json")" -U
-  security add-generic-password -a vault-223 -s "$SECRET_ITEM" -w "$(jq -r .AccessKey.SecretAccessKey "$TMP/k.json")" -U
+  # `security -i` reads its commands from stdin, so the values stay out of argv and `ps`.
+  { printf 'add-generic-password -a vault-223 -s %s -w "%s" -U\n' "$ID_ITEM" "$(jq -r .AccessKey.AccessKeyId "$TMP/k.json")"
+    printf 'add-generic-password -a vault-223 -s %s -w "%s" -U\n' "$SECRET_ITEM" "$(jq -r .AccessKey.SecretAccessKey "$TMP/k.json")"
+  } | security -i
   security find-generic-password -s "$SECRET_ITEM" -w >/dev/null || die "the secret did not read back from the Keychain."
   echo "stored $ID_ITEM and $SECRET_ITEM"
 fi
