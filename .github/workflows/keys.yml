@@ -23,6 +23,10 @@
 # never prints a Cloudflare response body. The owner reads the value from Vault, never from here.
 name: keys
 
+# The run's title carries the request id, so a caller that dispatches (pete-bot's Secrets API) finds its own run:
+# the dispatch API returns no run id. A dispatch with no id shows empty brackets.
+run-name: "keys ${{ inputs.action }} [${{ inputs.request_id }}]"
+
 on:
   workflow_dispatch:
     inputs:
@@ -43,6 +47,11 @@ on:
         default: ""
       pet:
         description: "The PET item this run answers"
+        required: false
+        type: string
+        default: ""
+      request_id:
+        description: "Set by a caller that must find this run again: pb-<base36>-<6 chars>. Leave empty by hand."
         required: false
         type: string
         default: ""
@@ -81,6 +90,7 @@ jobs:
           ACTION: ${{ inputs.action }}
           NAME: ${{ inputs.name }}
           PET: ${{ inputs.pet }}
+          REQUEST_ID: ${{ inputs.request_id }}
           ACTOR: ${{ github.actor }}
         run: |
           # Check every input before anything prints it, so a newline and a ::command:: cannot
@@ -93,7 +103,8 @@ jobs:
             *) echo "ABORT: unknown action"; exit 1 ;;
           esac
           [[ "$PET" =~ ^(PET-[0-9]{1,6})?$ ]] || { echo "ABORT: pet must look like PET-123."; exit 1; }
-          echo "action=$ACTION name=${NAME:-none} pet=${PET:-none} sha=$GITHUB_SHA actor=$ACTOR"
+          [[ "$REQUEST_ID" =~ ^(pb-[a-z0-9]{1,12}-[a-z0-9]{6})?$ ]] || { echo "ABORT: request_id must look like pb-abc123-def456."; exit 1; }
+          echo "action=$ACTION name=${NAME:-none} pet=${PET:-none} request=${REQUEST_ID:-none} sha=$GITHUB_SHA actor=$ACTOR"
           command -v docker >/dev/null || { echo "ABORT: docker is not installed on this runner."; exit 1; }
 
       - name: Encode Vault CA
