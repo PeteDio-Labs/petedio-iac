@@ -4,7 +4,7 @@
 #
 # Left out on purpose:
 #   - pve03's guests except 247: the nightly pve03 backup job runs `mode: stop` (the backup job definition),
-#     which restarts each of them. 223 (Vault) seals in that stop; the two unseal watchers reopen it.
+#     which restarts each of them. 223 (Vault) is excluded from the backup job and opens itself through KMS.
 #   - 233 (a runner): a lab-action job can run on it, and restarting its own runner ends the run.
 #     A session on 247 or the Mac restarts it with `ssh pve02 pct reboot 233` between runs.
 #

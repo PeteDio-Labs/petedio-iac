@@ -27,9 +27,10 @@ read-only, and `pct start` refuses for every guest. The recovery command is in
 [Single node came up](#single-node-came-up) — copy it onto paper.
 
 **Vault always boots sealed.** `configure-vault.yml` deliberately does not unseal.
-The unseal watcher on pete-pi-1 unseals it (PET-373); the Mac launchd agent is the fallback within about five
-minutes, provided the Mac is on the LAN or the tailnet. Until that happens, `.223`
-answers `503` and anything reading a secret fails.
+Since 2026-11-18 (PET-946) Vault opens itself through AWS KMS, with no watcher. A restart
+needs AWS and the internet: after a move, `.223` stays sealed and answers `503` until the lab
+reaches AWS, and its public address must match the one the KMS user allows
+(`scripts/seed-vault-kms.sh --update-ip`).
 
 **Every NFS export hangs off a USB drive.** `pve02`'s `/mnt/{nexus-data,backups,shared}`
 are all LVs on one PV — `/dev/sda`, a WD Blue `WD10EZEX` in a JMicron JMS567 **USB 3.0
