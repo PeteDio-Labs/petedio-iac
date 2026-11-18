@@ -1,0 +1,152 @@
+# aws-apply: plan and apply an AWS root (environments/dashboard or environments/portfolio, account
+# 847547470418) from CI.
+#
+# WHY. These roots had no CI path, so an apply meant a Mac session with an admin profile. A thread
+# dispatches this workflow and reads the run log.
+#
+# STORED KEYS, RELEASED BY THE TAP. The account's service control policy denies an IAM OIDC
+# provider (PET-816), so a job cannot assume a role. Each root has two IAM users whose keys sit in
+# Vault:
+#   plan   -> petedio-ci-<root>-plan   (ReadOnlyAccess). Vault role deploy-aws-plan, any dispatch on main.
+#   apply  -> petedio-ci-<root>-apply  (writes only that root's named resources). Vault role
+#             deploy-aws-apply, bound to the `lab-write` environment, so Vault refuses the key
+#             until Pedro approves the apply job.
+# scripts/seed-aws-ci.sh creates the users and places the keys; Pedro runs it.
+#
+# LIMIT. A leaked Vault token with the apply role could read an apply key. The token lasts 15
+# minutes, and a job reads its keys once at login. The apply user's policy names each root's
+# resources, so the key cannot touch the rest of the account.
+# GATE. The apply job re-plans and applies the saved plan only if its digest matches the digest
+# the plan job printed. The digest covers each change's address, instance key and values, so a
+# different change cannot pass. Only `main` runs: the Vault roles bind ref, event and this file.
+name: aws-apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      root:
+        description: "Which AWS root to plan or apply"
+        required: true
+        type: choice
+        options:
+          - dashboard
+          - portfolio
+      attach_domain:
+        description: "Dashboard only. Phase 2: attach dash.failover.pdlab.dev, after the NS delegation is merged."
+        required: false
+        type: boolean
+        default: false
+      apply:
+        description: "Run the apply job after the plan. Without it, the run only plans."
+        required: false
+        type: boolean
+        default: false
+      pet:
+        description: "The PET item this run answers, for example PET-942"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  VAULT_ADDR: https://192.168.50.223:8200
+  VAULT_CACERT: ${{ github.workspace }}/environments/homelab/vault-ca.crt
+  AWS_ACCOUNT: "847547470418"
+  BOUNDARY_ARN: arn:aws:iam::847547470418:policy/petedio-dashboard-boundary
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, homelab]
+    timeout-minutes: 20
+    outputs:
+      digest: ${{ steps.plan.outputs.digest }}
+      changes: ${{ steps.plan.outputs.changes }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.3
+          terraform_wrapper: false
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+      - name: Vault — keys via OIDC login
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: deploy-aws-plan
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: false
+          secrets: |
+            kv/data/services/aws-ci/${{ inputs.root }}-plan minio_access_key | MINIO_KEY ;
+            kv/data/services/aws-ci/${{ inputs.root }}-plan minio_secret_key | MINIO_SECRET ;
+            kv/data/services/aws-ci/${{ inputs.root }}-plan aws_access_key_id | AWS_CI_KEY ;
+            kv/data/services/aws-ci/${{ inputs.root }}-plan aws_secret_access_key | AWS_CI_SECRET
+      - name: Plan the root
+        id: plan
+        working-directory: environments/${{ inputs.root }}
+        shell: bash
+        env:
+          ROOT: ${{ inputs.root }}
+          ATTACH: ${{ inputs.attach_domain }}
+          PET: ${{ inputs.pet }}
+        run: ../../scripts/aws-apply-run.sh plan
+
+  apply:
+    needs: plan
+    # Pedro approves here. A plan with no changes skips the job instead of asking for a tap.
+    if: github.ref == 'refs/heads/main' && inputs.apply && needs.plan.outputs.changes != '0'
+    environment: lab-write
+    concurrency:
+      group: lab-write
+      cancel-in-progress: false
+    runs-on: [self-hosted, linux, x64, homelab]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.3
+          terraform_wrapper: false
+      - name: Encode Vault CA
+        id: vault_ca
+        working-directory: environments/homelab
+        shell: bash
+        run: echo "b64=$(base64 -w0 vault-ca.crt)" >> "$GITHUB_OUTPUT"
+      - name: Vault — keys via OIDC login
+        uses: hashicorp/vault-action@892a26828f195e65540a40b4768ae4571f51ebfc # v4.0.0
+        with:
+          url: https://192.168.50.223:8200
+          method: jwt
+          path: jwt-github
+          role: deploy-aws-apply
+          jwtGithubAudience: https://github.com/PeteDio-Labs
+          caCertificate: ${{ steps.vault_ca.outputs.b64 }}
+          exportToken: false
+          secrets: |
+            kv/data/services/aws-ci/${{ inputs.root }}-apply minio_access_key | MINIO_KEY ;
+            kv/data/services/aws-ci/${{ inputs.root }}-apply minio_secret_key | MINIO_SECRET ;
+            kv/data/services/aws-ci/${{ inputs.root }}-apply aws_access_key_id | AWS_CI_KEY ;
+            kv/data/services/aws-ci/${{ inputs.root }}-apply aws_secret_access_key | AWS_CI_SECRET
+      - name: Apply the root
+        working-directory: environments/${{ inputs.root }}
+        shell: bash
+        env:
+          ROOT: ${{ inputs.root }}
+          ATTACH: ${{ inputs.attach_domain }}
+          PET: ${{ inputs.pet }}
+          EXPECT_DIGEST: ${{ needs.plan.outputs.digest }}
+        run: ../../scripts/aws-apply-run.sh apply
