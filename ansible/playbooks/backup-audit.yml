@@ -28,7 +28,8 @@
     # clock and no more. A guest 48 hours old fails.
     backup_audit_max_age_h: 30
     # Left out of the nightly job on purpose; the reason is beside backup_store_jobs in the role that owns the jobs.
-    backup_audit_excluded_vmids: [247]
+    # 223 is Vault: the vault snapshot-age check below covers it, so a missing archive is not a fault.
+    backup_audit_excluded_vmids: [223, 247]
     # Guests backed up by a weekly job instead of the nightly one (MED-11). Seven days plus
     # a day of slack for the job's runtime and the audit's own clock.
     backup_audit_weekly_vmids: [244]

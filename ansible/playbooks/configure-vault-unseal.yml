@@ -3,9 +3,11 @@
 #
 # Vault on 223 unseals itself through AWS KMS (docs/runbooks/vault-kms-seal.md), so the Pi's
 # five-minute timer has nothing to do. A Vault on an auto-seal cannot take a Shamir key as an
-# unseal key; the key is a recovery key now. This play stops the timer, removes its unit and
-# script, and removes the key copy, so no machine in the lab holds one. The Mac Keychain item
-# `vault-unseal-key` stays as the record.
+# unseal key; the key is a recovery key now. This play stops the timer and removes its unit,
+# script and log. It leaves /etc/vault-unseal/unseal-key where it is: that file and the Mac
+# Keychain item `vault-unseal-key` are the two copies of the recovery key, and the recovery key is
+# what makes a new root token. Delete the Pi copy only after Pedro confirms a second copy exists
+# somewhere that does not depend on the Mac.
 #
 # The play keeps its old file name so a runbook that names it still finds it. It is operator-run:
 # the runner does not reach pete-pi-1 (PET-849).
@@ -28,7 +30,7 @@
         vault_unseal_timer_off.failed | default(false)
         and 'Could not find' not in (vault_unseal_timer_off.msg | default(''))
 
-    - name: Remove the unseal units, script, log and key copy
+    - name: Remove the unseal units, script and log (the key copy stays)
       ansible.builtin.file:
         path: "{{ item }}"
         state: absent
@@ -36,7 +38,6 @@
         - /etc/systemd/system/vault-unseal.timer
         - /etc/systemd/system/vault-unseal.service
         - /usr/local/bin/vault-unseal
-        - /etc/vault-unseal
         - /var/log/vault-unseal.log
       notify: Reload systemd
 

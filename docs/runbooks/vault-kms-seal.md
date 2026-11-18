@@ -60,8 +60,9 @@ unavailable for a few seconds at step 3.
    `changed=0`, and `seal-status` must show `"migration":false`.
 6. **Retire the watchers.** On the Mac, `pet-secrets watch uninstall`. On the Pi, run
    `cd ansible && ansible-playbook playbooks/configure-vault-unseal.yml`. It stops the timer and
-   removes the unit, the script and the key copy. Keep the Keychain items `vault-unseal-key` and
-   `vault-root-token`: the unseal key is now a recovery key.
+   removes the unit, the script and the log. It leaves `/etc/vault-unseal/unseal-key` and the
+   Keychain items `vault-unseal-key` and `vault-root-token`: the unseal key is now a recovery key,
+   and these are its two copies.
 7. **Prove the restart.** On 223 run `systemctl restart vault`. Within about 10 seconds
    `curl --cacert environments/homelab/vault-ca.crt https://192.168.50.223:8200/v1/sys/seal-status`
    must show `"sealed":false` with no watcher running. If it stays sealed, read `journalctl -u vault`
