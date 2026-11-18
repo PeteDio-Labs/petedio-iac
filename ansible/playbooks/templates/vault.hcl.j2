@@ -23,3 +23,21 @@ listener "tcp" {
 
 api_addr     = "https://192.168.50.223:8200"
 cluster_addr = "https://192.168.50.223:8201"
+
+{% if vault_awskms_key_id is defined %}
+# Auto-unseal through AWS KMS (docs/runbooks/vault-kms-seal.md). The credentials are not here:
+# /etc/vault.d/awskms.env holds them and the vault.service drop-in loads it. The IAM user can
+# only use this one key, and only from the lab's public address.
+seal "awskms" {
+  region     = "{{ vault_awskms_region | default('us-east-2') }}"
+  kms_key_id = "{{ vault_awskms_key_id }}"
+}
+{% if vault_seal_migrating | default(false) | bool %}
+
+# Migration only: the old seal stays declared and disabled until `vault operator unseal -migrate`
+# finishes. Remove it by running the play again without vault_seal_migrating.
+seal "shamir" {
+  disabled = "true"
+}
+{% endif %}
+{% endif %}

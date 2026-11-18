@@ -136,6 +136,12 @@ backup_store_jobs:
     #     environments/homelab/backup.tf). It is left out here, not unprotected. Leaving it
     #     off this list lets the play below reset the live exclude list to 247 alone and put
     #     244 back in the nightly stop, which is what happened on 2026-11-15.
+    #   223 vault — a stop-mode backup restarts Vault, and a restart seals it. Vault's own
+    #     raft snapshots (roles/vault-snapshot) go to MinIO nightly and hold the secrets and the
+    #     auth config. The container itself is rebuilt by vault.tf and configure-vault.yml.
+    #     This line waits for KMS auto-unseal (docs/runbooks/vault-kms-seal.md): add 223 only
+    #     after the migration is verified, because until then a nightly stop is what the Pi
+    #     watcher expects.
     exclude: [244, 247]
     # The longest the job may run, in minutes. Uptime Kuma silences pve03's guests from
     # 02:40 to 03:15 (uptime_kuma_maintenances in roles/uptime-kuma, PET-635). The

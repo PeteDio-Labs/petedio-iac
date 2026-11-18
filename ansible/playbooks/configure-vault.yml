@@ -137,6 +137,42 @@
         - /opt/vault/tls/vault.key
         - /opt/vault/tls/vault.crt
 
+    # KMS auto-unseal credentials. Set only when scripts/deploy-vault-seal.sh passes
+    # vault_awskms_key_id, vault_awskms_access_key_id and vault_awskms_secret_access_key.
+    - name: Install the AWS KMS credentials for the seal
+      ansible.builtin.copy:
+        content: |
+          AWS_ACCESS_KEY_ID={{ vault_awskms_access_key_id }}
+          AWS_SECRET_ACCESS_KEY={{ vault_awskms_secret_access_key }}
+        dest: /etc/vault.d/awskms.env
+        owner: root
+        group: vault
+        mode: "0640"
+      no_log: true
+      when: vault_awskms_key_id is defined
+      notify: Restart vault
+
+    - name: Create the vault.service drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/vault.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: vault_awskms_key_id is defined
+
+    - name: Load the KMS credentials into vault.service
+      ansible.builtin.copy:
+        content: |
+          [Service]
+          EnvironmentFile=/etc/vault.d/awskms.env
+        dest: /etc/systemd/system/vault.service.d/awskms.conf
+        owner: root
+        group: root
+        mode: "0644"
+      when: vault_awskms_key_id is defined
+      notify: Restart vault
+
     - name: Render the Vault configuration (raft storage + TLS listener)
       ansible.builtin.template:
         src: templates/vault.hcl.j2
@@ -168,3 +204,4 @@
       ansible.builtin.systemd:
         name: vault
         state: restarted
+        daemon_reload: true
