@@ -2,7 +2,7 @@
 #
 # The workflow starts and stops CT 249 on pve03 from the LAN runner. It needs three things from Vault:
 #   1. an SSH certificate whose command is FIXED to /usr/local/sbin/staging-power on the node, which
-#      accepts only status, start and stop for container 249 (ansible/playbooks/files/staging-power-node.sh),
+#      accepts only status, start, stop and teardown for container 249 (ansible/playbooks/files/staging-power-node.sh),
 #   2. read access to kv/services/staging-app, the read-only GitHub App that reads the portfolio's
 #      `staging` branch, and
 #   3. a login that only this workflow, on main, can mint, on a schedule or a dispatch.

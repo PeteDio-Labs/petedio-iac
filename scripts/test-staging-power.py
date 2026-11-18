@@ -26,7 +26,7 @@ def eq(got, want, label):
 # decide: every cell of the table
 eq(sp.decide(True, FRESH, NOW, False)[0], "start", "pending+recent+stopped")
 eq(sp.decide(True, FRESH, NOW, True)[0], "none", "pending+recent+running")
-eq(sp.decide(False, FRESH, NOW, True)[0], "stop", "promoted+running (send it)")
+eq(sp.decide(False, FRESH, NOW, True)[0], "teardown", "promoted+running (merged to main)")
 eq(sp.decide(False, FRESH, NOW, False)[0], "none", "promoted+stopped")
 eq(sp.decide(True, STALE, NOW, True)[0], "stop", "pending+idle+running")
 eq(sp.decide(True, STALE, NOW, False)[0], "none", "pending+idle+stopped")
@@ -66,7 +66,7 @@ eq(sp.combine([(True, FRESH), (False, FRESH)]), (True, FRESH), "one pending")
 eq(sp.combine([(False, FRESH), (True, STALE)]), (True, STALE), "a recent push on a promoted site is ignored")
 eq(sp.combine([(True, STALE), (True, FRESH)]), (True, FRESH), "newest pending push wins")
 eq(sp.combine([(True, None), (False, FRESH)]), (True, None), "pending with no push time")
-eq(sp.decide(*sp.combine([(False, FRESH), (True, STALE)]), NOW, True)[0], "stop", "promoted site's push does not hold the box up")
+eq(sp.decide(*sp.combine([(False, FRESH), (True, STALE)]), NOW, True)[0], "stop", "promoted site's push does not hold the box up; the other site is idle, so no teardown")
 eq(sp.decide(*sp.combine([(True, STALE), (True, FRESH)]), NOW, False)[0], "start", "dashboard work starts the box")
 
 print(f"staging-power: {checked} checks passed")

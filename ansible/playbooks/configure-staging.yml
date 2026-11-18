@@ -137,6 +137,16 @@
         - /etc/staging
         - /var/lib/staging-build
 
+    # The node's staging-power teardown runs this when a staging branch is merged into main. It
+    # repoints both `current` links at their placeholder (PET-942).
+    - name: Install the reset command
+      ansible.builtin.copy:
+        src: files/staging-reset.sh
+        dest: /usr/local/sbin/staging-reset
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Write the placeholder page that serves until the first build
       ansible.builtin.copy:
         dest: "{{ staging_base }}/releases/placeholder/index.html"
