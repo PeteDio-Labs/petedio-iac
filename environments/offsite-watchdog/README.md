@@ -180,7 +180,7 @@ credits from the calculation, so they track gross spend. `petedio-monthly-5usd` 
 `python3 scripts/test-offsite-watchdog.py` drives `lambda/handler.py` against fakes. It is not wired
 into CI. `terraform validate` needs the provider downloads, so run it from 247 before the first plan.
 
-## CloudWatch alarms, lab events and billing alarm (PET-962)
+## CloudWatch alarms, lab events and billing alarm
 
 `alarms.tf` adds the CloudWatch layer. It costs about $2 to $3 a month.
 
@@ -189,7 +189,7 @@ into CI. `terraform validate` needs the provider downloads, so run it from 247 b
 | `lab-dark` alarm | Fires when `HeartbeatAgeSeconds` stays above `heartbeat_max_age_seconds` for two 5-minute periods, or when the checker reports nothing. It emails the `petedio-watchdog-alarms` topic. `extra_alarm_action_arns` takes a failover action later. |
 | `check-<name>` alarms | One per entry in `public_checks`, such as Authentik on EC2. They read `CheckUp`. |
 | `billing` alarm | Fires when estimated gross charges pass `billing_alarm_usd`. It lives in us-east-1 with its own topic. Turn on "Receive Billing Alerts" once in the account's billing preferences first. |
-| Lab events | `POST <events_url>` with the heartbeat secret header and a JSON list of up to 50 events. Each event keeps `id`, `ts`, `source`, `level` and `msg`, and lands in `/aws/lambda/petedio-watchdog` as a `lab_event` line. The lab's Loki shipper sends here too, so one Logs Insights query shows lab and cloud in one timeline. |
+| Lab events | `POST <events_url>` with the heartbeat secret header and a JSON list of up to 50 events. Each event keeps `id`, `ts`, `source`, `level` and `msg`, and lands in `/aws/lambda/petedio-watchdog` as a `lab_event` line. The lab has no sender yet: Alloy forwards only to Loki. A later change adds a sender that converts the lab's event lines to this format, and until then the endpoint receives nothing. |
 
 The function writes its metrics as embedded-metric-format log lines, so the function role needs
 no new permission and the boundary policy stays as it is.
@@ -207,11 +207,17 @@ Put these in a customer-managed policy named `petedio-watchdog-alarms` and attac
 
 ```json
 {"Effect": "Allow",
- "Action": ["cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:DescribeAlarms",
-            "cloudwatch:ListTagsForResource", "cloudwatch:TagResource", "cloudwatch:UntagResource"],
+ "Action": "cloudwatch:PutMetricAlarm",
+ "Resource": "arn:aws:cloudwatch:*:ACCOUNT_ID:alarm:petedio-watchdog-*",
+ "Condition": {"ForAllValues:StringEquals": {"cloudwatch:AlarmActions": [
+   "arn:aws:sns:us-east-2:ACCOUNT_ID:petedio-watchdog-alarms",
+   "arn:aws:sns:us-east-1:ACCOUNT_ID:petedio-watchdog-billing"]}}},
+{"Effect": "Allow",
+ "Action": ["cloudwatch:DeleteAlarms", "cloudwatch:ListTagsForResource",
+            "cloudwatch:TagResource", "cloudwatch:UntagResource"],
  "Resource": "arn:aws:cloudwatch:*:ACCOUNT_ID:alarm:petedio-watchdog-*"},
 {"Effect": "Allow",
- "Action": ["sns:CreateTopic", "sns:DeleteTopic", "sns:GetTopicAttributes", "sns:SetTopicAttributes",
+ "Action": ["sns:CreateTopic", "sns:DeleteTopic", "sns:GetTopicAttributes",
             "sns:Subscribe", "sns:Unsubscribe", "sns:GetSubscriptionAttributes",
             "sns:ListTagsForResource", "sns:TagResource", "sns:UntagResource"],
  "Resource": "arn:aws:sns:*:ACCOUNT_ID:petedio-watchdog-*"},
@@ -220,5 +226,8 @@ Put these in a customer-managed policy named `petedio-watchdog-alarms` and attac
  "Resource": "*"}
 ```
 
-The apply user cannot publish to the topics or change other alarms. Alarms act only on topics
-named `petedio-watchdog-*`.
+The condition on `PutMetricAlarm` limits every alarm's actions to the two watchdog topics, so
+the apply user cannot attach an EC2 stop or another destination. A failover action needs its own
+reviewed grant. The policy leaves out `sns:SetTopicAttributes` and `sns:Publish`: with
+`SetTopicAttributes` the user could rewrite a topic's access policy and grant itself publishing.
+If a plan asks for `SetTopicAttributes`, an admin reviews that request instead of adding it here.

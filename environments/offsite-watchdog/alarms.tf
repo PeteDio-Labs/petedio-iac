@@ -1,4 +1,4 @@
-# CloudWatch alarms for the off-site watchdog (PET-962). The Lambda writes metrics in the
+# CloudWatch alarms for the off-site watchdog. The Lambda writes metrics in the
 # PeteDio/Watchdog namespace (embedded metric format, so no PutMetricData call and no extra
 # IAM on the function role). These alarms read them and email an SNS topic.
 #
