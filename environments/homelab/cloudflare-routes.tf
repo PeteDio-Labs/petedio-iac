@@ -147,6 +147,9 @@ module "cloudflare_ingress" {
       # Access cookie. The two hosts share the site pdlab.dev, so the cookie is sent. No token
       # is stored anywhere, and the JWT check on 237 still runs.
       cors_allowed_origins = ["https://staging-dash.pdlab.dev"]
+      # Caddy on staging-249 proxies /api/ here with the `staging` service token (PET-942), so the
+      # staging dashboard needs no cookie. pete-bot admits that token read-only (pete-bot#144).
+      agents = ["staging"]
     }
 
     # Portfolio staging, a copy of pdlab.dev served by Caddy on staging-249 (LXC 249). A

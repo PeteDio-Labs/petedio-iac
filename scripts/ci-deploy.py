@@ -211,16 +211,22 @@ def stage_backup_store() -> dict:
 def stage_staging() -> dict:
     # Optional until Pedro seeds the dedicated App. Absent, the play still converges Caddy and the
     # site root, and leaves the sync timer off. All three fields or none, as codex-248 does.
+    # The dashboard's /api/ token is separate and optional: absent, /api/ answers 503.
+    edge = kv("callers/edge/staging", False).get("header", "")
+    if edge and not (edge.startswith("{") and "\n" not in edge and "`" not in edge):
+        raise Abort("kv/callers/edge/staging header is not the one-line JSON keys.py writes.")
     app = kv("services/staging-app", False)
     if not app:
         print("staging-app: not seeded. The play converges Caddy only, and the sync timer stays off.")
-        return {"staging_app_id": "", "staging_installation_id": "", "staging_app_pem": ""}
+        return {"staging_app_id": "", "staging_installation_id": "", "staging_app_pem": "",
+                "dashboard_staging_edge_header": edge}
     app_id, inst, pem = need(app, "services/staging-app", "app_id", "installation_id", "app_pem")
     if not (app_id + inst).isdigit():
         raise Abort("kv/services/staging-app holds a non-numeric id.")
     if len(pem.strip().splitlines()) < 3:
         raise Abort("kv/services/staging-app app_pem lost its newlines. Re-seed it.")
-    return {"staging_app_id": app_id, "staging_installation_id": inst, "staging_app_pem": pem}
+    return {"staging_app_id": app_id, "staging_installation_id": inst, "staging_app_pem": pem,
+            "dashboard_staging_edge_header": edge}
 
 
 def stage_uptime_kuma() -> dict:
