@@ -145,6 +145,10 @@ JSON
 # and a role only with that boundary. It creates an EC2 resource only when the request carries the
 # tag project=petedio-authentik, and it changes only resources that carry that tag, so the key
 # cannot stop, retag or rewire anything else in the region.
+# A create call is also checked against its parent: CreateSubnet against the VPC, RunInstances
+# against the subnet, security group, image and network interface. A request tag never reaches
+# a parent, so each parent has its own statement: the VPC, subnet and security group by their
+# project tag, the image by Amazon as owner, and the interface RunInstances makes in the run.
 ABND="arn:aws:iam::$ACCT:policy/petedio-authentik-boundary"
 cat > "$TMP/authentik-boundary.json" <<JSON
 {"Version":"2012-10-17","Statement":[
@@ -159,7 +163,11 @@ cat > "$TMP/authentik-apply.json" <<JSON
 {"Version":"2012-10-17","Statement":[
  {"Sid":"Read","Effect":"Allow","Action":["iam:Get*","iam:List*","sts:GetCallerIdentity","s3:ListAllMyBuckets","ec2:Describe*","ec2:Get*"],"Resource":"*"},
  {"Sid":"AmiParameter","Effect":"Allow","Action":["ssm:GetParameter","ssm:GetParameters"],"Resource":"arn:aws:ssm:us-east-2::parameter/aws/service/*"},
- {"Sid":"Ec2CreateTagged","Effect":"Allow","Action":["ec2:CreateVpc","ec2:CreateSubnet","ec2:CreateInternetGateway","ec2:CreateRouteTable","ec2:CreateSecurityGroup","ec2:AuthorizeSecurityGroupEgress","ec2:RunInstances"],"Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":"us-east-2","aws:RequestTag/project":"petedio-authentik"}}},
+ {"Sid":"Ec2CreateTagged","Effect":"Allow","Action":["ec2:CreateVpc","ec2:CreateSubnet","ec2:CreateInternetGateway","ec2:CreateRouteTable","ec2:CreateSecurityGroup","ec2:AuthorizeSecurityGroupEgress","ec2:RunInstances"],"Resource":["arn:aws:ec2:us-east-2:$ACCT:vpc/*","arn:aws:ec2:us-east-2:$ACCT:subnet/*","arn:aws:ec2:us-east-2:$ACCT:internet-gateway/*","arn:aws:ec2:us-east-2:$ACCT:route-table/*","arn:aws:ec2:us-east-2:$ACCT:security-group/*","arn:aws:ec2:us-east-2:$ACCT:security-group-rule/*","arn:aws:ec2:us-east-2:$ACCT:instance/*","arn:aws:ec2:us-east-2:$ACCT:volume/*"],"Condition":{"StringEquals":{"aws:RequestTag/project":"petedio-authentik"}}},
+ {"Sid":"Ec2CreateInOwnVpc","Effect":"Allow","Action":["ec2:CreateSubnet","ec2:CreateRouteTable","ec2:CreateSecurityGroup"],"Resource":"arn:aws:ec2:us-east-2:$ACCT:vpc/*","Condition":{"StringEquals":{"aws:ResourceTag/project":"petedio-authentik"}}},
+ {"Sid":"Ec2LaunchInOwnNetwork","Effect":"Allow","Action":"ec2:RunInstances","Resource":["arn:aws:ec2:us-east-2:$ACCT:subnet/*","arn:aws:ec2:us-east-2:$ACCT:security-group/*"],"Condition":{"StringEquals":{"aws:ResourceTag/project":"petedio-authentik"}}},
+ {"Sid":"Ec2LaunchAmazonImage","Effect":"Allow","Action":"ec2:RunInstances","Resource":"arn:aws:ec2:us-east-2::image/*","Condition":{"StringEquals":{"ec2:Owner":"amazon"}}},
+ {"Sid":"Ec2LaunchInterface","Effect":"Allow","Action":"ec2:RunInstances","Resource":"arn:aws:ec2:us-east-2:$ACCT:network-interface/*"},
  {"Sid":"Ec2TagOnCreate","Effect":"Allow","Action":"ec2:CreateTags","Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":"us-east-2"},"StringLike":{"ec2:CreateAction":["CreateVpc","CreateSubnet","CreateInternetGateway","CreateRouteTable","CreateSecurityGroup","AuthorizeSecurityGroupEgress","RunInstances"]}}},
  {"Sid":"Ec2OwnResourcesOnly","Effect":"Allow","Action":["ec2:CreateTags","ec2:DeleteTags","ec2:ModifyVpcAttribute","ec2:ModifySubnetAttribute","ec2:AttachInternetGateway","ec2:CreateRoute","ec2:ReplaceRoute","ec2:AssociateRouteTable","ec2:AuthorizeSecurityGroupEgress","ec2:RevokeSecurityGroupEgress","ec2:ModifySecurityGroupRules","ec2:UpdateSecurityGroupRuleDescriptionsEgress","ec2:ModifyInstanceAttribute","ec2:ModifyInstanceMetadataOptions","ec2:StopInstances","ec2:StartInstances","ec2:ModifyVolume"],"Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":"us-east-2","aws:ResourceTag/project":"petedio-authentik"}}},
  {"Sid":"Bucket","Effect":"Allow","Action":"s3:*","Resource":["arn:aws:s3:::petedio-authentik-$ACCT","arn:aws:s3:::petedio-authentik-$ACCT/*"]},
