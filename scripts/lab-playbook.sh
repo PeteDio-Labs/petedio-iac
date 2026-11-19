@@ -47,7 +47,7 @@ case "$MODE" in
   *) echo "REFUSED: mode '$MODE' is not check or apply." >&2; exit 2 ;;
 esac
 # Refuse a malformed or unlisted name here, with no PyYAML needed, before it reaches Docker.
-if ! [[ "$NAME" =~ ^[a-z0-9][a-z0-9-]*\.yml$ ]] \
+if ! [[ "$NAME" =~ ^([a-z0-9][a-z0-9-]*/)?[a-z0-9][a-z0-9-]*\.yml$ ]] \
    || ! sed -e 's/#.*//' -e 's/[[:space:]]//g' "$REPO_ROOT/scripts/lab-playbooks.txt" | grep -qxF "$NAME"; then
   echo "REFUSED: '$NAME' is not a playbook name in scripts/lab-playbooks.txt." >&2
   exit 2
