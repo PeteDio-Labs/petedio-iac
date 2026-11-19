@@ -117,10 +117,12 @@ fields from Vault after the revoke has run.
 
 ## Staging power (CT 249)
 
-`staging-power.yml` starts CT 249 when UI work lands on the `staging` branch of `pdlabs-portfolio`. It stops the container after a promotion to `main` or after 3 hours with no UI commit. It runs every 5 minutes on the LAN runner.
+`staging-power.yml` starts CT 249 when UI work lands on the `staging` branch of `pdlabs-portfolio`. It stops the container after a promotion to `main`, and shuts it down 24 hours after it started. A push newer than that shutdown starts it again with a fresh 24-hour clock. It runs every 5 minutes on the LAN runner.
+
+**Staging standard (every staging environment):** a staging box stays up while its work is unmerged. The clock is the container's start time, which a later push does not reset. The dashboard alerts at 3, 9 and 20 hours of uptime, and `staging-power.py` shuts the box down at 24 hours. A new staging site on CT 249 inherits this with no change, because the limit is about the container and not the site.
 
 - To force a state, dispatch `staging-power.yml` with `mode` set to `start`, `stop` or `status`.
-- The runner never calls Proxmox directly. It signs a `staging-power` SSH certificate that runs one forced command on pve03, `/usr/local/sbin/staging-power`. That command accepts only `status`, `start` and `stop`, and only for the guest named `staging-249`.
+- The runner never calls Proxmox directly. It signs a `staging-power` SSH certificate that runs one forced command on pve03, `/usr/local/sbin/staging-power`. That command accepts only `status`, `clock`, `start`, `stop` and `teardown`, and only for the guest named `staging-249`. `clock` prints when the container last started or stopped, which the 24-hour limit reads.
 - The `auto` mode reads `kv/services/staging-app`. If the secret is not seeded, the run fails and stops nothing.
 - Each run prints what it examined: files compared, commits read and the decision.
 - To install the node script, apply `access/configure-ssh-ca-deploy-hosts.yml` and then `services/configure-staging-power.yml` through `lab-action.yml`.
