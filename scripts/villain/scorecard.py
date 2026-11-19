@@ -85,6 +85,9 @@ def main(argv=None):
         print(f"scorecard: FAILED to read Kuma: {e}", file=sys.stderr)
         return 1
     victims = [v.strip() for v in a.victims.split(",") if v.strip()]
+    if not victims:
+        print("scorecard: FAILED: --victims named no victim, so nothing was examined", file=sys.stderr)
+        return 1
     rows, monitors, read = score(status, beats, victims, ts(a.since), ts(a.undo_at) if a.undo_at else None)
     print(f"scorecard: read {monitors} monitors and {read} beats; scoring {len(victims)} victim(s)")
     bad = read == 0

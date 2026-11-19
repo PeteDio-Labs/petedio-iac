@@ -34,6 +34,11 @@ class T(unittest.TestCase):
         rc, out = run({"7": [beat("15:00:20", 0)]})
         self.assertEqual(rc, 0); self.assertIn("not yet UP", out)
 
+    def test_empty_victim_list_fails(self):
+        for v in ("", ","):
+            rc, out = run({"7": [beat("15:00:20", 0)]}, v)
+            self.assertEqual(rc, 1); self.assertIn("named no victim", out)
+
     def test_never_down_fails(self):
         rc, out = run({"7": [beat("15:00:20", 1), beat("15:01:00", 1)]})
         self.assertEqual(rc, 1); self.assertIn("never seen DOWN", out)

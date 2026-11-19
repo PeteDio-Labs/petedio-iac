@@ -49,14 +49,31 @@
   ansible.builtin.command: ifup {{ decoy_bridge_name }}
   changed_when: true
 
+# An empty bridge is up by flag but has no carrier until a guest attaches, so the check reads the
+# flag and the type, not the operational state.
 - name: Decoy bridge — read the bridge after
   when: not ansible_check_mode
-  ansible.builtin.command: ip -o link show dev {{ decoy_bridge_name }}
+  ansible.builtin.command: ip -d -o link show dev {{ decoy_bridge_name }}
   register: decoy_bridge_after
   changed_when: false
 
-- name: Decoy bridge — assert the bridge exists
+- name: Decoy bridge — assert it is a bridge and administratively up
   when: not ansible_check_mode
   ansible.builtin.assert:
-    that: "'state UP' in decoy_bridge_after.stdout or 'state UNKNOWN' in decoy_bridge_after.stdout"
+    that:
+      - "' bridge ' in decoy_bridge_after.stdout"
+      - decoy_bridge_after.stdout is regex('<[^>]*\\bUP\\b[^>]*>')
     fail_msg: "{{ decoy_bridge_name }} reads: {{ decoy_bridge_after.stdout }}"
+
+# The node must hold no address on the bridge, or a decoy could address the node and skip the gateway.
+- name: Decoy bridge — read the addresses on the bridge
+  when: not ansible_check_mode
+  ansible.builtin.command: ip -o addr show dev {{ decoy_bridge_name }}
+  register: decoy_bridge_addrs
+  changed_when: false
+
+- name: Decoy bridge — assert the node holds no address on it
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: decoy_bridge_addrs.stdout | trim | length == 0
+    fail_msg: "{{ inventory_hostname }} holds an address on {{ decoy_bridge_name }}: {{ decoy_bridge_addrs.stdout }}"

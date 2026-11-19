@@ -5,7 +5,3 @@
   ansible.builtin.systemd_service:
     name: "{{ decoy_gw_nft_unit }}"
     state: reloaded
-
-- name: Turn IPv4 forwarding on now
-  ansible.builtin.command: sysctl -w net.ipv4.ip_forward=1
-  changed_when: true

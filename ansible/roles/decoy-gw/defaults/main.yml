@@ -13,6 +13,10 @@
 # eth1, and the input chain keeps a decoy off the gateway's own services, bar a ping. There is no
 # masquerade and no route out: a decoy has no internet, no LAN host, no Authentik and no Vault.
 #
+# FORWARDING IS TIED TO THE FILTER. The nft unit turns net.ipv4.ip_forward on after it loads the
+# default-drop table and off before it removes it, so the gateway never forwards unfiltered, at boot
+# or on a first, interrupted run.
+#
 # ADDRESSES ARE STATIC, set by Terraform, so a decoy never waits on this container to boot. The
 # gateway runs no DHCP: a dnsmasq on the decoy leg would add a boot-order dependency and, bound
 # wrongly, would hand out leases on the home LAN.

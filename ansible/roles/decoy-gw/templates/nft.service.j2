@@ -12,7 +12,10 @@ Conflicts=shutdown.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/sbin/nft -f {{ decoy_gw_nft_file }}
+# Forwarding turns on only after the default-drop table is loaded, and off before it is removed.
+ExecStartPost=/usr/sbin/sysctl -w net.ipv4.ip_forward=1
 ExecReload=/usr/sbin/nft -f {{ decoy_gw_nft_file }}
+ExecStop=-/usr/sbin/sysctl -w net.ipv4.ip_forward=0
 ExecStop=/usr/sbin/nft delete table inet villain_decoys
 
 [Install]

@@ -6,19 +6,6 @@
     update_cache: true
     cache_valid_time: 3600
 
-# Forwarding on, persisted. A container netns may refuse the write; the assert below says so.
-- name: Decoy gateway — keep IPv4 forwarding on at boot
-  ansible.builtin.copy:
-    content: "net.ipv4.ip_forward = 1\n"
-    dest: /etc/sysctl.d/90-decoy-gw.conf
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Turn IPv4 forwarding on now
-
-- name: Decoy gateway — apply forwarding before the ruleset
-  ansible.builtin.meta: flush_handlers
-
 - name: Decoy gateway — write the ruleset
   ansible.builtin.template:
     src: nftables.nft.j2
