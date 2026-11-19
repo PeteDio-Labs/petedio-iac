@@ -1,0 +1,8 @@
+# Lab Villains allowlist (PET-954). One target per line: group vmid name node tier
+#
+# A villain can hit only a line listed here. The tier must be `decoy` until a PR that
+# changes TIERS_ALLOWED in guard.py also gets Pedro's OK in plain words. guard.py
+# refuses a vmid on its denylist even when it is listed.
+#
+# The Gotham decoy containers join this file in the PR that creates them.
+# group   vmid  name  node  tier
