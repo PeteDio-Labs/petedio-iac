@@ -2,7 +2,9 @@
 """Lab Villains guard (PET-954): choose victims, or refuse, and change nothing.
 
     scripts/villain/guard.py check joker  [--seed N]
-    scripts/villain/guard.py check thanos --group GROUP [--seed N]
+    scripts/villain/guard.py check thanos [--group GROUP] [--seed N]
+
+Thanos snaps half of the universe: every usable target on the allowlist. --group narrows it to one group.
 
 It reads scripts/villain/targets.txt and prints what it examined and what it picked. It never
 touches a host. The strike playbooks call it first and act only on the victims it prints.
@@ -78,9 +80,10 @@ def pick(villain, rows, group, seed):
     if villain == "joker":
         victim = rng.choice(ok)
         return [dict(victim, fault=rng.choice(JOKER_FAULTS))], denied
-    members = [r for r in ok if r["group"] == group]
+    members = [r for r in ok if group is None or r["group"] == group]
+    scope = "the universe" if group is None else f"group {group!r}"
     if len(members) < 2:
-        raise Refused(f"group {group!r} has {len(members)} usable members; Thanos needs 2 or more")
+        raise Refused(f"{scope} has {len(members)} usable members; Thanos needs 2 or more")
     k = len(members) // 2  # half, rounded down; never the last member
     return [dict(v, fault="stop") for v in rng.sample(members, k)], denied
 
@@ -98,8 +101,6 @@ def main(argv=None):
     now = datetime.fromisoformat(a.now) if a.now else datetime.now(TZ)
     try:
         rows = read_targets(a.targets)
-        if a.villain == "thanos" and not a.group:
-            raise Refused("thanos needs --group")
         if in_quiet_hours(now):
             raise Refused("quiet hours: the backup window is 02:15 to 03:30 Eastern")
         victims, denied = pick(a.villain, rows, a.group, seed)

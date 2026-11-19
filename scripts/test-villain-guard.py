@@ -35,7 +35,12 @@ class T(unittest.TestCase):
 
     def test_thanos_refuses_group_of_one_and_missing_group(self):
         self.assertEqual(run(GOTHAM[:1], "thanos", "--group", "gotham")[0], 1)
-        self.assertEqual(run(GOTHAM, "thanos")[0], 1)
+        self.assertEqual(run(GOTHAM[:1], "thanos")[0], 1)
+
+    def test_thanos_snaps_half_the_universe_across_groups(self):
+        rows = GOTHAM + [f"titan {950+i} titan-{i} pve03 decoy" for i in range(1, 5)]
+        rc, out = run(rows, "thanos", "--seed", "3")
+        self.assertEqual(rc, 0); self.assertEqual(out.count("victim "), 4)
 
     def test_denylist_and_tier(self):
         rc, out = run(["core 223 vault pve03 decoy", "core 250 x pve03 prod"], "joker")
