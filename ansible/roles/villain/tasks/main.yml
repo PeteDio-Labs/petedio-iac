@@ -5,8 +5,8 @@
 # prints what a strike would do, and changes nothing.
 - name: Refuse a strike while the kill switch is off
   ansible.builtin.assert:
-    that: villain_undo | bool or villains_enabled | bool or ansible_check_mode
-    fail_msg: "REFUSED: villains_enabled is false. A strike needs -e villains_enabled=true after Pedro's go."
+    that: villain_undo | bool or villain_enabled | bool or ansible_check_mode
+    fail_msg: "REFUSED: villain_enabled is false. A strike needs -e villain_enabled=true after Pedro's go."
   run_once: true
 
 - name: Read the guard's pick, or the decoys an undo covers

@@ -3,8 +3,8 @@
 villain_name: joker
 # Run the undo instead of a strike: put every decoy back, then cancel the dead-man timers.
 villain_undo: false
-# Kill switch. A strike refuses unless this is true. Pass -e villains_enabled=true on purpose.
-villains_enabled: false
+# Kill switch. A strike refuses unless this is true. Pass -e villain_enabled=true on purpose.
+villain_enabled: false
 # Replay a pick. Empty means a random seed. The run prints the seed it used.
 villain_seed: ""
 # Narrow Thanos to one group. Empty uses his own universe (marvel).

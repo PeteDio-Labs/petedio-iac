@@ -387,24 +387,24 @@ uptime_kuma_monitors:
     hostname: "192.168.50.253"
     port: 22
     description: "Lab Villains decoy (dc). Throwaway container that chaos tests may stop."
-  - name: decoy-marvel-254
+  - name: decoy-marvel-210
     type: port
-    hostname: "192.168.50.254"
+    hostname: "192.168.50.210"
     port: 22
     description: "Lab Villains decoy (marvel). Throwaway container that chaos tests may stop."
-  - name: decoy-marvel-255
+  - name: decoy-marvel-211
     type: port
-    hostname: "192.168.50.255"
+    hostname: "192.168.50.211"
     port: 22
     description: "Lab Villains decoy (marvel). Throwaway container that chaos tests may stop."
-  - name: decoy-marvel-256
+  - name: decoy-marvel-212
     type: port
-    hostname: "192.168.50.256"
+    hostname: "192.168.50.212"
     port: 22
     description: "Lab Villains decoy (marvel). Throwaway container that chaos tests may stop."
-  - name: decoy-marvel-257
+  - name: decoy-marvel-213
     type: port
-    hostname: "192.168.50.257"
+    hostname: "192.168.50.213"
     port: 22
     description: "Lab Villains decoy (marvel). Throwaway container that chaos tests may stop."
 
@@ -477,10 +477,10 @@ uptime_kuma_maintenances:
       - decoy-dc-251  # 251, a Lab Villains decoy
       - decoy-dc-252  # 252, a Lab Villains decoy
       - decoy-dc-253  # 253, a Lab Villains decoy
-      - decoy-marvel-254  # 254, a Lab Villains decoy
-      - decoy-marvel-255  # 255, a Lab Villains decoy
-      - decoy-marvel-256  # 256, a Lab Villains decoy
-      - decoy-marvel-257  # 257, a Lab Villains decoy
+      - decoy-marvel-210  # 210, a Lab Villains decoy
+      - decoy-marvel-211  # 211, a Lab Villains decoy
+      - decoy-marvel-212  # 212, a Lab Villains decoy
+      - decoy-marvel-213  # 213, a Lab Villains decoy
   # 244 leaves the nightly job and has its own weekly job (MED-11): Sundays at 04:00 in
   # stop mode, declared as proxmox_backup_job.plex_remote_weekly in environments/homelab/backup.tf.
   # The window opens five minutes early and runs 30 minutes, the same margin as the nightly one.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lab Villains scorecard (PET-954): did detection and recovery work after a strike?
 
-    scripts/villain/scorecard.py --since 2026-11-26T15:00:00Z --victims 251,255 [--undo-at ISO]
+    scripts/villain/scorecard.py --since 2026-11-26T15:00:00Z --victims 251,211 [--undo-at ISO]
                                  [--discord yes|no|unknown]
 
 Reads Uptime Kuma's fault-study status page and its heartbeat JSON, then reports for each victim

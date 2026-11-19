@@ -2,7 +2,7 @@
 #
 # Two separate universes, so Joker and Thanos never share victims (guard.py reads the group):
 #   dc      Joker's  250-253  decoy-dc-<vmid>
-#   marvel  Thanos'  254-257  decoy-marvel-<vmid>
+#   marvel  Thanos'  210-213  decoy-marvel-<vmid>
 # Every decoy is listed in scripts/villain/targets.txt with tier `decoy`. No real service is in
 # either group. A real service joins a group only by a PR that Pedro approves in plain words.
 #
@@ -10,8 +10,10 @@
 # check is a Kuma TCP monitor on :22 (a Mac host step on PET-954, because Kuma on pete-pi-1 has no
 # CI deploy). Joker's `kill-service` fault stops sshd, so a down monitor proves detection.
 #
-# WHY 250 to 257. VMID = last IP octet, as everywhere here. 249 is staging and 248 is codex;
-# 250 to 257 were absent from `lab_list_guests` and unreferenced in this repo on 2026-11-19.
+# WHY THESE NUMBERS. VMID = last IP octet, as everywhere here, so a VMID must be 1 to 254.
+# 250 to 253 follow staging (249). Only five numbers above 249 are valid hosts, so Thanos' four
+# sit at 210 to 213. All eight were absent from `lab_list_guests` and unreferenced in this repo
+# on 2026-11-19. Confirm the router's DHCP pool excludes 210 to 213 and 250 to 253 before you merge.
 # Confirm no live guest holds one of them before you apply.
 #
 # The three fields that have each broken a container here, as staging.tf lists: datastore_id
@@ -23,10 +25,10 @@ locals {
     "251" = { group = "dc" }
     "252" = { group = "dc" }
     "253" = { group = "dc" }
-    "254" = { group = "marvel" }
-    "255" = { group = "marvel" }
-    "256" = { group = "marvel" }
-    "257" = { group = "marvel" }
+    "210" = { group = "marvel" }
+    "211" = { group = "marvel" }
+    "212" = { group = "marvel" }
+    "213" = { group = "marvel" }
   }
 }
 

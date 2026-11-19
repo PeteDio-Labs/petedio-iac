@@ -5,7 +5,7 @@
 # scripts/lab-playbooks.txt, so lab-action cannot run it until a PR that Pedro approves in plain words.
 #
 #   ansible-playbook playbooks/villain/joker.yml --check                     # print the pick, touch nothing
-#   ansible-playbook playbooks/villain/joker.yml -e villains_enabled=true    # strike, after Pedro's go
+#   ansible-playbook playbooks/villain/joker.yml -e villain_enabled=true    # strike, after Pedro's go
 #   ansible-playbook playbooks/villain/joker.yml -e villain_undo=true        # put the decoys back now
 #
 # A strike arms a dead-man timer on the node first: the decoy comes back after villain_deadman_minutes
