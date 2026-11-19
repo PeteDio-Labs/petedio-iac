@@ -97,6 +97,14 @@ lxc_features_declared:
   "237": { nesting: "1", keyctl: "1" }   # media-dash-237 — HAS NEITHER; created 2026-09-09
   "245": { nesting: "1", keyctl: "1" }   # minio-data-245 — HAS NEITHER
   "249": { nesting: "1" }                # staging-249 — Debian 13 systemd host (Caddy); like 248, no keyctl
+  "250": { nesting: "1" }                # decoy-dc-250 — Lab Villains decoy, Debian 13; nesting only, like 249
+  "251": { nesting: "1" }                # decoy-dc-251 — Lab Villains decoy, Debian 13; nesting only, like 249
+  "252": { nesting: "1" }                # decoy-dc-252 — Lab Villains decoy, Debian 13; nesting only, like 249
+  "253": { nesting: "1" }                # decoy-dc-253 — Lab Villains decoy, Debian 13; nesting only, like 249
+  "210": { nesting: "1" }                # decoy-marvel-210 — Lab Villains decoy, Debian 13; nesting only, like 249
+  "211": { nesting: "1" }                # decoy-marvel-211 — Lab Villains decoy, Debian 13; nesting only, like 249
+  "212": { nesting: "1" }                # decoy-marvel-212 — Lab Villains decoy, Debian 13; nesting only, like 249
+  "213": { nesting: "1" }                # decoy-marvel-213 — Lab Villains decoy, Debian 13; nesting only, like 249
   # Nesting only, and deliberately. Debian 13, systemd 257, created with no features: on
   # 2026-10-01 `systemctl --failed` listed tmp.mount, dev-mqueue.mount and run-lock.mount,
   # the three units the evidence above ties to a missing `nesting=1`. Nothing here runs

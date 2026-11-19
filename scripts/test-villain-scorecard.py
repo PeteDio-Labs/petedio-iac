@@ -26,6 +26,14 @@ class T(unittest.TestCase):
                       "251", "--undo-at", "2026-11-26T15:00:40Z")
         self.assertEqual(rc, 0); self.assertIn("DOWN after 20 s", out); self.assertIn("UP again 20 s", out)
 
+    def test_undo_without_recovery_fails(self):
+        rc, out = run({"7": [beat("15:00:20", 0), beat("15:01:00", 0)]}, "251", "--undo-at", "2026-11-26T15:00:40Z")
+        self.assertEqual(rc, 1); self.assertIn("no UP beat after the undo", out)
+
+    def test_no_undo_given_and_still_down_is_not_a_failure(self):
+        rc, out = run({"7": [beat("15:00:20", 0)]})
+        self.assertEqual(rc, 0); self.assertIn("not yet UP", out)
+
     def test_never_down_fails(self):
         rc, out = run({"7": [beat("15:00:20", 1), beat("15:01:00", 1)]})
         self.assertEqual(rc, 1); self.assertIn("never seen DOWN", out)
