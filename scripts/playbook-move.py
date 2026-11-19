@@ -15,7 +15,8 @@ The script does what a move needs and a plain `git mv` leaves broken:
 1. `import_playbook` targets become paths relative to the importing file's new folder.
 2. In a moved playbook, `playbook_dir ~ '/../x'` and `{{ playbook_dir }}/../x` gain one `..`,
    and a relative asset (`src: files/x`, `src: templates/x`, a bare `src: x.j2` that exists in
-   either folder, or `lookup('file', 'x')` for a file in `files/`) points at the shared folders.
+   either folder, or `lookup('file', 'x')` for a file in `files/`) points at the shared folders through `{{ playbook_dir | dirname }}`, which ansible-lint's
+   `no-relative-paths` rule accepts and a `../` path does not.
 3. Every other text file in the repo (workflows, scripts, docs, inventory, allowlist) that names
    `playbooks/<file>.yml` or a bare `<file>.yml` gets the new path.
 
@@ -83,7 +84,7 @@ def bare_asset(line: str) -> str:
     if m:
         for d in ("templates", "files"):
             if (PLAYBOOKS / d / m.group(2)).is_file():
-                return line[: m.start()] + f'{m.group(1)}"{{{{ playbook_dir }}}}/../{d}/{m.group(2)}"\n'
+                return line[: m.start()] + f'{m.group(1)}"{{{{ playbook_dir | dirname }}}}/{d}/{m.group(2)}"\n'
     m = FILE_LOOKUP.search(line)
     if m and (PLAYBOOKS / "files" / m.group(2)).is_file():
         return line[: m.start()] + f"{m.group(1)}playbook_dir ~ '/../files/{m.group(2)}'" + line[m.end():]
@@ -134,7 +135,7 @@ def main(argv: list[str]) -> int:
                 new = new.replace("{{ playbook_dir }}/../", "{{ playbook_dir }}/../../")
                 new = new.replace("playbook_dir ~ '/../", "playbook_dir ~ '/../../")
                 new = ASSET_SRC.sub(
-                    lambda mm: f'{mm.group(1)}"{{{{ playbook_dir }}}}/../{mm.group(2) or mm.group(3) or mm.group(4)}"', new)
+                    lambda mm: f'{mm.group(1)}"{{{{ playbook_dir | dirname }}}}/{mm.group(2) or mm.group(3) or mm.group(4)}"', new)
             if moved:
                 new = bare_asset(new)
             out.append(new)
