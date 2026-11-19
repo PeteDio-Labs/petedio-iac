@@ -48,7 +48,8 @@ INCLUDE_KEYS = {
 CODE_DIRS = ("library", "module_utils", "action_plugins", "filter_plugins", "lookup_plugins",
              "callback_plugins", "connection_plugins", "strategy_plugins", "test_plugins",
              "vars_plugins", "inventory_plugins")
-NAME = re.compile(r"^[a-z0-9][a-z0-9-]*\.yml$")
+# A name is `<file>.yml` or `<area>/<file>.yml`: one folder level, as docs/playbooks-layout.md says.
+NAME = re.compile(r"^([a-z0-9][a-z0-9-]*/)?[a-z0-9][a-z0-9-]*\.yml$")
 
 
 def allowlist() -> set[str]:
@@ -184,8 +185,11 @@ def main(argv: list[str]) -> int:
         return 2
     allowed = allowlist()
     if argv[1] == "--all":
-        for p in sorted(PLAYBOOKS.glob("*.yml")):
-            check(p.name, allowed)
+        for p in sorted(PLAYBOOKS.rglob("*.yml")):
+            rel = p.relative_to(PLAYBOOKS)
+            if rel.parts[0] in ("files", "templates"):
+                continue  # assets the plays copy, not plays
+            check(rel.as_posix(), allowed)
         return 0
     return 0 if check(argv[1], allowed) else 1
 

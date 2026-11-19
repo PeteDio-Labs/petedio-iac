@@ -55,7 +55,7 @@ case "$ACTION" in
   playbook_check|playbook_apply)
     # The name must match a fixed pattern and appear in the allowlist before anything is signed.
     # This needs no PyYAML, so it holds on a runner without it.
-    if ! [[ "$TARGET" =~ ^[a-z0-9][a-z0-9-]*\.yml$ ]] \
+    if ! [[ "$TARGET" =~ ^([a-z0-9][a-z0-9-]*/)?[a-z0-9][a-z0-9-]*\.yml$ ]] \
        || ! sed -e 's/#.*//' -e 's/[[:space:]]//g' "$REPO_ROOT/scripts/lab-playbooks.txt" | grep -qxF "$TARGET"; then
       echo "REFUSED: '$TARGET' is not a playbook name in scripts/lab-playbooks.txt." >&2
       exit 2
@@ -64,7 +64,7 @@ case "$ACTION" in
       python3 "$REPO_ROOT/scripts/lab-playbook-guard.py" "$TARGET" || exit 2
     fi
     CMD=("$REPO_ROOT/scripts/lab-playbook.sh" "${ACTION#playbook_}" "$TARGET")
-    SUMMARY='^playbook (check|apply) [a-z0-9-]+\.yml: [0-9]+ of [0-9]+ hosts' ;;
+    SUMMARY='^playbook (check|apply) ([a-z0-9-]+/)?[a-z0-9-]+\.yml: [0-9]+ of [0-9]+ hosts' ;;
   # A read-only probe inside LXC 237 (PET-878, PET-879). scripts/lab-probe.sh validates each value against a
   # strict pattern and reads lab-agent's own token inside 237; nothing is placed.
   lab_probe)
