@@ -32,6 +32,31 @@
     state: present
     update_cache: true
 
+# The package creates the loki user in nogroup and creates no loki group and no data directory.
+# The unit runs as User=loki, so Loki reads its config through this group and writes only here.
+- name: Create the loki group
+  ansible.builtin.group:
+    name: loki
+    system: true
+  register: loki_group
+
+# In check mode the group is reported but not created, so the user module would fail to find it.
+- name: Add the loki user to the loki group
+  ansible.builtin.user:
+    name: loki
+    groups: [loki]
+    append: true
+  notify: Restart loki
+  when: not (ansible_check_mode and loki_group is changed)
+
+- name: Create the data directory
+  ansible.builtin.file:
+    path: /var/lib/loki
+    state: directory
+    owner: loki
+    group: loki
+    mode: "0750"
+
 # Loki refuses a config it cannot parse, so a bad file never reaches the live path.
 - name: Land the Loki config
   ansible.builtin.template:
@@ -46,11 +71,13 @@
 - name: Apply a pending restart now
   ansible.builtin.meta: flush_handlers
 
+# Check mode installs no package, so on a fresh host the unit does not exist yet.
 - name: Enable and start Loki
   ansible.builtin.systemd:
     name: loki
     enabled: true
     state: started
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Wait until Loki is ready
   ansible.builtin.uri:
@@ -60,6 +87,7 @@
   until: loki_ready.status == 200 and 'ready' in loki_ready.content
   retries: 30
   delay: 5
+  when: not ansible_check_mode
 
 # A ready store is not proof that a shipper reached it. Count the streams it holds and say so.
 # Zero streams after a first run is expected, so the play reports the count and does not fail on it.
@@ -68,9 +96,11 @@
     url: "http://127.0.0.1:{{ loki_port }}/loki/api/v1/labels"
     return_content: true
   register: loki_labels
+  when: not ansible_check_mode
 
 - name: Say what was examined
   ansible.builtin.debug:
     msg: >-
       loki answers ready on {{ loki_port }} and holds {{ loki_labels.json.data | default([]) | length }}
       label names. Zero means no shipper has pushed yet: run playbooks/observability/configure-log-shipping.yml.
+  when: not ansible_check_mode
