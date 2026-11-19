@@ -14,12 +14,10 @@
     owner: root
     group: root
     mode: "0644"
-  register: decoy_gw_sysctl
+  notify: Turn IPv4 forwarding on now
 
-- name: Decoy gateway — turn IPv4 forwarding on now
-  ansible.builtin.command: sysctl -w net.ipv4.ip_forward=1
-  when: decoy_gw_sysctl is changed
-  changed_when: true
+- name: Decoy gateway — apply forwarding before the ruleset
+  ansible.builtin.meta: flush_handlers
 
 - name: Decoy gateway — write the ruleset
   ansible.builtin.template:
