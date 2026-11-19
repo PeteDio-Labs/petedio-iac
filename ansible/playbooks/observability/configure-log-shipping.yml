@@ -2,7 +2,9 @@
 # observability/configure-log-shipping.yml — Grafana Alloy on each host that already pages, reading the journal
 # and pushing warnings and above, plus the paging units, to Loki on metrics-240. (PET-709)
 #
-# The scope is the item's cut: vault, the runners, Postgres, MinIO, Plane and pete-bot's host.
+# The scope is the item's cut: vault, the runners, Postgres, MinIO, Plane and pete-bot's host, plus
+# Authentik, ollama, claude-247 and pve02 (the Lab Villains detection gate). pve03, pve01 and the media
+# LXCs sit in other inventories and join in a later step.
 # Add a group to `hosts:` to widen it, and widen it one group at a time: each host gains an apt
 # repository and a service.
 #
@@ -19,7 +21,7 @@
   connection: local
   gather_facts: false
   vars:
-    log_shipping_groups: [vault, runner, postgres, minio, plane, media_dash]
+    log_shipping_groups: [vault, runner, postgres, minio, plane, media_dash, authentik, ollama, claude, proxmox]
   tasks:
     - name: Assert each group is in the inventory and not empty
       ansible.builtin.assert:
@@ -32,7 +34,7 @@
       loop: "{{ log_shipping_groups }}"
 
 - name: Ship the journal to Loki
-  hosts: vault:runner:postgres:minio:plane:media_dash
+  hosts: vault:runner:postgres:minio:plane:media_dash:authentik:ollama:claude:proxmox
   become: true
   gather_facts: true
   roles:
