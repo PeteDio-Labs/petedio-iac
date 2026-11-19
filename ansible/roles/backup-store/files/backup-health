@@ -21,7 +21,8 @@
 # comes from /etc/backup-health.env, which is root-only because the URL is the token.
 #   BACKUP_HEALTH_STORE       Proxmox storage ID            (ollama-backups)
 #   BACKUP_HEALTH_MNT         where that storage mounts     (/mnt/ollama-backups)
-#   BACKUP_HEALTH_MAX_AGE_H   newest archive age limit      (26)
+#   BACKUP_HEALTH_MAX_AGE_H   newest archive age limit for a daily job (26). A job that runs
+#                             less often gets its longest gap plus the 2 h of slack (PET-960).
 #   BACKUP_HEALTH_ROOT_MAX    root disk use limit, percent  (85)
 #   BACKUP_HEALTH_MIN_GUESTS  fewest guests the job covers  (1)
 #   BACKUP_HEALTH_MAX_JOB_MIN longest the last vzdump run may take, minutes (0, unchecked)
@@ -123,25 +124,77 @@ def guests():
     return found
 
 
+DAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+def longest_gap_h(schedule):
+    """The longest gap, in hours, between runs of a Proxmox job schedule. None when unreadable.
+
+    Reads `HH:MM` (daily) and `<days> HH:MM`, where days is a comma list of names and `a..b`
+    ranges, for example `sun 04:00` or `mon..fri 02:30`. Anything else returns None, and the
+    caller keeps the daily limit, so an unknown schedule is checked strictly, not skipped.
+    """
+    text = str(schedule or "").strip().lower()
+    if re.fullmatch(r"\d{1,2}:\d\d", text):
+        return 24.0
+    m = re.fullmatch(r"([a-z.,]+)\s+\d{1,2}:\d\d", text)
+    if not m:
+        return None
+    days = set()
+    for part in m.group(1).split(","):
+        lo, _, hi = part.partition("..")
+        if lo not in DAYS or (hi and hi not in DAYS):
+            return None
+        if not hi:
+            days.add(DAYS[lo])
+            continue
+        d = DAYS[lo]
+        days.add(d)
+        while d != DAYS[hi]:
+            d = (d + 1) % 7
+            days.add(d)
+    order = sorted(days)
+    gaps = [(order[(i + 1) % len(order)] - order[i]) % 7 or 7 for i in range(len(order))]
+    return max(gaps) * 24.0
+
+
+def job_limit_h(schedule):
+    """The age limit for a guest covered by a job on `schedule`: its longest gap plus the daily slack."""
+    gap = longest_gap_h(schedule)
+    if gap is None:
+        return MAX_AGE_H
+    return gap + (MAX_AGE_H - 24.0)
+
+
 def covered(all_guests):
-    """The guests this node's enabled backup jobs cover."""
+    """The guests this node's enabled backup jobs cover, and each guest's age limit in hours.
+
+    A guest that several jobs cover gets the shortest limit, so a daily job still guards it.
+    """
     jobs = [j for j in pvesh("/cluster/backup")
             if j.get("node") == NODE and j.get("enabled", 1) in (1, "1")]
     if not jobs:
         fail(f"no enabled backup job names node {NODE}")
         return set()
-    ids = set()
+    limits = {}
     for j in jobs:
         exclude = {int(x) for x in str(j.get("exclude", "")).split(",") if x.strip()}
         if str(j.get("all", 0)) == "1":
-            ids |= set(all_guests) - exclude
+            job_ids = set(all_guests) - exclude
         else:
-            ids |= {int(x) for x in str(j.get("vmid", "")).split(",") if x.strip()}
+            job_ids = {int(x) for x in str(j.get("vmid", "")).split(",") if x.strip()}
+        limit = job_limit_h(j.get("schedule"))
+        if longest_gap_h(j.get("schedule")) is None:
+            print(f"     job {j.get('id', '?')}: schedule {j.get('schedule')!r} is not one this check reads; "
+                  f"its guests keep the {MAX_AGE_H:.0f} h limit", flush=True)
+        for vmid in job_ids:
+            limits[vmid] = min(limit, limits.get(vmid, limit))
+    ids = set(limits)
     ok(f"{len(jobs)} backup job(s) for {NODE} cover {len(ids)} of {len(all_guests)} guests")
-    return ids
+    return ids, limits
 
 
-def check_archives(ids, all_guests):
+def check_archives(ids, all_guests, limits):
     dump = os.path.join(MNT, "dump")
     newest = {}
     scanned = 0
@@ -168,13 +221,16 @@ def check_archives(ids, all_guests):
             stale.append(f"{vmid} {name}: no archive")
             continue
         age_h = (now - newest[vmid]) / 3600
-        if age_h > MAX_AGE_H:
-            stale.append(f"{vmid} {name}: newest is {age_h:.0f} h old")
+        limit = limits.get(vmid, MAX_AGE_H)
+        if age_h > limit:
+            stale.append(f"{vmid} {name}: newest is {age_h:.0f} h old, limit {limit:.0f} h")
     if stale:
         for s in stale:
             fail(f"backup missing or old: {s}")
     else:
-        ok(f"all {len(ids)} covered guests have an archive under {MAX_AGE_H:.0f} h old")
+        longer = {v: l for v, l in limits.items() if l > MAX_AGE_H}
+        extra = "".join(f"; {v} {all_guests.get(v, ('?', '?', ''))[1]} allows {l:.0f} h" for v, l in sorted(longer.items()))
+        ok(f"all {len(ids)} covered guests have an archive under {MAX_AGE_H:.0f} h old{extra}")
 
 
 def check_job_duration():
@@ -254,11 +310,11 @@ def main():
     check_root()
     try:
         all_guests = guests()
-        ids = covered(all_guests)
+        ids, limits = covered(all_guests)
         if 0 < len(ids) < MIN_GUESTS:
             fail(f"the job covers {len(ids)} guests, fewer than {MIN_GUESTS}")
         if ids:
-            check_archives(ids, all_guests)
+            check_archives(ids, all_guests, limits)
         check_locks(all_guests)
         check_job_duration()
     except (subprocess.SubprocessError, ValueError, KeyError) as e:
