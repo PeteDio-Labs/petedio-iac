@@ -3,3 +3,10 @@
   ansible.builtin.systemd_service:
     name: NetworkManager
     state: reloaded
+
+# A check run may not have written the unit, so systemd cannot find it yet.
+- name: Reload the decoy host isolation table
+  when: not ansible_check_mode
+  ansible.builtin.systemd_service:
+    name: "{{ decoy_bridge_nft_unit }}"
+    state: reloaded

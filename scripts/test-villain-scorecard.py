@@ -34,6 +34,10 @@ class T(unittest.TestCase):
         rc, out = run({"7": [beat("15:00:20", 0)]})
         self.assertEqual(rc, 0); self.assertIn("not yet UP", out)
 
+    def test_up_before_the_down_is_not_a_recovery(self):
+        rc, out = run({"7": [beat("15:01:00", 1), beat("15:01:20", 0)]}, "251", "--undo-at", "2026-11-26T15:00:40Z")
+        self.assertEqual(rc, 1); self.assertIn("no UP beat after the undo", out)
+
     def test_empty_victim_list_fails(self):
         for v in ("", ","):
             rc, out = run({"7": [beat("15:00:20", 0)]}, v)

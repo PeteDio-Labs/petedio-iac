@@ -60,7 +60,8 @@ def score(status, beats, victims, since, undo_at):
         row = {"vmid": vmid, "monitor": name, "beats": len(bl), "detected_s": None, "recovered_s": None}
         if down:
             row["detected_s"] = round((beat_time(down) - since).total_seconds())
-            after = undo_at or beat_time(down)
+            # Recovery counts only after the undo and after the DOWN it recovers from.
+            after = max(undo_at, beat_time(down)) if undo_at else beat_time(down)
             up = next((b for b in bl if b["status"] == 1 and beat_time(b) >= after), None)
             if up:
                 row["recovered_s"] = round((beat_time(up) - after).total_seconds())
