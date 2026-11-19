@@ -38,6 +38,10 @@ class T(unittest.TestCase):
         rc, out = run({"7": [beat("15:01:00", 1), beat("15:01:20", 0)]}, "251", "--undo-at", "2026-11-26T15:00:40Z")
         self.assertEqual(rc, 1); self.assertIn("no UP beat after the undo", out)
 
+    def test_latency_counts_from_the_undo(self):
+        rc, out = run({"7": [beat("15:01:20", 0), beat("15:02:00", 1)]}, "251", "--undo-at", "2026-11-26T15:00:40Z")
+        self.assertEqual(rc, 0); self.assertIn("80", out)
+
     def test_empty_victim_list_fails(self):
         for v in ("", ","):
             rc, out = run({"7": [beat("15:00:20", 0)]}, v)

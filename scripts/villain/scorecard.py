@@ -64,7 +64,8 @@ def score(status, beats, victims, since, undo_at):
             after = max(undo_at, beat_time(down)) if undo_at else beat_time(down)
             up = next((b for b in bl if b["status"] == 1 and beat_time(b) >= after), None)
             if up:
-                row["recovered_s"] = round((beat_time(up) - after).total_seconds())
+                origin = undo_at or after  # latency counts from the undo, not from a later DOWN
+                row["recovered_s"] = round((beat_time(up) - origin).total_seconds())
         rows.append(row)
     return rows, len(ids), read
 
@@ -98,7 +99,7 @@ def main(argv=None):
         elif r["detected_s"] is None:
             print(f"  {r['vmid']} {r['monitor']}: FAIL never seen DOWN in {r['beats']} beats"); bad = True
         else:
-            rec = f"UP again {r['recovered_s']} s later" if r["recovered_s"] is not None else "not yet UP"
+            rec = f"UP again {r['recovered_s']} s after the undo" if r["recovered_s"] is not None else "not yet UP"
             if r["recovered_s"] is None and a.undo_at:
                 rec += ": FAIL no UP beat after the undo"; bad = True
             print(f"  {r['vmid']} {r['monitor']}: Kuma saw DOWN after {r['detected_s']} s; {rec} ({r['beats']} beats)")
