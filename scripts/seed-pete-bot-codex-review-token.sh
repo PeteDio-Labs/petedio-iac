@@ -2,7 +2,7 @@
 # seed-pete-bot-codex-review-token.sh — mint the bearer that opens pete-bot's
 # /v1/codex-review, and store it in kv/services/pete-bot as codex_review_bearer_token.
 #
-# WHY. A thread asks for a Codex second opinion through lab-agent's queue_codex_review tool.
+# WHY. A thread asks for a Codex second opinion through lab-agent's request_codex_review tool.
 # lab-agent calls pete-bot's /v1/codex-review with this bearer, and pete-bot queues the review
 # with the merge desk's own Codex key. The same value is lab-agent's LAB_CODEX_REVIEW_TOKEN.
 # Until it is seeded, the route refuses every request and lab-agent offers neither tool.
@@ -113,6 +113,6 @@ unset NEW CURRENT ALERT NOTIFY SNAPSHOT
 step "Done"
 cat <<'NOTE'
   Next: deploy pete-bot (a merge to its main, or scripts/deploy-pete-bot.sh).
-  Proof: the lab MCP lists queue_codex_review and codex_review_status, and
-  codex_review_status on an open desk-repo PR answers with a head SHA and a reviews list.
+  Proof: the lab MCP lists request_codex_review and check_codex_review, and
+  check_codex_review on an open desk-repo PR answers with a head SHA and a reviews list.
 NOTE

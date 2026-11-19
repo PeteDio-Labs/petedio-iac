@@ -168,8 +168,8 @@
     mtrace_mcp_access_agents:
       bobbert: ca14c1dd4db82530a133724cd7945be4.access
       batsy: d620c3ddbedd7cde30577aeb2f11feb6.access
-    # Callers that may use tracerr's write tools (search_missing, blocklist_release,
-    # refresh_plex). Every caller not listed stays read-only. Each name must also be a
+    # Callers that may use tracerr's write tools (request_missing_search (still `search_missing` in mtrace_write_scopes below, an alias), request_blocklist,
+    # request_plex_refresh). Every caller not listed stays read-only. Each name must also be a
     # token_<name> field in kv/services/media/dashboard: tracerr stops at startup on one
     # that is not. batsy joined on Pedro's word (2026-11-09, PET-904). lab-agent joined on
     # Pedro's word (2026-11-15, MED-22) with ONE tool: see mtrace_write_scopes.

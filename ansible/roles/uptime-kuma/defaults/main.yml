@@ -106,7 +106,7 @@ uptime_kuma_notifications: >-
 uptime_kuma_retired_monitors:
   - usaa   # PET-590: LXC 238 destroyed
   # The zot and NFS pair studied a dependency that no longer exists. Both were provisioned
-  # as paused (active: false), so Kuma showed them as "no beats" and lab_overview listed them
+  # as paused (active: false), so Kuma showed them as "no beats" and lab_get_overview listed them
   # as needing attention every day. Remove these two names after a deploy has retired them.
   - zot-registry
   - nfs-pve02
