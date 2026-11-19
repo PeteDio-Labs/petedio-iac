@@ -20,7 +20,7 @@
 # GitHub runner is. Without systemd they don't run, and the play says so in a line that
 # can't be read as a pass. Under CI they must run, so a missing systemd fails the suite.
 ---
-- name: Guard every Ollama port with the allowlist, configure-ollama-246.yml
+- name: Guard every Ollama port with the allowlist, ollama/configure-ollama-246.yml
   hosts: localhost
   gather_facts: false
   # ansible.cfg sets become for every play. Case 1 reads and renders, unprivileged.

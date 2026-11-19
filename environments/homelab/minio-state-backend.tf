@@ -15,7 +15,7 @@
 # hand-managed by design".
 #
 # How .221 IS kept as code instead:
-#   - Config-as-code .... ansible/roles/minio + ansible/playbooks/configure-minio.yml
+#   - Config-as-code .... ansible/roles/minio + ansible/playbooks/services/configure-minio.yml
 #   - Disaster recovery .. docs/runbooks/minio-221-rebuild.md (bare LXC -> Ansible ->
 #                          restore tfstate from backup -> terraform init)
 #   - Backend wiring ..... backend.tf (the S3 backend that consumes this host)

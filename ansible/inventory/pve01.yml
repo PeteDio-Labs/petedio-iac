@@ -13,16 +13,16 @@
 # old notes and comments that say "pve01" mean the R620 unless they cite PET-528.
 #
 # ⚠ ITS OWN GROUP, pve_gpu, NOT pve_new. Several plays target pve_new with pve03's role in
-# mind: configure-pve-node.yml rebuilds the bridge from pve_node_* vars, and
-# configure-media-split.yml mounts the media NFS shares. pve01 needs neither. A play
+# mind: proxmox/configure-pve-node.yml rebuilds the bridge from pve_node_* vars, and
+# media/configure-media-split.yml mounts the media NFS shares. pve01 needs neither. A play
 # that should reach every node names `pve_gpu` beside `proxmox:pve_new`, as
-# configure-lxc-features.yml does.
+# proxmox/configure-lxc-features.yml does.
 #
 # THE TWO 1 TB DISKS SURVIVED THE INSTALL. They were unplugged while the installer
 # ran, so nothing on them changed:
 #   sda  ubuntu-vg        backup-lv at /srv/backups (the `ollama-backups` store),
 #                         and the old Ubuntu root, kept as a rollback
-#   sdb  network-storage  the recovered pve02 WD disk (configure-wd-disk.yml)
+#   sdb  network-storage  the recovered pve02 WD disk (proxmox/configure-wd-disk.yml)
 #
 # Root over the cluster's shared authorized_keys: joining copies the cluster's
 # /etc/pve/priv/authorized_keys onto the node, so the key that opens pve03 opens pve01.

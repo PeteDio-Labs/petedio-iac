@@ -28,7 +28,7 @@ hand using this document, **not** by `terraform apply`.
 - you're standing up a replacement state-backend host from nothing.
 
 For a *routine* config change (binary bump, versioning, UFW) you do **not** need a
-rebuild — just re-run the role (`ansible-playbook playbooks/configure-minio.yml …`,
+rebuild — just re-run the role (`ansible-playbook playbooks/services/configure-minio.yml …`,
 idempotent). This runbook is the **total-loss** path.
 
 ---
@@ -118,7 +118,7 @@ vault kv get -format=json kv/iac/minio-root | \
   jq '{minio_root_user: .data.data.root_user, minio_root_password: .data.data.root_password}' \
   > /tmp/minio-secrets.json
 
-ansible-playbook playbooks/configure-minio.yml -e @/tmp/minio-secrets.json
+ansible-playbook playbooks/services/configure-minio.yml -e @/tmp/minio-secrets.json
 
 shred -u /tmp/minio-secrets.json
 ```
@@ -219,13 +219,13 @@ The role ships an opt-in `mc mirror` backup behind a systemd timer. Once the des
 alias exists on .221 (configure it under root's `~/.mc`), enable it:
 
 ```yaml
-# group_vars or -e extra-vars for configure-minio.yml
+# group_vars or -e extra-vars for services/configure-minio.yml
 minio_backup_enabled: true
 minio_backup_dest: "offsite/tfstate-backup"   # your alias/path
 minio_backup_oncalendar: "daily"              # systemd OnCalendar=
 ```
 
-Re-run `configure-minio.yml`; the role installs `minio-tfstate-backup.{service,timer}` and
+Re-run `services/configure-minio.yml`; the role installs `minio-tfstate-backup.{service,timer}` and
 enables the timer. First run + verify:
 
 ```bash
@@ -296,8 +296,8 @@ ssh root@192.168.50.221 'systemctl cat minio.service | grep -E "^(User|Group|Exe
 ```
 
 If a probe disagrees with the host_vars file, change the file in a PR.
-Do not run `configure-minio.yml` for real against 221 to find out. The check is
-`ansible-playbook playbooks/configure-minio.yml --check --diff --limit minio-221 -e @<0600 file>`.
+Do not run `services/configure-minio.yml` for real against 221 to find out. The check is
+`ansible-playbook playbooks/services/configure-minio.yml --check --diff --limit minio-221 -e @<0600 file>`.
 It passes when it reports no change to `/etc/default/minio`, the data directory or the service
 account. Under `--check` on a host without `mc`, the play prints `NOT EXAMINED` for the mc
 install and does not download it, so the check cannot fail on the mirror.

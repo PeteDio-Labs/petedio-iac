@@ -4,7 +4,7 @@
 # tests/lxc-startup-plan.yml runs it on localhost.
 #
 # lxc_startup_found maps each node to the declared VMIDs it reported, or to null for a node
-# that gave no report. playbooks/configure-lxc-startup.yml builds it from each node's plan
+# that gave no report. playbooks/proxmox/configure-lxc-startup.yml builds it from each node's plan
 # and asserts on both results.
 
 - name: List the nodes that gave no report

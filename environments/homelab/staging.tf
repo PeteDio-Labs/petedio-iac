@@ -3,7 +3,7 @@
 #
 # The host serves a built `dist/` with Caddy on :8080. Terraform owns existence, hardware and
 # network only. Caddy, the site root and the file layout belong to
-# ansible/playbooks/configure-staging.yml. The deploy that fills the site root is a separate
+# ansible/playbooks/services/configure-staging.yml. The deploy that fills the site root is a separate
 # change, because it runs portfolio code on a self-hosted runner and needs Pedro's OK.
 #
 # WHY 249. VMID = last IP octet, as everywhere here. 230 to 239 are used or burned
@@ -28,7 +28,7 @@ module "staging" {
   target_node      = "pve03"
   template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
   ssh_public_key   = var.ssh_public_key
-  description      = "Staging copy of pdlab.dev (portfolio). Managed by Terraform; app by configure-staging.yml."
+  description      = "Staging copy of pdlab.dev (portfolio). Managed by Terraform; app by services/configure-staging.yml."
 }
 
 output "staging_id" {

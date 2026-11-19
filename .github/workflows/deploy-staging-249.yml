@@ -1,4 +1,4 @@
-# deploy-staging-249 — configure-staging.yml against staging-249 (the portfolio staging host).
+# deploy-staging-249 — services/configure-staging.yml against staging-249 (the portfolio staging host).
 #
 # Replaces scripts/deploy-staging-249.sh as the way to run it. The script stays as the operator's
 # fallback, for a sealed or unreachable CI path. Both read the same Vault records. This one

@@ -16,7 +16,7 @@
 #
 # Same TF/Ansible split as every other app LXC: TF owns existence + hardware + network;
 # everything inside (MinIO binaries, systemd unit, UFW, buckets, versioning, quotas) is
-# Ansible — ansible/playbooks/configure-minio-data.yml + roles/minio (the SAME role that
+# Ansible — ansible/playbooks/services/configure-minio-data.yml + roles/minio (the SAME role that
 # converges .221; it takes a bucket list, and .221's default is unchanged).
 #
 # VMID 245 = next free after tailscale (244); VMID = last IP octet (192.168.50.245). This

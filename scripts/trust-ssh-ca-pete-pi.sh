@@ -14,7 +14,7 @@
 # the result by reading sshd's effective config and the listener count.
 #
 # ansible/inventory/host_vars/pete-pi.yml declares the same state for roles/ssh-ca, so a later
-# configure-ssh-ca.yml run on this host keeps these files.
+# access/configure-ssh-ca.yml run on this host keeps these files.
 #
 # PRINCIPAL SCOPE. AuthorizedPrincipalsFile applies to every user, so root and other accounts on the
 # Pi get no principals file and trust no certificate. Only pedro lists a principal.

@@ -140,12 +140,12 @@ because the nightly vzdump jobs run at 02:30 (pve02) and 02:45 (pve03) Eastern, 
 the store is disabled, every job fails. It doesn't need the driver.
 
 1. Turn pve01's own host firewall off:
-   `ansible-playbook playbooks/configure-pve-firewall.yml --limit pve01`. The datacenter
+   `ansible-playbook playbooks/proxmox/configure-pve-firewall.yml --limit pve01`. The datacenter
    firewall is on, and a node with no `host.fw` drops inbound traffic, NFS included.
    Gate: `/etc/pve/nodes/pve01/host.fw` holds `enable: 0`. Port 2049 has no listener
    until step 2 installs the NFS server, so don't test it here.
 2. Rebuild the NFS server first:
-   `ansible-playbook playbooks/configure-backup-store.yml --limit pve01`. The reinstall
+   `ansible-playbook playbooks/backup/configure-backup-store.yml --limit pve01`. The reinstall
    removed its exports, and A4 unmounted every client, so no client can mount until
    this runs. Gate: `exportfs` on pve01 lists `/srv/backups` and `/srv/backups/pete-pi`,
    and `nc -zv 192.168.50.12 2049` from pve02 connects.
@@ -155,8 +155,8 @@ the store is disabled, every job fails. It doesn't need the driver.
    role proves the mounted store reads `active`, and a disabled store never does.
    `is_mountpoint` keeps any node without the mount from writing to its root disk.
 4. `../scripts/deploy-backup-store.sh` (from `ansible/`), then
-   `ansible-playbook playbooks/configure-wd-disk.yml`. The script runs
-   `configure-backup-store.yml` with the nodes' Kuma push tokens from Vault, so it is
+   `ansible-playbook playbooks/proxmox/configure-wd-disk.yml`. The script runs
+   `backup/configure-backup-store.yml` with the nodes' Kuma push tokens from Vault, so it is
    Pedro's credential step (`PET-511`). The bare play installs `backup-health.timer`
    with no push URL, and each node's first 06:00 run then fails its push. On pete-pi-1, restart the
    automount: `sudo systemctl restart 'mnt-ollama\x2dbackups.automount'`.
@@ -165,7 +165,7 @@ the store is disabled, every job fails. It doesn't need the driver.
    count (804). Count on a node, not on pete-pi-1: the Pi mounts only its own export,
    `/srv/backups/pete-pi`, which holds `uptime-kuma` and no `dump`. On the Pi, check
    that `findmnt /mnt/ollama-backups` shows that NFS mount.
-6. `ansible-playbook playbooks/configure-pve01.yml -e nvidia_driver_allow_reboot=true`.
+6. `ansible-playbook playbooks/proxmox/configure-pve01.yml -e nvidia_driver_allow_reboot=true`.
    It sets the time zone and the `.lab` domain, downloads the template with `pveam`,
    and installs the driver. It ends with "CT 246 does not exist yet". That message is
    expected at this point. Gate: the `nvidia-smi` line lists both UUIDs at
@@ -176,15 +176,15 @@ the store is disabled, every job fails. It doesn't need the driver.
 1. Merge the PR. Apply-on-merge creates CT 246 on pve01. Gate: the apply log shows
    `module.ollama` created, `module.pve01_host` updated in place, and nothing destroyed.
 2. From `main`, run:
-   - `ansible-playbook playbooks/configure-lxc-features.yml`, then `pct reboot 246` on pve01.
+   - `ansible-playbook playbooks/proxmox/configure-lxc-features.yml`, then `pct reboot 246` on pve01.
      Gate: `pct config 246 --current` shows `nesting=1`. The play also exits 2 for any
      other container with a restart pending, such as 240 or 249. Reboot only 246 here:
      each other restart needs its own window from Pedro.
-   - `ansible-playbook playbooks/configure-pve01.yml -e lxc_gpu_allow_restart=true`.
+   - `ansible-playbook playbooks/proxmox/configure-pve01.yml -e lxc_gpu_allow_restart=true`.
      Gate, from the host: `pct config 246 --current` lists each `/dev/nvidia*` entry
      with `mode=0666`, and `pct exec 246 -- ls -l /dev/nvidia0 /dev/nvidia1` shows both
      device nodes. Don't run `nvidia-smi` in the container yet: the next play installs it.
-   - `ansible-playbook playbooks/configure-ollama-246.yml`. Run it from a `main` that
+   - `ansible-playbook playbooks/ollama/configure-ollama-246.yml`. Run it from a `main` that
      holds the allowlist drop-ins (`PET-528`, Codex P1 on 26f7ee1). It installs the
      NVIDIA userspace before Ollama. Gate: `pct exec 246 -- nvidia-smi -L` lists both
      UUIDs, and the play's last play reports that every installed guarded unit requires
@@ -195,12 +195,12 @@ the store is disabled, every job fails. It doesn't need the driver.
 3. Bring pve01 into the node baseline. Each play reaches pve01 through `pve_gpu`. The
    journald and node-exporter plays also run on pve02, pve03 and pete-pi-1 and their
    guests. To touch pve01 only, add `--limit pve01`.
-   - `ansible-playbook playbooks/configure-pve-firewall.yml --check --diff`, then without
+   - `ansible-playbook playbooks/proxmox/configure-pve-firewall.yml --check --diff`, then without
      `--check`. It writes pve01's `host.fw` with `enable: 0`, which every node needs
      before the datacenter firewall filters anything.
-   - `ansible-playbook playbooks/configure-journald.yml`
-   - `ansible-playbook playbooks/configure-node-exporter.yml`, then `configure-metrics.yml`,
-     which scrapes pve01 at `.12`. `configure-metrics.yml` needs CT 240 running with
+   - `ansible-playbook playbooks/observability/configure-journald.yml`
+   - `ansible-playbook playbooks/observability/configure-node-exporter.yml`, then `observability/configure-metrics.yml`,
+     which scrapes pve01 at `.12`. `observability/configure-metrics.yml` needs CT 240 running with
      `nesting=1`, so its restart, and any other the features play reports, comes first, in
      a window Pedro picks. Gate: inside CT 240, `/api/v1/targets` on `127.0.0.1:9090`
      shows `192.168.50.12` as `up`.
@@ -228,7 +228,7 @@ they were. Then restore the two-node cluster's third vote:
 2. On pve03, register the QDevice: `pvecm qdevice setup 192.168.50.4`. It asks for the
    Pi's root password, which Pedro types. `roles/cluster-qdevice` never runs this step;
    it only installs and serves qnetd.
-3. `ansible-playbook playbooks/configure-pete-pi.yml --tags qdevice`. The setup leaves
+3. `ansible-playbook playbooks/services/configure-pete-pi.yml --tags qdevice`. The setup leaves
    qnetd's certificate store owned by root, and the role gives it back to `coroqnetd`.
 4. Gate: `pvecm status` on pve03 shows `Expected votes: 3` and the QDevice line reads
    `A,V`. `A,NV` means the QDevice is registered and casts no vote.

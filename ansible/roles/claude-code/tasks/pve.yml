@@ -10,7 +10,7 @@
 # because PVEAuditor holds no privilege that modifies anything. README.md, "The read-only
 # Proxmox token (PET-510)", has the proofs.
 #
-# THE TOKEN IS MINTED ON THE MAC, NOT HERE. playbooks/mint-claude-247-pve.yml creates the user,
+# THE TOKEN IS MINTED ON THE MAC, NOT HERE. playbooks/access/mint-claude-247-pve.yml creates the user,
 # the token and both ACLs on pve02 and writes kv/services/claude-247-pve.
 # scripts/deploy-claude-247.sh reads that entry and passes it to this file.
 #

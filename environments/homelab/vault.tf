@@ -7,7 +7,7 @@
 # container and owns existence + hardware + network only.
 #
 # Vault itself — install, raft storage, TLS, and the nesting/keyctl container
-# features — comes from Ansible post-create (ansible/playbooks/configure-vault.yml).
+# features — comes from Ansible post-create (ansible/playbooks/vault/configure-vault.yml).
 # Proxmox's root@pam check rejects API tokens for the `features` mutation, so the
 # module leaves `features` out and keeps it in ignore_changes (see docs/GOTCHAS.md).
 

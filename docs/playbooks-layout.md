@@ -41,7 +41,11 @@ the same pull request.
 6. **Allowlist:** `scripts/lab-playbooks.txt` lists a playbook as `<area>/<name>.yml`. The guard,
    `lab-action.sh` and `lab-playbook.sh` accept that form and nothing deeper. `archive/` and
    `villain/` playbooks never go on the allowlist.
-7. **Stale plays:** a play that targets a retired host, or that a newer play replaced, moves to
+7. **Outside callers:** a playbook that another repo's workflow runs by path stays directly under
+   `ansible/playbooks/` until that repo changes its caller. `configure-pete-bot.yml` (pete-bot),
+   `configure-media-dash.yml` (petedio-media-control) and `configure-search.yml` (petedio-search)
+   are such playbooks. Search the other repos for a playbook's path before you move it.
+8. **Stale plays:** a play that targets a retired host, or that a newer play replaced, moves to
    `archive/` with a dated banner that says what replaced it and why it must not run. A play with
    no remaining value is deleted, and the pull request gives a one-line reason. CI still
    syntax-checks and lints `archive/`, so a kept play stays valid YAML.

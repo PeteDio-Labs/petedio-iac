@@ -73,4 +73,4 @@
   ansible.builtin.debug:
     msg: >-
       loki answers ready on {{ loki_port }} and holds {{ loki_labels.json.data | default([]) | length }}
-      label names. Zero means no shipper has pushed yet: run playbooks/configure-log-shipping.yml.
+      label names. Zero means no shipper has pushed yet: run playbooks/observability/configure-log-shipping.yml.

@@ -203,7 +203,7 @@
     fail_msg: >-
       `unshare --user` failed ({{ codex_userns.stderr | default('') }}), so the Codex sandbox
       cannot start. Declare `nesting: "1"` for this container in
-      roles/lxc-features/defaults/main.yml, run configure-lxc-features.yml, and restart it.
+      roles/lxc-features/defaults/main.yml, run proxmox/configure-lxc-features.yml, and restart it.
     quiet: true
 
 - name: Create the Codex system config directory

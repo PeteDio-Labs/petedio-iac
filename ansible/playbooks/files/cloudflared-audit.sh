@@ -1,6 +1,6 @@
 #!/bin/sh
 # cloudflared-audit.sh — print how each container on this host is configured, with no secret in
-# the output (PET-768, PET-718). audit-cloudflared-112.yml pipes it into `pct exec 112 -- sh -s`.
+# the output (PET-768, PET-718). observability/audit-cloudflared-112.yml pipes it into `pct exec 112 -- sh -s`.
 #
 # The tunnel token can sit in Config.Cmd (`--token <value>`) or in Config.Env (`TUNNEL_TOKEN=...`).
 # This script strips the secret here, on the guest, so no raw value reaches Ansible's registered

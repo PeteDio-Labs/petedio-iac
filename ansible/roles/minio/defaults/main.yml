@@ -102,7 +102,7 @@ minio_unit_legacy_layout: false
 
 # --- Root credentials (REQUIRED — no default, never commit) ----------------------
 # Resolve from Vault and pass as a no_log extra-var via a 0600 JSON @file — the
-# configure-postgres.yml pattern (PET-106). Referenced Vault path (by name only):
+# services/configure-postgres.yml pattern (PET-106). Referenced Vault path (by name only):
 #   kv/iac/minio-root   fields: root_user, root_password
 # Deliberately left UNDEFINED: a committed placeholder would silently become the live
 # root credential on a bare re-run. tasks/main.yml asserts both are defined first.

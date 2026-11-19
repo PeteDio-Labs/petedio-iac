@@ -16,7 +16,7 @@ The steps belong to `PET-675`, `PET-674`, `PET-670`, `PET-667` and `PET-671`. A 
 |---|---|---|---|
 | 1 | [petedio-iac#461](https://github.com/PeteDio-Labs/petedio-iac/pull/461), [petedio-iac#459](https://github.com/PeteDio-Labs/petedio-iac/pull/459) and [petedio-iac#460](https://github.com/PeteDio-Labs/petedio-iac/pull/460) | `scripts/apply-vault-config.sh` | the plan lists the changes below, and the apply ends with `0 to destroy` |
 | 2 | none | `scripts/seed-claude-ops-ansible-approle.sh` | the script prints the token's policies and three capabilities |
-| 3 | none | `ansible-playbook playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent` from `ansible/` | the play ends with `failed=0` |
+| 3 | none | `ansible-playbook playbooks/access/mint-pve-audit-token.yml -e pve_client=lab-agent` from `ansible/` | the play ends with `failed=0` |
 | 4 | none | `scripts/seed-lab-agent.sh` | the script ends at `Done` and names no missing field |
 | 5 | [pete-bot#37](https://github.com/PeteDio-Labs/pete-bot/pull/37), then [pete-bot#38](https://github.com/PeteDio-Labs/pete-bot/pull/38) | none | the deploy installs `lab-agent` and its `/health` reports every dependency up |
 | 6 | [pete-bot#39](https://github.com/PeteDio-Labs/pete-bot/pull/39) and its plain-text change [pete-bot#40](https://github.com/PeteDio-Labs/pete-bot/pull/40) | none | `journalctl -u lab-agent` shows `drift check scheduled` |
@@ -67,7 +67,7 @@ Add `--rotate` to replace the `secret_id`. When the destroy of the old one fails
 ## Step 3: mint the lab-agent Proxmox token
 
 ```bash
-(cd ansible && ansible-playbook playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent)
+(cd ansible && ansible-playbook playbooks/access/mint-pve-audit-token.yml -e pve_client=lab-agent)
 ```
 
 The token has the `PVEAuditor` role and goes to `kv/services/lab-agent-pve`.

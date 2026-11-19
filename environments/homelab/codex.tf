@@ -4,7 +4,7 @@
 #
 # Same TF/Ansible split as claude.tf: TF owns existence, hardware, network and the guest
 # firewall; everything inside (the Codex binary, the session user, AGENTS.md, config.toml)
-# is Ansible — ansible/playbooks/configure-codex.yml + roles/codex.
+# is Ansible — ansible/playbooks/services/configure-codex.yml + roles/codex.
 #
 # VMID 248 = next free in the Agents (24x) block; VMID = last IP octet. 246 is claimed for
 # notes-svc by minio-data.tf, and 247 is claude-247. The 1xx block is for media guests, so
@@ -47,7 +47,7 @@ module "codex" {
 # without a rule list that goes stale.
 #
 # ⚠ THESE RULES DO NOTHING UNTIL THE DATACENTER FIREWALL IS ON. The CI token holds no
-# Sys.Modify, so Terraform cannot turn it on. ansible/playbooks/configure-pve-firewall.yml
+# Sys.Modify, so Terraform cannot turn it on. ansible/playbooks/proxmox/configure-pve-firewall.yml
 # does, over the nodes' root SSH, and turns each node's own host firewall off first, so
 # only guests with a firewall config are filtered (PET-553).
 #

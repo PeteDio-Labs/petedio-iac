@@ -93,7 +93,7 @@ jobs:
             kv/data/services/claude-247-pve ca_pem | PVE_CA_PEM ;
             kv/data/iac/lxc-ssh private_key | ANSIBLE_SSH_KEY
 
-      - name: Check the identities, then apply configure-claude-code.yml (ansible in Docker)
+      - name: Check the identities, then apply services/configure-claude-code.yml (ansible in Docker)
         shell: bash
         env:
           MIXUP_PROBE: ${{ inputs.mixup_probe }}
@@ -145,8 +145,8 @@ jobs:
             "apt-get update -q >/dev/null && apt-get install -y -q openssh-client >/dev/null && \
              pip install -q 'ansible-core==2.20.4' && \
              ansible-galaxy collection install -r requirements.yml && \
-             if ansible-playbook -i inventory/ playbooks/configure-claude-code.yml --list-hosts | grep -q 'hosts (0):'; then \
+             if ansible-playbook -i inventory/ playbooks/services/configure-claude-code.yml --list-hosts | grep -q 'hosts (0):'; then \
                echo 'ABORT: play matches zero hosts — inventory or group name is wrong'; exit 1; \
              fi && \
-             ansible-playbook -i inventory/ playbooks/configure-claude-code.yml \
+             ansible-playbook -i inventory/ playbooks/services/configure-claude-code.yml \
                -e @/ci/extra.json -e ansible_ssh_private_key_file=/ci/key"

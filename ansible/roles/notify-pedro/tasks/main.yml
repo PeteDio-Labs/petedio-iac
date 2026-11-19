@@ -70,7 +70,7 @@
 #
 # A REFUSED TOKEN FAILS THE RUN, AND AN UNREACHABLE pete-bot WARNS (exit 3). The first is
 # this host's config. The second is media-dash-237's outage, and failing here would stop
-# every task after this role, including the session checks in configure-claude-code.yml.
+# every task after this role, including the session checks in services/configure-claude-code.yml.
 - name: Check for each user's token on disk
   ansible.builtin.stat:
     path: "{{ ansible_facts.getent_passwd[item][4] }}/.config/notify-pedro/token"

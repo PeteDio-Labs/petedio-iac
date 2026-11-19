@@ -1,4 +1,4 @@
-# deploy-plane — configure-plane.yml against plane-235 (Plane and its MCP shim).
+# deploy-plane — services/configure-plane.yml against plane-235 (Plane and its MCP shim).
 #
 # Replaces scripts/deploy-plane.sh as the way to run it. The script stays as the operator's
 # fallback, for a sealed or unreachable CI path. Both read the same Vault records. This one

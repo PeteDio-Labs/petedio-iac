@@ -103,7 +103,7 @@ first (`vault-breakglass` on 247).
   F="$(mktemp)"
   vault kv get -format=json kv/iac/minio-root \
     | jq '{minio_root_user: .data.data.root_user, minio_root_password: .data.data.root_password}' > "$F"
-  ansible-playbook playbooks/configure-minio.yml --check --diff -e @"$F"
+  ansible-playbook playbooks/services/configure-minio.yml --check --diff -e @"$F"
   shred -u "$F"
   ```
 

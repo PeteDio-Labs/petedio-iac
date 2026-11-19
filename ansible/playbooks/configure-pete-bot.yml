@@ -100,7 +100,7 @@
     # stay off, so a deploy before the seed changes nothing.
     pete_bot_reports_repos: "petedio-iac,petedio-workspace,petedio-vault,petedio-pm,pete-bot,\
       petedio-media-control,petedio-media-iac,skills"
-    # Written by collect-cve-inventory.yml. The directory is root:pete-bot 0750, so the unit's
+    # Written by observability/collect-cve-inventory.yml. The directory is root:pete-bot 0750, so the unit's
     # Group= reads it, and ProtectSystem=strict leaves it readable.
     pete_bot_cve_snapshot: /var/lib/cve-inventory/cve-inventory.json
     pete_bot_reports_ready: >-
@@ -253,7 +253,7 @@
         fail_msg: >-
           lab-agent got {{ lab_agent_set_count }} of {{ lab_agent_values | length }} values, or it
           has no mirror App, or its ask bearer repeats another route's. Seed
-          kv/services/lab-agent-pve with playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
+          kv/services/lab-agent-pve with playbooks/access/mint-pve-audit-token.yml -e pve_client=lab-agent
           and kv/services/lab-agent with scripts/seed-lab-agent.sh, then deploy again.
           kv/services/claude-workspace-mirror comes from scripts/seed-workspace-mirror-vault.sh.
 
@@ -715,7 +715,7 @@
             state: started
             daemon_reload: true
 
-    # The daily CVE check (PET-770) reads the file collect-cve-inventory.yml writes. Switching it on
+    # The daily CVE check (PET-770) reads the file observability/collect-cve-inventory.yml writes. Switching it on
     # before that file exists would send a failure DM and retry three times a day, so the path
     # stays empty, and the report off, until the first collector run has written the file.
     - name: Look for the CVE inventory snapshot

@@ -47,7 +47,7 @@ module "metrics" {
   # state, so false would stop a hand-started container on the next apply.
   start_on_boot = true
 
-  description = "Metrics store and dashboards (PET-708). Managed by Terraform; services by configure-metrics.yml."
+  description = "Metrics store and dashboards (PET-708). Managed by Terraform; services by observability/configure-metrics.yml."
 }
 
 output "metrics_id" {

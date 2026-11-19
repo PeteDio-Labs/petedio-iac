@@ -55,5 +55,5 @@ variable "ansible_inventory" {
 variable "ansible_playbook" {
   description = "Playbook (relative to ansible_dir) the gated bridge runs."
   type        = string
-  default     = "playbooks/ollama-service.yml"
+  default     = "playbooks/ollama/ollama-service.yml"
 }
