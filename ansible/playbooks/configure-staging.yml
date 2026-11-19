@@ -320,7 +320,7 @@
             }
             # Same-origin /api/ to the reports host, read-only. Caddy adds the staging service
             # token, so the browser holds none, and drops the visitor's cookies.
-{% if dashboard_staging_edge_header | length > 0 %}
+          {% if dashboard_staging_edge_header | length > 0 %}
             handle /api/* {
               @write not method GET HEAD
               respond @write 405
@@ -330,11 +330,11 @@
                 import /etc/caddy/dashboard-edge.conf
               }
             }
-{% else %}
+          {% else %}
             handle /api/* {
               respond `{"error":"staging api not configured"}` 503
             }
-{% endif %}
+          {% endif %}
             handle {
               try_files {path} /index.html
               file_server
