@@ -16,7 +16,7 @@
 # IDEMPOTENT. A re-run with the role and ACL present changes nothing. A check reports what it
 # would add, because the two reads below run in check mode and the writes are skipped.
 #
-# After it applies, set manage_backup_job = true in environments/homelab/flags.auto.tfvars.
+# The grant is applied and `manage_backup_job` is true in environments/homelab/flags.auto.tfvars.
 
 - name: Give the IaC token the backup-storage grant
   hosts: pve01
