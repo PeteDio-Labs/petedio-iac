@@ -3,3 +3,4 @@
   ansible.builtin.systemd:
     name: loki
     state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"
