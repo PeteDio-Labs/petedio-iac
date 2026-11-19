@@ -76,3 +76,15 @@ variable "credit_expires" {
   type        = string
   default     = "2027-04-20"
 }
+
+variable "billing_alarm_usd" {
+  description = "The CloudWatch billing alarm fires when estimated gross charges this month pass this amount. Lower than the monthly budget so it warns first."
+  type        = number
+  default     = 15
+}
+
+variable "extra_alarm_action_arns" {
+  description = "More ARNs the lab-dark alarm notifies, such as a failover action. Empty by default: the alarm emails the SNS topic only."
+  type        = list(string)
+  default     = []
+}

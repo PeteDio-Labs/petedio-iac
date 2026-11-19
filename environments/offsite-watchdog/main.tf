@@ -34,6 +34,18 @@ provider "aws" {
   }
 }
 
+# Billing metrics live only in us-east-1 (alarms.tf).
+provider "aws" {
+  alias      = "us_east_1"
+  region     = "us-east-1"
+  access_key = ephemeral.vault_kv_secret_v2.watchdog.data["aws_access_key_id"]
+  secret_key = ephemeral.vault_kv_secret_v2.watchdog.data["aws_secret_access_key"]
+
+  default_tags {
+    tags = local.tags
+  }
+}
+
 resource "aws_ssm_parameter" "discord_bot_token" {
   name             = local.param_token
   type             = "SecureString"
@@ -187,4 +199,9 @@ resource "aws_lambda_permission" "tick" {
 output "heartbeat_url" {
   description = "Where the lab POSTs its heartbeat. Store it with scripts/seed-aws-watchdog-vault.sh --heartbeat-url."
   value       = aws_lambda_function_url.fn.function_url
+}
+
+output "events_url" {
+  description = "Where the lab POSTs a JSON list of event lines, with the same secret header as the heartbeat. Each event lands in the function's log group as a lab_event line."
+  value       = "${aws_lambda_function_url.fn.function_url}events"
 }

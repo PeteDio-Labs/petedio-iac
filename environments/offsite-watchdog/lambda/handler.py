@@ -3,7 +3,8 @@
 Two entry paths in one function:
 
 - a Function URL request is the lab's heartbeat: it must carry the heartbeat secret and
-  records the time;
+  records the time. A request to `/events` carries a batch of lab event lines instead, which
+  land in CloudWatch Logs next to the checks;
 - a scheduled run checks the heartbeat's age and the public endpoints, and posts to Discord
   on a state change.
 
@@ -28,6 +29,7 @@ HEARTBEAT_ID = "heartbeat"
 OUTAGE_ID = "outage-note"  # the lab's account of its own missed beats, read once by RECOVERED
 USER_AGENT = "DiscordBot (https://github.com/PeteDio-Labs/petedio-iac, 1)"  # Discord answers 403 to the default urllib agent
 DISCORD_API = "https://discord.com/api/v10"
+METRIC_NAMESPACE = "PeteDio/Watchdog"  # the alarms in alarms.tf read this namespace
 
 
 def _env(name, default=None):
@@ -137,6 +139,68 @@ def heartbeat(event, store, now):
     return {"statusCode": 200, "body": "ok"}
 
 
+EVENT_MAX_BYTES = 16384
+EVENT_MAX_COUNT = 50
+EVENT_FIELDS = ("id", "ts", "source", "level", "msg")
+
+
+def clean_event(raw):
+    """Keep only the allow-listed fields, as short text. Returns None for anything that is not an object."""
+    if not isinstance(raw, dict):
+        return None
+    event = {k: str(raw[k])[:200] for k in EVENT_FIELDS if k in raw}
+    return event or None
+
+
+def lab_events(event, store):
+    """POST /events: the lab ships its event lines here and each one lands in CloudWatch Logs.
+
+    The same secret as the heartbeat guards it. The body is capped, each event keeps five short
+    fields, and the response says how many were written, so a sender can tell none from all.
+    """
+    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    if not hmac.compare_digest(headers.get("x-heartbeat-secret", ""), store.secret(_env("PARAM_HEARTBEAT"))):
+        return {"statusCode": 403, "body": "forbidden"}
+    body = event.get("body") or ""
+    if event.get("isBase64Encoded"):
+        import base64
+
+        body = base64.b64decode(body).decode("utf-8", "replace")
+    if len(body.encode()) > EVENT_MAX_BYTES:
+        return {"statusCode": 413, "body": "too large"}
+    try:
+        items = json.loads(body)
+    except ValueError:
+        return {"statusCode": 400, "body": "not json"}
+    if not isinstance(items, list) or len(items) > EVENT_MAX_COUNT:
+        return {"statusCode": 400, "body": "send a list of at most %d events" % EVENT_MAX_COUNT}
+    written = 0
+    for raw in items:
+        cleaned = clean_event(raw)
+        if cleaned:
+            print(json.dumps({"lab_event": cleaned}))
+            written += 1
+    return {"statusCode": 200, "body": json.dumps({"written": written, "received": len(items)})}
+
+
+def emf(metrics, dimensions=None):
+    """One CloudWatch embedded-metric line. CloudWatch turns it into a metric with no PutMetricData call."""
+    dims = dimensions or {}
+    line = {
+        "_aws": {
+            "Timestamp": int(time.time() * 1000),
+            "CloudWatchMetrics": [{
+                "Namespace": METRIC_NAMESPACE,
+                "Dimensions": [sorted(dims)],
+                "Metrics": [{"Name": name, "Unit": unit} for name, (_, unit) in metrics.items()],
+            }],
+        },
+        **dims,
+        **{name: value for name, (value, _) in metrics.items()},
+    }
+    print(json.dumps(line))
+
+
 def run_checks(store, now, probe_fn=probe, post_fn=discord):
     target = (store.secret(_env("PARAM_DISCORD_TOKEN")), store.secret(_env("PARAM_DISCORD_CHANNEL")))
     threshold = int(_env("FAIL_THRESHOLD", "2"))
@@ -219,6 +283,12 @@ def run_checks(store, now, probe_fn=probe, post_fn=discord):
         print(json.dumps({"check": name, "up": up, "detail": detail,
                           "fails": int(state.get("fails", 0)), "posted": bool(state.get("posted", False))}))
 
+    # Metrics for the CloudWatch alarms. The age is the number the lab-dark alarm judges, and a
+    # missing datapoint also alarms, so a dead checker cannot read as a healthy lab.
+    emf({"HeartbeatAgeSeconds": (age, "Seconds")})
+    for name, up, _ in results:
+        emf({"CheckUp": (1 if up else 0, "None")}, {"Check": name})
+
     if failed_posts:
         raise RuntimeError("%d Discord post(s) failed" % len(failed_posts))
     return {"examined": len(results), "answering": sum(1 for _, up, _ in results if up)}
@@ -228,5 +298,7 @@ def handler(event, context, store=None, now=None):
     store = store or AwsStore()
     now = time.time() if now is None else now
     if "requestContext" in (event or {}) and "http" in event["requestContext"]:
+        if event["requestContext"]["http"].get("path") == "/events":
+            return lab_events(event, store)
         return heartbeat(event, store, now)
     return run_checks(store, now)
