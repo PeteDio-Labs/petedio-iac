@@ -1,9 +1,9 @@
 ---
-# ⚠ Written for pve01 + pve02 (2026-08-31). pve01 died on 2026-09-03; the survivors are pve02
-# (the `proxmox` group) and pve03 (`pve_new`). This play still targets `proxmox` only — pve03
-# holds the platform tier and Vault, so putting it in an overnight reboot window is a decision,
-# not a find-and-replace (configure-lxc-features.yml shows the `proxmox:pve_new` pattern).
-# The pve01 sentences below are history.
+# ⚠ SCOPE. This play targets the `proxmox` group, which holds pve02 only. pve03 (`pve_new`) holds
+# Vault and the platform tier, and pve01 (`pve_gpu`, the former ollama-host at .12, PET-528) holds
+# both GPUs. Adding either to this overnight window is a decision, not a find-and-replace
+# (configure-lxc-features.yml shows the `proxmox:pve_new:pve_gpu` pattern). The first pve01, a
+# Dell R620, died on 2026-09-03; the pve01 sentences below mean that machine and are history.
 #
 # schedule-node-upgrade.yml — install pending upgrades on both Proxmox nodes
 # overnight, gated on a fresh backup, without rebooting. (PET-315)

@@ -1,4 +1,8 @@
 ---
+# ⛔ ARCHIVED 2026-11-19 — DO NOT RUN. One-shot cleanup for PET-779: CT 234 and the Palworld server are
+# destroyed, and the play removed the host leftovers when it ran. Kept as the record of what the
+# `palworld-mesh-nat` role left on pve03.
+#
 # retire-palworld-mesh-nat.yml — remove the Palworld mesh NAT from pve03. (PET-779)
 #
 #   ansible-playbook -i inventory/pve03.yml playbooks/retire-palworld-mesh-nat.yml --check --diff

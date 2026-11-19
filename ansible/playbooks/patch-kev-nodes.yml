@@ -1,4 +1,8 @@
 ---
+# ⛔ ARCHIVED 2026-11-19 — DO NOT RUN. One-shot for PET-815 (libbrotli1 and inetutils-telnet on the
+# nodes). The fixes shipped, and `patch-guests.yml` is the standing patch path. It left the lab-action
+# allowlist when it moved here.
+#
 # patch-kev-nodes.yml — upgrade libbrotli1 and inetutils-telnet on the Proxmox nodes. (PET-815)
 #
 # The 2026-11-03 CVE check named CVE-2026-111497 (libbrotli1) and CVE-2026-24061
