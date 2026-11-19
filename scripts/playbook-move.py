@@ -37,7 +37,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PLAYBOOKS = ROOT / "ansible" / "playbooks"
 AREA = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-TEXT_SUFFIXES = {".yml", ".yaml", ".md", ".sh", ".py", ".tf", ".j2", ".toml", ".txt", ".json", ".hcl", ""}
+TEXT_SUFFIXES = {".yml", ".tfvars", ".yaml", ".md", ".sh", ".py", ".tf", ".j2", ".toml", ".txt", ".json", ".hcl", ""}
 # Files that describe the move and must keep the old names.
 SKIP = {"docs/playbooks-layout.md", "scripts/playbook-move.py"}
 BARE_SRC = re.compile(r"""(\bsrc:\s*)([A-Za-z0-9][\w.-]*)\s*$""")
