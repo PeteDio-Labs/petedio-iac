@@ -202,7 +202,9 @@ unconfirmed subscription receives nothing.
 
 ### Alarm permissions
 
-Put these in a customer-managed policy named `petedio-watchdog-alarms` and attach it to
+An admin creates two SNS topics first, `petedio-watchdog-alarms` in us-east-2 and
+`petedio-watchdog-billing` in us-east-1, with the default access policy. Terraform only reads them.
+Put the JSON below in a customer-managed policy named `petedio-watchdog-alarms` and attach it to
 `petedio-terraform-watchdog`, as for the budgets policy. An admin identity creates it.
 
 ```json
@@ -217,7 +219,7 @@ Put these in a customer-managed policy named `petedio-watchdog-alarms` and attac
             "cloudwatch:TagResource", "cloudwatch:UntagResource"],
  "Resource": "arn:aws:cloudwatch:*:ACCOUNT_ID:alarm:petedio-watchdog-*"},
 {"Effect": "Allow",
- "Action": ["sns:CreateTopic", "sns:DeleteTopic", "sns:GetTopicAttributes",
+ "Action": ["sns:GetTopicAttributes",
             "sns:Subscribe", "sns:Unsubscribe", "sns:GetSubscriptionAttributes",
             "sns:ListTagsForResource", "sns:TagResource", "sns:UntagResource"],
  "Resource": "arn:aws:sns:*:ACCOUNT_ID:petedio-watchdog-*"},
@@ -228,6 +230,6 @@ Put these in a customer-managed policy named `petedio-watchdog-alarms` and attac
 
 The condition on `PutMetricAlarm` limits every alarm's actions to the two watchdog topics, so
 the apply user cannot attach an EC2 stop or another destination. A failover action needs its own
-reviewed grant. The policy leaves out `sns:SetTopicAttributes` and `sns:Publish`: with
-`SetTopicAttributes` the user could rewrite a topic's access policy and grant itself publishing.
-If a plan asks for `SetTopicAttributes`, an admin reviews that request instead of adding it here.
+reviewed grant. The policy leaves out `sns:CreateTopic`, `sns:DeleteTopic`, `sns:SetTopicAttributes` and
+`sns:Publish`. A user who can create or delete a topic can set its access policy and grant itself
+publishing, so an admin owns the topics. If a plan asks for one of these, an admin reviews it.

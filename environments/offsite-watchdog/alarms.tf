@@ -9,16 +9,20 @@
 #
 # The apply user needs the `cloudwatch:` and `sns:` actions in README.md, "Alarm permissions".
 
-# Alarms notify this topic. An email subscription stays pending until its owner confirms the
-# message AWS sends, so a plan that adds one does not prove the alert reaches anyone.
-resource "aws_sns_topic" "alarms" {
+# An admin creates both SNS topics by hand (README, "Alarm permissions") and this root only
+# reads them. A user who can create or delete a topic can set its access policy at creation and
+# grant itself sns:Publish, so topic creation stays outside the apply user's grants.
+#
+# An email subscription stays pending until its owner confirms the message AWS sends, so a plan
+# that adds one does not prove the alert reaches anyone.
+data "aws_sns_topic" "alarms" {
   name = "${local.name}-alarms"
 }
 
 resource "aws_sns_topic_subscription" "alarm_email" {
   for_each = toset(var.budget_alert_emails)
 
-  topic_arn = aws_sns_topic.alarms.arn
+  topic_arn = data.aws_sns_topic.alarms.arn
   protocol  = "email"
   endpoint  = each.value
 }
@@ -39,8 +43,8 @@ resource "aws_cloudwatch_metric_alarm" "lab_dark" {
   datapoints_to_alarm = 2
   treat_missing_data  = "breaching"
 
-  alarm_actions = concat([aws_sns_topic.alarms.arn], var.extra_alarm_action_arns)
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = concat([data.aws_sns_topic.alarms.arn], var.extra_alarm_action_arns)
+  ok_actions    = [data.aws_sns_topic.alarms.arn]
 }
 
 # One alarm per public check, such as Authentik on EC2. CheckUp is 1 when the probe passed.
@@ -60,15 +64,15 @@ resource "aws_cloudwatch_metric_alarm" "check_down" {
   datapoints_to_alarm = 2
   treat_missing_data  = "breaching"
 
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  ok_actions    = [aws_sns_topic.alarms.arn]
+  alarm_actions = [data.aws_sns_topic.alarms.arn]
+  ok_actions    = [data.aws_sns_topic.alarms.arn]
 }
 
 # Billing metrics exist only in us-east-1, and an alarm can notify only a topic in its own
 # region, so this one has its own topic. EstimatedCharges is gross spend before credits, the
 # same basis as the budgets in budgets.tf. It needs "Receive Billing Alerts" turned on once in
 # the account's billing preferences.
-resource "aws_sns_topic" "billing" {
+data "aws_sns_topic" "billing" {
   provider = aws.us_east_1
   name     = "${local.name}-billing"
 }
@@ -77,7 +81,7 @@ resource "aws_sns_topic_subscription" "billing_email" {
   provider = aws.us_east_1
   for_each = toset(var.budget_alert_emails)
 
-  topic_arn = aws_sns_topic.billing.arn
+  topic_arn = data.aws_sns_topic.billing.arn
   protocol  = "email"
   endpoint  = each.value
 }
@@ -97,5 +101,5 @@ resource "aws_cloudwatch_metric_alarm" "billing" {
   evaluation_periods  = 1
   treat_missing_data  = "notBreaching" # the metric publishes a few times a day, so gaps are normal
 
-  alarm_actions = [aws_sns_topic.billing.arn]
+  alarm_actions = [data.aws_sns_topic.billing.arn]
 }
