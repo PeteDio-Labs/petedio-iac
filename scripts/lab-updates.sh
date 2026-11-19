@@ -6,6 +6,11 @@
 # Alpine guests (112) have no apt, so the probe branches on `apk` and reports security as `na`: apk
 # marks no update as a security fix. An apk simulation reads the cached index, so check the list age.
 #
+# A host with no active security suite in its apt sources is its own state, `nosec`: its
+# security=0 proves nothing (PET-828), so the row prints security=n/a and the last line names it.
+# That state does not change the exit code. Every unreadable host is named in the last line,
+# and its row says why.
+#
 # Changes nothing: it runs no `apt-get update`, no upgrade and no reboot. It reads the apt
 # lists each host already holds, so it prints each list's age. A count from a stale list
 # undercounts, and the age line is how you tell.
@@ -19,7 +24,8 @@ PVE01=root@192.168.50.12   # the former ollama-host, a node since PET-528; reach
 PVE02=pve02
 PVE03=pve03
 PI=pi1
-EXAMINED=0; SKIPPED=0; UNREADABLE=0; PENDING=0; REBOOT=0
+EXAMINED=0; SKIPPED=0; UNREADABLE=0; PENDING=0; REBOOT=0; NOSEC=0
+UNREADABLE_NAMES=""; NOSEC_NAMES=""
 
 on() { local o=(); [ "$1" = "$PVE01" ] && o=(-i "$HOME/.ssh/id_ed25519_ansible")
        ssh -n -o ConnectTimeout=8 -o BatchMode=yes ${o[@]+"${o[@]}"} "$1" "$2" 2>/dev/null; }
@@ -29,7 +35,7 @@ pct_on() {  # node, args...
   if [ "$n" = "$PVE03" ]; then on "$n" "sudo /usr/sbin/pct $*"; else on "$n" "pct $*"; fi
 }
 
-# One probe, run inside the host or guest. Prints: os|upgradable|security|list_age_days|reboot|unattended
+# One probe, run inside the host or guest. Prints: os|upgradable|security|list_age_days|reboot|unattended|secsuite
 # It prints "ERR <reason>" and exits 1 when it cannot read the patch state, so a failed
 # apt simulation never turns into a "0 upgradable" row.
 PROBE='
@@ -39,49 +45,74 @@ if command -v apk >/dev/null 2>&1; then
   up=$(printf "%s\n" "$sim" | grep -c "Upgrading")
   sec=na
   newest=$(stat -c %Y /var/cache/apk/APKINDEX*.tar.gz 2>/dev/null | sort -n | tail -1)
-  ua=no
+  ua=no; ss=na
 else
   sim=$(apt-get -s dist-upgrade 2>&1) || { echo "ERR apt-simulation"; exit 1; }
   up=$(printf "%s\n" "$sim" | grep -c "^Inst ")
   sec=$(printf "%s\n" "$sim" | grep "^Inst " | grep -ci "security")
   newest=$(stat -c %Y /var/lib/apt/periodic/update-success-stamp /var/lib/apt/lists 2>/dev/null | sort -n | tail -1)
   ua=no; dpkg -s unattended-upgrades >/dev/null 2>&1 && ua=yes
+  ss=no
+  # Only files APT reads: sources.list, *.list and *.sources. APT ignores .save and .bak files and
+  # deb822 stanzas with "Enabled: no".
+  for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+    [ -f "$f" ] && grep -Eiv "^[[:space:]]*#" "$f" | grep -Eiq "^deb[[:space:]].*security" && ss=yes
+  done
+  for f in /etc/apt/sources.list.d/*.sources; do
+    [ -f "$f" ] && awk -v RS= "tolower(\$0) ~ /suites:[^\n]*security/ && tolower(\$0) !~ /enabled:[ \t]*(no|false)/{f=1} END{exit !f}" "$f" && ss=yes
+  done
 fi
 [ -n "$newest" ] || { echo "ERR package-list-age"; exit 1; }
 age=$(( ( $(date +%s) - newest ) / 86400 ))
 rb=no; [ -e /var/run/reboot-required ] && rb=yes
-echo "$PRETTY_NAME|$up|$sec|$age|$rb|$ua"
+echo "$PRETTY_NAME|$up|$sec|$age|$rb|$ua|$ss"
 '
 KERNEL_Q="dpkg-query -W -f '\${Package}\n' 'proxmox-kernel-*-pve-signed' 2>/dev/null | sort -V | tail -1"
 
+unreadable() {  # label, reason
+  UNREADABLE=$((UNREADABLE+1)); UNREADABLE_NAMES="$UNREADABLE_NAMES ${1// /_}"
+  printf "  ✗ %-28s unreadable: %s\n" "$1" "$2"
+}
+
 report() {  # label, raw probe output
-  local label=$1 raw=$2
-  if ! printf '%s' "$raw" | tail -1 | grep -Eq '^[^|]+\|[0-9]+\|([0-9]+|na)\|[0-9]+\|(yes|no)\|(yes|no)$'; then
-    UNREADABLE=$((UNREADABLE+1)); printf "  ✗ %-28s unreadable\n" "$label"; return
+  local label=$1 raw=$2 last why
+  last=$(printf '%s' "$raw" | tail -1)
+  if ! printf '%s' "$last" | grep -Eq '^[^|]+\|[0-9]+\|([0-9]+|na)\|[0-9]+\|(yes|no)\|(yes|no)\|(yes|no|na)$'; then
+    case "$last" in
+      "ERR "*) why="${last#ERR }" ;;
+      "")      why="probe printed nothing (ssh or exec failed, or the guest has no sh)" ;;
+      *)       why="unexpected probe output: $(printf '%s' "$last" | cut -c1-80)" ;;
+    esac
+    unreadable "$label" "$why"; return
   fi
-  IFS='|' read -r os up sec age rb ua <<<"$(printf '%s' "$raw" | tail -1)"
+  IFS='|' read -r os up sec age rb ua ss <<<"$last"
   EXAMINED=$((EXAMINED+1)); PENDING=$((PENDING+up))
   [ "$rb" = yes ] && REBOOT=$((REBOOT+1))
-  printf "  %s %-28s %-26s upgradable=%-3s security=%-3s lists=%sd old reboot=%s unattended=%s\n" \
-    "$([ "$up" -gt 0 ] && echo '!' || echo '✓')" "$label" "$os" "$up" "$sec" "$age" "$rb" "$ua"
+  if [ "$ss" = no ]; then
+    NOSEC=$((NOSEC+1)); NOSEC_NAMES="$NOSEC_NAMES ${label// /_}"; sec="n/a"
+  fi
+  printf "  %s %-28s %-26s upgradable=%-3s security=%-3s lists=%sd old reboot=%s unattended=%s%s\n" \
+    "$([ "$up" -gt 0 ] && echo '!' || echo '✓')" "$label" "$os" "$up" "$sec" "$age" "$rb" "$ua" \
+    "$([ "$ss" = no ] && echo '  [nosec: no security suite in apt sources]')"
 }
 
 for n in $PVE01 $PVE02 $PVE03; do
-  printf "\n%s\n" "== node $n"
+  nl=$n; [ "$n" = "$PVE01" ] && nl=pve01
+  printf "\n%s\n" "== node $nl"
   pv=$(on "$n" "pveversion" | head -1)
   run=$(on "$n" "uname -r"); inst=$(on "$n" "$KERNEL_Q")
   if [ -z "$pv" ] || [ -z "$run" ] || [ -z "$inst" ]; then
-    UNREADABLE=$((UNREADABLE+1)); echo "  ✗ $n: could not read pveversion or kernel (pve='${pv:-?}' running='${run:-?}' installed='${inst:-?}')"
+    unreadable "$nl (node info)" "could not read pveversion or kernel (pve='${pv:-?}' running='${run:-?}' installed='${inst:-?}')"
   else
     echo "  $pv | running kernel $run | newest installed $inst"
   fi
-  report "$n (host)" "$(on "$n" "$PROBE")"
+  report "$nl (host)" "$(on "$n" "$PROBE")"
   # Keep the listing's exit status apart from its content: a node with no running guests is healthy.
   if ! listing=$(pct_on "$n" list) || [ -z "$listing" ]; then
-    UNREADABLE=$((UNREADABLE+1)); echo "  ✗ $n: pct list failed"; continue
+    unreadable "$nl (pct list)" "pct list failed"; continue
   fi
   ids=$(printf '%s\n' "$listing" | awk 'NR>1 && $2=="running"{print $1}')
-  [ -z "$ids" ] && echo "  (no running guests on $n)"
+  [ -z "$ids" ] && echo "  (no running guests on $nl)"
   for id in $ids; do
     name=$(pct_on "$n" "exec $id -- hostname")
     report "$id ${name:-?}" "$(pct_on "$n" "exec $id -- sh -c '$PROBE'")"
@@ -96,6 +127,7 @@ if [ "${LAB_ACTION:-}" = 1 ]; then
 else
   report "$PI (host)" "$(on "$PI" "$PROBE")"
 fi
-printf "\nexamined %d hosts or guests; %d unreadable; %d skipped; %d packages upgradable; %d need a reboot\n" \
-  "$EXAMINED" "$UNREADABLE" "$SKIPPED" "$PENDING" "$REBOOT"
+printf "\nexamined %d hosts or guests; %d unreadable%s; %d skipped; %d packages upgradable; %d need a reboot; %d with no security suite%s\n" \
+  "$EXAMINED" "$UNREADABLE" "${UNREADABLE_NAMES:+ (${UNREADABLE_NAMES# })}" "$SKIPPED" "$PENDING" "$REBOOT" \
+  "$NOSEC" "${NOSEC_NAMES:+ (${NOSEC_NAMES# })}"
 [ "$UNREADABLE" -eq 0 ] && [ "$EXAMINED" -gt 0 ]
