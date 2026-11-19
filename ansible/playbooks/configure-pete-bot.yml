@@ -1,5 +1,5 @@
 ---
-# services/configure-pete-bot.yml — install pete-bot on media-dash-237, beside tracerr (PET-375).
+# configure-pete-bot.yml — install pete-bot on media-dash-237, beside tracerr (PET-375).
 #
 # WHAT IT IS. A Discord surface and nothing else. POST /v1/alert takes an Uptime Kuma
 # webhook and DMs the owner, editing the original message when the service recovers, and
@@ -25,7 +25,7 @@
 # ⚠ THE BINARY IS BUILT ON THE CONTROLLER. `bun build --compile` produces a standalone
 # linux-x64 executable, so 237 needs neither node nor bun and no npm install runs on a
 # container with 512 MB. The play only ever COPIES it, and fails if it is missing rather
-# than leaving yesterday's binary in place. Same shape as media/configure-media-dash.yml.
+# than leaving yesterday's binary in place. Same shape as configure-media-dash.yml.
 #
 # ⚠ OPERATOR-RUN OR CD, NEVER ON MERGE TO THIS REPO. No workflow here watches it: the
 # binary comes from the pete-bot repo, so that repo's deploy.yml drives it.
@@ -206,7 +206,7 @@
     # homelab's one timezone. Each window runs 30 minutes from the job's start.
     - name: Read the backup jobs and the homelab timezone
       ansible.builtin.include_vars:
-        file: "{{ playbook_dir }}/../../roles/{{ item.role }}/defaults/main.yml"
+        file: "{{ playbook_dir }}/../roles/{{ item.role }}/defaults/main.yml"
         name: "{{ item.name }}"
       loop:
         - {role: backup-store, name: pete_bot_backup_defaults}
@@ -507,7 +507,7 @@
             mode: "0640"
           loop:
             - { name: pve-root-ca.pem, pem: "{{ lab_agent_pve_ca_pem }}" }
-            - { name: vault-ca.pem, pem: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../../environments/homelab/vault-ca.crt') }}" }
+            - { name: vault-ca.pem, pem: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../environments/homelab/vault-ca.crt') }}" }
           loop_control:
             label: "{{ item.name }}"
           notify: Restart lab-agent
@@ -691,7 +691,7 @@
         # Read by systemd, as root, before it drops to the service account. So 0600 root.
         - name: Install lab-agent's environment file
           ansible.builtin.template:
-            src: "{{ playbook_dir | dirname }}/templates/lab-agent.env.j2"
+            src: lab-agent.env.j2
             dest: "{{ lab_agent_env_file }}"
             owner: root
             group: root
@@ -701,7 +701,7 @@
 
         - name: Install lab-agent's systemd unit
           ansible.builtin.template:
-            src: "{{ playbook_dir | dirname }}/templates/lab-agent.service.j2"
+            src: lab-agent.service.j2
             dest: /etc/systemd/system/lab-agent.service
             owner: root
             group: root
@@ -748,7 +748,7 @@
 
     - name: Install the environment file
       ansible.builtin.template:
-        src: "{{ playbook_dir | dirname }}/templates/pete-bot.env.j2"
+        src: pete-bot.env.j2
         dest: "{{ pete_bot_env_file }}"
         owner: root
         group: "{{ pete_bot_user }}"
@@ -758,7 +758,7 @@
 
     - name: Install the systemd unit
       ansible.builtin.template:
-        src: "{{ playbook_dir | dirname }}/templates/pete-bot.service.j2"
+        src: pete-bot.service.j2
         dest: /etc/systemd/system/pete-bot.service
         owner: root
         group: root

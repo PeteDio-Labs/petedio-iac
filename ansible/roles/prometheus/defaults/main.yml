@@ -43,6 +43,6 @@ prometheus_node_targets:
 # Extra scrape jobs: { job, targets: [host:port], scheme (optional) }. The play fails when any
 # extra target is down, so list a job only once its endpoint answers. Kuma's needs an API key and
 # is not listed. pete-bot's endpoint is on since PET-711 (METRICS_ENABLED in pete-bot.env.j2), so
-# run services/configure-pete-bot.yml, or deploy pete-bot, before this play.
+# run configure-pete-bot.yml, or deploy pete-bot, before this play.
 prometheus_extra_jobs:
   - { job: pete-bot, targets: ["192.168.50.237:9090"] }

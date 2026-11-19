@@ -2,7 +2,7 @@
 # reseed-minio-pete-bot-reports.sh — (re)seed kv/services/pete-bot-reports-backup with a MinIO
 # service account scoped to JUST the `pete-bot` bucket on the app-data host (LXC 245), so pete-bot
 # on 237 can copy its reports database there each day (PET-868). pete-bot's deploy.yml reads the
-# path and passes the key to services/configure-pete-bot.yml, which renders REPORT_BACKUP_* into the bot's
+# path and passes the key to configure-pete-bot.yml, which renders REPORT_BACKUP_* into the bot's
 # environment file.
 #
 # WHY A SEPARATE CREDENTIAL: the root credential (kv/iac/minio-data-root) is admin on the whole

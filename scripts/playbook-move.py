@@ -21,7 +21,8 @@ The script does what a move needs and a plain `git mv` leaves broken:
    `playbooks/<file>.yml` or a bare `<file>.yml` gets the new path.
 
 It prints how many files it read, moved and rewrote, and exits non-zero when a map line names a
-playbook that does not exist or an area that is not a single folder name. It does not run
+playbook that does not exist or an area that is not a single folder name. It lists any loop-built
+`src: "{{ item }}"` it cannot rewrite, for a person to fix. It does not run
 Ansible: run `ansible-playbook --syntax-check` over every playbook and
 `scripts/lab-playbook-guard.py --all` afterwards.
 """
@@ -37,11 +38,13 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PLAYBOOKS = ROOT / "ansible" / "playbooks"
 AREA = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-TEXT_SUFFIXES = {".yml", ".yaml", ".md", ".sh", ".py", ".tf", ".j2", ".toml", ".txt", ".json", ".hcl", ""}
+TEXT_SUFFIXES = {".yml", ".tfvars", ".yaml", ".md", ".sh", ".py", ".tf", ".j2", ".toml", ".txt", ".json", ".hcl", ""}
 # Files that describe the move and must keep the old names.
 SKIP = {"docs/playbooks-layout.md", "scripts/playbook-move.py"}
 BARE_SRC = re.compile(r"""(\bsrc:\s*)([A-Za-z0-9][\w.-]*)\s*$""")
 FILE_LOOKUP = re.compile(r"""(lookup\('(?:ansible\.builtin\.)?file',\s*)'([A-Za-z0-9][\w.-]*)'""")
+# A loop-built `src: "{{ item }}.j2"` names an asset the script cannot see. A person rewrites it.
+TEMPLATED_SRC = re.compile(r"""\bsrc:\s*["']?\{\{\s*item\b""")
 IMPORT = re.compile(r"(import_playbook:\s*)(\S+)")
 ASSET_SRC = re.compile(r"""(\bsrc:\s*)(?:"((?:files|templates)/[^"]*)"|'((?:files|templates)/[^']*)'|((?:files|templates)/\S*))""")
 
@@ -109,6 +112,7 @@ def main(argv: list[str]) -> int:
 
     files = tracked_text_files()
     changed: dict[pathlib.Path, str] = {}
+    review: list[str] = []
     for f in files:
         # Where the file lives before the move, and after, since imports resolve from there.
         old_loc = f
@@ -138,6 +142,8 @@ def main(argv: list[str]) -> int:
                     lambda mm: f'{mm.group(1)}"{{{{ playbook_dir | dirname }}}}/{mm.group(2) or mm.group(3) or mm.group(4)}"', new)
             if moved:
                 new = bare_asset(new)
+                if TEMPLATED_SRC.search(new):
+                    review.append(f"{f.relative_to(ROOT)}:{len(out) + 1}: {new.strip()}")
             out.append(new)
         text = "".join(out)
         if text != "".join(lines):
@@ -147,6 +153,11 @@ def main(argv: list[str]) -> int:
           f"{len(changed)} files change")
     for n, a in sorted(moves.items(), key=lambda kv: (kv[1], kv[0])):
         print(f"  move {n} -> {a}/{n}")
+    for line in review:
+        print(f"  REVIEW by hand (loop-built src): {line}")
+    if review and apply:
+        print(f"{len(review)} loop-built src lines need a manual rewrite to "
+              "{{ playbook_dir | dirname }}/templates/...; the script cannot see them.")
     if not apply:
         for f in sorted(changed):
             print(f"  rewrite {f.relative_to(ROOT)}")

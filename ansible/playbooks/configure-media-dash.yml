@@ -1,5 +1,5 @@
 ---
-# media/configure-media-dash.yml — deploy tracerr on media-dash-237 as a systemd service.
+# configure-media-dash.yml — deploy tracerr on media-dash-237 as a systemd service.
 #
 # tracerr is the media stack's read-only control surface (PET-355, repo
 # PeteDio-Labs/petedio-media-control). It answers "where is this stuck" by joining seerr
@@ -434,7 +434,7 @@
 
     - name: Install the LAN allowlist ruleset
       ansible.builtin.template:
-        src: "{{ playbook_dir | dirname }}/templates/mtrace-allowlist.nft.j2"
+        src: mtrace-allowlist.nft.j2
         dest: /etc/mtrace/allowlist.nft
         owner: root
         group: root
@@ -446,7 +446,7 @@
 
     - name: Install the allowlist unit
       ansible.builtin.template:
-        src: "{{ playbook_dir | dirname }}/templates/mtrace-allowlist.service.j2"
+        src: mtrace-allowlist.service.j2
         dest: /etc/systemd/system/mtrace-allowlist.service
         owner: root
         group: root
@@ -490,7 +490,7 @@
 
     - name: Install the service environment
       ansible.builtin.template:
-        src: "{{ playbook_dir | dirname }}/templates/mtrace.env.j2"
+        src: mtrace.env.j2
         dest: /etc/mtrace.env
         owner: root
         group: "{{ mtrace_group }}"
@@ -500,7 +500,7 @@
 
     - name: Install the systemd unit
       ansible.builtin.template:
-        src: "{{ playbook_dir | dirname }}/templates/mtrace.service.j2"
+        src: mtrace.service.j2
         dest: /etc/systemd/system/mtrace.service
         owner: root
         group: root

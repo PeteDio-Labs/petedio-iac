@@ -10,7 +10,7 @@
 # pve03 gets tracerr's public key with `restrict,port-forwarding,permitopen=` pinned to
 # 244's sshd, so the key opens a tunnel and never a shell or any other port on the node.
 # 244 gets the same key, restricted to the node's bridge address, as the media hosts do
-# in media/configure-media-dash.yml.
+# in configure-media-dash.yml.
 #
 # The public key is derived on pve03 from the private key on 237 with `ssh-keygen -y`, so
 # no key is typed, pasted or read from Vault. The play places no secret.

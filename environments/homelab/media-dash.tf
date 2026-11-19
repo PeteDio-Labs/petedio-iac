@@ -33,7 +33,7 @@
 #
 # TF owns existence, hardware and network only. The binary, the systemd unit and the
 # SSH key it uses to reach the media hosts are Ansible's, via
-# playbooks/media/configure-media-dash.yml — same split as every other app host here.
+# playbooks/configure-media-dash.yml — same split as every other app host here.
 
 module "media_dash" {
   source = "../../modules/proxmox-lxc"
@@ -73,7 +73,7 @@ module "media_dash" {
   # the same reason; it is the only other greenfield container on this node.
   template_file_id = "local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst"
   ssh_public_key   = var.ssh_public_key
-  description      = "mtrace — read-only media stack control surface (PET-355). Managed by Terraform; app by media/configure-media-dash.yml."
+  description      = "mtrace — read-only media stack control surface (PET-355). Managed by Terraform; app by configure-media-dash.yml."
 }
 
 output "media_dash_id" {

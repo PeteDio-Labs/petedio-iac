@@ -110,7 +110,7 @@ To set it up, do these in order before you merge the pete-bot change:
    The play now also trusts the CA on 237 and lists `deploy-pete-bot` in root's principals file.
 3. Merge the pete-bot change. The next push to its `main` is the first certificate login to 237.
 
-A merge before steps 1 and 2 fails the deploy at the signing step, not silently. `services/configure-pete-bot.yml`
+A merge before steps 1 and 2 fails the deploy at the signing step, not silently. `configure-pete-bot.yml`
 revokes every `pete-bot-cd` key on 237, so reverting the pete-bot change does not restore the old login.
 To roll back, restore the key by hand on 237 or fix the certificate path. Pedro deletes the old key
 fields from Vault after the revoke has run.

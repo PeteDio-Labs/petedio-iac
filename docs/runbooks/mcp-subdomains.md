@@ -17,7 +17,7 @@ for the lab connector. Pedro runs steps 2 to 4.
    ```bash
    (cd environments/homelab && terraform output -raw lab_mcp_subdomain_access_aud)
    ```
-   Set `lab_agent_access_aud` in `ansible/playbooks/services/configure-pete-bot.yml` to that value in a
+   Set `lab_agent_access_aud` in `ansible/playbooks/configure-pete-bot.yml` to that value in a
    PR, merge it, and run the configure-pete-bot play. Add the new lab connector, call a tool,
    and remove the old connector.
 4. **Check both.** `scripts/lab-mcp-check.sh` probes the edge, the Plane shim, the 237 listener

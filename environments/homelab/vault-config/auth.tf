@@ -150,7 +150,7 @@ resource "vault_jwt_auth_backend_role" "media_ci" {
 # and the workflow still reported green. repository + ref is exactly as tight: this repo,
 # pushes to main only (a PR run carries ref=refs/pull/N/merge and is excluded).
 # pete-bot-cd role -> pete-bot-cd policy (PET-375). The pete-bot repo's deploy.yml
-# builds the standalone binary and runs services/configure-pete-bot.yml against media-dash-237.
+# builds the standalone binary and runs configure-pete-bot.yml against media-dash-237.
 # Main-push only: a PR run carries ref=refs/pull/N/merge and is excluded.
 resource "vault_jwt_auth_backend_role" "pete_bot_cd" {
   backend           = vault_jwt_auth_backend.github.path
@@ -215,7 +215,7 @@ resource "vault_jwt_auth_backend_role" "media_dash_cd" {
 }
 
 # search-cd role → search-cd policy. petedio-search's deploy.yml compiles the binary on the
-# runner and runs services/configure-search.yml against ollama-246 on every push to main, so a deploy no
+# runner and runs configure-search.yml against ollama-246 on every push to main, so a deploy no
 # longer waits on an operator running scripts/deploy-search.sh. workflow_ref pins deploy.yml, the
 # only workflow in that repo that mints this role. event_name admits the two triggers deploy.yml
 # has, push and workflow_dispatch, and nothing else.

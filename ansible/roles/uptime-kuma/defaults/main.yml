@@ -293,7 +293,7 @@ uptime_kuma_monitors:
   # -- services that ran unwatched (PET-706) -----------------------------------
   # petedio-search binds 192.168.50.246 and the LAN reaches it, so the Pi does too.
   # /healthz proves only that the server is up; the embedding lane has its own check
-  # in services/configure-search.yml.
+  # in configure-search.yml.
   - name: search
     type: http
     url: "http://192.168.50.246:8526/healthz"

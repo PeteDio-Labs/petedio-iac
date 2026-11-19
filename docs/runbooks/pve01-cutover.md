@@ -205,7 +205,7 @@ the store is disabled, every job fails. It doesn't need the driver.
      a window Pedro picks. Gate: inside CT 240, `/api/v1/targets` on `127.0.0.1:9090`
      shows `192.168.50.12` as `up`.
 4. Repoint the consumers: `./scripts/deploy-uptime-kuma.sh`, then
-   `./scripts/deploy-pete-bot.sh`. The bare `services/configure-pete-bot.yml` fails its secrets
+   `./scripts/deploy-pete-bot.sh`. The bare `configure-pete-bot.yml` fails its secrets
    assert, because only the script reads `kv/services/pete-bot` and passes the secrets
    in. The script is Pedro's credential step.
 5. Gate, in this order:

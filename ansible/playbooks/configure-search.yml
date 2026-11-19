@@ -1,5 +1,5 @@
 ---
-# services/configure-search.yml — deploy petedio-search on ollama-246 as two systemd units (PET-526; moved off bare metal in PET-528).
+# configure-search.yml — deploy petedio-search on ollama-246 as two systemd units (PET-526; moved off bare metal in PET-528).
 #
 # petedio-search (repo PeteDio-Labs/petedio-search, private) is the shared, meaning-based
 # search over the vault, Plane (PET, MSG and DAY items and comments) and the lab digest.
@@ -15,7 +15,7 @@
 # serve reloads its in-memory copy when refresh bumps the generation counter.
 #
 # THE PLAY COPIES A COMPILED BINARY and never builds on the target, as tracerr does
-# (media/configure-media-dash.yml). scripts/deploy-search.sh builds it with
+# (configure-media-dash.yml). scripts/deploy-search.sh builds it with
 # `--target=bun-linux-x64`.
 #
 # READING THE VAULT. The org disallows deploy keys, so the PET-526 deploy key never
@@ -191,7 +191,7 @@
 
     - name: Install the service environment
       ansible.builtin.template:
-        src: "{{ playbook_dir | dirname }}/templates/petedio-search.env.j2"
+        src: petedio-search.env.j2
         dest: /etc/petedio-search.env
         owner: root
         group: "{{ search_group }}"
