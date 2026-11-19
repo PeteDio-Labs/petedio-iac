@@ -63,7 +63,10 @@ locals {
     metrics    = module.metrics.vm_id
     ollama     = module.ollama.vm_id
     staging    = module.staging.vm_id
+    # Lab Villains decoys (PET-954), one module per VMID in villain-decoys.tf.
   } : {}
+
+  pool_decoy_members = var.manage_resource_pool ? merge({ decoy_gw = module.decoy_gw.vm_id }, { for k, m in module.decoy : "decoy_${k}" => m.vm_id }) : {}
 
   # LXCs that exist on the cluster but have NO Terraform module here, so there is
   # no module output to source a vm_id from. Membership is additive and never
@@ -94,7 +97,7 @@ locals {
 # proxmox_pool_membership (NOT the deprecated _virtual_environment_ alias). `type` is
 # read-only — the provider infers lxc vs qemu from the vm_id — so only pool_id + vm_id are set.
 resource "proxmox_pool_membership" "lxc" {
-  for_each = merge(local.pool_lxc_members, local.pool_unmanaged_members)
+  for_each = merge(local.pool_lxc_members, local.pool_decoy_members, local.pool_unmanaged_members)
 
   pool_id = proxmox_virtual_environment_pool.homelab[0].pool_id
   vm_id   = each.value

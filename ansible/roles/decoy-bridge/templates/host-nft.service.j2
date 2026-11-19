@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# petedio-iac roles/decoy-bridge (PET-954). Loads the bridge villain_decoy_host table and nothing else.
+[Unit]
+Description=Node isolation for the Lab Villains decoy bridge (PET-954)
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+After=local-fs.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ decoy_bridge_nft_file }}
+ExecReload=/usr/sbin/nft -f {{ decoy_bridge_nft_file }}
+ExecStop=/usr/sbin/nft delete table bridge villain_decoy_host
+
+[Install]
+WantedBy=multi-user.target

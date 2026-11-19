@@ -1,0 +1,33 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# petedio-iac roles/decoy-gw (PET-954). One table, loaded by {{ decoy_gw_nft_unit }}.service. The first
+# two lines make a reload atomic. Nothing outside this table is touched.
+
+table inet villain_decoys
+delete table inet villain_decoys
+
+table inet villain_decoys {
+        # The only way in: a LAN client to a forwarded port reaches one decoy's sshd.
+        chain prerouting {
+                type nat hook prerouting priority dstnat; policy accept;
+{% for v in decoy_gw_vmids %}
+                iifname "{{ decoy_gw_lan_if }}" ip saddr {{ decoy_gw_lan_subnet }} tcp dport {{ decoy_gw_port_base + v }} dnat ip to 10.66.0.{{ v }}:{{ decoy_gw_ssh_port }}
+{% endfor %}
+        }
+
+        chain forward {
+                type filter hook forward priority filter; policy drop;
+                # A decoy answers; it never starts a connection.
+                iifname "{{ decoy_gw_decoy_if }}" ct state established,related counter accept
+                iifname "{{ decoy_gw_lan_if }}" oifname "{{ decoy_gw_decoy_if }}" ct status dnat tcp dport {{ decoy_gw_ssh_port }} counter accept
+                counter drop
+        }
+
+        # A decoy may ping the gateway, and nothing else on it.
+        chain input {
+                type filter hook input priority filter; policy accept;
+                iifname "{{ decoy_gw_decoy_if }}" ct state established,related accept
+                iifname "{{ decoy_gw_decoy_if }}" icmp type echo-request accept
+                iifname "{{ decoy_gw_decoy_if }}" counter drop
+        }
+}
