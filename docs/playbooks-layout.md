@@ -30,8 +30,9 @@ the same pull request.
    playbook moves, so a search for it still works.
 2. **Header:** the first comment lines say what the play does, which hosts it targets, and the
    command that runs it, with the area in the path: `ansible-playbook playbooks/backup/backup-audit.yml`.
-3. **Assets:** reach a shared asset with `{{ playbook_dir }}/../files/<x>` or
-   `{{ playbook_dir }}/../templates/<x>`. A bare `src: x.j2` fails in an area folder.
+3. **Assets:** reach a shared asset with `{{ playbook_dir | dirname }}/files/<x>` or
+   `{{ playbook_dir | dirname }}/templates/<x>`. A bare `src: x.j2` fails in an area folder, and a
+   `../` path fails the `no-relative-paths` lint rule.
 4. **Paths out of the tree:** `{{ playbook_dir }}/../../environments/...` becomes
    `{{ playbook_dir }}/../../../environments/...` one folder deeper. Use
    `scripts/playbook-move.py` instead of editing by hand.
