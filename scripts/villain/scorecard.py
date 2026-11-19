@@ -99,7 +99,7 @@ def main(argv=None):
         elif r["detected_s"] is None:
             print(f"  {r['vmid']} {r['monitor']}: FAIL never seen DOWN in {r['beats']} beats"); bad = True
         else:
-            rec = f"UP again {r['recovered_s']} s after the undo" if r["recovered_s"] is not None else "not yet UP"
+            rec = f"UP again {r['recovered_s']} s {"after the undo" if a.undo_at else "after the DOWN"}" if r["recovered_s"] is not None else "not yet UP"
             if r["recovered_s"] is None and a.undo_at:
                 rec += ": FAIL no UP beat after the undo"; bad = True
             print(f"  {r['vmid']} {r['monitor']}: Kuma saw DOWN after {r['detected_s']} s; {rec} ({r['beats']} beats)")
