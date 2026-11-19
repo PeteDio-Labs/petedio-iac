@@ -15,7 +15,8 @@ def run(rows, *args, now=NOON):
     return p.returncode, p.stdout + p.stderr
 
 
-GOTHAM = [f"gotham {900+i} gotham-{i} pve03 decoy" for i in range(1, 5)]
+GOTHAM = [f"dc {900+i} gotham-{i} pve03 decoy" for i in range(1, 5)]
+MARVEL = [f"marvel {950+i} titan-{i} pve03 decoy" for i in range(1, 5)]
 
 
 class T(unittest.TestCase):
@@ -28,19 +29,23 @@ class T(unittest.TestCase):
         self.assertEqual(a, b); self.assertEqual(a[1].count("victim "), 1)
 
     def test_thanos_takes_half_rounded_down(self):
-        rc, out = run(GOTHAM, "thanos", "--group", "gotham", "--seed", "1")
+        rc, out = run(MARVEL, "thanos", "--seed", "1")
         self.assertEqual(rc, 0); self.assertEqual(out.count("victim "), 2)
-        rc, out = run(GOTHAM[:3], "thanos", "--group", "gotham", "--seed", "1")
+        rc, out = run(MARVEL[:3], "thanos", "--seed", "1")
         self.assertEqual(out.count("victim "), 1)
 
     def test_thanos_refuses_group_of_one_and_missing_group(self):
-        self.assertEqual(run(GOTHAM[:1], "thanos", "--group", "gotham")[0], 1)
-        self.assertEqual(run(GOTHAM[:1], "thanos")[0], 1)
+        self.assertEqual(run(GOTHAM[:1], "thanos", "--group", "dc")[0], 1)
+        self.assertEqual(run(MARVEL[:1], "thanos")[0], 1)
 
-    def test_thanos_snaps_half_the_universe_across_groups(self):
-        rows = GOTHAM + [f"titan {950+i} titan-{i} pve03 decoy" for i in range(1, 5)]
-        rc, out = run(rows, "thanos", "--seed", "3")
-        self.assertEqual(rc, 0); self.assertEqual(out.count("victim "), 4)
+    def test_thanos_snaps_half_of_marvel_only(self):
+        rc, out = run(GOTHAM + MARVEL, "thanos", "--seed", "3")
+        self.assertEqual(rc, 0); self.assertEqual(out.count("victim "), 2)
+        self.assertNotIn("gotham-", out)
+
+    def test_joker_stays_in_dc(self):
+        rc, out = run(GOTHAM + MARVEL, "joker", "--seed", "5")
+        self.assertIn("gotham-", out); self.assertNotIn("titan-", out)
 
     def test_denylist_and_tier(self):
         rc, out = run(["core 223 vault pve03 decoy", "core 250 x pve03 prod"], "joker")

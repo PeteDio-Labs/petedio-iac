@@ -4,7 +4,8 @@
     scripts/villain/guard.py check joker  [--seed N]
     scripts/villain/guard.py check thanos [--group GROUP] [--seed N]
 
-Thanos snaps half of the universe: every usable target on the allowlist. --group narrows it to one group.
+Each villain works in his own universe, which is a group in targets.txt: Joker in `dc`, Thanos in
+`marvel`. Joker picks one target there. Thanos snaps half of it. --group overrides the universe.
 
 It reads scripts/villain/targets.txt and prints what it examined and what it picked. It never
 touches a host. The strike playbooks call it first and act only on the victims it prints.
@@ -33,6 +34,7 @@ DENY_VMIDS = {112, 119, 221, 223, 232, 233, 235, 237, 240, 245, 246, 247, 248}
 QUIET_START, QUIET_END = (2, 15), (3, 30)
 TZ = ZoneInfo("America/New_York")
 
+UNIVERSE = {"joker": "dc", "thanos": "marvel"}
 JOKER_FAULTS = ("stop", "restart", "kill-service")
 
 
@@ -74,14 +76,18 @@ def in_quiet_hours(now):
 
 def pick(villain, rows, group, seed):
     rng = random.Random(seed)
+    group = group or UNIVERSE[villain]
     ok, denied = usable(rows)
     if not ok:
         raise Refused(f"no usable targets: read {len(rows)}, denied {len(denied)}")
     if villain == "joker":
+        ok = [r for r in ok if r["group"] == group]
+        if not ok:
+            raise Refused(f"no usable targets in {group!r}")
         victim = rng.choice(ok)
         return [dict(victim, fault=rng.choice(JOKER_FAULTS))], denied
-    members = [r for r in ok if group is None or r["group"] == group]
-    scope = "the universe" if group is None else f"group {group!r}"
+    members = [r for r in ok if r["group"] == group]
+    scope = f"universe {group!r}"
     if len(members) < 2:
         raise Refused(f"{scope} has {len(members)} usable members; Thanos needs 2 or more")
     k = len(members) // 2  # half, rounded down; never the last member
