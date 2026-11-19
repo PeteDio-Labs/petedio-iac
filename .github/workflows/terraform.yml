@@ -192,6 +192,16 @@ jobs:
         working-directory: environments/dashboard
         run: terraform validate
 
+      # environments/authentik is the AWS root of Authentik's off-prem copy (PET-932). The same
+      # explicit, credential-free validate, because nothing else in CI reads that root.
+      - name: Init authentik root (no backend)
+        working-directory: environments/authentik
+        run: terraform init -input=false -backend=false
+
+      - name: Validate authentik root
+        working-directory: environments/authentik
+        run: terraform validate
+
   # --- Privileged apply ---------------------------------------------------------------
   # Self-hosted, INSIDE the homelab. Runs ONLY on push to main (post-merge, trusted code) and
   # is gated behind the hosted `validate` job. The only job that mints Vault creds + touches

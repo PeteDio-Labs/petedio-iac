@@ -65,6 +65,9 @@ variable "routes" {
     allowed_idps        = optional(list(string), [])
     access_email_domain = optional(string)
     access_emails       = optional(list(string), [])
+    # false: keep the ingress rule and create no CNAME, because the caller owns the record. A
+    # failover hostname uses it, so the record can point at another tunnel (PET-932).
+    dns = optional(bool, true)
     # Agents from secrets/callers.yml, each let through by its Cloudflare Access service token,
     # sent in the one header Authorization. Needs access = true. The module finds each token by
     # its name, agent-<name>, which keys.yml gives it.

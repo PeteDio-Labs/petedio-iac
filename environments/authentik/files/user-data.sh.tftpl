@@ -1,0 +1,64 @@
+#!/bin/bash
+# First boot of the Authentik host (PET-932). Installs Docker, the compose plugin and swap, then
+# hands over to authentik-sync.sh, which Terraform keeps in the bucket. This file runs once; every
+# later change arrives through the sync timer, so nothing here needs to change after launch.
+set -euo pipefail
+exec > >(tee -a /var/log/authentik-bootstrap.log) 2>&1
+echo "bootstrap: start $(date -u +%FT%TZ)"
+
+BUCKET="${bucket}"
+REGION="${region}"
+COMPOSE_VERSION="v2.39.4"
+COMPOSE_SHA256="49082844b87f03cdcd5f5bbef1ba8c9c897b7a2dfb80cea18d61ec8ca6117e0c"
+
+dnf -y install docker
+systemctl enable --now docker
+
+# The compose plugin is not in the Amazon Linux repos. Pin the release and check its digest.
+install -d /usr/local/lib/docker/cli-plugins
+curl -fsSL -o /tmp/docker-compose "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-aarch64"
+echo "$COMPOSE_SHA256  /tmp/docker-compose" | sha256sum -c -
+install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+docker compose version
+
+# 2 GiB of swap: the worker spikes during migrations on a 2 GiB host.
+if [ ! -f /swapfile ]; then
+  dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  chmod 600 /swapfile
+  mkswap /swapfile
+  echo '/swapfile none swap defaults 0 0' >> /etc/fstab
+fi
+swapon -a
+
+install -d -m 0700 /opt/authentik /opt/authentik/bin
+aws s3 cp --region "$REGION" "s3://$BUCKET/config/authentik-sync.sh" /opt/authentik/bin/authentik-sync.sh
+chmod 0700 /opt/authentik/bin/authentik-sync.sh
+printf 'BUCKET=%s\nAWS_REGION=%s\n' "$BUCKET" "$REGION" > /opt/authentik/bootstrap.env
+
+cat > /etc/systemd/system/authentik-sync.service <<'UNIT'
+[Unit]
+Description=Sync Authentik config from S3 and converge the stack (PET-932)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/authentik/bootstrap.env
+ExecStart=/opt/authentik/bin/authentik-sync.sh
+UNIT
+
+cat > /etc/systemd/system/authentik-sync.timer <<'UNIT'
+[Unit]
+Description=Run authentik-sync every two minutes
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=2min
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now authentik-sync.timer
+echo "bootstrap: done $(date -u +%FT%TZ)"
