@@ -44,6 +44,9 @@
     # Empty leaves /api/ answering 503, so the dashboard shows its fixtures only.
     dashboard_staging_edge_header: ""
     dashboard_staging_api_origin: reports.pdlab.dev
+    # Only the tunnel host (cloudflared on LXC 112) may use /api/, so a request reaches it after
+    # Cloudflare Access. A LAN or tailnet client on :8081 gets 403 and sees fixtures only.
+    dashboard_staging_api_peer: 192.168.50.112
 
   pre_tasks:
     - name: Assert the App identity is complete, or absent on purpose
@@ -322,6 +325,8 @@
             # token, so the browser holds none, and drops the visitor's cookies.
           {% if dashboard_staging_edge_header | length > 0 %}
             handle /api/* {
+              @notpeer not remote_ip {{ dashboard_staging_api_peer }}
+              respond @notpeer 403
               @write not method GET HEAD
               respond @write 405
               reverse_proxy https://{{ dashboard_staging_api_origin }} {
