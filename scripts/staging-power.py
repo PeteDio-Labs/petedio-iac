@@ -9,18 +9,21 @@ only while UI work is pending on that branch.
 
 The container also serves the lab dashboard's fixtures-only site (:8081). AUTO treats pete-bot's
 `dashboard-staging` release, read without a token because the repository is public: the site is
-pending while the release holds an asset, and its clock is the asset's update time. The box runs
-when ANY site is pending and recent (combine()).
+pending while the release holds an asset, and its push time is the asset's update time. The box
+runs while ANY site is pending (combine()).
 
 AUTO decides the portfolio from GitHub, with the read-only staging App (kv/services/staging-app):
   pending  the `staging` branch differs from `main` outside .github. A squash-merge of staging into
            main ("send it") makes the content equal, so pending turns false and the box stops.
-  recent   the newest commit on `staging` that the sync bot did not write is under IDLE_HOURS old.
-  run when pending and recent, else stop. Only a change of state is sent to the node.
+  push     the newest commit on `staging` that the sync bot did not write, and for the dashboard the
+           release asset's update time.
+  run      while pending, for MAX_UP_HOURS from the moment the box started. Then it shuts down and
+           stays off until a push newer than that shutdown starts it again. Only a change of state
+           is sent to the node.
 
 THE NODE SIDE. The job signs a 30-minute SSH certificate for the `staging-power` principal. That
 role fixes the command to /usr/local/sbin/staging-power on pve03 (vault-config/staging-power.tf),
-which accepts only `status`, `start` and `stop`, and acts only on CT 249.
+which accepts only `status`, `clock`, `start`, `stop` and `teardown`, and acts only on CT 249.
 
 THE LAST LINE SAYS WHAT WAS EXAMINED. A run that could not read GitHub or the node fails, and
 stops nothing. A green run over a read that never happened is the bug this repo keeps shipping.
@@ -48,7 +51,10 @@ NODE = "192.168.50.10"  # pve03
 NODE_KNOWN_HOSTS = os.environ.get("LAB_KNOWN_HOSTS", "/etc/ssh/lab-node-known-hosts")
 SSH_ROLE = "staging-power"
 REPO = "PeteDio-Labs/pdlabs-portfolio"
-IDLE_HOURS = 3.0
+# The box stays up for this long after it starts, whatever the push times say, then shuts down.
+# Alerts at 3, 9 and 20 hours of uptime come from the dashboard, which reads the same uptime from
+# Proxmox. A new push after a shutdown starts the box again with a fresh clock.
+MAX_UP_HOURS = 24.0
 # The dashboard staging site shares the container. pete-bot is a public repository, so its release
 # is read without a token (60 requests an hour per address; a 5-minute schedule makes 12).
 DASH_REPO = "petedio-labs/pete-bot"
@@ -93,7 +99,7 @@ def combine(states: list[tuple[bool, dt.datetime | None]]) -> tuple[bool, dt.dat
 
     The container should run when ANY site has pending work and a recent push. So the pair is
     pending when any site is, and its time is the newest push among the pending sites only: a
-    recent push on a promoted site must not keep the box up."""
+    push on a promoted site must not start the box."""
     pend = [t for p, t in states if p]
     if not pend:
         return False, None
@@ -101,21 +107,33 @@ def combine(states: list[tuple[bool, dt.datetime | None]]) -> tuple[bool, dt.dat
     return True, (max(times) if times else None)
 
 
-def decide(pending: bool, last_ui_at: dt.datetime | None, now: dt.datetime, running: bool) -> tuple[str, str]:
+def decide(pending: bool, last_ui_at: dt.datetime | None, now: dt.datetime, running: bool,
+           since: dt.datetime | None = None) -> tuple[str, str]:
     """(action, reason). action is start, stop, teardown or none.
+
+    since is when the container last started (running) or last stopped (stopped), from the node's
+    `clock`, or None when the node could not say.
 
     teardown is a stop for a promoted site: nothing is pending, so the work was merged into main
     (or the release is gone). The node resets both sites to their placeholder before it shuts the
-    box down. stop is the idle timeout: the pending work is still unmerged, so its content stays."""
-    recent = last_ui_at is not None and (now - last_ui_at) < dt.timedelta(hours=IDLE_HOURS)
-    want = pending and recent
-    if want and not running:
-        return "start", "UI work is pending and the newest staging push is under %gh old" % IDLE_HOURS
-    if not want and running:
+    box down. stop is the uptime limit: the work is still unmerged, so its content stays, and the
+    box stays off until a push newer than the shutdown arrives."""
+    if running:
         if not pending:
             return "teardown", "nothing is pending on staging, so the work is merged"
-        return "stop", "no staging push for %gh or more" % IDLE_HOURS
-    return "none", "container already %s" % ("running" if running else "stopped")
+        if since is None:
+            return "none", "container running; the node gave no start time, so the %gh limit cannot be checked" % MAX_UP_HOURS
+        up_h = (now - since).total_seconds() / 3600
+        if up_h >= MAX_UP_HOURS:
+            return "stop", "up %.1fh, over the %gh limit" % (up_h, MAX_UP_HOURS)
+        return "none", "container running, up %.1fh of %gh" % (up_h, MAX_UP_HOURS)
+    if not pending:
+        return "none", "container stopped, nothing pending"
+    if last_ui_at is None:
+        return "none", "container stopped; no push was seen to start it"
+    if since is not None and last_ui_at <= since:
+        return "none", "container stopped; the newest push is not newer than the last shutdown"
+    return "start", "UI work is pending and the newest push is newer than the last shutdown"
 
 
 # ── Vault and the node ────────────────────────────────────────────────────────────────────────
@@ -144,7 +162,7 @@ def vault(method: str, path: str, body: dict | None = None) -> dict | None:
 
 def node(word: str, workdir: pathlib.Path) -> str:
     """Run status, start, stop or teardown on the node. Returns the script's one-line answer."""
-    assert word in ("status", "start", "stop", "teardown")
+    assert word in ("status", "clock", "start", "stop", "teardown")
     key = workdir / "key"
     if not key.exists():
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", SSH_ROLE, "-f", str(key)], check=True)
@@ -164,6 +182,17 @@ def node(word: str, workdir: pathlib.Path) -> str:
     if not out.startswith("staging-249:"):
         raise Abort(f"the node answered '{word}' with an unexpected line: {out[:200]!r}")
     return out
+
+
+def read_clock(workdir: pathlib.Path) -> dt.datetime | None:
+    """When the container last started (running) or stopped (stopped), from the node's `clock`.
+    None when the node reports 0, which means systemd had no timestamp to give."""
+    out = node("clock", workdir)
+    parts = out.split()
+    if len(parts) != 3 or not parts[2].isdigit():
+        raise Abort(f"the node answered 'clock' with an unexpected line: {out[:200]!r}")
+    epoch = int(parts[2])
+    return dt.datetime.fromtimestamp(epoch, dt.timezone.utc) if epoch > 0 else None
 
 
 # ── GitHub ────────────────────────────────────────────────────────────────────────────────────
@@ -236,8 +265,8 @@ def newest_asset_time(release: dict) -> dt.datetime | None:
 
 def read_dashboard_state() -> tuple[bool, dt.datetime | None, str]:
     """Read pete-bot's `dashboard-staging` release, with no token. The site is pending while the
-    release holds an asset, and the clock is that asset's update time, so the box stays up for
-    IDLE_HOURS after each publish and no longer. A missing release or one with no asset is not
+    release holds an asset, and its push time is that asset's update time, so each publish starts
+    the box once the last shutdown is older than it. A missing release or one with no asset is not
     pending: there is nothing to serve. Any other failure aborts the run."""
     rel = github("GET", f"/repos/{DASH_REPO}/releases/tags/{DASH_TAG}", None, missing_ok=True)
     if rel is None:
@@ -287,12 +316,14 @@ def main(argv: list[str]) -> int:
         pending, last_ui = combine([(p_pending, p_last), (d_pending, d_last)])
         detail = f"portfolio: {p_detail} (pending={p_pending}); dashboard: {d_detail} (pending={d_pending})"
         now = dt.datetime.now(dt.timezone.utc)
-        action, reason = decide(pending, last_ui, now, running)
+        since = read_clock(workdir)
+        action, reason = decide(pending, last_ui, now, running, since)
         if action != "none":
             after = node(action, workdir)
         else:
             after = state
-        print(f"staging-power auto: examined {detail}; pending={pending}; node before: {state}. "
+        print(f"staging-power auto: examined {detail}; pending={pending}; node before: {state}"
+              f" (clock {since.isoformat() if since else 'unknown'}). "
               f"Decision: {action} ({reason}). Node after: {after}")
         return 0
     except Abort as err:

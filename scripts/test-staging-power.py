@@ -23,17 +23,26 @@ def eq(got, want, label):
         sys.exit(1)
 
 
-# decide: every cell of the table
-eq(sp.decide(True, FRESH, NOW, False)[0], "start", "pending+recent+stopped")
-eq(sp.decide(True, FRESH, NOW, True)[0], "none", "pending+recent+running")
-eq(sp.decide(False, FRESH, NOW, True)[0], "teardown", "promoted+running (merged to main)")
-eq(sp.decide(False, FRESH, NOW, False)[0], "none", "promoted+stopped")
-eq(sp.decide(True, STALE, NOW, True)[0], "stop", "pending+idle+running")
-eq(sp.decide(True, STALE, NOW, False)[0], "none", "pending+idle+stopped")
-eq(sp.decide(True, None, NOW, True)[0], "stop", "no UI commit seen, running")
-eq(sp.decide(True, None, NOW, False)[0], "none", "no UI commit seen, stopped")
-# the idle boundary is exclusive at exactly 3 hours
-eq(sp.decide(True, NOW - dt.timedelta(hours=3), NOW, True)[0], "stop", "exactly 3h is idle")
+# decide: every cell of the table. since is when the box last started (running) or stopped.
+UP2 = NOW - dt.timedelta(hours=2)
+UP25 = NOW - dt.timedelta(hours=25)
+PUSH_OLD = NOW - dt.timedelta(hours=30)
+eq(sp.decide(True, FRESH, NOW, False, PUSH_OLD)[0], "start", "pending, push newer than the last shutdown, stopped")
+eq(sp.decide(True, FRESH, NOW, True, UP2)[0], "none", "pending, up 2h")
+eq(sp.decide(False, FRESH, NOW, True, UP2)[0], "teardown", "promoted+running (merged to main)")
+eq(sp.decide(False, FRESH, NOW, False, UP2)[0], "none", "promoted+stopped")
+eq(sp.decide(True, PUSH_OLD, NOW, True, UP25)[0], "stop", "pending, up 25h: the limit stops it")
+eq(sp.decide(True, FRESH, NOW, True, UP25)[0], "stop", "a recent push does not extend the 24h limit")
+eq(sp.decide(True, PUSH_OLD, NOW, False, UP25)[0], "none", "stopped at the limit: stays off, the push is older than the shutdown")
+eq(sp.decide(True, FRESH, NOW, False, UP25)[0], "start", "a push after the shutdown starts it again")
+eq(sp.decide(True, None, NOW, False, UP25)[0], "none", "no push seen, stopped")
+eq(sp.decide(True, FRESH, NOW, True, None)[0], "none", "running, no start time from the node: no stop, and it says why")
+eq(sp.decide(True, FRESH, NOW, False, None)[0], "start", "stopped, no shutdown time: a push starts it")
+eq(sp.decide(True, FRESH, NOW, True, NOW - dt.timedelta(hours=24))[0], "stop", "exactly 24h is the limit")
+eq(sp.decide(True, FRESH, NOW, True, NOW - dt.timedelta(hours=23, minutes=59))[0], "none", "23h59 is under the limit")
+eq(sp.decide(True, UP25, NOW, False, UP25)[0], "none", "a push at the shutdown time is not newer")
+# a long-idle box (the old 3h rule) now stays up
+eq(sp.decide(True, NOW - dt.timedelta(hours=10), NOW, True, NOW - dt.timedelta(hours=11))[0], "none", "10h since the push, up 11h: no idle stop")
 
 # pending_from_files
 eq(sp.pending_from_files([]), False, "identical branches")
@@ -66,7 +75,7 @@ eq(sp.combine([(True, FRESH), (False, FRESH)]), (True, FRESH), "one pending")
 eq(sp.combine([(False, FRESH), (True, STALE)]), (True, STALE), "a recent push on a promoted site is ignored")
 eq(sp.combine([(True, STALE), (True, FRESH)]), (True, FRESH), "newest pending push wins")
 eq(sp.combine([(True, None), (False, FRESH)]), (True, None), "pending with no push time")
-eq(sp.decide(*sp.combine([(False, FRESH), (True, STALE)]), NOW, True)[0], "stop", "promoted site's push does not hold the box up; the other site is idle, so no teardown")
-eq(sp.decide(*sp.combine([(True, STALE), (True, FRESH)]), NOW, False)[0], "start", "dashboard work starts the box")
+eq(sp.decide(*sp.combine([(False, FRESH), (True, STALE)]), NOW, True, UP2)[0], "none", "promoted site's push is ignored; the other site is pending, so no teardown")
+eq(sp.decide(*sp.combine([(True, STALE), (True, FRESH)]), NOW, False, PUSH_OLD)[0], "start", "dashboard work starts the box")
 
 print(f"staging-power: {checked} checks passed")
