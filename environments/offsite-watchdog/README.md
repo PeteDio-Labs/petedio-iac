@@ -179,3 +179,46 @@ credits from the calculation, so they track gross spend. `petedio-monthly-5usd` 
 
 `python3 scripts/test-offsite-watchdog.py` drives `lambda/handler.py` against fakes. It is not wired
 into CI. `terraform validate` needs the provider downloads, so run it from 247 before the first plan.
+
+## CloudWatch alarms, lab events and billing alarm (PET-962)
+
+`alarms.tf` adds the CloudWatch layer. It costs about $2 to $3 a month.
+
+| Piece | What it does |
+|---|---|
+| `lab-dark` alarm | Fires when `HeartbeatAgeSeconds` stays above `heartbeat_max_age_seconds` for two 5-minute periods, or when the checker reports nothing. It emails the `petedio-watchdog-alarms` topic. `extra_alarm_action_arns` takes a failover action later. |
+| `check-<name>` alarms | One per entry in `public_checks`, such as Authentik on EC2. They read `CheckUp`. |
+| `billing` alarm | Fires when estimated gross charges pass `billing_alarm_usd`. It lives in us-east-1 with its own topic. Turn on "Receive Billing Alerts" once in the account's billing preferences first. |
+| Lab events | `POST <events_url>` with the heartbeat secret header and a JSON list of up to 50 events. Each event keeps `id`, `ts`, `source`, `level` and `msg`, and lands in `/aws/lambda/petedio-watchdog` as a `lab_event` line. The lab's Loki shipper sends here too, so one Logs Insights query shows lab and cloud in one timeline. |
+
+The function writes its metrics as embedded-metric-format log lines, so the function role needs
+no new permission and the boundary policy stays as it is.
+
+CloudWatch Synthetics canaries cost about $10 a month each at a 5-minute rate. The Lambda probes
+already check the same endpoints from outside, so this module does not add canaries.
+
+Confirm each email subscription once. AWS sends a message per address and topic, and an
+unconfirmed subscription receives nothing.
+
+### Alarm permissions
+
+Put these in a customer-managed policy named `petedio-watchdog-alarms` and attach it to
+`petedio-terraform-watchdog`, as for the budgets policy. An admin identity creates it.
+
+```json
+{"Effect": "Allow",
+ "Action": ["cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:DescribeAlarms",
+            "cloudwatch:ListTagsForResource", "cloudwatch:TagResource", "cloudwatch:UntagResource"],
+ "Resource": "arn:aws:cloudwatch:*:ACCOUNT_ID:alarm:petedio-watchdog-*"},
+{"Effect": "Allow",
+ "Action": ["sns:CreateTopic", "sns:DeleteTopic", "sns:GetTopicAttributes", "sns:SetTopicAttributes",
+            "sns:Subscribe", "sns:Unsubscribe", "sns:GetSubscriptionAttributes",
+            "sns:ListTagsForResource", "sns:TagResource", "sns:UntagResource"],
+ "Resource": "arn:aws:sns:*:ACCOUNT_ID:petedio-watchdog-*"},
+{"Effect": "Allow",
+ "Action": ["cloudwatch:DescribeAlarms", "sns:ListTopics", "sns:ListSubscriptionsByTopic"],
+ "Resource": "*"}
+```
+
+The apply user cannot publish to the topics or change other alarms. Alarms act only on topics
+named `petedio-watchdog-*`.

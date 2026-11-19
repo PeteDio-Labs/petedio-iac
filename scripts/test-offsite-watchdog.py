@@ -138,7 +138,7 @@ import io, contextlib
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     run(Store(), T0)
-lines = [json.loads(ln) for ln in buf.getvalue().splitlines() if ln.startswith("{")]
+lines = [json.loads(ln) for ln in buf.getvalue().splitlines() if ln.startswith("{") and "_aws" not in ln]
 check("each run logs one JSON line per check", len(lines) == 1 and lines[0]["check"] == "lab-heartbeat" and "up" in lines[0], buf.getvalue())
 
 # 4. A failed post raises, leaves its marker unset, and does not block another target's marker.
@@ -239,6 +239,42 @@ check("the post goes to the DM channel's messages URL", req.full_url == "https:/
 check("the post carries the bot Authorization header", req.get_header("Authorization") == "Bot bot-token")
 check("the post carries a DiscordBot User-Agent", req.get_header("User-agent", "").startswith("DiscordBot ("))
 check("the post body is the message", json.loads(req.data) == {"content": "hello"})
+
+# 10. Lab events land in CloudWatch Logs, behind the heartbeat secret, with a capped body.
+import io
+from contextlib import redirect_stdout
+
+
+def events_req(body, secret="s3cret"):
+    return {"requestContext": {"http": {"path": "/events"}}, "headers": {"x-heartbeat-secret": secret}, "body": body}
+
+
+configure()
+s = Store()
+out = io.StringIO()
+with redirect_stdout(out):
+    bad = h.handler(events_req("[]", secret="wrong"), None, store=s, now=T0)
+    good = h.handler(events_req(json.dumps([{"id": "e1", "ts": "t", "source": "vault", "level": "warn", "msg": "sealed", "token": "leak"}, 7])), None, store=s, now=T0)
+    big = h.handler(events_req("[" + "1," * 9000 + "1]"), None, store=s, now=T0)
+    notlist = h.handler(events_req("{}"), None, store=s, now=T0)
+lines = [json.loads(x) for x in out.getvalue().splitlines()]
+check("events with a wrong secret get 403 and write nothing", bad["statusCode"] == 403)
+check("events: one valid event written, the non-object skipped", json.loads(good["body"]) == {"written": 1, "received": 2}, good["body"])
+check("events keep only allow-listed fields", lines == [{"lab_event": {"id": "e1", "ts": "t", "source": "vault", "level": "warn", "msg": "sealed"}}], str(lines))
+check("an oversize body gets 413", big["statusCode"] == 413)
+check("a body that is not a list gets 400", notlist["statusCode"] == 400)
+check("/events does not record a heartbeat", s.get("heartbeat") is None)
+
+# 11. Each run emits metrics the alarms read, including one per check.
+configure([{"name": "pdlab", "url": "https://pdlab.test"}])
+s = Store()
+out = io.StringIO()
+with redirect_stdout(out):
+    run(s, T0)
+emfs = [json.loads(x) for x in out.getvalue().splitlines() if x.startswith("{") and "_aws" in x]
+names = [m["Name"] for e in emfs for m in e["_aws"]["CloudWatchMetrics"][0]["Metrics"]]
+check("a run emits HeartbeatAgeSeconds and CheckUp per check", names == ["HeartbeatAgeSeconds", "CheckUp", "CheckUp"], str(names))
+check("CheckUp carries its Check dimension", [e.get("Check") for e in emfs] == [None, "lab-heartbeat", "pdlab"])
 
 print("\n%d failure(s)" % len(failures))
 sys.exit(1 if failures else 0)
