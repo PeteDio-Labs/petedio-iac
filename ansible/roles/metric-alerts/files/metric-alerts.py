@@ -16,10 +16,13 @@ rule named `coverage` counts the live node targets, so an empty store pages inst
   metric-alerts --check    evaluate and print, post nothing, change no state
   metric-alerts --test     post one test line to prove the bot token and the DM
 """
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -28,6 +31,13 @@ RULES = os.environ.get("METRIC_ALERTS_RULES", "/etc/metric-alerts/rules.json")
 STATE = os.environ.get("METRIC_ALERTS_STATE", "/var/lib/metric-alerts/state.json")
 DISCORD_CURL = os.environ.get("METRIC_ALERTS_DISCORD", "/etc/metric-alerts/discord.curl")
 HOST = os.uname().nodename
+# Every alert is also an event on one Loki stream (job=events). The event ID is a hash of the
+# rule, the offender and the incident start, so a retry or a copy on the other side carries the same
+# ID and Loki drops the repeat (PET alert-router, streams design).
+LOKI = os.environ.get("METRIC_ALERTS_LOKI", "http://127.0.0.1:3100")
+ENV = os.environ.get("METRIC_ALERTS_ENV", "lab")
+# A series whose host label matches this is a Lab Villains decoy: it becomes an event and never a DM.
+DECOY = re.compile(os.environ.get("METRIC_ALERTS_DECOY_HOST", r"^decoy-"))
 
 
 def query(expr):
@@ -47,6 +57,31 @@ def post(text):
     return subprocess.run(cmd, check=False).returncode == 0
 
 
+def event_id(key, since):
+    """One ID per incident: the same rule, offender and start always give the same ID."""
+    return hashlib.sha256(("%s@%d" % (key, since)).encode()).hexdigest()[:16]
+
+
+def push_event(kind, rule, key, metric, since, ts):
+    """Append one JSON event to Loki. The line and its timestamp repeat exactly on a retry."""
+    line = json.dumps({"event_id": event_id(key, since), "kind": kind, "rule": rule["name"],
+                       "key": key, "host": metric.get("host", ""), "since": since, "env": ENV,
+                       "source": "metric-alerts"}, sort_keys=True)
+    labels = {"job": "events", "kind": kind, "source": "metric-alerts", "env": ENV}
+    body = {"streams": [{"stream": labels, "values": [[str(int(ts * 1e9)), line]]}]}
+    req = urllib.request.Request(LOKI + "/loki/api/v1/push", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            return True
+    except Exception:  # noqa: BLE001 - a failed push retries on the next run
+        return False
+
+
+def is_decoy(metric):
+    return bool(DECOY.search(metric.get("host", "")))
+
+
 def label_key(rule, metric):
     labels = ",".join("%s=%s" % (k, metric[k]) for k in sorted(metric) if k not in ("__name__", "job", "instance"))
     return "%s{%s}" % (rule, labels)
@@ -58,7 +93,7 @@ def describe(rule, series):
     return "%s (%s) value %s" % (rule["summary"], labels or "no labels", series["value"][1][:8])
 
 
-def evaluate(rules, state, query_fn=query, post_fn=post, mode="run"):
+def evaluate(rules, state, query_fn=query, post_fn=post, mode="run", event_fn=push_event, now=time.time):
     """Run every rule once. Returns (exit_code, lines_printed)."""
     rc, lines = 0, []
     new_state = {}
@@ -81,23 +116,44 @@ def evaluate(rules, state, query_fn=query, post_fn=post, mode="run"):
             seen.add(key)
             prev = state.get(key, {"runs": 0, "posted": False})
             runs, posted = prev["runs"] + 1, prev["posted"]
-            lines.append("rule %s: %s FIRING run %d" % (rule["name"], key, runs))
-            if mode == "run" and runs >= rule.get("for_runs", 1) and not posted:
-                if post_fn("FIRING: %s. From %s." % (describe(rule, series), HOST)):
-                    posted = True
-                else:
-                    rc = 1
-            new_state[key] = {"runs": runs, "posted": posted}
+            since = prev.get("since") or int(now())
+            logged = prev.get("logged", False)
+            decoy = is_decoy(series["metric"])
+            lines.append("rule %s: %s FIRING run %d%s" % (rule["name"], key, runs, " (decoy)" if decoy else ""))
+            if mode == "run" and runs >= rule.get("for_runs", 1):
+                if not logged:
+                    if event_fn("alert.firing", rule, key, series["metric"], since, since):
+                        logged = True
+                    else:
+                        rc = 1
+                # A decoy never pages: the event is the record, and the scorecard reads it.
+                if not posted:
+                    if decoy:
+                        posted = True
+                    elif post_fn("FIRING: %s. From %s." % (describe(rule, series), HOST)):
+                        posted = True
+                    else:
+                        rc = 1
+            new_state[key] = {"runs": runs, "posted": posted, "since": since, "logged": logged,
+                              "decoy": decoy, "host": series["metric"].get("host", "")}
         for key, prev in state.items():
             if not key.startswith(rule["name"] + "{") or key in seen:
                 continue
-            if prev["posted"] and mode == "run":
-                if post_fn("RESOLVED: %s (%s). From %s." % (rule["summary"], key, HOST)):
-                    continue
-                rc = 1
-                new_state[key] = prev  # the post failed, so the marker stays and the next run retries
-            elif mode != "run":
+            if mode != "run":
                 new_state[key] = prev
+                continue
+            # The resolve time is fixed on the first run that sees the series gone, so a retry repeats it.
+            resolved_at = prev.get("resolved_at") or int(now())
+            metric = {"host": prev.get("host", "")}
+            ok = True
+            if prev.get("logged") and not event_fn("alert.resolved", rule, key, metric, prev.get("since", 0), resolved_at):
+                ok = False
+            if prev["posted"] and not prev.get("decoy"):
+                if not post_fn("RESOLVED: %s (%s). From %s." % (rule["summary"], key, HOST)):
+                    ok = False
+            if not ok:
+                rc = 1
+                new_state[key] = dict(prev, resolved_at=resolved_at)  # the marker stays and the next run retries
         lines.append("rule %s: examined, %d firing" % (rule["name"], len(result)))
     # Every query failing means the store is down, and a down store cannot fire its own rules.
     prev = state.get("store{}", {"runs": 0, "posted": False})
