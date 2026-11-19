@@ -48,13 +48,6 @@ resource "aws_vpc" "this" {
   tags                 = { Name = var.name }
 }
 
-# The VPC's default security group allows traffic between its members. Strip every rule, so a
-# resource that lands in it by accident is closed.
-resource "aws_default_security_group" "this" {
-  vpc_id = aws_vpc.this.id
-  tags   = { Name = "${var.name}-default-closed" }
-}
-
 resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
   tags   = { Name = var.name }
@@ -327,6 +320,9 @@ resource "aws_instance" "host" {
     volume_size           = var.root_volume_gb
     encrypted             = true
     delete_on_termination = false
+    # default_tags do not reach a root volume. The CI apply policy creates EC2 resources only
+    # when the request carries the project tag, so the volume names it too.
+    tags = merge(local.tags, { Name = var.name })
   }
 
   # A terminate from the console or the API must be a decision, not a slip. It does not block a stop.

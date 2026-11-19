@@ -21,12 +21,16 @@ set -euo pipefail
 umask 077
 
 : "${BUCKET:?}" "${AWS_REGION:?}"
-D=/opt/authentik
+# AUTHENTIK_DIR, APP_UID and UNIT_DIR exist for scripts/test-authentik-sync.sh. The host uses
+# the defaults.
+D="${AUTHENTIK_DIR:-/opt/authentik}"
+APP_UID="${APP_UID:-1000}"
+UNIT_DIR="${UNIT_DIR:-/etc/systemd/system}"
 S="$D/state"
 install -d -m 0700 "$D/config" "$S"
 # The server and worker run as UID 1000 and read these bind mounts, so they cannot be root-only.
 for d in media certs custom-templates; do
-  [ -d "$D/$d" ] || install -d -m 0755 -o 1000 -g 1000 "$D/$d"
+  [ -d "$D/$d" ] || install -d -m 0755 -o "$APP_UID" -g "$APP_UID" "$D/$d"
 done
 export AWS_REGION
 log() { echo "authentik-sync: $*"; }
@@ -55,11 +59,11 @@ install -m 0700 "$D/config/authentik-sync.sh" "$D/bin/authentik-sync.sh"   # tak
 install -m 0700 "$D/config/authentik-backup.sh" "$D/bin/authentik-backup.sh"
 install -m 0600 "$D/config/docker-compose.yml" "$D/docker-compose.yml"
 
-if [ ! -f /etc/systemd/system/authentik-backup.timer ]; then
+if [ ! -f "$UNIT_DIR/authentik-backup.timer" ]; then
   printf '[Unit]\nDescription=Nightly Authentik dump to S3 (PET-932)\nAfter=docker.service\n\n[Service]\nType=oneshot\nEnvironmentFile=/opt/authentik/bootstrap.env\nExecStart=/opt/authentik/bin/authentik-backup.sh\n' \
-    > /etc/systemd/system/authentik-backup.service
+    > "$UNIT_DIR/authentik-backup.service"
   printf '[Unit]\nDescription=Run authentik-backup nightly\n\n[Timer]\nOnCalendar=*-*-* 07:30:00 UTC\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n' \
-    > /etc/systemd/system/authentik-backup.timer
+    > "$UNIT_DIR/authentik-backup.timer"
   systemctl daemon-reload
   systemctl enable --now authentik-backup.timer
   log "installed the nightly backup timer"
@@ -139,6 +143,10 @@ if [ -n "$stamp" ] && [ "$stamp" != "$have" ]; then
     [ "$(sha256sum "$S/media.tar.gz" | cut -d' ' -f1)" = "$(awk '{print $3}' <<<"$ready")" ] \
       || { log "media.tar.gz does not match its READY digest. Re-run the seed script."; rm -f "$S/restore.dump" "$S/media.tar.gz"; status error "media digest mismatch"; exit 1; }
     dc stop server worker cloudflared 2>/dev/null || true
+    # From here the database is being replaced. Drop the marker first, so a restore that fails or
+    # stops halfway leaves no marker, and no later run starts the stack on a partial database.
+    rm -f "$S/restored-stamp"
+    have=""
     dc up -d --wait postgresql
     # The role and database come from .env, inside the container, so no value reaches argv here.
     dc exec -T postgresql sh -c 'dropdb -U "$POSTGRES_USER" --if-exists --force "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" -O "$POSTGRES_USER" "$POSTGRES_DB"'
@@ -150,9 +158,9 @@ if [ -n "$stamp" ] && [ "$stamp" != "$have" ]; then
     # Keep one earlier media folder as a rollback, never more, so restores cannot fill the disk.
     find "$S" -maxdepth 1 -type d -name 'media.before-*' -exec rm -rf {} +
     [ ! -d "$D/media" ] || mv "$D/media" "$S/media.before-$stamp"
-    install -d -m 0755 -o 1000 -g 1000 "$D/media"
+    install -d -m 0755 -o "$APP_UID" -g "$APP_UID" "$D/media"
     (umask 022 && tar -xzf "$S/media.tar.gz" -C "$D/media" --no-same-owner)
-    chown -R 1000:1000 "$D/media"
+    chown -R "$APP_UID:$APP_UID" "$D/media"
     shred -u "$S/restore.dump"
     rm -f "$S/media.tar.gz"
     echo "$stamp" > "$S/restored-stamp"
