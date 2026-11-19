@@ -1,0 +1,112 @@
+---
+# One strike or one undo. Runs on a node (delegated) and touches decoys only.
+# A strike: the guard picks victims, each is checked to be a decoy on this node, a dead-man timer
+# is armed on the node, then the fault runs. An undo puts every decoy back. Check mode reads and
+# prints what a strike would do, and changes nothing.
+- name: Refuse a strike while the kill switch is off
+  ansible.builtin.assert:
+    that: villain_undo | bool or villains_enabled | bool or ansible_check_mode
+    fail_msg: "REFUSED: villains_enabled is false. A strike needs -e villains_enabled=true after Pedro's go."
+  run_once: true
+
+- name: Read the guard's pick, or the decoys an undo covers
+  ansible.builtin.command:
+    argv: >-
+      {{ ['python3', playbook_dir ~ '/../../../scripts/villain/guard.py']
+         + (['undo-list'] if villain_undo | bool else ['check', villain_name])
+         + (['--group', villain_group] if villain_group | length > 0 else [])
+         + (['--seed', villain_seed | string] if (villain_seed | string | length > 0 and not villain_undo | bool) else [])
+         + ['--json'] }}
+  delegate_to: localhost
+  run_once: true
+  register: villain_pick
+  changed_when: false
+  check_mode: false  # lab-action: read-only
+
+- name: Keep the victims
+  ansible.builtin.set_fact:
+    villain_victims: "{{ (villain_pick.stdout | from_json).victims }}"
+    villain_seed_used: "{{ (villain_pick.stdout | from_json).seed | default('n/a') }}"
+  run_once: true
+
+- name: Install the undo script on the node
+  ansible.builtin.copy:
+    src: villain-undo.sh
+    dest: "{{ villain_undo_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+  delegate_to: "{{ item }}"
+  loop: "{{ villain_victims | map(attribute='node') | unique | list }}"
+
+- name: Prove each victim is a decoy on its node
+  ansible.builtin.command:
+    argv: [sh, -c, "pct config {{ item.vmid }} | grep -Eq '^hostname: decoy-(dc|marvel)-{{ item.vmid }}$'"]
+  delegate_to: "{{ item.node }}"
+  loop: "{{ villain_victims }}"
+  loop_control: {label: "{{ item.vmid }} {{ item.name }}"}
+  changed_when: false
+  check_mode: false  # lab-action: read-only
+
+- name: Print the plan
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'undo' if villain_undo | bool else villain_name }}: {{ villain_victims | length }} victim(s),
+      seed {{ villain_seed_used }}, {{ ansible_check_mode | ternary('check mode, nothing runs', 'live') }}.
+      {% for v in villain_victims %}{{ v.vmid }} {{ v.name }} {{ v.fault | default('undo') }}{{ '; ' if not loop.last }}{% endfor %}
+  run_once: true
+
+- name: Arm the dead-man timer before the strike
+  ansible.builtin.command:
+    argv:
+      - systemd-run
+      - "--unit=villain-deadman-{{ item.vmid }}"
+      - "--on-active={{ villain_deadman_minutes }}m"
+      - "--description=Lab Villains dead-man: undo decoy {{ item.vmid }}"
+      - "{{ villain_undo_script }}"
+      - "{{ item.vmid }}"
+  delegate_to: "{{ item.node }}"
+  loop: "{{ villain_victims }}"
+  loop_control: {label: "{{ item.vmid }}"}
+  when: not villain_undo | bool and not ansible_check_mode
+  changed_when: true
+
+- name: Strike
+  ansible.builtin.command:
+    argv: >-
+      {{ ['pct', 'stop', item.vmid | string] if item.fault == 'stop'
+         else ['pct', 'reboot', item.vmid | string] if item.fault == 'restart'
+         else ['pct', 'exec', item.vmid | string, '--', 'systemctl', 'stop', 'ssh'] }}
+  delegate_to: "{{ item.node }}"
+  loop: "{{ villain_victims }}"
+  loop_control: {label: "{{ item.vmid }} {{ item.fault }}"}
+  when: not villain_undo | bool and not ansible_check_mode
+  changed_when: true
+
+- name: Log the strike on the node
+  ansible.builtin.shell: >-
+    echo "$(date -Is) {{ villain_name }} seed={{ villain_seed_used }} {{ item.vmid }} {{ item.fault }}" >> {{ villain_log }}
+  delegate_to: "{{ item.node }}"
+  loop: "{{ villain_victims }}"
+  loop_control: {label: "{{ item.vmid }}"}
+  when: not villain_undo | bool and not ansible_check_mode
+  changed_when: true
+
+- name: Undo now
+  ansible.builtin.command:
+    argv: ["{{ villain_undo_script }}", "{{ item.vmid | string }}"]
+  delegate_to: "{{ item.node }}"
+  loop: "{{ villain_victims }}"
+  loop_control: {label: "{{ item.vmid }}"}
+  when: villain_undo | bool and not ansible_check_mode
+  changed_when: true
+
+- name: Cancel the dead-man timers after an undo
+  ansible.builtin.command:
+    argv: [systemctl, stop, "villain-deadman-{{ item.vmid }}.timer"]
+  delegate_to: "{{ item.node }}"
+  loop: "{{ villain_victims }}"
+  loop_control: {label: "{{ item.vmid }}"}
+  when: villain_undo | bool and not ansible_check_mode
+  changed_when: false
+  failed_when: false

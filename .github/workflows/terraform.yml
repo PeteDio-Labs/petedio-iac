@@ -158,6 +158,8 @@ jobs:
           scripts/test-lab-repo-vars.sh
           scripts/test-portfolio-plan.sh
           scripts/test-seed-aws-portfolio-plan.sh
+          python3 scripts/test-villain-guard.py
+          python3 scripts/test-villain-scorecard.py
 
       - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
         run: terraform init -input=false -backend=false

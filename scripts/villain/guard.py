@@ -3,6 +3,10 @@
 
     scripts/villain/guard.py check joker  [--seed N]
     scripts/villain/guard.py check thanos [--group GROUP] [--seed N]
+    scripts/villain/guard.py undo-list [--group GROUP]
+
+Add --json to print one JSON object instead of text. `undo-list` prints every usable decoy, so an
+undo run knows what to put back. It has no quiet-hours refusal, because an undo is always safe.
 
 Each villain works in his own universe, which is a group in targets.txt: Joker in `dc`, Thanos in
 `marvel`. Joker picks one target there. Thanos snaps half of it. --group overrides the universe.
@@ -13,6 +17,7 @@ touches a host. The strike playbooks call it first and act only on the victims i
 Refusals exit non-zero. An empty allowlist is a refusal, not a clean result.
 """
 import argparse
+import json
 import os
 import random
 import sys
@@ -96,15 +101,35 @@ def pick(villain, rows, group, seed):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("mode", choices=["check"])
-    ap.add_argument("villain", choices=["joker", "thanos"])
+    ap.add_argument("mode", choices=["check", "undo-list"])
+    ap.add_argument("villain", nargs="?", choices=["joker", "thanos"])
     ap.add_argument("--group")
     ap.add_argument("--seed", type=int)
+    ap.add_argument("--json", action="store_true")
     ap.add_argument("--targets", default=str(TARGETS))
     ap.add_argument("--now", help="ISO time, for tests")
     a = ap.parse_args(argv)
     seed = a.seed if a.seed is not None else random.SystemRandom().randrange(2**32)
     now = datetime.fromisoformat(a.now) if a.now else datetime.now(TZ)
+    if (a.mode == "check") != bool(a.villain):
+        ap.error("check needs a villain; undo-list takes none")
+    if a.mode == "undo-list":
+        try:
+            rows = read_targets(a.targets)
+            ok, denied = usable(rows)
+            ok = [r for r in ok if not a.group or r["group"] == a.group]
+            if not ok:
+                raise Refused(f"no usable targets: read {len(rows)}, denied {len(denied)}")
+        except Refused as e:
+            print(f"villain-guard: REFUSED: {e}", file=sys.stderr)
+            return 1
+        if a.json:
+            print(json.dumps({"read": len(rows), "denied": len(denied), "victims": ok}))
+        else:
+            print(f"villain-guard: read {len(rows)} targets; denied {len(denied)}; undo covers {len(ok)}")
+            for v in ok:
+                print(f"  decoy {v['vmid']} {v['name']} on {v['node']} group {v['group']}")
+        return 0
     try:
         rows = read_targets(a.targets)
         if in_quiet_hours(now):
@@ -114,6 +139,9 @@ def main(argv=None):
         print(f"villain-guard: REFUSED: {e}", file=sys.stderr)
         return 1
     switch = os.environ.get("VILLAINS_ENABLED", "false")
+    if a.json:
+        print(json.dumps({"read": len(rows), "denied": len(denied), "seed": seed, "victims": victims}))
+        return 0
     print(f"villain-guard: read {len(rows)} targets; denied {len(denied)}; picked {len(victims)}; seed {seed}")
     for v in victims:
         print(f"  victim {v['vmid']} {v['name']} on {v['node']} group {v['group']} fault {v['fault']}")
