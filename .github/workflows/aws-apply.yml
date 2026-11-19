@@ -37,6 +37,11 @@ on:
         required: false
         type: boolean
         default: false
+      first_apply:
+        description: "Authentik only. The root has no state yet, so a plan that reads 0 resources is expected."
+        required: false
+        type: boolean
+        default: false
       apply:
         description: "Run the apply job after the plan. Without it, the run only plans."
         required: false
@@ -101,6 +106,7 @@ jobs:
         env:
           ROOT: ${{ inputs.root }}
           ATTACH: ${{ inputs.attach_domain }}
+          FIRST_APPLY: ${{ inputs.first_apply }}
           PET: ${{ inputs.pet }}
         run: ../../scripts/aws-apply-run.sh plan
 
@@ -148,6 +154,7 @@ jobs:
         env:
           ROOT: ${{ inputs.root }}
           ATTACH: ${{ inputs.attach_domain }}
+          FIRST_APPLY: ${{ inputs.first_apply }}
           PET: ${{ inputs.pet }}
           EXPECT_DIGEST: ${{ needs.plan.outputs.digest }}
         run: ../../scripts/aws-apply-run.sh apply

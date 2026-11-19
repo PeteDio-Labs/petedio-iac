@@ -9,7 +9,8 @@
 #
 # No secret in this root. The host reads its .env, the tunnel token and the optional Tailscale
 # key from SSM Parameter Store at run time. scripts/seed-authentik-aws.sh writes them, and Pedro
-# runs it (PET-511). Terraform names the parameters but never holds their values.
+# runs it (PET-511). Terraform names the parameters but never holds their values. The host
+# publishes backups/status.json on each sync, which the seed script and a watchdog read.
 #
 # Declared, not hand-run. Terraform writes the compose file and the host scripts to the bucket's
 # config/ prefix. A timer on the host syncs that prefix every two minutes, so a version bump is a
@@ -328,7 +329,7 @@ resource "aws_instance" "host" {
     delete_on_termination = false
   }
 
-  # A stop or terminate from the console must be a decision, not a slip.
+  # A terminate from the console or the API must be a decision, not a slip. It does not block a stop.
   disable_api_termination = true
 
   tags = { Name = var.name }
@@ -337,5 +338,10 @@ resource "aws_instance" "host" {
     ignore_changes = [ami, user_data]
   }
 
-  depends_on = [aws_s3_object.config]
+  # The first boot reads config/ with the role, so the role's grants must exist before it.
+  depends_on = [
+    aws_s3_object.config,
+    aws_iam_role_policy.host,
+    aws_iam_role_policy_attachment.ssm_core,
+  ]
 }

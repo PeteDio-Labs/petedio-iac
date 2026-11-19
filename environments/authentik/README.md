@@ -45,12 +45,14 @@ Pedro runs the two scripts, because they place credentials (`PET-511`). Everythi
 
 1. **Merge this PR.** The homelab apply on merge creates the `authentik-aws` tunnel and `auth-aws.pdlab.dev`. `auth.pdlab.dev` stays on the lab, because `authentik_side` is `lab`.
 2. **Vault policy.** Dispatch `vault-config-apply.yml` and approve it. It lets `aws-apply.yml` read the `authentik-*` keys.
-3. **CI users.** Pedro runs `./scripts/seed-aws-ci.sh --profile <profile>` on the Mac. It adds the `authentik` plan and apply users and the boundary, and leaves the existing keys as they are.
-4. **Apply.** Dispatch `aws-apply.yml` with `root=authentik` and `apply=true`, and approve the `lab-write` job. The host boots and waits.
-5. **Secrets and data.** Pedro runs `./scripts/seed-authentik-aws.sh --profile <profile> --copy-data` on the Mac. It writes the SSM parameters, copies the database and media while 119 keeps serving, and waits until `auth-aws.pdlab.dev` answers.
-6. **Check.** Sign in at `https://auth-aws.pdlab.dev`. The lab copy is untouched.
-7. **Switch.** Run step 5 again for a fresh copy, then merge the change that sets `authentik_side = "aws"` in `environments/homelab` and `accept_restore = false` here, and apply both. The record change takes about a minute.
-8. **Lab side.** Point the LDAP outpost on 119 at `https://auth.pdlab.dev`, stop the server and worker there, and move the lab-verify, Kuma and Prometheus checks to the new names. Keep 119's database for a week as the rollback.
+3. **CI users.** Pedro runs `./scripts/seed-aws-ci.sh --profile <profile>` on the Mac. It adds the `authentik` plan and apply users and the boundary. A key Vault already holds stays as it is.
+4. **Apply.** Dispatch `aws-apply.yml` with `root=authentik`, `apply=true` and `first_apply=true`, and approve the `lab-write` job. The host boots and waits. Every later run leaves `first_apply` off, so a plan that reads an empty state stops.
+5. **Secrets and data.** Pedro runs `./scripts/seed-authentik-aws.sh --profile <profile> --copy-data` on the Mac. It writes the SSM parameters, copies the database and media while 119 keeps serving, and waits until the host reports that copy restored and healthy in `backups/status.json`.
+6. **Check.** Open `https://auth-aws.pdlab.dev`. Access lets in Pedro alone, then Authentik asks you to sign in. The lab copy is untouched.
+7. **Final copy.** Stop writes you care about on 119, then run step 5 again. The script waits until the host reports that exact copy.
+8. **Close the restore.** Merge `accept_restore = false` here and apply it through `aws-apply.yml`. The host refuses any later copy within two minutes.
+9. **Switch.** Merge `authentik_side = "aws"` in `environments/homelab`. The apply on merge moves the record, which takes about a minute.
+10. **Lab side.** Point the LDAP outpost on 119 at `https://auth.pdlab.dev`, stop the server and worker there, and move the lab-verify, Kuma and Prometheus checks to the new names. Keep 119's database for a week as the rollback.
 
 ## Rollback
 

@@ -6,3 +6,4 @@ scripts/seed-vault-oidc.sh
 scripts/seed-authentik-api-token.sh
 scripts/test-seed-vault-oidc.sh
 scripts/test-seed-authentik-api-token.sh
+scripts/seed-authentik-aws.sh

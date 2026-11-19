@@ -43,7 +43,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ACCT="847547470418"; REGION="us-east-2"
 BUCKET="petedio-authentik-$ACCT"; PFX="/petedio-authentik"
-TUNNEL_NAME="authentik-aws"; CHECK_URL="https://auth-aws.pdlab.dev/-/health/ready/"
+TUNNEL_NAME="authentik-aws"
 VAULT_TOKEN_KEYCHAIN_ITEM="${VAULT_TOKEN_KEYCHAIN_ITEM:-vault-root-token}"
 export VAULT_ADDR="${VAULT_ADDR:-https://192.168.50.223:8200}"
 export VAULT_CACERT="${VAULT_CACERT:-$REPO_ROOT/environments/homelab/vault-ca.crt}"
@@ -84,8 +84,10 @@ fi
 export VAULT_TOKEN
 vault token lookup >/dev/null 2>&1 || die "the Vault token is invalid, or Vault is sealed. Run scripts/pet-secrets doctor."
 CF_ACCT="$(vault kv get -field=account_id kv/iac/cloudflare)" || die "could not read account_id from kv/iac/cloudflare."
-printf 'Authorization: Bearer %s\n' "$(vault kv get -field=api_token kv/iac/cloudflare)" > "$TMP/cf-header" \
-  || die "could not read api_token from kv/iac/cloudflare."
+CF_TOK="$(vault kv get -field=api_token kv/iac/cloudflare)" || die "could not read api_token from kv/iac/cloudflare."
+[ -n "$CF_TOK" ] || die "kv/iac/cloudflare holds an empty api_token."
+printf 'Authorization: Bearer %s\n' "$CF_TOK" > "$TMP/cf-header"
+unset CF_TOK
 echo "  read the Cloudflare token (not shown)"
 
 step "Tunnel token for $TUNNEL_NAME"
@@ -134,13 +136,24 @@ if [ "$COPY" -eq 1 ]; then
   aws_ s3 cp "$TMP/READY" "s3://$BUCKET/migrate/READY" --only-show-errors
   echo "  copy $STAMP: Postgres $VER, database $DS bytes, media $(wc -c < "$TMP/media.tar.gz" | tr -d ' ') bytes"
 
-  step "Waiting for $CHECK_URL (up to 10 minutes)"
+  # Wait for the host to report this exact copy. A 2xx from the login page would also come from
+  # an earlier copy, so the page is not proof. The host writes backups/status.json on every sync.
+  step "Waiting for the host to restore copy $STAMP (up to 10 minutes)"
   for i in $(seq 1 40); do
-    code="$(curl -s -o /dev/null -w '%{http_code}' "$CHECK_URL" || true)"
-    case "$code" in 2*) echo "  answered $code after about $((i * 15)) s: the AWS copy is up with copy $STAMP"; exit 0 ;; esac
+    if aws_ s3 cp "s3://$BUCKET/backups/status.json" "$TMP/status.json" --only-show-errors 2>/dev/null; then
+      phase="$(jq -r '.phase // empty' "$TMP/status.json")"
+      got="$(jq -r '.restored_stamp // empty' "$TMP/status.json")"
+      detail="$(jq -r '.detail // empty' "$TMP/status.json")"
+      case "$phase" in
+        ok) [ "$got" != "$STAMP" ] || { echo "  the host serves copy $STAMP and reports healthy ($(jq -r .checked_at "$TMP/status.json"))"; exit 0; } ;;
+        error) [ "$got" = "$STAMP" ] || die "the host reports an error: $detail. On the host: aws ssm start-session, then journalctl -u authentik-sync." ;;
+        waiting|restoring) : ;;
+        *) die "the host's status.json has an unknown phase '$phase'." ;;
+      esac
+    fi
     sleep 15
   done
-  die "$CHECK_URL still answers ${code:-nothing} after 10 minutes. On the host: aws ssm start-session, then journalctl -u authentik-sync."
+  die "after 10 minutes the host reports phase '${phase:-none}' with copy '${got:-none}', not $STAMP. On the host: aws ssm start-session, then journalctl -u authentik-sync."
 fi
 echo
 echo "Done. The host picks the secrets up within two minutes. Run again with --copy-data to start it."

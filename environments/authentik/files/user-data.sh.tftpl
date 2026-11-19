@@ -31,7 +31,12 @@ fi
 swapon -a
 
 install -d -m 0700 /opt/authentik /opt/authentik/bin
-aws s3 cp --region "$REGION" "s3://$BUCKET/config/authentik-sync.sh" /opt/authentik/bin/authentik-sync.sh
+# The role's policy can take a moment to reach every region endpoint, so retry for ten minutes.
+for i in $(seq 1 60); do
+  aws s3 cp --region "$REGION" "s3://$BUCKET/config/authentik-sync.sh" /opt/authentik/bin/authentik-sync.sh && break
+  [ "$i" -lt 60 ] || { echo "bootstrap: could not read config/authentik-sync.sh after 10 minutes"; exit 1; }
+  sleep 10
+done
 chmod 0700 /opt/authentik/bin/authentik-sync.sh
 printf 'BUCKET=%s\nAWS_REGION=%s\n' "$BUCKET" "$REGION" > /opt/authentik/bootstrap.env
 

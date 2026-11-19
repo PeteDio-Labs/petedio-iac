@@ -55,8 +55,9 @@ variable "authentik_version" {
 variable "accept_restore" {
   description = <<-EOT
     Let the host replace its database with the newest dump under migrate/ in its bucket. True while
-    the lab copy serves auth.pdlab.dev. Set false in the same change that moves auth.pdlab.dev to
-    AWS, so a late copy from the lab can never overwrite the live database.
+    the lab copy serves auth.pdlab.dev. Set it false and apply it, after the final copy is restored
+    and before the homelab change that moves auth.pdlab.dev to AWS merges. A late copy from the lab
+    then cannot overwrite the live database.
   EOT
   type        = bool
   default     = true

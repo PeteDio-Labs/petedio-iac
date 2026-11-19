@@ -239,5 +239,6 @@ mint(){ # $1 root, $2 kind (plan|apply)
 for root in dashboard portfolio authentik; do mint "$root" plan; mint "$root" apply; done
 
 step "Done"
-echo "  4 IAM users, 4 MinIO service accounts and the boundary policy exist, and Vault holds 4 entries under kv/services/aws-ci/."
+echo "  6 IAM users (plan and apply for dashboard, portfolio and authentik), their MinIO service accounts and"
+echo "  the petedio-dashboard-boundary and petedio-authentik-boundary policies exist. Vault holds an entry per user under kv/services/aws-ci/."
 echo "  Tell the thread: seed finished. No value was printed."

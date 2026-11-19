@@ -18,6 +18,8 @@ size="$(stat -c %s "$S/backup.dump")"
 aws s3 cp "$S/backup.dump" "s3://$BUCKET/backups/$day/authentik.dump" --only-show-errors
 tar -czf "$S/backup-media.tar.gz" -C "$D/media" .
 aws s3 cp "$S/backup-media.tar.gz" "s3://$BUCKET/backups/$day/media.tar.gz" --only-show-errors
+msize="$(stat -c %s "$S/backup-media.tar.gz")"
 shred -u "$S/backup.dump"
+rm -f "$S/backup-media.tar.gz"
 date -u +%FT%TZ > "$S/last-backup"
-echo "authentik-backup: wrote backups/$day: database $size bytes, media $(stat -c %s "$S/backup-media.tar.gz") bytes"
+echo "authentik-backup: wrote backups/$day: database $size bytes, media $msize bytes"

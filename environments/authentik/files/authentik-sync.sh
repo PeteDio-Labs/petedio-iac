@@ -23,7 +23,11 @@ umask 077
 : "${BUCKET:?}" "${AWS_REGION:?}"
 D=/opt/authentik
 S="$D/state"
-install -d -m 0700 "$D/config" "$S" "$D/media" "$D/certs" "$D/custom-templates"
+install -d -m 0700 "$D/config" "$S"
+# The server and worker run as UID 1000 and read these bind mounts, so they cannot be root-only.
+for d in media certs custom-templates; do
+  [ -d "$D/$d" ] || install -d -m 0755 -o 1000 -g 1000 "$D/$d"
+done
 export AWS_REGION
 log() { echo "authentik-sync: $*"; }
 
@@ -33,6 +37,10 @@ status() { # $1 phase, $2 detail
   printf '{"checked_at":"%s","phase":"%s","detail":"%s","server_health":"%s","restored_stamp":"%s","accept_restore":"%s"}\n' \
     "$(date -u +%FT%TZ)" "$1" "$2" "$health" "$(cat "$S/restored-stamp" 2>/dev/null || true)" "${ACCEPT_RESTORE:-unknown}" \
     > "$S/status.json"
+  # Publish it, so scripts/seed-authentik-aws.sh can wait for this exact copy. The host role may
+  # write only backups/. A failed upload must not hide the phase, so it only warns.
+  aws s3 cp "$S/status.json" "s3://$BUCKET/backups/status.json" --only-show-errors \
+    || echo "authentik-sync: could not publish status.json to s3://$BUCKET/backups/"
 }
 
 # ── 1. Config from the bucket ──────────────────────────────────────────────────────────────────
@@ -127,9 +135,9 @@ if [ -n "$stamp" ] && [ "$stamp" != "$have" ]; then
     aws s3 cp "s3://$BUCKET/migrate/authentik.dump" "$S/restore.dump" --only-show-errors
     aws s3 cp "s3://$BUCKET/migrate/media.tar.gz" "$S/media.tar.gz" --only-show-errors
     [ "$(sha256sum "$S/restore.dump" | cut -d' ' -f1)" = "$(awk '{print $2}' <<<"$ready")" ] \
-      || { log "authentik.dump does not match its READY digest. Re-run the seed script."; status error "dump digest mismatch"; exit 1; }
+      || { log "authentik.dump does not match its READY digest. Re-run the seed script."; rm -f "$S/restore.dump" "$S/media.tar.gz"; status error "dump digest mismatch"; exit 1; }
     [ "$(sha256sum "$S/media.tar.gz" | cut -d' ' -f1)" = "$(awk '{print $3}' <<<"$ready")" ] \
-      || { log "media.tar.gz does not match its READY digest. Re-run the seed script."; status error "media digest mismatch"; exit 1; }
+      || { log "media.tar.gz does not match its READY digest. Re-run the seed script."; rm -f "$S/restore.dump" "$S/media.tar.gz"; status error "media digest mismatch"; exit 1; }
     dc stop server worker cloudflared 2>/dev/null || true
     dc up -d --wait postgresql
     # The role and database come from .env, inside the container, so no value reaches argv here.
@@ -139,10 +147,14 @@ if [ -n "$stamp" ] && [ "$stamp" != "$have" ]; then
     users="$(dc exec -T postgresql sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select count(*) from authentik_core_user"')"
     [ "${tables:-0}" -gt 50 ] && [ "${users:-0}" -gt 0 ] \
       || { log "the restore left $tables tables and $users users, which is not an Authentik database. Stack stays down."; status error "restore check failed"; exit 1; }
+    # Keep one earlier media folder as a rollback, never more, so restores cannot fill the disk.
+    find "$S" -maxdepth 1 -type d -name 'media.before-*' -exec rm -rf {} +
     [ ! -d "$D/media" ] || mv "$D/media" "$S/media.before-$stamp"
-    install -d -m 0755 "$D/media"
-    tar -xzf "$S/media.tar.gz" -C "$D/media"
+    install -d -m 0755 -o 1000 -g 1000 "$D/media"
+    (umask 022 && tar -xzf "$S/media.tar.gz" -C "$D/media" --no-same-owner)
+    chown -R 1000:1000 "$D/media"
     shred -u "$S/restore.dump"
+    rm -f "$S/media.tar.gz"
     echo "$stamp" > "$S/restored-stamp"
     have="$stamp"
     log "restored copy $stamp: $tables tables, $users users"
