@@ -32,8 +32,8 @@ TARGETS = HERE / "targets.txt"
 TIERS_ALLOWED = {"decoy"}
 
 # Never hit, even when listed: Vault, Authentik, cloudflared, MinIO, runners, pete-bot,
-# Prometheus, Plane shim, Ollama, claude-247 and codex-248. Checked against vault/Hosts/hosts-inventory.md.
-DENY_VMIDS = {112, 119, 221, 223, 232, 233, 235, 237, 240, 245, 246, 247, 248}
+# Prometheus, Plane shim, Ollama, claude-247, codex-248 and the decoy gateway 214. Checked against vault/Hosts/hosts-inventory.md.
+DENY_VMIDS = {112, 119, 214, 221, 223, 232, 233, 235, 237, 240, 245, 246, 247, 248}
 
 # pve03's backup job stops guests around 02:45 Eastern.
 QUIET_START, QUIET_END = (2, 15), (3, 30)

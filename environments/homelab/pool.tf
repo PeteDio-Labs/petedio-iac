@@ -66,7 +66,7 @@ locals {
     # Lab Villains decoys (PET-954), one module per VMID in villain-decoys.tf.
   } : {}
 
-  pool_decoy_members = var.manage_resource_pool ? { for k, m in module.decoy : "decoy_${k}" => m.vm_id } : {}
+  pool_decoy_members = var.manage_resource_pool ? merge({ decoy_gw = module.decoy_gw.vm_id }, { for k, m in module.decoy : "decoy_${k}" => m.vm_id }) : {}
 
   # LXCs that exist on the cluster but have NO Terraform module here, so there is
   # no module output to source a vm_id from. Membership is additive and never

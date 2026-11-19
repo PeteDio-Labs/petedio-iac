@@ -1,0 +1,18 @@
+---
+# configure-decoy-gw.yml — the gateway container for the Lab Villains decoys (PET-954).
+# roles/decoy-gw/defaults has the design. Terraform creates the container (villain-decoys.tf), and
+# configure-decoy-net.yml creates the bridge it sits on, before the merge.
+#
+#   cd ansible
+#   ansible-playbook playbooks/services/configure-decoy-gw.yml --check --diff
+#   ansible-playbook playbooks/services/configure-decoy-gw.yml
+#
+# Run `playbooks/proxmox/configure-lxc-features.yml` for pve03 once after the container exists, so its
+# declared features converge. Not on scripts/lab-playbooks.txt: a Mac or 247 session runs it.
+
+- name: Configure the decoy gateway
+  hosts: decoy_gw
+  become: false
+  gather_facts: false
+  roles:
+    - decoy-gw

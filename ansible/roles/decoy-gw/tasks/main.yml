@@ -1,0 +1,93 @@
+---
+- name: Decoy gateway — install nftables
+  ansible.builtin.apt:
+    name: nftables
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Forwarding on, persisted. A container netns may refuse the write; the assert below says so.
+- name: Decoy gateway — keep IPv4 forwarding on at boot
+  ansible.builtin.copy:
+    content: "net.ipv4.ip_forward = 1\n"
+    dest: /etc/sysctl.d/90-decoy-gw.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: decoy_gw_sysctl
+
+- name: Decoy gateway — turn IPv4 forwarding on now
+  ansible.builtin.command: sysctl -w net.ipv4.ip_forward=1
+  when: decoy_gw_sysctl is changed
+  changed_when: true
+
+- name: Decoy gateway — write the ruleset
+  ansible.builtin.template:
+    src: nftables.nft.j2
+    dest: "{{ decoy_gw_nft_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: nft -c -f %s
+  notify: Reload the decoy nftables table
+
+- name: Decoy gateway — write the unit that loads it
+  ansible.builtin.template:
+    src: nft.service.j2
+    dest: /etc/systemd/system/{{ decoy_gw_nft_unit }}.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: decoy_gw_unit
+
+# A check run never writes the unit, so systemd cannot find it yet.
+- name: Decoy gateway — enable and start the table
+  when: not (ansible_check_mode and decoy_gw_unit is changed)
+  ansible.builtin.systemd_service:
+    name: "{{ decoy_gw_nft_unit }}"
+    enabled: true
+    state: started
+    daemon_reload: "{{ decoy_gw_unit is changed }}"
+
+- name: Decoy gateway — apply a changed ruleset now
+  ansible.builtin.meta: flush_handlers
+
+# Prove it. Read the kernel's answers, not the files. A check run writes nothing, so these run on
+# a real run only.
+- name: Decoy gateway — read forwarding
+  when: not ansible_check_mode
+  ansible.builtin.command: sysctl -n net.ipv4.ip_forward
+  register: decoy_gw_forwarding
+  changed_when: false
+
+- name: Decoy gateway — assert forwarding is on
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: decoy_gw_forwarding.stdout | trim == '1'
+    fail_msg: "net.ipv4.ip_forward reads {{ decoy_gw_forwarding.stdout }} on {{ inventory_hostname }}."
+
+- name: Decoy gateway — read the loaded table
+  when: not ansible_check_mode
+  ansible.builtin.command: nft list table inet villain_decoys
+  register: decoy_gw_nft_live
+  changed_when: false
+
+- name: Decoy gateway — assert every decoy has its forward
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: >-
+      (decoy_gw_nft_live.stdout | regex_findall('dnat ip to 10\.66\.0\.[0-9]+:' ~ decoy_gw_ssh_port))
+      | length == decoy_gw_vmids | length
+    fail_msg: "Expected {{ decoy_gw_vmids | length }} DNAT rules."
+
+- name: Decoy gateway — read its decoy-leg address
+  when: not ansible_check_mode
+  ansible.builtin.command: ip -4 -o addr show dev {{ decoy_gw_decoy_if }}
+  register: decoy_gw_addr
+  changed_when: false
+
+- name: Decoy gateway — assert it holds 10.66.0.1
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: "'10.66.0.1/24' in decoy_gw_addr.stdout"
+    fail_msg: "{{ decoy_gw_decoy_if }} reads: {{ decoy_gw_addr.stdout }}"

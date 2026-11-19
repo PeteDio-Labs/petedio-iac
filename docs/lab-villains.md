@@ -8,6 +8,23 @@ work. Each villain has its own universe of decoys. No real service is a target.
 | Joker | `dc`, VMIDs 250 to 253 | one random fault on one decoy: stop, restart, or stop sshd | `ansible/playbooks/villain/joker.yml` |
 | Thanos | `marvel`, VMIDs 210 to 213 | stops half the decoys, rounded down, never the last | `ansible/playbooks/villain/thanos.yml` |
 
+## Network
+
+The decoys sit on a private bridge, `vmbr66`, on `10.66.0.0/24`, with no router and no DHCP. Each decoy's
+address is `10.66.0.<vmid>`, set by Terraform, so a decoy never waits on a gateway to boot. `decoy-gw-214`
+is the gateway: one leg on the LAN (`192.168.50.214`), one on `vmbr66` (`10.66.0.1`). It forwards LAN
+port `10<vmid>` to a decoy's sshd, and it lets a decoy start no connection. A decoy has no internet and
+no route to any LAN host, Authentik and Vault included. Kuma monitors the forwarded ports. The gateway
+is on the denylist and never a target.
+
+Bring it up in this order:
+
+1. Run `ansible/playbooks/proxmox/configure-decoy-net.yml` on pve03 **before** the merge that creates the
+   containers. A merge applies Terraform and does not run Ansible, and the containers attach to `vmbr66`.
+2. Merge the pull request. Terraform creates the gateway and the eight decoys.
+3. Run `ansible/playbooks/services/configure-decoy-gw.yml`, then the lxc-features play for pve03.
+4. Run `scripts/deploy-uptime-kuma.sh` to add the monitors.
+
 ## Safety rules
 
 - `scripts/villain/targets.txt` is the allowlist. `scripts/villain/guard.py` also refuses a

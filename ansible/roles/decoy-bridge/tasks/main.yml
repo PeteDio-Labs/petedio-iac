@@ -1,0 +1,62 @@
+---
+- name: Decoy bridge — read /etc/network/interfaces
+  ansible.builtin.slurp:
+    src: /etc/network/interfaces
+  register: decoy_bridge_interfaces
+  check_mode: false
+
+- name: Decoy bridge — assert it sources interfaces.d
+  ansible.builtin.assert:
+    that: >-
+      (decoy_bridge_interfaces.content | b64decode
+       | regex_findall('(?m)^source /etc/network/interfaces\.d/\*$')) | length > 0
+    fail_msg: >-
+      /etc/network/interfaces on {{ inventory_hostname }} does not source
+      /etc/network/interfaces.d/*, so {{ decoy_bridge_interfaces_file }} would never load.
+
+# NetworkManager hands off before the bridge exists.
+- name: Decoy bridge — keep NetworkManager off the bridge
+  ansible.builtin.template:
+    src: nm-unmanaged.conf.j2
+    dest: "{{ decoy_bridge_nm_conf }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload NetworkManager
+
+- name: Decoy bridge — apply the NetworkManager change before the bridge
+  ansible.builtin.meta: flush_handlers
+
+- name: Decoy bridge — declare the bridge
+  ansible.builtin.template:
+    src: interfaces.j2
+    dest: "{{ decoy_bridge_interfaces_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: decoy_bridge_stanza
+
+- name: Decoy bridge — read the bridge's state
+  ansible.builtin.command: ip -o link show dev {{ decoy_bridge_name }}
+  register: decoy_bridge_link
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# ifup only this bridge. `ifreload -a` would re-apply every interface on the node.
+- name: Decoy bridge — bring the bridge up
+  when: decoy_bridge_stanza is changed or decoy_bridge_link.rc != 0
+  ansible.builtin.command: ifup {{ decoy_bridge_name }}
+  changed_when: true
+
+- name: Decoy bridge — read the bridge after
+  when: not ansible_check_mode
+  ansible.builtin.command: ip -o link show dev {{ decoy_bridge_name }}
+  register: decoy_bridge_after
+  changed_when: false
+
+- name: Decoy bridge — assert the bridge exists
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: "'state UP' in decoy_bridge_after.stdout or 'state UNKNOWN' in decoy_bridge_after.stdout"
+    fail_msg: "{{ decoy_bridge_name }} reads: {{ decoy_bridge_after.stdout }}"

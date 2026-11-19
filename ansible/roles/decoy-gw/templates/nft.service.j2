@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# petedio-iac roles/decoy-gw (PET-954). Loads the inet villain_decoys table and nothing else.
+[Unit]
+Description=nftables table for the Lab Villains decoys (PET-954)
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+After=local-fs.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f {{ decoy_gw_nft_file }}
+ExecReload=/usr/sbin/nft -f {{ decoy_gw_nft_file }}
+ExecStop=/usr/sbin/nft delete table inet villain_decoys
+
+[Install]
+WantedBy=multi-user.target

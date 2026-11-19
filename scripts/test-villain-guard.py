@@ -51,6 +51,10 @@ class T(unittest.TestCase):
         rc, out = run(["core 223 vault pve03 decoy", "core 250 x pve03 prod"], "joker")
         self.assertEqual(rc, 1); self.assertIn("denied 2", out)
 
+    def test_gateway_214_is_denied_even_when_listed(self):
+        rc, out = run(["core 214 decoy-gw-214 pve03 decoy"], "joker")
+        self.assertEqual(rc, 1); self.assertIn("denied 1", out)
+
     def test_quiet_hours(self):
         rc, out = run(GOTHAM, "joker", now="2026-11-19T02:45:00-05:00")
         self.assertEqual(rc, 1); self.assertIn("quiet hours", out)
