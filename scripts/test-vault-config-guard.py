@@ -151,6 +151,16 @@ class T(unittest.TestCase):
         self.assertEqual(pol("deploy-other", *ok), 1)                                      # only the pinned name
         self.assertEqual(pol("deploy-terraform-plan", KV + "data/admin/*"), 1)
 
+    def test_staging_deploy_pin(self):
+        def pol(name, *paths):
+            body = "\n".join('path "%s" {\n capabilities=["read"]\n}' % p for p in paths)
+            return run([rc("vault_policy.n", "vault_policy", ["update"], {"name": name, "policy": body})])[0]
+        ok = [KV + "data/services/staging-app", KV + "data/callers/edge/staging"]
+        self.assertEqual(pol("deploy-staging-249", *ok), 0)
+        self.assertEqual(pol("deploy-staging-249", *ok, KV + "data/callers/edge/muse"), 1)  # not in the pinned set
+        self.assertEqual(pol("deploy-staging-249", KV + "data/callers/edge/*"), 1)
+        self.assertEqual(pol("deploy-other", KV + "data/callers/edge/staging"), 1)           # only the pinned name
+
     def test_known_list_is_not_unknown(self):
         # Terraform writes after_unknown as [false] for a list whose elements are all known.
         r = rc("vault_jwt_auth_backend_role.n", "vault_jwt_auth_backend_role", ["create"], {**ROLE, "token_policies": ["deploy-x"]})

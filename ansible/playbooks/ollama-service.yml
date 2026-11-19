@@ -1,11 +1,10 @@
-# Ported from homelab-infra for the greenfield petedio-iac.
-# Dual-GPU (GTX 1660 SUPER + RTX 3060 Ti), .12.
 ---
-# Update and verify the native Ollama service on ollama-host.
+# Install the native Ollama service and its pinned GPU lanes on ollama-246.
+# configure-ollama-246.yml imports this play after the allowlist and the NVIDIA userspace.
 #
 # Usage:
 #   ansible-playbook playbooks/ollama-service.yml
-#   ansible-playbook playbooks/ollama-service.yml --limit ollama-host
+#   ansible-playbook playbooks/ollama-service.yml --limit ollama-246
 
 - name: Update native Ollama service
   hosts: ollama
