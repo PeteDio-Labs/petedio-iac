@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-claude-247.sh — resolve LXC 247's identities from Vault and run
-# configure-claude-code.yml against it (PET-399, PET-493).
+# services/configure-claude-code.yml against it (PET-399, PET-493).
 #
 # ⚠ THIS WAS deploy-claude-loop.sh UNTIL PET-493. It carries several identities, and no one
 # of their names fits the others, so the script is named for the HOST. The work loop's
@@ -129,9 +129,9 @@ trap 'rm -rf "$TMP"' EXIT
 "$SCRIPT_DIR/claude-247-extra-vars.sh" "$TMP/extra.json"
 unset MIRROR_APP_PEM VAULT_APP_PEM CODE_APP_PEM OPS_APP_PEM PVE_TOKEN_SECRET PVE_CA_PEM NOTIFY_TOKEN
 
-step "Running configure-claude-code.yml (247's identities)"
+step "Running services/configure-claude-code.yml (247's identities)"
 cd "$ANSIBLE_DIR"
-ansible-playbook playbooks/configure-claude-code.yml -e "@$TMP/extra.json" "$@"
+ansible-playbook playbooks/services/configure-claude-code.yml -e "@$TMP/extra.json" "$@"
 
 step "Done"
 cat <<'TXT'

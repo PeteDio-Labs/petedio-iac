@@ -3,7 +3,7 @@
 #
 # The credentials come from the macOS Keychain (placed by seed-vault-kms.sh) and go to Ansible as
 # extra-vars. They never reach the repo, argv or a CI runner. Operator-run, on purpose: no workflow
-# calls configure-vault.yml with these values.
+# calls vault/configure-vault.yml with these values.
 #
 #   --key-id ID    the KMS key id printed by seed-vault-kms.sh (required)
 #   anything else is passed to ansible-playbook, for example --check
@@ -28,4 +28,4 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 python3 -c 'import json,sys;a=sys.stdin.read().split("\n");json.dump({"vault_awskms_key_id":sys.argv[2],"vault_awskms_access_key_id":a[0],"vault_awskms_secret_access_key":a[1]},open(sys.argv[1],"w"))' \
   "$TMP/extra.json" "$KEY_ID" <<<"$AK"$'\n'"$SK"
 cd "$ANSIBLE_DIR"
-ansible-playbook playbooks/configure-vault.yml -e "@$TMP/extra.json" ${PASS[@]+"${PASS[@]}"}
+ansible-playbook playbooks/vault/configure-vault.yml -e "@$TMP/extra.json" ${PASS[@]+"${PASS[@]}"}

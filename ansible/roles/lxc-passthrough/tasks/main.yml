@@ -2,9 +2,9 @@
 # Converge `mpN` and `devN` for each declared container on this node, then re-read the
 # running config and fail while any running container differs. See defaults/main.yml.
 #
-#   ansible-playbook playbooks/configure-lxc-passthrough.yml --check
-#   ansible-playbook playbooks/configure-lxc-passthrough.yml
-#   ansible-playbook playbooks/configure-lxc-passthrough.yml -e lxc_passthrough_allow_restart=true
+#   ansible-playbook playbooks/proxmox/configure-lxc-passthrough.yml --check
+#   ansible-playbook playbooks/proxmox/configure-lxc-passthrough.yml
+#   ansible-playbook playbooks/proxmox/configure-lxc-passthrough.yml -e lxc_passthrough_allow_restart=true
 
 - name: Look for pct
   ansible.builtin.stat:

@@ -13,7 +13,7 @@ across Mac / iPhone / iPad / Windows PC, through the `obsidian-fs-mcs` bucket on
 | Credential | Vault `kv/services/minio-obsidian` (`access_key`, `secret_key`, `endpoint`, `bucket`) |
 | Reachability | tailnet `tailef7394.ts.net` via the `tailscale-244` subnet router (`192.168.50.0/24`) |
 | Plugin | Obsidian community plugin **Remotely Save** (S3-compatible) |
-| Infra | `environments/homelab/minio-data.tf` · `ansible/playbooks/configure-minio-data.yml` |
+| Infra | `environments/homelab/minio-data.tf` · `ansible/playbooks/services/configure-minio-data.yml` |
 
 ## Why there is no public URL, and why that is not a limitation
 

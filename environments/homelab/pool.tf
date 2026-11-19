@@ -75,7 +75,7 @@ locals {
   # Each of these is unmanaged for its own reason, not by oversight:
   #   221 minio      the Terraform S3 STATE BACKEND. TF cannot create the host
   #                  that stores TF state — see minio-state-backend.tf. Config-as-
-  #                  code only, via configure-minio.yml.
+  #                  code only, via services/configure-minio.yml.
   #   102 flaresolverr  pve02. Community-script container, never captured.
   #   112 cloud-flare-main  pve02. The cloudflared tunnel connector.
   #

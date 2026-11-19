@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # claude-247-extra-vars.sh — check LXC 247's identities and write them as the extra-vars
-# file configure-claude-code.yml takes (PET-515).
+# file services/configure-claude-code.yml takes (PET-515).
 #
 #   scripts/claude-247-extra-vars.sh <out.json>
 #
@@ -334,7 +334,7 @@ step "Resolving the read-only Proxmox token (PET-510)"
 #
 # ⚠ THE SESSION USER CAN READ THIS TOKEN. What bounds it is Proxmox: PVEAuditor on / for the
 # user and for the token, with privilege separation, so it reads the cluster and changes
-# nothing. ansible/playbooks/mint-claude-247-pve.yml writes this entry, once, from the Mac.
+# nothing. ansible/playbooks/access/mint-claude-247-pve.yml writes this entry, once, from the Mac.
 
 PVE_PRESENT=0
 PVE_FOUND=0
@@ -349,12 +349,12 @@ elif [ "$PVE_FOUND" -gt 0 ]; then
 
   The mint playbook writes all four in one request, so this entry was written some other way.
   Remove the token on pve02 with 'pveum user token remove claude-247@pve audit', then run
-  ansible/playbooks/mint-claude-247-pve.yml again."
+  ansible/playbooks/access/mint-claude-247-pve.yml again."
 else
   warn "kv/services/claude-247-pve is empty, so the Proxmox token is NOT being landed.
 
   Everything else in this run converges. To fix it, run
-  ansible/playbooks/mint-claude-247-pve.yml from the Mac, and then this script again."
+  ansible/playbooks/access/mint-claude-247-pve.yml from the Mac, and then this script again."
 fi
 
 if [ "$PVE_PRESENT" -eq 1 ]; then
@@ -364,7 +364,7 @@ if [ "$PVE_PRESENT" -eq 1 ]; then
     || die "kv/services/claude-247-pve names the token '$PVE_TOKEN_ID', not claude-247@pve!audit.
 
   Only claude-247@pve!audit is bounded to PVEAuditor. Re-mint with
-  ansible/playbooks/mint-claude-247-pve.yml."
+  ansible/playbooks/access/mint-claude-247-pve.yml."
 
   case "$PVE_ENDPOINT" in
     https://*) ;;

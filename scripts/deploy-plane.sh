@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy-plane.sh — resolve Plane's secrets from Vault and run configure-plane.yml
+# deploy-plane.sh — resolve Plane's secrets from Vault and run services/configure-plane.yml
 # against LXC 235. The playbook has two plays: Plane in /opt/plane, and the MCP shim in
 # /opt/plane-mcp (PET-292, codified by PET-610).
 #
@@ -23,7 +23,7 @@
 #
 # ORDER MATTERS — this will fail loudly, and correctly, if you skip a step:
 #   1. plane.tf applied (LXC 235 exists)
-#   2. playbooks/configure-lxc-features.yml (PET-378) run (nesting=1,keyctl=1 — Docker won't start without)
+#   2. playbooks/proxmox/configure-lxc-features.yml (PET-378) run (nesting=1,keyctl=1 — Docker won't start without)
 #   3. `plane` database exists on 231 (databases.tf) and kv/db/plane is seeded
 #   4. `plane` bucket exists on 245 (group_vars/minio_data.yml + deploy-minio-data.sh)
 set -euo pipefail
@@ -69,7 +69,7 @@ MQ_PW="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=mq_password kv/services/pla
 MCP_KEY="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=api_key kv/services/plane-claude)" \
   || die "cannot read kv/services/plane-claude field 'api_key' — run scripts/seed-plane-member-pat.sh --name claude first."
 [ -n "$MCP_KEY" ] || die "kv/services/plane-claude field 'api_key' is empty."
-# One personal MCP site each. Keep this list equal to plane_mcp_members in configure-plane.yml,
+# One personal MCP site each. Keep this list equal to plane_mcp_members in services/configure-plane.yml,
 # and give each name a kv/data/services/plane-<name> path in vault-config's ansible-247 policy;
 # the play stops when a member's PAT is missing.
 MCP_MEMBERS="tom sonia"
@@ -122,8 +122,8 @@ with open(sys.argv[1], "w") as fh:
     }, fh)
 PYEOF
 
-step "Ansible: configure-plane.yml"
+step "Ansible: services/configure-plane.yml"
 cd "$ANSIBLE_DIR"
-ansible-playbook playbooks/configure-plane.yml -e "@$VARS_FILE" "$@"
+ansible-playbook playbooks/services/configure-plane.yml -e "@$VARS_FILE" "$@"
 
 step "Done. Re-run this script — a converged host must report changed=0."

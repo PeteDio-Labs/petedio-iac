@@ -7,7 +7,7 @@ shared `kv/iac/lxc-ssh` root key one consumer at a time (audit H6).
 | Piece | Where |
 |---|---|
 | The CA and the signing roles | `environments/homelab/vault-config/ssh.tf` |
-| Host trust and role users | `ansible/roles/ssh-ca`, run by `ansible/playbooks/configure-ssh-ca.yml` |
+| Host trust and role users | `ansible/roles/ssh-ca`, run by `ansible/playbooks/access/configure-ssh-ca.yml` |
 | Get a certificate | `scripts/ssh-ca-sign.sh <role> <public-key-file>` |
 
 ## Roles
@@ -26,9 +26,9 @@ user and principal in `ssh_ca_users` (role defaults, or `host_vars` for one host
 
 ## Trust the CA on `ollama-246` (`search-deploy`, PET-526)
 
-`ollama-246` trusts no CA until this step, and the `configure-ssh-ca.yml` play cannot reach it
+`ollama-246` trusts no CA until this step, and the `access/configure-ssh-ca.yml` play cannot reach it
 without the shared `lxc-ssh` key. To trust the CA without that key, dispatch `lab-action.yml` with
-`action=playbook_apply` and `target=configure-ssh-ca-ollama-246.yml`. The play logs in to `pve01`
+`action=playbook_apply` and `target=access/configure-ssh-ca-ollama-246.yml`. The play logs in to `pve01`
 with the `lab-runner` certificate and runs `pct exec 246`. It waits for your tap on the
 `lab-write` environment. Its last line names the counts it examined. After it, the
 `petedio-search` deploy signs a `search-deploy` certificate and connects to the guest directly.
@@ -45,7 +45,7 @@ Apply `vault-config` first, because the `search-deploy` role must exist before a
    `curl -s --cacert environments/homelab/vault-ca.crt https://192.168.50.223:8200/v1/ssh-client-signer/public_key`
    prints one `ssh-ed25519` line.
 3. To trust the CA on the canary, run this from `ansible/`:
-   `ansible-playbook playbooks/configure-ssh-ca.yml -e ssh_ca_targets=metrics-240 -e ansible_ssh_private_key_file=<file>`.
+   `ansible-playbook playbooks/access/configure-ssh-ca.yml -e ssh_ca_targets=metrics-240 -e ansible_ssh_private_key_file=<file>`.
    A host does not trust the CA until this first run, so the first run logs in with the
    `kv/iac/lxc-ssh` key. Since `PET-725` only the break-glass token reads it. Write it to a
    `0600` file in a `mktemp -d` directory, with `trap 'rm -rf "$T"' EXIT` set first, so a

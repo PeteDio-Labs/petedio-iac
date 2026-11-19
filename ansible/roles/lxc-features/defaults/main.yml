@@ -100,7 +100,7 @@ lxc_features_declared:
   # Nesting only, and deliberately. Debian 13, systemd 257, created with no features: on
   # 2026-10-01 `systemctl --failed` listed tmp.mount, dev-mqueue.mount and run-lock.mount,
   # the three units the evidence above ties to a missing `nesting=1`. Nothing here runs
-  # Docker (playbooks/configure-claude-code.yml), so the container gets no keyctl, as 248
+  # Docker (playbooks/services/configure-claude-code.yml), so the container gets no keyctl, as 248
   # does. Applying it takes a `pct reboot 247`, which ends Pedro's Remote Control
   # sessions, so pick that window with him (PET-557).
   "247": { nesting: "1" }                # claude-247 — Claude Code, Remote Control — HAS NEITHER

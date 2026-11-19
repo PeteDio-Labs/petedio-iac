@@ -11,6 +11,6 @@ manage_backup_job     = true
 email_routing_live    = true
 email_routing_forward = true
 
-# manage_backup_job went true again on 2026-11-07, after the grant-iac-backup-storage.yml
+# manage_backup_job went true again on 2026-11-07, after the backup/grant-iac-backup-storage.yml
 # playbook gave the token Datastore.Allocate on /storage/ollama-backups (lab-action run
 # 42372280086). Before the grant, every apply failed at proxmox_backup_job.pve01 with 403.

@@ -1,0 +1,84 @@
+---
+# media/configure-tracerr-plex-remote.yml — let tracerr on 237 reach plex-remote 244 (MED-21).
+#
+# pve03 DNATs only port 32400 to 244, so tracerr cannot reach 244's sshd directly, and
+# 244 sits on a bridge that only pve03 routes. tracerr reads Plex by running curl on the
+# host, so it needs a shell on 244. The jump grants that and nothing more:
+#
+#   237 --ssh -J root@192.168.50.10--> pve03 (tunnel to 10.244.0.244:22 only) --> 244
+#
+# pve03 gets tracerr's public key with `restrict,port-forwarding,permitopen=` pinned to
+# 244's sshd, so the key opens a tunnel and never a shell or any other port on the node.
+# 244 gets the same key, restricted to the node's bridge address, as the media hosts do
+# in configure-media-dash.yml.
+#
+# The public key is derived on pve03 from the private key on 237 with `ssh-keygen -y`, so
+# no key is typed, pasted or read from Vault. The play places no secret.
+#
+# Run it with playbook_check, then playbook_apply, from lab-action.yml. It is idempotent.
+# It changes nothing on 237: the host-key pin and the transport live in tracerr.
+
+- name: Authorize tracerr's key on pve03 (tunnel only) and plex-remote 244
+  hosts: pve_new
+  become: true
+  gather_facts: false
+
+  vars:
+    tracerr_ct: 237
+    tracerr_private_key: /opt/mtrace/.ssh/id_ed25519_mtrace
+    plex_remote_ct: 244
+    plex_remote_address: 10.244.0.244
+    # 244's sshd sees the tunnel arrive from pve03's address on vmbr244
+    # (plex_remote_net_bridge_address in petedio-media-iac).
+    plex_remote_jump_source: 10.244.0.1
+    tracerr_source: 192.168.50.237
+
+  tasks:
+    - name: Derive tracerr's public key from its private key on 237
+      ansible.builtin.command:
+        cmd: "pct exec {{ tracerr_ct }} -- ssh-keygen -y -f {{ tracerr_private_key }}"
+      register: tracerr_pubkey
+      changed_when: false
+      check_mode: false # lab-action: read-only (prints only the public half)
+
+    - name: Check that a public key came back
+      ansible.builtin.assert:
+        that:
+          - tracerr_pubkey.stdout | regex_search('^ssh-ed25519 [A-Za-z0-9+/=]+') is not none
+        fail_msg: "Reading tracerr's key on 237 returned no ed25519 public key."
+      when: not ansible_check_mode
+
+    - name: Authorize the key on pve03 for a tunnel to 244's sshd only
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ tracerr_pubkey.stdout | trim }}"
+        comment: tracerr-244-jump
+        key_options: >-
+          restrict,port-forwarding,permitopen="{{ plex_remote_address }}:22",from="{{ tracerr_source }}"
+        state: present
+        exclusive: false
+      when: not ansible_check_mode
+
+    - name: Read 244's authorized_keys
+      ansible.builtin.command:
+        cmd: "pct exec {{ plex_remote_ct }} -- cat /root/.ssh/authorized_keys"
+      register: plex_remote_keys
+      changed_when: false
+      failed_when: false
+      check_mode: false # lab-action: read-only
+
+    - name: Authorize the key on 244
+      ansible.builtin.shell:
+        cmd: >-
+          pct exec {{ plex_remote_ct }} -- sh -c
+          'mkdir -p /root/.ssh && chmod 700 /root/.ssh &&
+          printf "%s\n" "$0" >> /root/.ssh/authorized_keys &&
+          chmod 600 /root/.ssh/authorized_keys'
+          '{{ line }}'
+      vars:
+        line: >-
+          restrict,from="{{ plex_remote_jump_source }}" {{ tracerr_pubkey.stdout | trim }} tracerr-244-jump
+      when:
+        - not ansible_check_mode
+        - (tracerr_pubkey.stdout.split()[1]) not in plex_remote_keys.stdout
+      changed_when: true

@@ -385,7 +385,7 @@ fi
 case "$(rsh "$REMOTE_ALIAS" 2>/dev/null || echo FAILED)" in
   OK) echo "  refreshed the on-host mc alias local" ;;
   SKIPPED) echo "  no mc on $MINIO_HOST, so there is no on-host alias to refresh" ;;
-  *) followup_fail "could not refresh the on-host mc alias local on $MINIO_HOST. Re-run configure-minio.yml." ;;
+  *) followup_fail "could not refresh the on-host mc alias local on $MINIO_HOST. Re-run services/configure-minio.yml." ;;
 esac
 # Record that the proof is done, so an interruption before the Vault write completes does not
 # turn the next run's proof into a failure. The marker keeps the old password's sha256.

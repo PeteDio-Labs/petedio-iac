@@ -380,7 +380,7 @@
     # first time if something is there to write to. Doing it here means the first real
     # question does not fail on seven unknown hosts.
     # plex-remote (244) is not scanned here: its sshd is reachable only from pve03, so 237 cannot
-    # scan it. tracerr reaches it with `ssh -J` through pve03 (key from configure-tracerr-plex-remote.yml),
+    # scan it. tracerr reaches it with `ssh -J` through pve03 (key from media/configure-tracerr-plex-remote.yml),
     # and StrictHostKeyChecking=accept-new records 244's key on first use. pve03's own key is
     # pre-seeded below, so the jump hop is checked.
     - name: Pre-seed the media hosts' ssh host keys

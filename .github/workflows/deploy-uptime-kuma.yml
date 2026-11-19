@@ -1,4 +1,4 @@
-# deploy-uptime-kuma — configure-pete-pi.yml against pete-pi (Uptime Kuma, the digest, the QDevice
+# deploy-uptime-kuma — services/configure-pete-pi.yml against pete-pi (Uptime Kuma, the digest, the QDevice
 # daemon and the tailnet routes), without the Mac (PET-849).
 #
 # Replaces scripts/deploy-uptime-kuma.sh as the way to run it. The script stays as the fallback and

@@ -36,7 +36,7 @@
 # ONE RUN, NOT TWO, like the mirror. The App is authorized before Ansible starts, so the run
 # that carries the identity also clones and configures. A run that carries no identity leaves
 # the credentials alone and converges from what is on disk, which keeps a bare
-# `ansible-playbook playbooks/configure-claude-code.yml` runnable on a seeded host.
+# `ansible-playbook playbooks/services/configure-claude-code.yml` runnable on a seeded host.
 ---
 # ⚠ follow: false is load-bearing (PET-410), the same as every other directory this role
 # creates inside the session user's home. ansible.builtin.file defaults to follow: yes, and

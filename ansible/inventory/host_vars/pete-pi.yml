@@ -2,7 +2,7 @@
 # pete-pi's SSH CA users (PET-849). Only pedro accepts a certificate here, and only the
 # deploy-uptime-kuma principal. scripts/trust-ssh-ca-pete-pi.sh writes the same files once, and
 # roles/ssh-ca keeps them if a later run covers this host:
-#   ansible-playbook playbooks/configure-ssh-ca.yml -e ssh_ca_targets=pete-pi
+#   ansible-playbook playbooks/access/configure-ssh-ca.yml -e ssh_ca_targets=pete-pi
 # Without this entry the role's defaults would remove auth_principals/pedro, give root the pedro
 # principal and create the inventory account on the Pi.
 ssh_ca_users:

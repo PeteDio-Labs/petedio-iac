@@ -10,7 +10,7 @@ Each rule is the short form. The narrative is in the cited `docs/GOTCHAS.md` sec
 
 - Keep `features`, `mount_point`, `idmap`, `console`, `startup`, `template_file_id` and `user_account` in `ignore_changes`. bpg can't round-trip them, and an API token can't set features or bind mounts (docs/GOTCHAS.md: "Proxmox / bpg").
 - A brownfield import must match live config exactly: NIC name, `hwaddr`, NIC firewall, DNS, `os_type`. Read it first with `scripts/proxmox-ro-config.sh` (docs/GOTCHAS.md: "Proxmox / bpg").
-- `pct set --features` replaces the whole string, and `pct config` shows declared, not running, features. Converge them with `playbooks/configure-lxc-features.yml` (docs/GOTCHAS.md: "Proxmox / bpg").
+- `pct set --features` replaces the whole string, and `pct config` shows declared, not running, features. Converge them with `playbooks/proxmox/configure-lxc-features.yml` (docs/GOTCHAS.md: "Proxmox / bpg").
 - The LAN bridge is `vmbr0` on pve02 and pve03. A config recovered from pve01 says `vmbr1`, so reset the bridge and keep `hwaddr` on migrate (docs/GOTCHAS.md: "Cluster + storage — pve02 + pve03 + QDevice (post 2026-09-03)").
 - Storage is per node: scope it with `nodes`, and pve03 has no `local-lvm`. Run `pct listsnapshot` before stopping a guest to migrate (docs/GOTCHAS.md: "Cluster + storage — pve02 + pve03 + QDevice (post 2026-09-03)").
 - The MinIO backend needs `use_path_style` and all four `skip_*` flags. Locking is `use_lockfile`, and bucket versioning is the recovery net (docs/GOTCHAS.md: "MinIO S3 state backend").

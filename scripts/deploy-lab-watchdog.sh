@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-lab-watchdog.sh — resolve the Discord bot credentials from Vault and run
-# configure-lab-watchdog.yml against claude-247 (PET-707). Modeled on deploy-codex-248.sh.
+# observability/configure-lab-watchdog.yml against claude-247 (PET-707). Modeled on deploy-codex-248.sh.
 #
 #   kv/services/lab-watchdog -> discord_bot_token, discord_dm_channel_id
 #     Seeded by seed-watchdog-discord.sh.
@@ -85,9 +85,9 @@ jq -n '{lab_watchdog_discord_bot_token: env.DISCORD_BOT_TOKEN,
   lab_watchdog_heartbeat_url: env.HB_URL, lab_watchdog_heartbeat_secret: env.HB_SECRET}' > "$TMP/extra.json"
 unset DISCORD_BOT_TOKEN HB_SECRET
 
-step "Running configure-lab-watchdog.yml"
+step "Running observability/configure-lab-watchdog.yml"
 cd "$ANSIBLE_DIR"
-ansible-playbook playbooks/configure-lab-watchdog.yml -e "@$TMP/extra.json" "$@"
+ansible-playbook playbooks/observability/configure-lab-watchdog.yml -e "@$TMP/extra.json" "$@"
 
 step "Done"
 cat <<'TXT'

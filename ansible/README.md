@@ -36,11 +36,11 @@ roles/nvidia-driver/                 # pinned .run driver: host (DKMS) or contai
 roles/lxc-gpu/                       # devN passthrough of the NVIDIA nodes
 roles/ollama-service/                # Ollama install, systemd drop-in, pinned extra lanes
 roles/ollama-models/                 # pulls base models and keeps the resident ones loaded
-playbooks/configure-pve01.yml        # node: repos, driver, template, GPU passthrough
-playbooks/configure-ollama-246.yml   # container: driver userspace, then the two plays below
-playbooks/ollama-service.yml
-playbooks/ollama-models.yml
-playbooks/wake-ollama-host.yml       # WoL for pve01 (same MAC and address)
+playbooks/proxmox/configure-pve01.yml        # node: repos, driver, template, GPU passthrough
+playbooks/ollama/configure-ollama-246.yml   # container: driver userspace, then the two plays below
+playbooks/ollama/ollama-service.yml
+playbooks/ollama/ollama-models.yml
+playbooks/ollama/wake-ollama-host.yml       # WoL for pve01 (same MAC and address)
 ```
 
 ## Running the plays (bootstrap order)
@@ -48,11 +48,11 @@ playbooks/wake-ollama-host.yml       # WoL for pve01 (same MAC and address)
 Run from this `ansible/` directory, in the order `docs/runbooks/pve01-cutover.md` gives:
 
 ```sh
-ansible-playbook playbooks/configure-pve01.yml -e nvidia_driver_allow_reboot=true
-ansible-playbook playbooks/configure-ollama-246.yml
+ansible-playbook playbooks/proxmox/configure-pve01.yml -e nvidia_driver_allow_reboot=true
+ansible-playbook playbooks/ollama/configure-ollama-246.yml
 ```
 
 **Wake the node** when it is powered off (WoL magic packet):
 ```sh
-ansible-playbook playbooks/wake-ollama-host.yml --tags wait
+ansible-playbook playbooks/ollama/wake-ollama-host.yml --tags wait
 ```

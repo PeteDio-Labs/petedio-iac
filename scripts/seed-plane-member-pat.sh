@@ -8,7 +8,7 @@
 # WHO. --name picks one entry from the MEMBERS table below. Each entry fixes the token label,
 # the Caddy site and route that use the token, and whether the person may be a workspace
 # Admin. A name outside the table is refused. To add a person, add a row here and an entry
-# in configure-plane.yml's plane_mcp_members.
+# in services/configure-plane.yml's plane_mcp_members.
 #
 # WHY ITS OWN PATH. kv/services/plane holds Pedro's PAT, and the plane-ci role reads that
 # path from a pull_request subject. A member's token stays out of reach of every CI run.

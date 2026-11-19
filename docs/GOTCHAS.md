@@ -61,7 +61,7 @@ section heading. History sections for systems that are gone get no rule.
     (109, 231, 237, 245) and one with half (236). CT 237 had been created that same day
     through the documented process. **Declare it instead:**
     `ansible/roles/lxc-features/defaults/main.yml` names every container's intended
-    features, and `playbooks/configure-lxc-features.yml` converges them.
+    features, and `playbooks/proxmox/configure-lxc-features.yml` converges them.
   - ⚠ **`pct set --features` REPLACES the whole string, it does not merge.** Setting
     `nesting=1,keyctl=1` on a container carrying `mount=nfs` silently drops the mount
     flag. Always pass the union of what is there and what you want.
@@ -296,7 +296,7 @@ section heading. History sections for systems that are gone get no rule.
   finding out the slow way is an outage of everything.
 
 - **History — the VXLAN anchored on pve01 and died with it (2026-09-03).**
-  `configure-mesh-vxlan.yml` and `roles/mesh-vxlan` are superseded by pve02's wired mesh adapter
+  `archive/configure-mesh-vxlan.yml` and `roles/mesh-vxlan` are superseded by pve02's wired mesh adapter
   (`roles/mesh-usb-bridge`); the VXLAN leg was removed from 236 in PET-332. The mechanism is kept because it worked and the MTU
   and gateway traps are general. **A node with one NIC can still hold an address on a network
   it has no cable to.** pve02 has a single port, on `.50`, and the TVs live on the `.86` mesh — which `.50` cannot be reached from,
@@ -305,7 +305,7 @@ section heading. History sections for systems that are gone get no rule.
   unwraps them into its own mesh bridge (`vmbr0`, port `eno1`). pve02 gets `vmbr1` backed only by
   the tunnel. The inner frame is never rewritten, so this is a real layer-2 presence: no NAT, no
   proxy, no custom access URLs, native client discovery, and the consumer mesh router needs no
-  configuration at all. Managed by `ansible/playbooks/configure-mesh-vxlan.yml`.
+  configuration at all. Managed by `ansible/playbooks/archive/configure-mesh-vxlan.yml`.
 
   Two things to get right, both of which fail quietly:
 
@@ -687,7 +687,7 @@ they do fire on time, but do not rely on it to keep jobs off a contended runner.
 - **faasd in an unprivileged LXC needs `/dev/net/tun`** for its CNI bridge. Without it the
   gateway/functions deploy but get no network (invokes hang / "no route to host"). Pass it
   through on the node: `pct set <id> -dev0 /dev/net/tun,mode=0666` + reboot (the line is in
-  `playbooks/configure-lxc-features.yml`, PET-378). nesting+keyctl are necessary but NOT sufficient for faasd.
+  `playbooks/proxmox/configure-lxc-features.yml`, PET-378). nesting+keyctl are necessary but NOT sufficient for faasd.
 
 - **faasd basic-auth secret files must be `0644`, not `0600`.** The gateway runs as a NON-root
   user and bind-mounts `/var/lib/faasd/secrets/basic-auth-{user,password}` → `/run/secrets`.
@@ -988,7 +988,7 @@ one for the syntax while the text lived only in `CLAUDE.md`.
 
 - **This host needs `nesting=1` for systemd, and no `keyctl`, because nothing here runs
   Docker.** Debian 13 ships systemd 257, which fails `tmp.mount`, `dev-mqueue.mount` and
-  `run-lock.mount` without nesting. `playbooks/configure-lxc-features.yml` declares 247 as
+  `run-lock.mount` without nesting. `playbooks/proxmox/configure-lxc-features.yml` declares 247 as
   nesting only and converges it, and the flag takes effect after a `pct reboot 247`
   (PET-557). There is still no `scripts/lxc-features-<id>.sh` step. Keep `keyctl` off: the
   day something here wants Docker is the day this host gains a second feature to remember.

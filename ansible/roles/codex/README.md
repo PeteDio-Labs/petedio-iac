@@ -9,7 +9,7 @@ reviews it with comments, and the merge goes by tier (`PET-645`). Pedro chose th
 |---|---|
 | Host | `codex-248`: `192.168.50.248`, VMID 248, pve03 |
 | Terraform | `environments/homelab/codex.tf`, which also declares the guest firewall |
-| Playbooks | `playbooks/configure-pve-firewall.yml` once, then `scripts/deploy-codex-248.sh`, which runs `playbooks/configure-codex.yml` |
+| Playbooks | `playbooks/proxmox/configure-pve-firewall.yml` once, then `scripts/deploy-codex-248.sh`, which runs `playbooks/services/configure-codex.yml` |
 | Runs as | `codex`, a non-root user with no sudo |
 | Codex | pinned by `codex_version` and `codex_sha256` in `defaults/main.yml` |
 | Container features | `nesting=1` only, declared in `roles/lxc-features` |
@@ -28,19 +28,19 @@ reviews it with comments, and the merge goes by tier (`PET-645`). Pedro chose th
 ## Bring the host up
 
 1. Merge the Terraform change. The apply creates CT 248 and its firewall rules.
-   Then run `playbooks/configure-lxc-features.yml`, and restart 248 with `pct reboot 248`
+   Then run `playbooks/proxmox/configure-lxc-features.yml`, and restart 248 with `pct reboot 248`
    on pve03, so the sandbox can create its user namespace.
 2. To turn the datacenter firewall on, run the firewall play once. Preview it first:
 
    ```bash
-   ansible-playbook playbooks/configure-pve-firewall.yml --check --diff
-   ansible-playbook playbooks/configure-pve-firewall.yml
+   ansible-playbook playbooks/proxmox/configure-pve-firewall.yml --check --diff
+   ansible-playbook playbooks/proxmox/configure-pve-firewall.yml
    ```
 
 3. Configure the host:
 
    ```bash
-   ansible-playbook playbooks/configure-codex.yml
+   ansible-playbook playbooks/services/configure-codex.yml
    ```
 
 4. To prove the firewall, run these from the host. The first two must fail at once with a
