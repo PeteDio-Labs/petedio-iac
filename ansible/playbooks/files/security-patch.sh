@@ -1,6 +1,6 @@
 #!/bin/sh
 # security-patch.sh — install pending security updates inside one guest, and never reboot (PET-908).
-# patch-guests.yml pipes it into `pct exec <vmid> -- sh -s <mode>`; the 247 or Mac host step for
+# base/patch-guests.yml pipes it into `pct exec <vmid> -- sh -s <mode>`; the 247 or Mac host step for
 # pi1 pipes it over ssh (docs/runbooks/upgrades.md).
 #
 #   sh -s plan    # read-only: simulate, change nothing

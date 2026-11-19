@@ -7,8 +7,8 @@
 # guests. So the play sets each line that differs, RE-READS the node, and fails while any
 # declared guest on it still differs.
 #
-#   ansible-playbook playbooks/configure-lxc-startup.yml --check
-#   ansible-playbook playbooks/configure-lxc-startup.yml
+#   ansible-playbook playbooks/proxmox/configure-lxc-startup.yml --check
+#   ansible-playbook playbooks/proxmox/configure-lxc-startup.yml
 
 - name: Refuse a declaration that pct set cannot take
   ansible.builtin.include_tasks: declaration.yml

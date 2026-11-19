@@ -12,7 +12,7 @@
 # the same device the deploy roles use for source-address.
 #
 # ⚠ THE NODE MUST LIST THE PRINCIPAL. group_vars/pve_new.yml names staging-power, and
-# configure-ssh-ca-deploy-hosts.yml writes it into root's principals file on pve03.
+# access/configure-ssh-ca-deploy-hosts.yml writes it into root's principals file on pve03.
 
 resource "vault_ssh_secret_backend_role" "staging_power" {
   backend  = vault_mount.ssh_client_signer.path

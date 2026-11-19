@@ -6,7 +6,7 @@
 # NO SCRIPT ON THE NODE. Unlike plane-235 or openfaas-241 there is no
 # scripts/lxc-features-247.sh to run first, and no keyctl, because nothing here runs
 # Docker. The container's `nesting=1`, which systemd 257 needs for its mounts, comes from
-# playbooks/configure-lxc-features.yml (PET-557).
+# playbooks/proxmox/configure-lxc-features.yml (PET-557).
 #
 # WHAT THIS PLAY CANNOT DO. Remote Control needs a real claude.ai login, and there is no
 # unattended path to one — API keys and `claude setup-token` tokens are both refused by the
@@ -210,7 +210,7 @@
 # file to the target user, which needs `acl` on this template, and mangles the module's JSON
 # into `Module result deserialization failed: No start of json char found` when it cannot.
 # That is how runner-233 ended up built, running and never registered (PET-128,
-# playbooks/configure-runner.yml). Dropping privileges INSIDE the command, from the root
+# playbooks/services/configure-runner.yml). Dropping privileges INSIDE the command, from the root
 # connection, avoids the unprivileged-become machinery altogether.
 - name: Install Claude Code (npm global, as the session user)
   ansible.builtin.command:
@@ -451,7 +451,7 @@
 # from 2026-09-16, when a `workspace` entry naming a directory nothing clones reached main,
 # and the host still carried only claude-remote-iac.service.
 #
-# Split instead. The servable entries converge, and playbooks/configure-claude-code.yml
+# Split instead. The servable entries converge, and playbooks/services/configure-claude-code.yml
 # fails at the END naming the clone step — the same shape the Remote Control consent below
 # uses, for the reason written there: an exit code of 0 would claim a run that did not
 # happen. Loud and blocking are different things, and only the first one was wanted.
@@ -657,7 +657,7 @@
     label: "{{ item.name }}"
   # Declared on but no consent: a start would only hang, so leave the units exactly as they
   # are. Declared on, consent given, but the directory untrusted: a start would only land the
-  # unit in `failed`, so leave that unit alone too. playbooks/configure-claude-code.yml fails
+  # unit in `failed`, so leave that unit alone too. playbooks/services/configure-claude-code.yml fails
   # the run at the end with the step to take, for either one.
   when: >-
     not (claude_remote_enable | bool)

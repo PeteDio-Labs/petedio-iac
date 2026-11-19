@@ -1,0 +1,390 @@
+---
+# services/configure-plane.yml — Docker + Plane Community Edition on LXC 235 (plane.tf).
+#
+# Plane replaces Linear as the tracker. This play installs Docker CE, renders the
+# compose stack and its env from Vault-supplied values, and brings it up.
+#
+# WHAT IS EXTERNAL, AND WHY:
+#   * Postgres  -> the `plane` database on postgres-231 (databases.tf). Keeps one
+#     RDS-shaped backup path and the ephemeral write-only password discipline.
+#   * MinIO     -> the `plane` bucket on minio-data-245. NOT .221, which holds tfstate.
+#   * Redis + RabbitMQ stay BUNDLED: no durable state worth a separate backup path.
+#
+# THE APP IS PUBLIC BEHIND ACCESS, THE BUCKET IS NOT (PET-610). plane.pdlab.dev routes to
+# :8080 through the tunnel on LXC 112, gated by Cloudflare Access (cloudflare-routes.tf).
+# Attachments stay on the LAN and the tailnet; the header of plane.tf says why. Nothing here
+# binds a public interface: cloudflared reaches the LAN address from another host.
+#
+# PREREQUISITES (this play does not do them, and will fail loudly if they are missing):
+#   1. playbooks/proxmox/configure-lxc-features.yml (PET-378) has set nesting=1,keyctl=1 on the node. Docker will
+#      not start in an unprivileged LXC without them.
+#   2. kv/db/plane exists with field `password` (the database owner's).
+#   3. kv/services/plane exists with the MinIO access/secret pair and a generated
+#      SECRET_KEY. Passed in as no_log extra-vars by scripts/deploy-plane.sh.
+#
+# Manual-validation-first (standing convention, PET-266): run scripts/deploy-plane.sh by
+# hand and get it green BEFORE any CD-on-merge workflow is wired to this play.
+
+- name: Configure Plane (LXC 235)
+  hosts: plane
+  become: true
+
+  vars:
+    plane_dir: /opt/plane
+    # Pinned. v1.4.1 was the latest stable release on 2026-08-13; `stable` is what
+    # APP_RELEASE falls back to if unset, which is how a tracker upgrades itself
+    # under you. Bump deliberately and re-derive plane.env.j2 from the new compose.
+    plane_version: "{{ plane_release | default('v1.4.1') }}"
+    plane_web_port: 8080
+    plane_host_ip: 192.168.50.235
+    # WEB_URL, and the first CORS origin. Plane builds its sign-in redirects from it.
+    plane_public_url: https://plane.pdlab.dev
+    pg_host: 192.168.50.231
+    pg_db: plane
+    pg_user: plane
+    minio_endpoint: http://192.168.50.245:9000
+    minio_bucket: plane
+
+  pre_tasks:
+    - name: Fail early if the Vault-supplied secrets were not passed in
+      ansible.builtin.assert:
+        that:
+          - plane_db_password | default('') | length > 0
+          - plane_secret_key | default('') | length > 0
+          - plane_minio_access_key | default('') | length > 0
+          - plane_minio_secret_key | default('') | length > 0
+          - plane_live_secret_key | default('') | length > 0
+          - plane_mq_password | default('') | length > 0
+        fail_msg: >-
+          Missing secrets. Run this via scripts/deploy-plane.sh, which resolves them
+          from Vault and passes them as no_log extra-vars — never hardcode them here.
+      no_log: true
+
+  tasks:
+    - name: Install prerequisites for the Docker apt repo
+      ansible.builtin.apt:
+        name: [apt-transport-https, ca-certificates, gnupg, curl, python3-requests]
+        state: present
+        update_cache: true
+
+    - name: Add the Docker apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/debian/gpg
+        dest: /usr/share/keyrings/docker-archive-keyring.asc
+        mode: "0644"
+
+    - name: Add the Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/usr/share/keyrings/docker-archive-keyring.asc]
+          https://download.docker.com/linux/debian {{ ansible_facts['distribution_release'] }} stable
+        filename: docker
+        state: present
+
+    - name: Install Docker CE and the compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker is running and enabled
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Create the Plane directory
+      ansible.builtin.file:
+        path: "{{ plane_dir }}"
+        state: directory
+        mode: "0750"
+
+    # deployments/cli/community/ is the SELF-HOST compose. The docker-compose.yml at
+    # the repo root is the build-from-source one (every service is `build:`, no images)
+    # and would not deploy. Verified against v1.4.1.
+    - name: Fetch the pinned Plane Community compose file
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/makeplane/plane/{{ plane_version }}/deployments/cli/community/docker-compose.yml"
+        dest: "{{ plane_dir }}/docker-compose.yml"
+        mode: "0640"
+      register: plane_compose
+
+    - name: Render plane.env from Vault-supplied values
+      ansible.builtin.template:
+        src: "{{ playbook_dir | dirname }}/templates/plane.env.j2"
+        dest: "{{ plane_dir }}/plane.env"
+        mode: "0600"
+      no_log: true
+      register: plane_env
+
+    # Without this, the bundled Postgres and MinIO start anyway — see the template header.
+    - name: Render the compose override that disables the bundled db and object store
+      ansible.builtin.template:
+        src: "{{ playbook_dir | dirname }}/templates/plane-compose-override.yml.j2"
+        dest: "{{ plane_dir }}/docker-compose.override.yml"
+        mode: "0640"
+      register: plane_override
+
+    - name: Bring the stack up
+      ansible.builtin.command:
+        cmd: docker compose --env-file plane.env up -d
+        chdir: "{{ plane_dir }}"
+      register: plane_up
+      # `up -d` restarts the one-shot services (such as the migrator) on every run and logs
+      # `Started` for them, so `Started` is not a change. A new or recreated container logs
+      # `Created` or `Recreated`, which only a compose-file, env-file or image change causes.
+      changed_when: "'Created' in plane_up.stderr or 'Recreated' in plane_up.stderr"
+
+    # The whole external-database decision is undone silently if these come up anyway.
+    - name: Assert the bundled Postgres and MinIO are NOT running
+      ansible.builtin.shell:
+        cmd: set -o pipefail && docker compose ps --format '{% raw %}{{.Service}}{% endraw %}' | sort -u
+        chdir: "{{ plane_dir }}"
+        executable: /bin/bash
+      changed_when: false
+      register: plane_ps
+
+    - name: Fail if a bundled data service started
+      ansible.builtin.assert:
+        that:
+          - "'plane-db' not in plane_ps.stdout_lines"
+          - "'plane-minio' not in plane_ps.stdout_lines"
+        fail_msg: >-
+          A bundled data service is running ({{ plane_ps.stdout_lines | join(', ') }}).
+          The compose override did not take effect, so Plane may be writing to a local
+          Postgres/MinIO instead of 231/245. Fix before using this instance.
+
+    - name: Wait for Plane to answer on the LAN address
+      ansible.builtin.uri:
+        url: "http://192.168.50.235:{{ plane_web_port }}/"
+        status_code: [200, 301, 302, 401, 404]
+        timeout: 10
+      register: plane_http
+      retries: 30
+      delay: 10
+      until: plane_http is succeeded
+
+  post_tasks:
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          Plane {{ plane_version }} up on http://192.168.50.235:{{ plane_web_port }}
+          and {{ plane_public_url }} (Access) · db={{ pg_db }}@{{ pg_host }} · bucket={{ minio_bucket }}@245
+
+# ---- The MCP shim: /opt/plane-mcp (PET-292, codified by PET-610) -------------------------
+#
+# PET-292 built this stack by hand on 2026-08-14. PET-610 moved it here unchanged: on
+# 2026-10-13 the three files under files/plane-mcp/ hashed identical to the live ones, and
+# templates/plane-mcp.env.j2 rendered identical to the live env file. Check the live host
+# before you edit either; a hand edit on 235 since then is drift this play would revert.
+#
+# ⚠ A SEPARATE COMPOSE PROJECT, ON PURPOSE. The tracker must never restart to change the MCP,
+# so this play never touches /opt/plane, and the play above never touches /opt/plane-mcp.
+# Do not merge the two compose files for tidiness (vault/Hosts/235-plane.md).
+#
+# ONE SITE PER PERSON, ONE STACK. :8790 swaps in the Claude Member user's PAT for pdlab.dev/mcp/plane
+# (PET-667, PET-660), so project threads stop acting as Pedro. plane_mcp_api_key holds that PAT. Each entry in
+# plane_mcp_members gets a site of its own: :8791 swaps in Tom's PAT for mcp-tom.pdlab.dev
+# (PET-610), and :8792 swaps in Sonia's for mcp-sonia.pdlab.dev (PET-650). Each route's Access
+# policy admits one email, so each port acts as one Plane user. To add a person, add an entry
+# here, a port in files/plane-mcp/docker-compose.yml, a name in scripts/deploy-plane.sh and a
+# route in cloudflare-routes.tf.
+#
+# ⚠ THE FIREWALL IS THE BOUNDARY. Caddy publishes both ports on the LAN because cloudflared
+# runs on LXC 112, another host, and Caddy checks no Access JWT: it swaps in a PAT for any
+# request that reaches it. /usr/local/sbin/plane-mcp-firewall drops every other source in the
+# raw table, over IPv4 and IPv6, ahead of Docker's DNAT. plane-mcp-firewall.service runs it
+# before docker.service, and docker.service requires it, so a boot fails closed. Never
+# restart or stop the unit, because that restarts Docker and the tracker with it; this play
+# reloads it. Test both directions on each port after a change: healthz returns 000 from the
+# LAN over IPv4 and IPv6, and 200 from 192.168.50.112.
+- name: Configure the Plane MCP shim (LXC 235)
+  hosts: plane
+  become: true
+
+  vars:
+    plane_mcp_dir: /opt/plane-mcp
+    plane_host_ip: 192.168.50.235
+    plane_web_port: 8080
+    plane_workspace_slug: petedio
+    plane_mcp_port: 8790
+    plane_mcp_tunnel_host: 192.168.50.112
+    # scripts/deploy-plane.sh reads kv/services/plane-<name> field api_key for each entry, and
+    # passes the PATs in plane_mcp_member_keys, keyed on name.
+    plane_mcp_members:
+      - { name: tom, port: 8791 }
+      - { name: sonia, port: 8792 }
+    plane_mcp_ports: "{{ [plane_mcp_port] + plane_mcp_members | map(attribute='port') | list }}"
+
+  pre_tasks:
+    # Two sites that hold one PAT would act as one person under two Access lists, so every PAT
+    # must be distinct.
+    - name: Fail early if any MCP site's Plane PAT was not passed in, or two sites share one
+      ansible.builtin.assert:
+        that:
+          - plane_mcp_api_key | default('') | length > 0
+          - plane_mcp_member_keys | default({}) is mapping
+          - plane_mcp_members | map(attribute='name')
+            | difference(plane_mcp_member_keys | default({}) | list) | length == 0
+          - plane_mcp_member_keys | dict2items | map(attribute='value')
+            | select | list | length == plane_mcp_member_keys | length
+          - ([plane_mcp_api_key] + plane_mcp_member_keys | dict2items | map(attribute='value') | list)
+            | unique | length == plane_mcp_member_keys | length + 1
+          - plane_mcp_ports | unique | length == plane_mcp_ports | length
+        fail_msg: >-
+          Missing plane_mcp_api_key or a member's PAT in plane_mcp_member_keys, two sites hold
+          the same PAT, or two sites share a port. Run this via scripts/deploy-plane.sh, which
+          reads kv/services/plane and kv/services/plane-<name> field api_key from Vault and
+          passes them as no_log extra-vars.
+      no_log: true
+
+  tasks:
+    - name: Create the MCP directory
+      ansible.builtin.file:
+        path: "{{ plane_mcp_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # The firewall goes in before the stack comes up, so a fresh host never publishes the
+    # PAT-holding port to the LAN, even for the seconds between the two.
+    - name: Install the script that restricts the MCP ports to the tunnel host
+      ansible.builtin.template:
+        src: "{{ playbook_dir | dirname }}/templates/plane-mcp-firewall.sh.j2"
+        dest: /usr/local/sbin/plane-mcp-firewall
+        owner: root
+        group: root
+        mode: "0755"
+      register: plane_mcp_fw_script
+
+    - name: Install the unit that runs it before Docker
+      ansible.builtin.copy:
+        src: "{{ playbook_dir | dirname }}/files/plane-mcp/plane-mcp-firewall.service"
+        dest: /etc/systemd/system/plane-mcp-firewall.service
+        owner: root
+        group: root
+        mode: "0644"
+      register: plane_mcp_fw_unit
+
+    # The systemd module skips `enable` for a unit that is already enabled, so it would never
+    # add the docker.service.requires symlink to a host that ran the older unit. reenable
+    # rebuilds the links from the current [Install] section.
+    - name: Rebuild the firewall unit's install links  # noqa: no-handler command-instead-of-module
+      ansible.builtin.command:
+        cmd: systemctl reenable plane-mcp-firewall.service
+      when: plane_mcp_fw_unit is changed
+      changed_when: true
+
+    # A oneshot with RemainAfterExit stays "active" after the rules it set are gone, so a
+    # change must re-run the script. Reload, never restart: docker.service requires this
+    # unit, so a restart would restart Docker and the tracker, and RefuseManualStop refuses it
+    # anyway. On a host where the unit is inactive, `reloaded` starts it.
+    - name: Apply the MCP firewall
+      ansible.builtin.systemd:
+        name: plane-mcp-firewall.service
+        enabled: true
+        daemon_reload: "{{ plane_mcp_fw_unit is changed }}"
+        state: >-
+          {{ 'reloaded' if (plane_mcp_fw_unit is changed or plane_mcp_fw_script is changed)
+          else 'started' }}
+
+    # With no state, the module only reads the unit's properties.
+    - name: Assert docker.service requires the MCP firewall
+      ansible.builtin.systemd:
+        name: docker.service
+      register: plane_mcp_docker_unit
+      failed_when: >-
+        'plane-mcp-firewall.service' not in plane_mcp_docker_unit.status.Requires | default('') | split
+
+    - name: Install the MCP compose file
+      ansible.builtin.copy:
+        src: "{{ playbook_dir | dirname }}/files/plane-mcp/docker-compose.yml"
+        dest: "{{ plane_mcp_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # plane-mcp builds from these two files (PET-882); compose rebuilds when either changes.
+    - name: Install the plane-mcp Dockerfile and key-validation patch
+      ansible.builtin.copy:
+        src: "{{ playbook_dir | dirname }}/files/plane-mcp/{{ item }}"
+        dest: "{{ plane_mcp_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [Dockerfile, plane_header_auth_provider.py]
+
+    - name: Install the Caddyfile that swaps the Access token for the Plane PAT
+      ansible.builtin.template:
+        src: "{{ playbook_dir | dirname }}/templates/plane-mcp-Caddyfile.j2"
+        dest: "{{ plane_mcp_dir }}/Caddyfile"
+        owner: root
+        group: root
+        mode: "0644"
+      register: plane_mcp_caddyfile
+
+    - name: Render plane-mcp.env from Vault-supplied values
+      ansible.builtin.template:
+        src: "{{ playbook_dir | dirname }}/templates/plane-mcp.env.j2"
+        dest: "{{ plane_mcp_dir }}/plane-mcp.env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    # Compose recreates a container whose compose entry or env file changed. It does not see
+    # a change to the bind-mounted Caddyfile, which the next task handles.
+    - name: Bring the MCP stack up
+      ansible.builtin.command:
+        cmd: docker compose up -d --build
+        chdir: "{{ plane_mcp_dir }}"
+      register: plane_mcp_up
+      changed_when: >-
+        'Started' in plane_mcp_up.stderr or 'Created' in plane_mcp_up.stderr
+        or 'Recreated' in plane_mcp_up.stderr
+
+    # The Caddyfile sets `admin off`, so Caddy cannot reload in place. A restart re-binds the
+    # file, which the copy above replaced with a new inode. A task, not a handler: the
+    # health wait below must see the restarted Caddy.
+    - name: Restart Caddy when its Caddyfile changed  # noqa: no-handler
+      ansible.builtin.command:
+        cmd: docker compose restart caddy
+        chdir: "{{ plane_mcp_dir }}"
+      when: plane_mcp_caddyfile is changed
+      changed_when: true
+
+    # A member port missing from docker-compose.yml is never published, so this wait fails.
+    - name: Wait for every shim site to answer on the host
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ item }}/healthz"
+        status_code: 200
+        timeout: 5
+      loop: "{{ plane_mcp_ports }}"
+      register: plane_mcp_health
+      retries: 12
+      delay: 5
+      until: plane_mcp_health is succeeded
+
+    - name: Assert the raw table admits only the tunnel host to every MCP port
+      ansible.builtin.command:
+        cmd: >-
+          {{ 'iptables' if item.1 == 4 else 'ip6tables' }} -t raw -C PREROUTING ! -i lo -p tcp
+          --dport {{ item.0 }} {{ '! -s ' ~ plane_mcp_tunnel_host if item.1 == 4 else '' }} -j DROP
+      loop: "{{ plane_mcp_ports | product([4, 6]) | list }}"
+      changed_when: false
+
+    # The bind in docker-compose.yml is IPv4-only. An IPv6 listener means it regressed.
+    - name: Assert no MCP port listens on IPv6
+      ansible.builtin.command:
+        cmd: "ss -Hltn '( sport = :{{ plane_mcp_ports | join(' or sport = :') }} )'"
+      register: plane_mcp_listeners
+      changed_when: false
+      failed_when: >-
+        plane_mcp_listeners.rc != 0 or '[' in plane_mcp_listeners.stdout
+        or plane_mcp_listeners.stdout_lines | length == 0

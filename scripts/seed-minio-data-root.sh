@@ -7,7 +7,7 @@
 # and the host holding app data — the exact blast radius LXC 245 exists to avoid. Two
 # hosts, two root credentials, no overlap.
 #
-# ORDER: this runs BEFORE the first configure-minio-data.yml, because the role writes these
+# ORDER: this runs BEFORE the first services/configure-minio-data.yml, because the role writes these
 # values into /etc/default/minio as MINIO_ROOT_USER/PASSWORD — they define the admin
 # account rather than discovering it. Rotating them here and re-running the play rotates
 # the live root credential; any svcacct minted under it survives (svcaccts have their own
@@ -51,7 +51,7 @@ EXISTING="$(vault kv get -field=root_password "$VAULT_PATH" 2>/dev/null || true)
 if [ -n "$EXISTING" ] && [ "$ROTATE" -eq 0 ]; then
   unset EXISTING
   echo "Already seeded — leaving it alone. Re-run with --rotate to replace it."
-  echo "(A rotate is only live once configure-minio-data.yml re-runs and restarts MinIO.)"
+  echo "(A rotate is only live once services/configure-minio-data.yml re-runs and restarts MinIO.)"
   exit 0
 fi
 unset EXISTING

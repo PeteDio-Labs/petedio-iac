@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-codex-248.sh — resolve codex-248's two reviewer identities from Vault and run
-# configure-codex.yml against it (PET-553). Modeled on deploy-claude-247.sh.
+# services/configure-codex.yml against it (PET-553). Modeled on deploy-claude-247.sh.
 #
 #   kv/services/codex-review-app -> app_id, installation_id, app_pem   (optional)
 #     The petedio-codex-review GitHub App. contents:read, pull_requests:write,
@@ -91,9 +91,9 @@ jq -n '{
 }' > "$TMP/extra.json"
 unset CODEX_APP_PEM CODEX_PLANE_KEY CODEX_NOTIFY_TOKEN
 
-step "Running configure-codex.yml"
+step "Running services/configure-codex.yml"
 cd "$ANSIBLE_DIR"
-ansible-playbook playbooks/configure-codex.yml -e "@$TMP/extra.json" "$@"
+ansible-playbook playbooks/services/configure-codex.yml -e "@$TMP/extra.json" "$@"
 
 step "Done"
 cat <<'TXT'

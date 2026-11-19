@@ -7,7 +7,7 @@ Both run through `lab-action.yml` on a runner, so no session needs a Mac prompt.
 ## Audit: are backups happening and recent?
 
 To read the state, dispatch `lab-action.yml` with `action=playbook_check` and
-`target=backup-audit.yml`. The run needs no approval and changes nothing.
+`target=backup/backup-audit.yml`. The run needs no approval and changes nothing.
 
 The play fails when any of these does not hold:
 
@@ -22,7 +22,7 @@ zero archives read is a failure, not a pass.
 
 ## Restore test: does an archive open?
 
-To run the preflight, dispatch `action=playbook_check` with `target=restore-test-backup.yml`. The
+To run the preflight, dispatch `action=playbook_check` with `target=backup/restore-test-backup.yml`. The
 preflight finds the newest archive of guest 102, tests its compression stream, reads the guest
 config inside it and refuses a config with a mount point, device or `lxc.*` line.
 

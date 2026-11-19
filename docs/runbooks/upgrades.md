@@ -7,9 +7,9 @@ on the `lab-write` job. The Mac and 247 run only the host steps marked as theirs
 Run `lab_updates` before and after every section. Its last line gives the counts of hosts
 examined, unreadable and skipped, so read those, not only the package total.
 
-## Patch OS security updates in every guest (`patch-guests.yml`, `PET-908`)
+## Patch OS security updates in every guest (`base/patch-guests.yml`, `PET-908`)
 
-- **Run:** `playbook_check patch-guests.yml`, then `playbook_apply patch-guests.yml`.
+- **Run:** `playbook_check base/patch-guests.yml`, then `playbook_apply base/patch-guests.yml`.
 - **What it does:** per node, one node at a time, it runs `files/security-patch.sh` inside each
   running LXC through `pct exec`. It upgrades security packages only. It never reboots and never
   runs `apt autoremove`.
@@ -23,7 +23,7 @@ examined, unreadable and skipped, so read those, not only the package total.
 - **Bad:** a guest that reports `reboot=yes` needs a planned reboot. A check simulates from the
   guest's cached lists and cannot run `apt-get update`, so a guest with old lists undercounts.
   Read `lists=<days>` in each row. An apply updates the lists first.
-- **Not covered:** the nodes (`schedule-node-upgrade.yml` owns them, gated on a fresh backup),
+- **Not covered:** the nodes (`proxmox/schedule-node-upgrade.yml` owns them, gated on a fresh backup),
   Alpine guests such as 112 (`apk` marks no security fix), and pi1.
 
 ### pi1 (a 247 or Mac host step)
@@ -39,10 +39,10 @@ ssh pi1 'sudo sh -s apply' < ansible/playbooks/files/security-patch.sh
 The last line starts with `RESULT|`. Post that line, and nothing else, on the PET item. Kuma
 runs on pi1, so check the Kuma page loads afterwards.
 
-## Restart the guests after patching (`restart-guests.yml`, `PET-908`)
+## Restart the guests after patching (`proxmox/restart-guests.yml`, `PET-908`)
 
-- **Run:** `playbook_check restart-guests.yml`, then `playbook_apply restart-guests.yml`.
-- **Why:** `patch-guests.yml` restarts no service, so a patched library stays loaded until the guest
+- **Run:** `playbook_check proxmox/restart-guests.yml`, then `playbook_apply proxmox/restart-guests.yml`.
+- **Why:** `base/patch-guests.yml` restarts no service, so a patched library stays loaded until the guest
   restarts. Guests on pve03 restart nightly under the backup job's `mode: stop`, and Vault's two
   unseal watchers reopen it. The play covers the guests nothing restarts: 240, 246, 110, 236 and 247.
 - **Order:** the list in `roles/guest-restart/defaults/main.yml`, one guest at a time, 247 last
@@ -55,9 +55,9 @@ runs on pi1, so check the Kuma page loads afterwards.
 - **Not covered:** 233, a runner. A restart of the runner that executes the job ends the job.
   A session on 247 or the Mac restarts it between runs with `ssh pve02 pct reboot 233`.
 
-## Upgrade Authentik (119) (`upgrade-authentik.yml`, `PET-908`)
+## Upgrade Authentik (119) (`services/upgrade-authentik.yml`, `PET-908`)
 
-- **Run:** `playbook_check upgrade-authentik.yml`, then `playbook_apply upgrade-authentik.yml`.
+- **Run:** `playbook_check services/upgrade-authentik.yml`, then `playbook_apply services/upgrade-authentik.yml`.
 - **Version:** one line, `authentik_version` in `ansible/roles/authentik/defaults/main.yml`. The
   tag sits inline on the `image:` lines of `server`, `worker` and `ldap` in
   `/opt/authentik/docker-compose.yml`. `.env` holds no tag. The running version was 2024.12.5
@@ -84,7 +84,7 @@ runs on pi1, so check the Kuma page loads afterwards.
 
 Planned. A Vault upgrade restarts the service, which seals it. The playbook upgrades the
 package, then waits for the KMS auto-unseal, and fails until
-`vault status` reports `Sealed false`. It takes a snapshot first (`vault-snapshot.yml`).
+`vault status` reports `Sealed false`. It takes a snapshot first (`vault/vault-snapshot.yml`).
 
 ## Upgrade the media apps
 

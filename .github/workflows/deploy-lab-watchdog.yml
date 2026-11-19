@@ -1,4 +1,4 @@
-# deploy-lab-watchdog — configure-lab-watchdog.yml against claude-247 (the lab watchdog probe and its heartbeat).
+# deploy-lab-watchdog — observability/configure-lab-watchdog.yml against claude-247 (the lab watchdog probe and its heartbeat).
 #
 # Replaces scripts/deploy-lab-watchdog.sh as the way to run it. The script stays as the operator's
 # fallback, for a sealed or unreachable CI path. Both read the same Vault records. This one

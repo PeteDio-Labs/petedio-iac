@@ -7,7 +7,7 @@
 ---
 vault_snapshot_vault_addr: "https://192.168.50.223:8200"
 # Vault's self-signed CA is already on the host at /opt/vault/tls/vault.crt (the listener
-# cert, which is its own CA — see configure-vault.yml). Used as VAULT_CACERT so the CLI
+# cert, which is its own CA — see vault/configure-vault.yml). Used as VAULT_CACERT so the CLI
 # verifies TLS instead of skipping it.
 vault_snapshot_vault_cacert: "/opt/vault/tls/vault.crt"
 

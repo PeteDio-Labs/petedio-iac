@@ -16,7 +16,7 @@
 #   MinIO admin: resolved from Vault kv/iac/minio-data-root (seed-minio-data-root.sh)
 #
 # Needs the tailnet (the endpoint is a 192.168.50.x address) and the `pete-bot` bucket, which
-# configure-minio-data.yml creates from inventory/group_vars/minio_data.yml
+# services/configure-minio-data.yml creates from inventory/group_vars/minio_data.yml
 # (scripts/deploy-minio-data.sh).
 set -euo pipefail
 
@@ -56,12 +56,12 @@ MROOT_P="$(vault kv get -field=root_password "$ROOT_PATH" 2>/dev/null || true)"
 step "Authenticating to MinIO at $MINIO_ENDPOINT"
 MCCFG="$(mktemp -d)"; trap 'rm -rf "$MCCFG"' EXIT
 mc --config-dir "$MCCFG" alias set adm "$MINIO_ENDPOINT" "$MROOT_U" "$MROOT_P" >/dev/null 2>&1 \
-  || die "MinIO admin creds rejected by $MINIO_ENDPOINT (is the tailnet up? has configure-minio-data.yml run?)."
+  || die "MinIO admin creds rejected by $MINIO_ENDPOINT (is the tailnet up? has services/configure-minio-data.yml run?)."
 
 # The bucket is the ROLE's job (inventory/group_vars/minio_data.yml), not this script's —
 # creating it here would let a bucket exist with no versioning and no quota. Fail instead.
 mc --config-dir "$MCCFG" ls "adm/$BUCKET" >/dev/null 2>&1 \
-  || die "bucket '$BUCKET' does not exist on $MINIO_ENDPOINT — run configure-minio-data.yml first (it also sets versioning + the quota)."
+  || die "bucket '$BUCKET' does not exist on $MINIO_ENDPOINT — run services/configure-minio-data.yml first (it also sets versioning + the quota)."
 
 step "Checking whether $DEST_PATH already holds a working credential"
 if [ "$ROTATE" -eq 0 ]; then

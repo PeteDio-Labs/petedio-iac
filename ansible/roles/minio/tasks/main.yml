@@ -22,7 +22,7 @@
       Missing minio_root_user / minio_root_password. Don't run this play bare — resolve
       them from Vault (kv/iac/minio-root, fields root_user/root_password) and pass them as
       a no_log extra-var via a 0600 JSON @file (see the role README / runbook for the
-      pattern, mirrored from configure-postgres.yml).
+      pattern, mirrored from services/configure-postgres.yml).
   no_log: true
 
 # --- OS account + storage --------------------------------------------------------

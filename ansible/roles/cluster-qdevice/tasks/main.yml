@@ -1,6 +1,6 @@
 ---
 # Run against the QDevice HOST (the Pi), not the cluster nodes. The nodes need
-# `corosync-qdevice` instead, which configure-pve-node.yml installs.
+# `corosync-qdevice` instead, which proxmox/configure-pve-node.yml installs.
 #
 # WHY A QDEVICE AT ALL. Two nodes give expected votes 2 and quorum 2, so losing
 # either leaves the survivor below quorum: /etc/pve goes read-only and no guest

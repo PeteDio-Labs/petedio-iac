@@ -1,6 +1,6 @@
 ---
 # Guests that nothing restarts on its own, in restart order (PET-908). A patched library stays loaded
-# until its service restarts, so after patch-guests.yml these guests need one deliberate restart.
+# until its service restarts, so after base/patch-guests.yml these guests need one deliberate restart.
 #
 # Left out on purpose:
 #   - pve03's guests except 247: the nightly pve03 backup job runs `mode: stop` (the backup job definition),

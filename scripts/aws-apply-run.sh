@@ -30,6 +30,8 @@ scrub() { sed -E 's/(key|secret|token)[^ ]*/[redacted]/Ig'; }
 case "$ROOT" in
   dashboard) VARS=(-var aws_profile=dash -var "attach_domain=${ATTACH:-false}" -var "permissions_boundary_arn=$BOUNDARY_ARN") ;;
   portfolio) VARS=(-var aws_profile=dash) ;;
+  # The host role must carry its own boundary, which scripts/seed-aws-ci.sh creates (PET-932).
+  authentik) VARS=(-var aws_profile=dash -var "permissions_boundary_arn=arn:aws:iam::$AWS_ACCOUNT:policy/petedio-authentik-boundary") ;;
   *) echo "ABORT: unknown root $ROOT."; exit 1 ;;
 esac
 echo "aws-$ROOT-$MODE: pet=${PET:-none} sha=$GITHUB_SHA attach_domain=${ATTACH:-false}"
@@ -51,9 +53,11 @@ head -n 80 "$T/changes.txt"
 total="$(jq '[(.resource_changes // [])[]] | length' "$T/plan.json")"
 [ "$total" -gt 0 ] || { echo "ABORT: the plan lists 0 resources, so it examined nothing."; exit 1; }
 prior="$(jq '[(.prior_state.values.root_module // {}) | .. | objects | select(has("address") and has("mode")) | .address] | length' "$T/plan.json")"
-# An empty prior state reads as "create everything". Dashboard has never applied, so only
-# portfolio must already have state.
+# An empty prior state reads as "create everything". Dashboard may plan before its first apply.
+# Portfolio must already have state. Authentik may read an empty state only on the run that sets
+# first_apply, so a wrong backend key or MinIO scope later cannot build a second host.
 if [ "$ROOT" = portfolio ] && [ "$prior" -eq 0 ]; then echo "ABORT: the plan read 0 resources from state, so it compared nothing. Check the backend key."; exit 1; fi
+if [ "$ROOT" = authentik ] && [ "$prior" -eq 0 ] && [ "${FIRST_APPLY:-false}" != "true" ]; then echo "ABORT: the plan read 0 resources from state, and first_apply is not set. Check the backend key, or set first_apply on the very first run."; exit 1; fi
 echo "$ROOT plan: read $prior resource(s) from state"
 changes="$(wc -l < "$T/changes.txt" | tr -d ' ')"
 del="$(grep -c 'delete' "$T/changes.txt" || true)"

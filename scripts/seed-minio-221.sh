@@ -3,7 +3,7 @@
 #   kv/iac/minio-root            the .221 MinIO root credential (root_user, root_password)
 #   kv/services/vault-snapshots  a svcacct scoped to the vault-snapshots bucket (access_key, secret_key)
 #
-# kv/iac/minio-root is the rebuild input for configure-minio.yml. Terraform's state backend
+# kv/iac/minio-root is the rebuild input for services/configure-minio.yml. Terraform's state backend
 # does not use it: that is a tfstate-scoped svcacct at kv/iac/minio (reseed-minio-vault.sh).
 # The vault-snapshot role reads kv/services/vault-snapshots (PET-109). The runbook minted
 # it by hand; this script replaces that step.

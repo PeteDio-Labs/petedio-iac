@@ -1,0 +1,15 @@
+---
+# proxmox/configure-mesh-usb-bridge.yml — bridge pve02's USB-to-Ethernet adapter onto
+# the .86 mesh. plex-gpu (236) holds its only NIC there (PET-504;
+# vault/Systems/plex-on-the-mesh.md). Pair with bridge = "vmbr2" on the plex_gpu
+# module in petedio-media-iac.
+#
+#   ansible-playbook playbooks/proxmox/configure-mesh-usb-bridge.yml
+#
+# Does not reload networking automatically — see the role for why.
+
+- name: Bridge pve02's USB-Ethernet adapter onto the mesh
+  hosts: pve02
+  become: true
+  roles:
+    - mesh-usb-bridge

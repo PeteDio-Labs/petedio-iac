@@ -1,5 +1,5 @@
-# aws-apply: plan and apply an AWS root (environments/dashboard or environments/portfolio, account
-# 847547470418) from CI.
+# aws-apply: plan and apply an AWS root (environments/dashboard, environments/portfolio or
+# environments/authentik, account 847547470418) from CI.
 #
 # WHY. These roots had no CI path, so an apply meant a Mac session with an admin profile. A thread
 # dispatches this workflow and reads the run log.
@@ -31,8 +31,14 @@ on:
         options:
           - dashboard
           - portfolio
+          - authentik
       attach_domain:
         description: "Dashboard only. Phase 2: attach dash.failover.pdlab.dev, after the NS delegation is merged."
+        required: false
+        type: boolean
+        default: false
+      first_apply:
+        description: "Authentik only. The root has no state yet, so a plan that reads 0 resources is expected."
         required: false
         type: boolean
         default: false
@@ -100,6 +106,7 @@ jobs:
         env:
           ROOT: ${{ inputs.root }}
           ATTACH: ${{ inputs.attach_domain }}
+          FIRST_APPLY: ${{ inputs.first_apply }}
           PET: ${{ inputs.pet }}
         run: ../../scripts/aws-apply-run.sh plan
 
@@ -147,6 +154,7 @@ jobs:
         env:
           ROOT: ${{ inputs.root }}
           ATTACH: ${{ inputs.attach_domain }}
+          FIRST_APPLY: ${{ inputs.first_apply }}
           PET: ${{ inputs.pet }}
           EXPECT_DIGEST: ${{ needs.plan.outputs.digest }}
         run: ../../scripts/aws-apply-run.sh apply

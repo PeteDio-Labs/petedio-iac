@@ -78,12 +78,12 @@ for v in VAULT_ADDR VAULT_CACERT VAULT_TOKEN; do
   [ -n "${!v:-}" ] || { echo "ABORT: $v is not set; the job did not log in to Vault." >&2; exit 1; }
 done
 
-# The nodes' host keys, pinned by ansible/playbooks/configure-lab-runner-known-hosts.yml. Check
+# The nodes' host keys, pinned by ansible/playbooks/access/configure-lab-runner-known-hosts.yml. Check
 # before anything is signed, so a runner without them mints no certificate.
 KNOWN_HOSTS="${LAB_KNOWN_HOSTS:-/etc/ssh/lab-node-known-hosts}"
 for h in 192.168.50.10 192.168.50.11 192.168.50.12; do
   grep -qE "(^|,)$h ssh-ed25519 " "$KNOWN_HOSTS" 2>/dev/null || {
-    echo "ABORT: no pinned host key for $h in $KNOWN_HOSTS; run configure-lab-runner-known-hosts.yml." >&2
+    echo "ABORT: no pinned host key for $h in $KNOWN_HOSTS; run access/configure-lab-runner-known-hosts.yml." >&2
     exit 1
   }
 done

@@ -1,11 +1,11 @@
 # Runbook — (re)provision a self-hosted GitHub Actions runner (runner-232 / runner-233)
 
-> **Facts corrected 2026-09-10 (PET-385).** runner-232 is on **pve03** (rebuilt there in PET-335); the tracker is Plane. `kv/iac/github-runner-pat` is still empty, so provision with a pre-minted registration token — `gh api -X POST /orgs/PeteDio-Labs/actions/runners/registration-token --jq .token`, passed as `github_runner_reg_token`; `configure-runner.yml` accepts either. Terraform applies on merge, not by hand. Declare the container's features first with `playbooks/configure-lxc-features.yml` (PET-378), or every Docker pull fails (PET-364).
+> **Facts corrected 2026-09-10 (PET-385).** runner-232 is on **pve03** (rebuilt there in PET-335); the tracker is Plane. `kv/iac/github-runner-pat` is still empty, so provision with a pre-minted registration token — `gh api -X POST /orgs/PeteDio-Labs/actions/runners/registration-token --jq .token`, passed as `github_runner_reg_token`; `services/configure-runner.yml` accepts either. Terraform applies on merge, not by hand. Declare the container's features first with `playbooks/proxmox/configure-lxc-features.yml` (PET-378), or every Docker pull fails (PET-364).
 
 This runbook brings a runner LXC from a bare container to a **registered, Docker-capable,
 green** self-hosted runner — entirely from IaC. Linear: **PET-80** (the registration half;
-`runner.tf` already owns the LXC, `configure-runner-docker.yml` the Docker half, both now
-folded into `configure-runner.yml`).
+`runner.tf` already owns the LXC, `services/configure-runner-docker.yml` the Docker half, both now
+folded into `services/configure-runner.yml`).
 
 Two org-scoped runners exist (`runner.tf`): **runner-232** (LXC 232, pve01) and
 **runner-233** (LXC 233, pve02). Both register to the **PeteDio-Labs org** with labels
@@ -52,7 +52,7 @@ PAT — never stored.
 1. **LXC** — `terraform apply` so the container exists (`module.runner` / `module.runner_2`
    in `environments/homelab/runner.tf`). Operator-only, in a no-apply window.
 
-2. **Confirm the runner version pin** — `configure-runner.yml`'s `runner_version` is pinned
+2. **Confirm the runner version pin** — `services/configure-runner.yml`'s `runner_version` is pinned
    (not `latest`). Check it against the current
    [actions/runner release](https://github.com/actions/runner/releases) and bump if needed;
    optionally set `runner_sha256` to the release's published linux-x64 SHA-256 to verify the
@@ -67,11 +67,11 @@ PAT — never stored.
 
    cd ansible
    # One box (first run on the new node), or drop --limit to do both:
-   ansible-playbook playbooks/configure-runner.yml -e @/tmp/runner-secret.json --limit runner-233
+   ansible-playbook playbooks/services/configure-runner.yml -e @/tmp/runner-secret.json --limit runner-233
 
    shred -u /tmp/runner-secret.json
    ```
-   This imports `configure-runner-docker.yml` (Docker), installs the pinned actions-runner,
+   This imports `services/configure-runner-docker.yml` (Docker), installs the pinned actions-runner,
    mints a registration token, runs `config.sh --replace --unattended`, and installs +
    starts `actions.runner.PeteDio-Labs.<host>.service`.
 

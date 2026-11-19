@@ -213,7 +213,7 @@ native Plex client discovery. The Google router was never touched — it simply
 sees one more device appear.
 
 ```bash
-cd ~/petedio/iac/ansible && ansible-playbook playbooks/configure-mesh-vxlan.yml
+cd ~/petedio/iac/ansible && ansible-playbook playbooks/archive/configure-mesh-vxlan.yml
 ```
 
 The play writes and validates the interface config on both nodes and proves layer

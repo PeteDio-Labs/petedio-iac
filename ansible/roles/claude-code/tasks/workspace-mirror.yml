@@ -43,7 +43,7 @@
 # paste in between. The App is authorized before Ansible starts, so the run that carries the
 # identity also mirrors and clones. A run that carries no identity converges everything else
 # and leaves the credentials alone — which is what keeps a
-# bare `ansible-playbook playbooks/configure-claude-code.yml` runnable on a host that has
+# bare `ansible-playbook playbooks/services/configure-claude-code.yml` runnable on a host that has
 # already been seeded.
 ---
 - name: Create the root-owned mirror credential directory
@@ -69,7 +69,7 @@
 # Gated on presence, not on the enable flag, for a reason
 # this host makes concrete. claude_workspace_mirror_enable is declared true in host_vars and
 # stays true, so asserting on it would fail every bare run of the play. The end of
-# playbooks/configure-claude-code.yml reports an unfinished delivery instead, naming the step
+# playbooks/services/configure-claude-code.yml reports an unfinished delivery instead, naming the step
 # that stopped, which is what claude_workspace_mirror_blocked_at below is for.
 - name: Decide whether this run carries the mirror App identity
   ansible.builtin.set_fact:

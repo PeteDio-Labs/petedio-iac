@@ -1,4 +1,4 @@
-# deploy-minio-data — configure-minio-data.yml against minio-data-245.
+# deploy-minio-data — services/configure-minio-data.yml against minio-data-245.
 #
 # Replaces scripts/deploy-minio-data.sh as the way to run it. The script stays as the operator's
 # fallback, for a sealed or unreachable CI path. Both read the same Vault records. This one
