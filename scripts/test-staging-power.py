@@ -44,6 +44,12 @@ eq(sp.decide(True, UP25, NOW, False, UP25)[0], "none", "a push at the shutdown t
 # a long-idle box (the old 3h rule) now stays up
 eq(sp.decide(True, NOW - dt.timedelta(hours=10), NOW, True, NOW - dt.timedelta(hours=11))[0], "none", "10h since the push, up 11h: no idle stop")
 
+# A running box with work pending and no clock is a failure, not a quiet pass.
+eq(sp.limit_unchecked(True, True, None), True, "running, pending, no clock: the run fails")
+eq(sp.limit_unchecked(True, True, UP2), False, "running with a clock: fine")
+eq(sp.limit_unchecked(True, False, None), False, "stopped with no clock: nothing to enforce")
+eq(sp.limit_unchecked(False, True, None), False, "running but promoted: teardown handles it")
+
 # pending_from_files
 eq(sp.pending_from_files([]), False, "identical branches")
 eq(sp.pending_from_files([{"filename": ".github/workflows/sync-staging.yml"}]), False, "only .github differs")

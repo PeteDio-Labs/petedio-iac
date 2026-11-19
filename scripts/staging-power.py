@@ -184,6 +184,12 @@ def node(word: str, workdir: pathlib.Path) -> str:
     return out
 
 
+def limit_unchecked(pending: bool, running: bool, since: dt.datetime | None) -> bool:
+    """True when the box is running with work pending and the node gave no start time, so the
+    24 h limit is not enforced. The run then fails, so a missing clock shows red, not green."""
+    return pending and running and since is None
+
+
 def read_clock(workdir: pathlib.Path) -> dt.datetime | None:
     """When the container last started (running) or stopped (stopped), from the node's `clock`.
     None when the node reports 0, which means systemd had no timestamp to give."""
@@ -325,6 +331,11 @@ def main(argv: list[str]) -> int:
         print(f"staging-power auto: examined {detail}; pending={pending}; node before: {state}"
               f" (clock {since.isoformat() if since else 'unknown'}). "
               f"Decision: {action} ({reason}). Node after: {after}")
+        if limit_unchecked(pending, running, since):
+            print(f"::error title=staging-power::the node gave no start time for CT 249, so the {MAX_UP_HOURS:g} h "
+                  "limit is not enforced. Check that configure-staging-power.yml is applied and that "
+                  "pve-container@249 reports ActiveEnterTimestamp.")
+            return 1
         return 0
     except Abort as err:
         print(f"::error title=staging-power::{err}")
