@@ -60,6 +60,8 @@ PINNED_POLICIES = {
         "kv/data/admin/postgres", "kv/data/db/plane", "kv/data/services/water-fast",
     },
     "deploy-media-plan": {"kv/data/iac/minio", "kv/data/iac/proxmox"},
+    # staging-249 reads the one service token Caddy sends on /api/ (PET-942), beside its App key.
+    "deploy-staging-249": {"kv/data/services/staging-app", "kv/data/callers/edge/staging"},
 }
 ALLOWED_REPOS = {"PeteDio-Labs/petedio-iac"}
 SUB_OK = re.compile(r"^repo:PeteDio-Labs(@\d+)?/[a-z0-9-]+(@\d+)?:(ref:refs/heads/main|pull_request)$")

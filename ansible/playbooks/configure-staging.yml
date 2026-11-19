@@ -40,6 +40,13 @@
     staging_app_id: ""
     staging_installation_id: ""
     staging_app_pem: ""
+    # The one-line Authorization value of kv/callers/edge/staging, which ci-deploy.py stages.
+    # Empty leaves /api/ answering 503, so the dashboard shows its fixtures only.
+    dashboard_staging_edge_header: ""
+    dashboard_staging_api_origin: reports.pdlab.dev
+    # Only the tunnel host (cloudflared on LXC 112) may use /api/, so a request reaches it after
+    # Cloudflare Access. A LAN or tailnet client on :8081 gets 403 and sees fixtures only.
+    dashboard_staging_api_peer: 192.168.50.112
 
   pre_tasks:
     - name: Assert the App identity is complete, or absent on purpose
@@ -255,6 +262,18 @@
         state: started
       when: staging_app_pem | length > 0
 
+    # The service-token header lives in its own file so the Caddyfile task can show its diff.
+    - name: Write the dashboard /api/ credential snippet
+      ansible.builtin.copy:
+        dest: /etc/caddy/dashboard-edge.conf
+        owner: root
+        group: caddy
+        mode: "0640"
+        content: "header_up Authorization `{{ dashboard_staging_edge_header }}`\n"
+      no_log: true
+      when: dashboard_staging_edge_header | length > 0
+      notify: Restart Caddy
+
     - name: Write the Caddyfile
       ansible.builtin.copy:
         dest: /etc/caddy/Caddyfile
@@ -302,6 +321,25 @@
             handle /health {
               respond `{"ok":true}` 200
             }
+            # Same-origin /api/ to the reports host, read-only. Caddy adds the staging service
+            # token, so the browser holds none, and drops the visitor's cookies.
+          {% if dashboard_staging_edge_header | length > 0 %}
+            handle /api/* {
+              @notpeer not remote_ip {{ dashboard_staging_api_peer }}
+              respond @notpeer 403
+              @write not method GET HEAD
+              respond @write 405
+              reverse_proxy https://{{ dashboard_staging_api_origin }} {
+                header_up Host {{ dashboard_staging_api_origin }}
+                header_up -Cookie
+                import /etc/caddy/dashboard-edge.conf
+              }
+            }
+          {% else %}
+            handle /api/* {
+              respond `{"error":"staging api not configured"}` 503
+            }
+          {% endif %}
             handle {
               try_files {path} /index.html
               file_server
