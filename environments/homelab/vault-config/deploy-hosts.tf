@@ -61,7 +61,7 @@ locals {
     # not the workspace-mirror App: the host runs branch code, and a key on it must not reach
     # petedio-vault (scripts/seed-staging-app-vault.sh proves the scope before it writes).
     "staging-249" = {
-      kv   = ["services/staging-app"]
+      kv   = ["services/staging-app", "callers/edge/staging"]
       sign = "deploy-staging-249"
     }
     # Uptime Kuma on pete-pi (PET-849). The certificate's principal is deploy-uptime-kuma. The Pi
