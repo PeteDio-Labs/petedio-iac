@@ -9,8 +9,8 @@
 # the config, RE-READS the node, and then fails while any container is still
 # running without what it was given, naming each one and the command to fix it.
 #
-#   ansible-playbook -i inventory/ playbooks/configure-lxc-features.yml
-#   ansible-playbook -i inventory/ playbooks/configure-lxc-features.yml --check
+#   ansible-playbook -i inventory/ playbooks/proxmox/configure-lxc-features.yml
+#   ansible-playbook -i inventory/ playbooks/proxmox/configure-lxc-features.yml --check
 
 - name: Look for pct
   # `pct` missing means the play is pointed at a container or the wrong machine.

@@ -21,7 +21,7 @@
 # ⚠ WHY A DEDICATED KEYPAIR AND NOT kv/iac/lxc-ssh: that key is root on every container in
 # the lab. media-dash-237 runs a read-only diagnostic reachable over HTTP; it must not hold
 # the lab's master key. The public half is installed on exactly six hosts by
-# playbooks/configure-media-dash.yml, and nowhere else.
+# playbooks/media/configure-media-dash.yml, and nowhere else.
 #
 # Idempotent: existing material is left alone. Pass --rotate to mint a fresh keypair,
 # which then REQUIRES re-running scripts/deploy-media-dash.sh to push the new public key
@@ -115,7 +115,7 @@ echo "  wrote ssh_private_key, ssh_public_key"
 
 step "Done"
 cat <<MSG
-  $SECRET_PATH now holds the SSH keypair configure-media-dash.yml expects.
+  $SECRET_PATH now holds the SSH keypair media/configure-media-dash.yml expects.
 
   Readable by: the media-dash-cd JWT role (the repo's deploy.yml) and the ansible policy.
   Explicitly DENIED to media-ci. That role reads kv/services/media/* for the media stack,

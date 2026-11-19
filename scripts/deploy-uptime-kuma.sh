@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-uptime-kuma.sh — resolve the Uptime Kuma admin credentials from Vault and
-# run configure-pete-pi.yml against Pete-Pi (PET-300).
+# run services/configure-pete-pi.yml against Pete-Pi (PET-300).
 #
 # Operator run. Manual-validation-first (standing convention, PET-266): this script
 # IS the manual-deploy proof; nothing is wired to CD-on-merge until a run is green.
@@ -103,9 +103,9 @@ print("  backup push monitors: " + (names or "none, no tokens at kv/services/bac
 # Keep the Keychain mirror in step with Vault if the password was rotated there.
 security add-generic-password -U -s "$KC_SERVICE" -a "$KC_ACCOUNT" -w "$KUMA_PW" 2>/dev/null || true
 
-step "Ansible: configure-pete-pi.yml"
+step "Ansible: services/configure-pete-pi.yml"
 cd "$ANSIBLE_DIR"
-ansible-playbook playbooks/configure-pete-pi.yml \
+ansible-playbook playbooks/services/configure-pete-pi.yml \
   -e "uptime_kuma_admin_user=$KUMA_USER" \
   -e "uptime_kuma_admin_password=$KUMA_PW" \
   -e "uptime_kuma_pete_bot_bearer=$KUMA_BEARER" \

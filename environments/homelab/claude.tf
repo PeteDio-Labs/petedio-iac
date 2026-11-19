@@ -9,7 +9,7 @@
 #
 # Same TF/Ansible split as every other app LXC: TF owns existence + hardware + network;
 # everything inside (Node.js, Claude Code, gh, the mirrored workspace repos, the
-# per-project remote-control units) is Ansible — ansible/playbooks/configure-claude-code.yml
+# per-project remote-control units) is Ansible — ansible/playbooks/services/configure-claude-code.yml
 # + roles/claude-code.
 #
 # VMID 247 = next free in the .24x compute/AI block; VMID = last IP octet. The four
@@ -39,7 +39,7 @@
 # ONE post-create step: nesting, for systemd. A Proxmox API token cannot set `features{}`
 # (hardcoded root@pam check, docs/GOTCHAS.md), so this resource leaves them out. Debian 13's
 # systemd 257 needs `nesting=1` for tmp.mount, dev-mqueue.mount and run-lock.mount, so
-# ansible/playbooks/configure-lxc-features.yml declares 247 as nesting only, and a rebuild
+# ansible/playbooks/proxmox/configure-lxc-features.yml declares 247 as nesting only, and a rebuild
 # runs it, then `pct reboot 247` (PET-557). Nothing here runs Docker, so there is no keyctl
 # and no device passthrough. Claude Code is a Node process; containerizing it would buy
 # nothing. If something here ever seems to want Docker, re-read this paragraph.

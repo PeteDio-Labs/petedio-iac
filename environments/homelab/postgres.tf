@@ -10,7 +10,7 @@
 #     never contacted (it's configured but unused — that does not open a
 #     connection). This was correct while Postgres wasn't installed yet.
 #   --- between phases ---
-#     Run ansible/playbooks/configure-postgres.yml against 231: install
+#     Run ansible/playbooks/services/configure-postgres.yml against 231: install
 #     Postgres, set listen_addresses='*' + pg_hba for 192.168.50.0/24, create
 #     the admin role the provider uses. Add TF_VAR_postgres_admin_password to CI
 #     from Vault (PET-6). (TF_VAR_poker_db_password went with PET-366.)

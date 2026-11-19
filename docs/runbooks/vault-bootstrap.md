@@ -6,7 +6,7 @@ This runbook covers the **manual, one-time operator steps** to bring the homelab
 Vault at <https://192.168.50.223:8200> (LXC 223) into service: initialize, unseal,
 log in, apply config-as-code, and seed secrets. Run it **once**, by hand, *after*
 Terraform has created the LXC (`environments/homelab/vault.tf`) and Ansible has
-installed Vault (`ansible/playbooks/configure-vault.yml` — raft storage + self-signed
+installed Vault (`ansible/playbooks/vault/configure-vault.yml` — raft storage + self-signed
 TLS, started **sealed**). These steps are deliberately **not** GitOps: `vault operator
 init` emits root-equivalent material exactly once and unsealing requires a human key
 quorum, so neither can be safely automated or committed. Everything else about Vault
@@ -25,7 +25,7 @@ workspace — see Step 6. Linear: **PET-6** (parent) · **PET-25** (init/unseal)
 ## Prerequisites
 
 - The `vault` CLI is installed locally (`vault version`).
-- LXC 223 is up and reachable, and `ansible/playbooks/configure-vault.yml` has run
+- LXC 223 is up and reachable, and `ansible/playbooks/vault/configure-vault.yml` has run
   (Vault installed, raft + TLS configured, service running but **sealed**).
 - Proxmox container features `nesting=1,keyctl=1` are set on the node for VMID 223.
   (The `bpg/proxmox` API token **cannot** set `features{}` — the `root@pam` check —
@@ -163,7 +163,7 @@ Consumers then set `VAULT_CACERT=environments/homelab/vault-ca.crt` (as in
 Prerequisites).
 
 > [!NOTE]
-> `ansible/playbooks/configure-vault.yml` may already `fetch` `vault.crt` into
+> `ansible/playbooks/vault/configure-vault.yml` may already `fetch` `vault.crt` into
 > `environments/homelab/vault-ca.crt` automatically. If so, just `git add` / commit the
 > file it produced and skip the `scp`. Commit **only** `vault.crt` — never `vault.key`.
 

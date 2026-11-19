@@ -13,14 +13,14 @@
 #
 # ONE APPLY. Every role, policy and signing role below lands in one `apply-vault-config.sh` run.
 # Each host must also trust the CA and list its principal before a workflow can log in. Run
-# configure-ssh-ca-deploy-hosts.yml through lab-action.yml for that (docs/runbooks/host-deploys.md).
+# access/configure-ssh-ca-deploy-hosts.yml through lab-action.yml for that (docs/runbooks/host-deploys.md).
 
 locals {
   # name: the workflow file deploy-<name>.yml, the kv paths its script read, and the SSH role the
   # job signs. Every deploy has its own role and principal. backup-store does not reuse
   # lab-runner: that principal is root on the nodes and lab-action.yml gates every write behind
   # the lab-write tap, so a dispatch-only deploy must not sign it. The nodes list
-  # deploy-backup-store in group_vars, written by configure-ssh-ca-deploy-hosts.yml.
+  # deploy-backup-store in group_vars, written by access/configure-ssh-ca-deploy-hosts.yml.
   host_deploys = {
     plane = {
       kv = [
@@ -85,7 +85,7 @@ locals {
 # One signing role per deploy host. Same shape as search-deploy in ssh.tf: the principal is the
 # role name, the certificate works only from runners 232 and 233, lives 30 minutes, and carries
 # no pty and no forwarding. The host decides which user accepts the principal (root's principals
-# file, written by configure-ssh-ca-deploy-hosts.yml).
+# file, written by access/configure-ssh-ca-deploy-hosts.yml).
 resource "vault_ssh_secret_backend_role" "host_deploy" {
   for_each = local.host_deploy_ssh_roles
 

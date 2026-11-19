@@ -5,8 +5,8 @@ A pete-bot DM is the first way a session reaches him, so every session host carr
 
 | Host | Playbook | Session users | Deploy script |
 |---|---|---|---|
-| claude-247 | `configure-claude-code.yml` | `claude`, and `claude-ops` when `claude_ops_enable` | `scripts/deploy-claude-247.sh` |
-| codex-248 | `configure-codex.yml` | `codex` | `scripts/deploy-codex-248.sh` |
+| claude-247 | `services/configure-claude-code.yml` | `claude`, and `claude-ops` when `claude_ops_enable` | `scripts/deploy-claude-247.sh` |
+| codex-248 | `services/configure-codex.yml` | `codex` | `scripts/deploy-codex-248.sh` |
 
 ## Usage
 

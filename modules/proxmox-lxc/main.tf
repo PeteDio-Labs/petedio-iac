@@ -7,7 +7,7 @@
 # Ansible. `features` is in ignore_changes so a later apply never strips them.
 # See docs/GOTCHAS.md.
 #
-# ⚠ THAT ANSIBLE IS `playbooks/configure-lxc-features.yml` (PET-378) — RUN IT
+# ⚠ THAT ANSIBLE IS `playbooks/proxmox/configure-lxc-features.yml` (PET-378) — RUN IT
 # AFTER CREATING A CONTAINER. Until then this comment named a mechanism that did
 # not exist: the only thing setting features was three one-off scripts for three
 # named containers, so anything created through this module got none. Four of

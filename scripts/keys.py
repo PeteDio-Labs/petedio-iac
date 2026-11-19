@@ -73,7 +73,7 @@ EXPIRY_WARN = dt.timedelta(days=21)
 AGENTS_LIST = re.compile(r'^\s*agents\s*=\s*\[([^\]]*)\]', re.M)
 # tracerr's write callers live in the deploy play. callers.yml records each agent's tracerr scope
 # too, so a reader sees it in one place; check() fails when the two disagree.
-MTRACE_PLAY = os.path.join(REPO_ROOT, "ansible", "playbooks", "configure-media-dash.yml")
+MTRACE_PLAY = os.path.join(REPO_ROOT, "ansible", "playbooks", "media/configure-media-dash.yml")
 MTRACE_WRITERS = re.compile(r'^\s*mtrace_write_callers:\s*\[([^\]]*)\]', re.M)
 
 

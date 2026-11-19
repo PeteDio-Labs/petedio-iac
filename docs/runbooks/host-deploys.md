@@ -8,14 +8,14 @@ None of these deploys reads the shared `kv/iac/lxc-ssh` key. `deploy-claude-247.
 
 | Workflow | Playbook | Host | Vault role (OIDC) | SSH principal |
 |---|---|---|---|---|
-| `deploy-plane.yml` | `configure-plane.yml` | `plane-235` | `deploy-plane` | `deploy-plane` |
-| `deploy-minio-data.yml` | `configure-minio-data.yml` | `minio-data-245` | `deploy-minio-data` | `deploy-minio-data` |
-| `deploy-metrics.yml` | `configure-metrics.yml` | `metrics-240` | `deploy-metrics` | `deploy-metrics` |
-| `deploy-lab-watchdog.yml` | `configure-lab-watchdog.yml` | `claude-247` | `deploy-lab-watchdog` | `deploy-lab-watchdog` |
-| `deploy-codex-248.yml` | `configure-codex.yml` | `codex-248` | `deploy-codex-248` | `deploy-codex-248` |
-| `deploy-backup-store.yml` | `configure-backup-store.yml` | `pve01`, `pve02`, `pve03` | `deploy-backup-store` | `deploy-backup-store` |
-| `deploy-staging-249.yml` | `configure-staging.yml` | `staging-249` | `deploy-staging-249` | `deploy-staging-249` |
-| `deploy-uptime-kuma.yml` | `configure-pete-pi.yml` | `pete-pi` | `deploy-uptime-kuma` | `deploy-uptime-kuma`, as `pedro` |
+| `deploy-plane.yml` | `services/configure-plane.yml` | `plane-235` | `deploy-plane` | `deploy-plane` |
+| `deploy-minio-data.yml` | `services/configure-minio-data.yml` | `minio-data-245` | `deploy-minio-data` | `deploy-minio-data` |
+| `deploy-metrics.yml` | `observability/configure-metrics.yml` | `metrics-240` | `deploy-metrics` | `deploy-metrics` |
+| `deploy-lab-watchdog.yml` | `observability/configure-lab-watchdog.yml` | `claude-247` | `deploy-lab-watchdog` | `deploy-lab-watchdog` |
+| `deploy-codex-248.yml` | `services/configure-codex.yml` | `codex-248` | `deploy-codex-248` | `deploy-codex-248` |
+| `deploy-backup-store.yml` | `backup/configure-backup-store.yml` | `pve01`, `pve02`, `pve03` | `deploy-backup-store` | `deploy-backup-store` |
+| `deploy-staging-249.yml` | `services/configure-staging.yml` | `staging-249` | `deploy-staging-249` | `deploy-staging-249` |
+| `deploy-uptime-kuma.yml` | `services/configure-pete-pi.yml` | `pete-pi` | `deploy-uptime-kuma` | `deploy-uptime-kuma`, as `pedro` |
 
 `ansible-claude-247.yml` already deploys `claude-247`'s identities. It still reads the shared
 key. Moving it to a `deploy-claude-247` principal is a separate change.
@@ -51,7 +51,7 @@ Do these in order, once.
    The plan adds 6 `vault_ssh_secret_backend_role.host_deploy`, 6 `vault_policy.host_deploy` and
    6 `vault_jwt_auth_backend_role.host_deploy` (18 to add), and destroys nothing.
 2. **Trust the CA on the five guests, and list the new principal on the nodes.** Dispatch `lab-action.yml` with `action=playbook_apply`
-   and `target=configure-ssh-ca-deploy-hosts.yml`. The check runs first with no approval. Approve
+   and `target=access/configure-ssh-ca-deploy-hosts.yml`. The check runs first with no approval. Approve
    the `lab-write` environment on the run page in a browser: the GitHub iOS app doesn't show the
    button. One tap covers the five guests and the three nodes' principals files.
 3. **Dispatch any deploy.** The first run is the first certificate login to that host.
@@ -106,11 +106,11 @@ with it. It no longer reads `deploy_ssh_private_key` from `kv/services/pete-bot`
 To set it up, do these in order before you merge the pete-bot change:
 
 1. Apply `vault-config`, which adds the `deploy-pete-bot` signing role and lets `pete-bot-cd` sign it. The name follows the `deploy-<name>` pattern that `scripts/vault-config-guard.py` allows, so the gated `vault-config-apply.yml` can take it. If the guard refuses the plan, run `scripts/apply-vault-config.sh` on the Mac.
-2. Dispatch `lab-action.yml` with `action=playbook_apply` and `target=configure-ssh-ca-deploy-hosts.yml`.
+2. Dispatch `lab-action.yml` with `action=playbook_apply` and `target=access/configure-ssh-ca-deploy-hosts.yml`.
    The play now also trusts the CA on 237 and lists `deploy-pete-bot` in root's principals file.
 3. Merge the pete-bot change. The next push to its `main` is the first certificate login to 237.
 
-A merge before steps 1 and 2 fails the deploy at the signing step, not silently. `configure-pete-bot.yml`
+A merge before steps 1 and 2 fails the deploy at the signing step, not silently. `services/configure-pete-bot.yml`
 revokes every `pete-bot-cd` key on 237, so reverting the pete-bot change does not restore the old login.
 To roll back, restore the key by hand on 237 or fix the certificate path. Pedro deletes the old key
 fields from Vault after the revoke has run.
@@ -123,4 +123,4 @@ fields from Vault after the revoke has run.
 - The runner never calls Proxmox directly. It signs a `staging-power` SSH certificate that runs one forced command on pve03, `/usr/local/sbin/staging-power`. That command accepts only `status`, `start` and `stop`, and only for the guest named `staging-249`.
 - The `auto` mode reads `kv/services/staging-app`. If the secret is not seeded, the run fails and stops nothing.
 - Each run prints what it examined: files compared, commits read and the decision.
-- To install the node script, apply `configure-ssh-ca-deploy-hosts.yml` and then `configure-staging-power.yml` through `lab-action.yml`.
+- To install the node script, apply `access/configure-ssh-ca-deploy-hosts.yml` and then `services/configure-staging-power.yml` through `lab-action.yml`.

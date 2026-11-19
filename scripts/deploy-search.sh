@@ -70,9 +70,9 @@ print("  callers: " + ", ".join(sorted(callers)))
 ' "$TMP/extra.yml" "$TMP/search.json" "$TMP/app.json"
 rm -f "$TMP/search.json" "$TMP/app.json"
 
-step "Running configure-search.yml"
+step "Running services/configure-search.yml"
 cd "$REPO_ROOT/ansible"
-ansible-playbook playbooks/configure-search.yml \
+ansible-playbook playbooks/services/configure-search.yml \
   -e search_binary_src="$SRC/dist/petedio-search" \
   -e "@$TMP/extra.yml" \
   "$@"

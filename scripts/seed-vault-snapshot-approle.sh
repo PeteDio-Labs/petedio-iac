@@ -8,7 +8,7 @@
 # Vault had no off-host backup. This script is that step.
 #
 # Run it on the Mac, on Pedro's word (PET-511), after scripts/apply-vault-config.sh has created
-# the vault-snapshot role. Then run ansible/playbooks/vault-snapshot.yml, then
+# the vault-snapshot role. Then run ansible/playbooks/vault/vault-snapshot.yml, then
 # `systemctl start vault-snapshot.service` on 223. The "Next" block at the end lists the steps.
 #
 #   Vault token: $VAULT_TOKEN, else macOS Keychain item $VAULT_TOKEN_KEYCHAIN_ITEM. No prompt.
@@ -293,7 +293,7 @@ cat <<TXT
   Record the accessor on PET-790: $ACCESSOR
 
   Install the units, then take one snapshot and check that it lands:
-    cd ansible && ansible-playbook playbooks/vault-snapshot.yml
+    cd ansible && ansible-playbook playbooks/vault/vault-snapshot.yml
     ssh $SNAP_HOST systemctl start vault-snapshot.service
     ssh $SNAP_HOST journalctl -u vault-snapshot.service -n 30
     mc ls <alias>/vault-snapshots   # <alias>: any mc alias for http://192.168.50.221:9000 (mc alias list)

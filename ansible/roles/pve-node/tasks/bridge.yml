@@ -2,7 +2,7 @@
 # The bridge conversion, kept in its own file because it is the one step that can
 # lock you out. Run it deliberately:
 #
-#   ansible-playbook playbooks/configure-pve-node.yml --tags bridge
+#   ansible-playbook playbooks/proxmox/configure-pve-node.yml --tags bridge
 #
 # It moves the address off the physical NIC onto {{ pve_node_bridge }}, which
 # tears down every connection on that interface. On pve03 the LAN is a USB

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy-metrics.sh — read the Discord bot fields from Vault and run configure-metrics.yml
+# deploy-metrics.sh — read the Discord bot fields from Vault and run observability/configure-metrics.yml
 # against metrics-240 (PET-708). Modeled on deploy-lab-watchdog.sh.
 #
 #   kv/services/lab-watchdog -> discord_bot_token, discord_dm_channel_id
@@ -60,9 +60,9 @@ jq -n '{metric_alerts_discord_bot_token: env.METRICS_DISCORD_BOT_TOKEN,
   metric_alerts_discord_dm_channel_id: env.METRICS_DISCORD_DM_CHANNEL_ID}' > "$TMP/extra.json"
 unset METRICS_DISCORD_BOT_TOKEN
 
-step "Running configure-metrics.yml"
+step "Running observability/configure-metrics.yml"
 cd "$ANSIBLE_DIR"
-ansible-playbook -i inventory/metrics.yml playbooks/configure-metrics.yml -e "@$TMP/extra.json" "$@"
+ansible-playbook -i inventory/metrics.yml playbooks/observability/configure-metrics.yml -e "@$TMP/extra.json" "$@"
 
 step "Done"
 cat <<'TXT'

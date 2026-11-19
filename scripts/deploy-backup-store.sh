@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy-backup-store.sh — run configure-backup-store.yml with the Kuma push tokens
+# deploy-backup-store.sh — run backup/configure-backup-store.yml with the Kuma push tokens
 # that the nodes' backup-health checks need (PET-529).
 #
 # The playbook runs without this wrapper. It then installs the check with no push URL,
@@ -49,6 +49,6 @@ print("  tokens for: " + ", ".join(sorted(tokens)))
 ' "$VARS" \
   || die "cannot read kv/services/backup-health. Run scripts/seed-backup-health-vault.sh first."
 
-step "Ansible: configure-backup-store.yml"
+step "Ansible: backup/configure-backup-store.yml"
 cd "$ANSIBLE_DIR"
-ansible-playbook playbooks/configure-backup-store.yml -e "@$VARS" "$@"
+ansible-playbook playbooks/backup/configure-backup-store.yml -e "@$VARS" "$@"

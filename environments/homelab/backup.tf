@@ -37,7 +37,7 @@ resource "proxmox_backup_job" "pve01" {
 # plex-remote (244) backs up weekly, keeping two copies (MED-11, Pedro's decision 2026-11-15).
 #
 # pve03's hand-made 02:45 job covers every guest except 247, so 244 was in it nightly.
-# configure-backup-plex-remote.yml adds 244 to that job's exclude list. This job takes its place.
+# backup/configure-backup-plex-remote.yml adds 244 to that job's exclude list. This job takes its place.
 #
 # Mode is stop. 244's rootfs sits on pve03's `local` directory store, which cannot snapshot, so a
 # running backup would need the guest quiet anyway. The job stops 244 for the length of the dump,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-minio-data.sh — resolve the app-data MinIO's root credentials from Vault and run
-# configure-minio-data.yml against LXC 245.
+# services/configure-minio-data.yml against LXC 245.
 #
 # Operator run. Resolves under the ansible policy (which already reads kv/data/iac/*, so
 # no vault-config change was needed for this host) and passes as no_log extra-vars:
@@ -44,7 +44,7 @@ ROOT_P="$(VAULT_TOKEN="$AN_TOKEN" vault kv get -field=root_password kv/iac/minio
 [ -n "$ROOT_P" ] || die "root_password missing from kv/iac/minio-data-root — run ./scripts/seed-minio-data-root.sh first."
 [ ${#ROOT_P} -ge 8 ] || die "root_password is shorter than the role's assert allows (${#ROOT_P} chars)."
 
-step "Running configure-minio-data.yml (MinIO + buckets on minio-data-245)"
+step "Running services/configure-minio-data.yml (MinIO + buckets on minio-data-245)"
 cd "$ANSIBLE_DIR"
 EVARS="$(mktemp)"; chmod 600 "$EVARS"; trap 'rm -f "$EVARS"' EXIT
 cat > "$EVARS" <<JSON
@@ -55,7 +55,7 @@ cat > "$EVARS" <<JSON
 JSON
 unset ROOT_P
 
-ansible-playbook playbooks/configure-minio-data.yml -e "@$EVARS" "$@"
+ansible-playbook playbooks/services/configure-minio-data.yml -e "@$EVARS" "$@"
 
 step "Done"
 cat <<'TXT'

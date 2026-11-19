@@ -1,7 +1,7 @@
 #!/bin/sh
 # {{ ansible_managed }}
 # plane-mcp-firewall: restrict the plane-mcp shim's ports to the cloudflared tunnel host.
-# Rendered by configure-plane.yml (PET-292, PET-610, PET-650). plane-mcp-firewall.service runs it
+# Rendered by services/configure-plane.yml (PET-292, PET-610, PET-650). plane-mcp-firewall.service runs it
 # before Docker starts, and again on reload.
 #
 # Each port's Caddy site swaps in a Plane PAT, and Caddy checks no Access JWT, so this

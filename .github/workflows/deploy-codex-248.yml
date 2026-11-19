@@ -1,4 +1,4 @@
-# deploy-codex-248 — configure-codex.yml against codex-248 (the Codex reviewer's identities).
+# deploy-codex-248 — services/configure-codex.yml against codex-248 (the Codex reviewer's identities).
 #
 # Replaces scripts/deploy-codex-248.sh as the way to run it. The script stays as the operator's
 # fallback, for a sealed or unreachable CI path. Both read the same Vault records. This one

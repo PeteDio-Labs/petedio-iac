@@ -5,8 +5,8 @@ between them is the whole point:
 
 | Host | Playbook | Buckets | In Terraform? |
 |---|---|---|---|
-| **minio-221** (`192.168.50.221`) | `configure-minio.yml` | `tfstate` | **No — never.** |
-| **minio-data-245** (`192.168.50.245`) | `configure-minio-data.yml` | `obsidian-fs-mcs` (+ future app buckets) | **Yes** — `environments/homelab/minio-data.tf` |
+| **minio-221** (`192.168.50.221`) | `services/configure-minio.yml` | `tfstate` | **No — never.** |
+| **minio-data-245** (`192.168.50.245`) | `services/configure-minio-data.yml` | `obsidian-fs-mcs` (+ future app buckets) | **Yes** — `environments/homelab/minio-data.tf` |
 
 **.221 is HAND-MANAGED by design** and has **no Terraform resource, ever** — Terraform
 cannot create the host that stores Terraform's own state (bootstrap circularity). The
@@ -70,7 +70,7 @@ umask 077
 vault kv get -format=json kv/iac/minio-root | \
   jq '{minio_root_user: .data.data.root_user, minio_root_password: .data.data.root_password}' \
   > /tmp/minio-secrets.json
-ansible-playbook playbooks/configure-minio.yml -e @/tmp/minio-secrets.json
+ansible-playbook playbooks/services/configure-minio.yml -e @/tmp/minio-secrets.json
 shred -u /tmp/minio-secrets.json
 ```
 

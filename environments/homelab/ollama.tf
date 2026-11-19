@@ -14,9 +14,9 @@
 # THE CONTAINER. Ollama's two pinned lanes and petedio-search run in CT 246, which
 # holds both GPUs as device nodes. Terraform creates it; Ansible owns what Proxmox lets
 # only root@pam set:
-#   - the devN GPU entries     roles/lxc-gpu, from playbooks/configure-pve01.yml
+#   - the devN GPU entries     roles/lxc-gpu, from playbooks/proxmox/configure-pve01.yml
 #   - nesting                   roles/lxc-features ("246" in its defaults)
-#   - the driver userspace,     playbooks/configure-ollama-246.yml
+#   - the driver userspace,     playbooks/ollama/configure-ollama-246.yml
 #     Ollama and the models
 # device_passthrough and features are both in the module's ignore_changes for that
 # reason, so the plan stays clean whether Ansible has run or not.
@@ -24,7 +24,7 @@
 # ⚠ MERGE ONLY AFTER pve01 HAS JOINED THE CLUSTER. Apply-on-merge creates CT 246 on
 # pve01, and a target_node that does not resolve fails at refresh, on the runner, after
 # the merge. The template must also be on pve01's own `local` store first:
-# configure-pve01.yml downloads it with pveam.
+# proxmox/configure-pve01.yml downloads it with pveam.
 
 moved {
   from = module.ollama_host
@@ -37,7 +37,7 @@ module "pve01_host" {
   hostname     = "pve01"
   ipv4_address = "192.168.50.12"
   mac_address  = "2c:f0:5d:a2:7f:4f"
-  description  = "Proxmox node pve01 (ex ollama-host): Ryzen 5 5600X, 16 GB, RTX 3060 Ti + GTX 1660 SUPER. Holds CT 246 and the ollama-backups store. OS config by ../../ansible (configure-pve01.yml)."
+  description  = "Proxmox node pve01 (ex ollama-host): Ryzen 5 5600X, 16 GB, RTX 3060 Ti + GTX 1660 SUPER. Holds CT 246 and the ollama-backups store. OS config by ../../ansible (proxmox/configure-pve01.yml)."
 }
 
 module "ollama" {
@@ -70,7 +70,7 @@ module "ollama" {
   # manages run state, so false would stop a hand-started container on the next apply.
   start_on_boot = true
 
-  description = "Ollama (RTX 3060 Ti :11434, GTX 1660 SUPER :11435) and petedio-search :8526 (PET-528). Managed by Terraform; GPUs by configure-pve01.yml, services by configure-ollama-246.yml."
+  description = "Ollama (RTX 3060 Ti :11434, GTX 1660 SUPER :11435) and petedio-search :8526 (PET-528). Managed by Terraform; GPUs by proxmox/configure-pve01.yml, services by ollama/configure-ollama-246.yml."
 }
 
 output "pve01_ip" {

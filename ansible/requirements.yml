@@ -12,7 +12,7 @@ collections:
   # warnings about our own code too, and this one is a countdown, not noise.
   - name: ansible.posix        # authorized_key (claude-code)
     version: ">=2.2.2"
-  - name: community.postgresql # configure-postgres.yml (postgres-rds, PET-19)
+  - name: community.postgresql # services/configure-postgres.yml (postgres-rds, PET-19)
   - name: community.proxmox    # proxmox_pct_remote connection to LXC 119 (PET-793; also needs paramiko)
     version: "2.0.0"           # the version syntax-checked and linted against
   - name: community.docker     # configure-poker-api.yml (docker_image pull, PET-44)

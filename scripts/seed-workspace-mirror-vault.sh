@@ -2,7 +2,7 @@
 # seed-workspace-mirror-vault.sh — put the petedio-workspace-mirror GitHub App credentials
 # into Vault at kv/services/claude-workspace-mirror, so claude-247 can fetch the private
 # workspace repo without a login and without a deploy key (PET-493). Since PET-542 the same
-# App also reads petedio-vault, for petedio-search on ollama-host (configure-search.yml).
+# App also reads petedio-vault, for petedio-search on ollama-host (services/configure-search.yml).
 #
 # WHY AN APP AND NOT A DEPLOY KEY. PeteDio-Labs disallows deploy keys for every repository it
 # owns — `gh api orgs/PeteDio-Labs --jq .deploy_keys_enabled_for_repositories` is false — so

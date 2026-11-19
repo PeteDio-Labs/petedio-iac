@@ -9,7 +9,7 @@
 #
 # Pete-Pi is a Raspberry Pi 4 Model B (Debian 13 trixie, aarch64) hosting Uptime
 # Kuma as the fault-injection study's measurement instrument (PET-300,
-# configure-pete-pi.yml). NOT a cluster member and no Terraform owns it — that
+# services/configure-pete-pi.yml). NOT a cluster member and no Terraform owns it — that
 # is the point: it keeps recording while pve01 or pve02 is the thing being
 # broken.
 #

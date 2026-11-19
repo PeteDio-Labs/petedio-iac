@@ -11,7 +11,7 @@ provider "proxmox" {
 
 # Postgres "RDS" — points at the LXC 231 host (modules/proxmox-lxc, see
 # postgres.tf). Connects as the non-super admin role Ansible provisions
-# (configure-postgres.yml). sslmode=disable: LAN-only host on 192.168.50.0/24,
+# (services/configure-postgres.yml). sslmode=disable: LAN-only host on 192.168.50.0/24,
 # no TLS yet (matches the homelab Proxmox/MinIO posture). superuser=false so the
 # provider doesn't assume rolsuper and skips superuser-only probes.
 #

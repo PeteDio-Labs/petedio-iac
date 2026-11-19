@@ -242,7 +242,7 @@ import {
 # The Access application audience tag for mcp-lab.pdlab.dev (PET-824). lab-agent checks it
 # against the `aud` claim of the Cf-Access-Jwt-Assertion JWT, so a token issued for another
 # Access app in the team cannot reach the lab tools. It is an identifier, not a secret.
-# configure-pete-bot.yml carries it as lab_agent_access_aud, and the MCP stays off until it does.
+# services/configure-pete-bot.yml carries it as lab_agent_access_aud, and the MCP stays off until it does.
 output "lab_mcp_subdomain_access_aud" {
   description = "Access application audience tag for mcp-lab.pdlab.dev (PET-824). lab-agent checks it on the Cf-Access-Jwt-Assertion JWT. Set it as lab_agent_access_aud. It is not a secret."
   value       = module.cloudflare_ingress.access_application_auds["mcp-lab.pdlab.dev"]
@@ -250,7 +250,7 @@ output "lab_mcp_subdomain_access_aud" {
 
 # The Access application audience tag for mcp-media.pdlab.dev. tracerr checks it against the `aud`
 # claim of the Cf-Access-Jwt-Assertion JWT. It is an identifier, not a secret.
-# configure-media-dash.yml carries it as mtrace_mcp_access_aud, and the MCP door stays off until it does.
+# media/configure-media-dash.yml carries it as mtrace_mcp_access_aud, and the MCP door stays off until it does.
 output "media_mcp_subdomain_access_aud" {
   description = "Access application audience tag for mcp-media.pdlab.dev. mtrace checks it on the Cf-Access-Jwt-Assertion JWT. Set it as mtrace_mcp_access_aud. It is not a secret."
   value       = module.cloudflare_ingress.access_application_auds["mcp-media.pdlab.dev"]
@@ -258,7 +258,7 @@ output "media_mcp_subdomain_access_aud" {
 
 # The Access application audience tag for reports.pdlab.dev (PET-868). pete-bot checks it against
 # the `aud` claim of the Cf-Access-Jwt-Assertion JWT. It is an identifier, not a secret.
-# configure-pete-bot.yml carries it as pete_bot_weekly_access_aud, and the dashboard stays off
+# services/configure-pete-bot.yml carries it as pete_bot_weekly_access_aud, and the dashboard stays off
 # until it does.
 output "weekly_dashboard_access_aud" {
   description = "Access application audience tag for reports.pdlab.dev (PET-868). pete-bot checks it on the Cf-Access-Jwt-Assertion JWT. Set it as pete_bot_weekly_access_aud. It is not a secret."

@@ -1,0 +1,13 @@
+---
+# Install the native Ollama service and its pinned GPU lanes on ollama-246.
+# ollama/configure-ollama-246.yml imports this play after the allowlist and the NVIDIA userspace.
+#
+# Usage:
+#   ansible-playbook playbooks/ollama/ollama-service.yml
+#   ansible-playbook playbooks/ollama/ollama-service.yml --limit ollama-246
+
+- name: Update native Ollama service
+  hosts: ollama
+  become: true
+  roles:
+    - ollama-service

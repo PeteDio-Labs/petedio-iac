@@ -90,9 +90,9 @@ yaml.safe_dump({
 }, open(sys.argv[1], "w"))
 ' "$TMP/extra.yml"
 
-step "Running configure-media-dash.yml"
+step "Running media/configure-media-dash.yml"
 cd "$REPO_ROOT/ansible"
-ansible-playbook playbooks/configure-media-dash.yml \
+ansible-playbook playbooks/media/configure-media-dash.yml \
   -e media_dash_binary_src="$SRC/dist/mtrace" \
   -e "@$TMP/extra.yml" \
   "$@"

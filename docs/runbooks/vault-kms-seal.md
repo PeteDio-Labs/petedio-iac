@@ -70,7 +70,7 @@ unavailable for a few seconds at step 3.
 5. **Rerun the deploy.** `./scripts/deploy-vault-seal.sh --key-id <key id>` must report
    `changed=0`, and `seal-status` must show `"migration":false`.
 6. **Retire the watchers.** On the Mac, `pet-secrets watch uninstall`. On the Pi, run
-   `cd ansible && ansible-playbook playbooks/configure-vault-unseal.yml`. It stops the timer and
+   `cd ansible && ansible-playbook playbooks/vault/configure-vault-unseal.yml`. It stops the timer and
    removes the unit, the script and the log. It leaves `/etc/vault-unseal/unseal-key` and the
    Keychain items `vault-unseal-key` and `vault-root-token`: the unseal key is now a recovery key,
    and these are its two copies.
@@ -85,6 +85,6 @@ The nightly stop-backup no longer includes 223 (`backup_store_jobs[].exclude`).
 
 ## Roll back
 
-Before step 4, rerun `configure-vault.yml` without the key id and unseal with the Shamir key.
+Before step 4, rerun `vault/configure-vault.yml` without the key id and unseal with the Shamir key.
 After the migration finishes, moving back to Shamir is another migrate run, and it needs KMS
 reachable.

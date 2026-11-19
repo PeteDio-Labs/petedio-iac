@@ -24,7 +24,7 @@ all:
     # ⚠ THE SEVEN SERVICES tracerr READS, AND THE ONLY REASON THIS GROUP EXISTS: to answer
     # "who may tracerr log into". petedio-media-iac OWNS these containers — their creation,
     # their storage, their placement, everything about them. Nothing here configures them;
-    # configure-media-dash.yml only installs ONE public key for root on each.
+    # media/configure-media-dash.yml only installs ONE public key for root on each.
     #
     # Duplicating six addresses across two repos is a real cost, accepted because the
     # alternative is a distribution script, and a script is a thing that runs at the wrong

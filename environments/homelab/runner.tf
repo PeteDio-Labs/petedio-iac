@@ -14,10 +14,10 @@
 # land, the org-scoping (PET-79) means every PeteDio-Labs repo is an entry point.
 #
 # PET-79: re-registered from petedio-iac-REPO scope to ORG scope so it serves all
-# PeteDio-Labs repos, and Docker was installed (configure-runner-docker.yml) so app
+# PeteDio-Labs repos, and Docker was installed (services/configure-runner-docker.yml) so app
 # CI can build images + use service containers. The legacy org runner ci-runner
 # (LXC 116, no Docker, not in IaC) was deregistered + stopped. PET-80: the runner
-# REGISTRATION is now codified — ../../ansible/playbooks/configure-runner.yml folds in
+# REGISTRATION is now codified — ../../ansible/playbooks/services/configure-runner.yml folds in
 # Docker and registers the runner with the org (mint-at-runtime reg token from a
 # Vault-stored PAT). TF owns the LXC; that play owns everything inside. Rebuild/register
 # path: ../../docs/runbooks/runner-232-rebuild.md.
@@ -91,7 +91,7 @@ output "runner_id" {
 # runner-233 (LXC 233) — SECOND self-hosted runner, on pve02 (PET-128). Adds CI capacity on
 # both cluster nodes; pve02 gained ~421 GB HDD `pve02-shared` + a debian-12 LXC template in
 # PET-127. Mirrors runner-232 (org-scoped to PeteDio-Labs; Docker via
-# configure-runner-docker.yml; registration is OUT-OF-BAND — org reg token + config.sh — so
+# services/configure-runner-docker.yml; registration is OUT-OF-BAND — org reg token + config.sh — so
 # TF owns only the LXC). This is GREENFIELD (no moved{} block — unlike runner-232, which was
 # a state-move of a pre-existing container).
 #
@@ -108,7 +108,7 @@ output "runner_id" {
 # Out-of-band prerequisites (operator — see the PR Manual steps): SDN.Use for the IaC token
 # on pve02's vmbr0 SDN zone (new-NIC create 403s otherwise — GOTCHAS); `pct set 233
 # --features nesting=1,keyctl=1` for Docker; the .233 DHCP reservation. Runner registration
-# is codified — `ansible-playbook configure-runner.yml --limit runner-233` (PET-80).
+# is codified — `ansible-playbook services/configure-runner.yml --limit runner-233` (PET-80).
 module "runner_2" {
   source = "../../modules/proxmox-lxc"
 

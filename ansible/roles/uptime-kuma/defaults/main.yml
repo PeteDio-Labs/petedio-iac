@@ -293,7 +293,7 @@ uptime_kuma_monitors:
   # -- services that ran unwatched (PET-706) -----------------------------------
   # petedio-search binds 192.168.50.246 and the LAN reaches it, so the Pi does too.
   # /healthz proves only that the server is up; the embedding lane has its own check
-  # in configure-search.yml.
+  # in services/configure-search.yml.
   - name: search
     type: http
     url: "http://192.168.50.246:8526/healthz"
@@ -461,7 +461,7 @@ uptime_kuma_maintenances:
 # (PET-386). The Pi mounts its own subdirectory, not the whole store: that export
 # squashes every uid to one account that owns only this directory, so root on the
 # Pi gains nothing over the vzdump archives beside it. The server side is
-# backup_store_pi_* in roles/backup-store; run configure-backup-store.yml first.
+# backup_store_pi_* in roles/backup-store; run backup/configure-backup-store.yml first.
 #
 # The first store was pve02's /mnt/backups, which the 2026-09-03 rack loss took
 # with it. From then until 2026-09-22 the script exited 0 when the mount was

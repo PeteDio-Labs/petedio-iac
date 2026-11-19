@@ -1,4 +1,4 @@
-# deploy-backup-store — configure-backup-store.yml against the Proxmox nodes (the backup-health checks).
+# deploy-backup-store — backup/configure-backup-store.yml against the Proxmox nodes (the backup-health checks).
 #
 # Replaces scripts/deploy-backup-store.sh as the way to run it. The script stays as the operator's
 # fallback, for a sealed or unreachable CI path. Both read the same Vault records. This one

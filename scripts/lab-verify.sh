@@ -74,7 +74,7 @@ FWREAD=$(printf '%s\n' "$FW" | grep -cE '^(ok|missing) ' || true)
 FWMISS=$(printf '%s\n' "$FW" | awk '/^missing /{printf "%s ", $2}')
 if [ "${FWREAD:-0}" -lt 3 ]; then bad "every node has host.fw" "read ${FWREAD:-0} node directories, expected 3"
 elif [ -n "$FWMISS" ] && [ "$(printf '%s\n' "$FW" | head -1)" = "on" ]; then bad "every node has host.fw" "datacenter firewall on, no 'enable: 0' on: $FWMISS"
-elif [ -n "$FWMISS" ]; then ok "every node has host.fw" "datacenter firewall off; missing on $FWMISS (run configure-pve-firewall.yml before turning it on)"
+elif [ -n "$FWMISS" ]; then ok "every node has host.fw" "datacenter firewall off; missing on $FWMISS (run proxmox/configure-pve-firewall.yml before turning it on)"
 else ok "every node has host.fw" "$FWREAD nodes read, all enable: 0"; fi
 W=$(on $PVE02 'touch /etc/pve/.verify 2>/dev/null && rm -f /etc/pve/.verify && echo yes')
 [ "$W" = "yes" ] && ok "/etc/pve writable" || bad "/etc/pve writable" "lost quorum?"
@@ -526,7 +526,7 @@ fi
 #
 # ⚠ NOTHING ELSE CATCHES THIS. Terraform keeps `features` in ignore_changes on purpose
 # (Proxmox rejects the mutation for API tokens), so the plan is clean either way and
-# always will be. configure-runner-docker.yml asserted the flags in a COMMENT. The org
+# always will be. services/configure-runner-docker.yml asserted the flags in a COMMENT. The org
 # runner API says "online". Four green signals over a runner that could not build.
 #
 # So the check is `run a container`, not `grep the config for nesting`. Configuration is
@@ -655,7 +655,7 @@ for p in sorted(ports):
         print(f"BAD\tollama :{p} loaded set readable\t{type(e).__name__}")
         continue
     extra = sorted(m["name"] for m in d.get("models", []) if (m["name"], p) not in want)
-    print(f"BAD\tollama :{p} holds only declared models\tundeclared {', '.join(extra)}; run playbooks/ollama-models.yml"
+    print(f"BAD\tollama :{p} holds only declared models\tundeclared {', '.join(extra)}; run playbooks/ollama/ollama-models.yml"
           if extra else f"OK\tollama :{p} holds only declared models\t{len(d.get('models', []))} loaded")
     # ⚠ A LOADED MODEL IS NOT A MODEL ON THE GPU (PET-762). For two weeks both lanes served
     # from the CPU at 7 tok/s, because the driver's userspace and kernel module had drifted

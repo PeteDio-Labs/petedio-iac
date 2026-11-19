@@ -258,7 +258,7 @@ json.dump({
 '
 
 cd "$ANSIBLE_DIR"
-ansible-playbook -i inventory/ playbooks/configure-pete-bot.yml -e "@$TMP/extra.json" "${ANSIBLE_ARGS[@]+"${ANSIBLE_ARGS[@]}"}"
+ansible-playbook -i inventory/ playbooks/services/configure-pete-bot.yml -e "@$TMP/extra.json" "${ANSIBLE_ARGS[@]+"${ANSIBLE_ARGS[@]}"}"
 
 step "Done"
 cat <<'NOTE'

@@ -7,7 +7,7 @@
 #   vault_token           a periodic, orphan Vault token with the lab-agent-presence policy
 #   vault_token_accessor  that token's accessor, so a rotation can revoke the old token
 # lab-agent's read-only Proxmox token lives at kv/services/lab-agent-pve. The play
-# ansible/playbooks/mint-pve-audit-token.yml mints it, because a node has to be touched.
+# ansible/playbooks/access/mint-pve-audit-token.yml mints it, because a node has to be touched.
 #
 # NO DEPLOY KEY. PeteDio-Labs disables deploy keys for every repository, so lab-agent
 # reads the private petedio-vault with the read-only petedio-workspace-mirror App, as
@@ -26,7 +26,7 @@
 # THE ORDER, on a first seed:
 #   1. scripts/apply-vault-config.sh, so the lab-agent-presence policy exists and
 #      pete-bot-cd may read both lab-agent paths
-#   2. ansible-playbook playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
+#   2. ansible-playbook playbooks/access/mint-pve-audit-token.yml -e pve_client=lab-agent
 #   3. this script
 #   4. scripts/deploy-pete-bot.sh, or pete-bot's deploy.yml PR that reads both paths. That
 #      PR merges only after steps 2 and 3: its Vault step fails on a missing field.
@@ -256,7 +256,7 @@ step "Done"
 cat <<'NOTE'
   Next:
     1. If kv/services/lab-agent-pve is not seeded yet, run, from ansible/:
-         ansible-playbook playbooks/mint-pve-audit-token.yml -e pve_client=lab-agent
+         ansible-playbook playbooks/access/mint-pve-audit-token.yml -e pve_client=lab-agent
     2. Deploy: ./scripts/deploy-pete-bot.sh, or merge pete-bot's deploy.yml PR that reads
        the lab-agent paths and the mirror App. The play fails unless lab-agent's /health reports every check up.
 NOTE

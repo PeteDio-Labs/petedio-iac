@@ -2,7 +2,7 @@
 # group_vars for minio_data (LXC 245 / 192.168.50.245) — the app-data MinIO.
 #
 # THIS FILE IS THE BUCKET REGISTRY for app data. Adding a bucket to the homelab means
-# adding an entry below and re-running configure-minio-data.yml — not touching .221 (the
+# adding an entry below and re-running services/configure-minio-data.yml — not touching .221 (the
 # Terraform state backend), and not touching roles/minio/defaults/main.yml (whose default
 # is .221's single `tfstate` bucket and must stay that way).
 #

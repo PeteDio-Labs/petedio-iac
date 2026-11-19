@@ -1,0 +1,51 @@
+---
+# backup/configure-backup-store.yml — give the cluster a backup target that neither
+# Proxmox node owns, on ollama-host. (PET-288)
+#
+# ⚠ ollama-host IS pve01 SINCE 2026-10-23 (PET-528). The box was reinstalled as a
+# Proxmox node on a new 128 GB drive, with sda unplugged, so the store's LV
+# (ubuntu-vg/backup-lv) and every archive on it came through untouched. pve01 mounts
+# that LV in place and serves the same export from the same address, .12. The store
+# is now on a cluster member, which weakens the "neither node owns it" property
+# below: a fault on pve01 now takes a node and the backups together.
+#
+# WHY. Surveyed 2026-08-31: no scheduled backups existed anywhere, and exactly
+# ONE archive existed in the whole cluster. The "295 GB reserved" target was an
+# NFS mount FROM pve02, so pve01 backed up to pve02 and pve02 would have backed
+# up to itself — which protects nothing.
+#
+# ollama-host is a third machine and its disk is mostly unclaimed: 901.6 GB of
+# physical volume behind a 100 GB root LV, the Ubuntu installer default.
+#
+#   ansible-playbook playbooks/backup/configure-backup-store.yml
+#
+# NO -K NEEDED. The server play runs as root on pve01 (inventory/pve01.yml).
+#
+# ORDER MATTERS, hence serial and the server first: a node cannot mount an export
+# that does not exist yet.
+#
+# ⚠ WHAT THIS DOES NOT PROTECT. The 2.6 TB media library is on bind mounts, which
+# vzdump excludes for LXC by default. That is correct — it is re-downloadable and
+# including it would make backups impossible — but "we have backups" must not be
+# read as covering it.
+#
+# ⚠ NOT 3-2-1. One extra copy, one extra machine, same building, same power,
+# single disk. Vault's data in particular wants a second destination.
+
+- name: Build the backup store
+  hosts: pve01
+  become: true
+  roles:
+    - backup-store
+
+# pve03 is in its own inventory group (pve_new), so `proxmox` alone misses it —
+# and a node whose backup store is not mounted does not fail. Its `ollama-backups`
+# storage reports ACTIVE while pointing at an unmounted path on the local root
+# disk, so backups "succeed" onto the wrong filesystem. Found on pve03 on
+# 2026-09-04, after the arr stack had already moved there.
+- name: Point the Proxmox nodes at it
+  hosts: proxmox:pve_new
+  become: true
+  serial: 1
+  roles:
+    - backup-store

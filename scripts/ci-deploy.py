@@ -125,7 +125,7 @@ def stage_plane() -> dict:
     plane = kv("services/plane", True)
     claude = kv("services/plane-claude", True)
     members = {}
-    # Keep this list equal to plane_mcp_members in configure-plane.yml and to host_deploys.plane.kv
+    # Keep this list equal to plane_mcp_members in services/configure-plane.yml and to host_deploys.plane.kv
     # in vault-config/deploy-hosts.tf. The play stops when a member's token is missing.
     for name in ("tom", "sonia"):
         members[name] = need(kv(f"services/plane-{name}", True), f"services/plane-{name}", "api_key")[0]
@@ -244,54 +244,54 @@ def stage_uptime_kuma() -> dict:
 
 DEPLOYS = {
     "plane": {
-        "playbook": "configure-plane.yml",
+        "playbook": "services/configure-plane.yml",
         "ssh_role": "deploy-plane",
         "hosts": {"plane-235"},
         "stage": stage_plane,
     },
     "minio-data": {
-        "playbook": "configure-minio-data.yml",
+        "playbook": "services/configure-minio-data.yml",
         "ssh_role": "deploy-minio-data",
         "hosts": {"minio-data-245"},
         "stage": stage_minio_data,
     },
     "metrics": {
-        "playbook": "configure-metrics.yml",
+        "playbook": "observability/configure-metrics.yml",
         "ssh_role": "deploy-metrics",
         "hosts": {"metrics-240"},
         "stage": stage_metrics,
     },
     "lab-watchdog": {
-        "playbook": "configure-lab-watchdog.yml",
+        "playbook": "observability/configure-lab-watchdog.yml",
         "ssh_role": "deploy-lab-watchdog",
         "hosts": {"claude-247"},
         "stage": stage_lab_watchdog,
     },
     "codex-248": {
-        "playbook": "configure-codex.yml",
+        "playbook": "services/configure-codex.yml",
         "ssh_role": "deploy-codex-248",
         "hosts": {"codex-248"},
         "stage": stage_codex,
     },
     "staging-249": {
-        "playbook": "configure-staging.yml",
+        "playbook": "services/configure-staging.yml",
         "ssh_role": "deploy-staging-249",
         "hosts": {"staging-249"},
         "stage": stage_staging,
     },
     # pete-pi logs in as pedro, not root: the Pi lists the principal in auth_principals/pedro.
     "uptime-kuma": {
-        "playbook": "configure-pete-pi.yml",
+        "playbook": "services/configure-pete-pi.yml",
         "ssh_role": "deploy-uptime-kuma",
         "ssh_user": "pedro",
         "hosts": {"pete-pi"},
         "stage": stage_uptime_kuma,
     },
     # The nodes list the deploy-backup-store principal (group_vars, written by
-    # configure-ssh-ca-deploy-hosts.yml). The node host keys are pinned on the runner, so it checks
+    # access/configure-ssh-ca-deploy-hosts.yml). The node host keys are pinned on the runner, so it checks
     # them strictly.
     "backup-store": {
-        "playbook": "configure-backup-store.yml",
+        "playbook": "backup/configure-backup-store.yml",
         "ssh_role": "deploy-backup-store",
         "hosts": {"pve01", "pve02", "pve03"},
         "stage": stage_backup_store,

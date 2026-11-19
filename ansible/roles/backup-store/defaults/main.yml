@@ -140,7 +140,7 @@ backup_store_jobs:
     #     vault-kms-seal.md) it reopens in seconds, but a nightly restart is still a nightly
     #     gap for every job that reads Vault. Vault's own raft snapshots (roles/vault-snapshot)
     #     go to MinIO nightly and hold the secrets and the auth config. vault.tf and
-    #     configure-vault.yml rebuild the container.
+    #     vault/configure-vault.yml rebuild the container.
     exclude: [223, 244, 247]
     # The longest the job may run, in minutes. Uptime Kuma silences pve03's guests from
     # 02:40 to 03:15 (uptime_kuma_maintenances in roles/uptime-kuma, PET-635). The

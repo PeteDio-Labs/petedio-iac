@@ -1,4 +1,4 @@
-# deploy-metrics — configure-metrics.yml against metrics-240 (Prometheus, Grafana, the alert evaluator).
+# deploy-metrics — observability/configure-metrics.yml against metrics-240 (Prometheus, Grafana, the alert evaluator).
 #
 # Replaces scripts/deploy-metrics.sh as the way to run it. The script stays as the operator's
 # fallback, for a sealed or unreachable CI path. Both read the same Vault records. This one
