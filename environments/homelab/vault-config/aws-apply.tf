@@ -1,8 +1,8 @@
 # deploy-aws-plan and deploy-aws-apply: what aws-apply.yml may read (PET-942).
 #
-# The workflow plans and applies one AWS root, environments/dashboard or environments/portfolio
-# (account 847547470418). The account's service control policy denies an OIDC provider, so a job
-# cannot assume an AWS role. It reads an IAM user's key from Vault instead.
+# The workflow plans and applies one AWS root, environments/dashboard, environments/portfolio or
+# environments/authentik (PET-932), in account 847547470418. The account's service control policy
+# denies an OIDC provider, so a job cannot assume an AWS role. It reads an IAM user's key from Vault instead.
 #
 # Two roles keep the write keys behind Pedro's tap:
 #   deploy-aws-plan   reads the two read-only plan entries: an AWS read-only key and a MinIO service
@@ -23,6 +23,9 @@ resource "vault_policy" "deploy_aws_plan" {
     path "kv/data/services/aws-ci/portfolio-plan" {
       capabilities = ["read"]
     }
+    path "kv/data/services/aws-ci/authentik-plan" {
+      capabilities = ["read"]
+    }
   EOT
 }
 
@@ -34,6 +37,9 @@ resource "vault_policy" "deploy_aws_apply" {
       capabilities = ["read"]
     }
     path "kv/data/services/aws-ci/portfolio-apply" {
+      capabilities = ["read"]
+    }
+    path "kv/data/services/aws-ci/authentik-apply" {
       capabilities = ["read"]
     }
   EOT

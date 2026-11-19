@@ -9,7 +9,7 @@
 # the users would still need these keys placed in Vault, and a key made by Terraform sits in its
 # state, so the script keeps users, policies and keys together, as seed-aws-portfolio-plan.sh does.
 #
-# Per root (dashboard, portfolio) it creates:
+# Per root (dashboard, portfolio, authentik) it creates:
 #   petedio-ci-<root>-plan    ReadOnlyAccess. Key -> kv/services/aws-ci/<root>-plan
 #   petedio-ci-<root>-apply   a managed policy of the same name that names that root's resources.
 #                             Key -> kv/services/aws-ci/<root>-apply
@@ -140,6 +140,49 @@ cat > "$TMP/portfolio-apply.json" <<JSON
 ]}
 JSON
 
+# Authentik on AWS (PET-932). The boundary caps the host role: its own parameters, its own bucket,
+# and the calls the SSM agent makes. The apply policy may create only petedio-authentik-* IAM names,
+# and a role only with that boundary. It creates an EC2 resource only when the request carries the
+# tag project=petedio-authentik, and it changes only resources that carry that tag, so the key
+# cannot stop, retag or rewire anything else in the region.
+ABND="arn:aws:iam::$ACCT:policy/petedio-authentik-boundary"
+cat > "$TMP/authentik-boundary.json" <<JSON
+{"Version":"2012-10-17","Statement":[
+ {"Effect":"Allow","Action":["ssm:GetParameter","ssm:GetParameters","ssm:GetParametersByPath"],"Resource":"arn:aws:ssm:us-east-2:$ACCT:parameter/petedio-authentik/*"},
+ {"Effect":"Allow","Action":"kms:Decrypt","Resource":"*","Condition":{"StringEquals":{"kms:ViaService":"ssm.us-east-2.amazonaws.com"}}},
+ {"Effect":"Allow","Action":["s3:ListBucket","s3:GetObject","s3:PutObject"],"Resource":["arn:aws:s3:::petedio-authentik-$ACCT","arn:aws:s3:::petedio-authentik-$ACCT/*"]},
+ {"Effect":"Allow","Action":["ssm:UpdateInstanceInformation","ssm:ListInstanceAssociations","ssm:ListAssociations","ssm:DescribeAssociation","ssm:GetDocument","ssm:DescribeDocument","ssm:UpdateInstanceAssociationStatus","ssm:PutInventory","ssmmessages:*","ec2messages:*"],"Resource":"*"}
+]}
+JSON
+
+cat > "$TMP/authentik-apply.json" <<JSON
+{"Version":"2012-10-17","Statement":[
+ {"Sid":"Read","Effect":"Allow","Action":["iam:Get*","iam:List*","sts:GetCallerIdentity","s3:ListAllMyBuckets","ec2:Describe*","ec2:Get*"],"Resource":"*"},
+ {"Sid":"AmiParameter","Effect":"Allow","Action":["ssm:GetParameter","ssm:GetParameters"],"Resource":"arn:aws:ssm:us-east-2::parameter/aws/service/*"},
+ {"Sid":"Ec2CreateTagged","Effect":"Allow","Action":["ec2:CreateVpc","ec2:CreateSubnet","ec2:CreateInternetGateway","ec2:CreateRouteTable","ec2:CreateSecurityGroup","ec2:AuthorizeSecurityGroupEgress","ec2:RunInstances"],"Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":"us-east-2","aws:RequestTag/project":"petedio-authentik"}}},
+ {"Sid":"Ec2TagOnCreate","Effect":"Allow","Action":"ec2:CreateTags","Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":"us-east-2"},"StringLike":{"ec2:CreateAction":["CreateVpc","CreateSubnet","CreateInternetGateway","CreateRouteTable","CreateSecurityGroup","AuthorizeSecurityGroupEgress","RunInstances"]}}},
+ {"Sid":"Ec2OwnResourcesOnly","Effect":"Allow","Action":["ec2:CreateTags","ec2:DeleteTags","ec2:ModifyVpcAttribute","ec2:ModifySubnetAttribute","ec2:AttachInternetGateway","ec2:CreateRoute","ec2:ReplaceRoute","ec2:AssociateRouteTable","ec2:AuthorizeSecurityGroupEgress","ec2:RevokeSecurityGroupEgress","ec2:ModifySecurityGroupRules","ec2:UpdateSecurityGroupRuleDescriptionsEgress","ec2:ModifyInstanceAttribute","ec2:ModifyInstanceMetadataOptions","ec2:StopInstances","ec2:StartInstances","ec2:ModifyVolume"],"Resource":"*","Condition":{"StringEquals":{"aws:RequestedRegion":"us-east-2","aws:ResourceTag/project":"petedio-authentik"}}},
+ {"Sid":"Bucket","Effect":"Allow","Action":"s3:*","Resource":["arn:aws:s3:::petedio-authentik-$ACCT","arn:aws:s3:::petedio-authentik-$ACCT/*"]},
+ {"Sid":"IamNamedOnly","Effect":"Allow","Action":["iam:CreateRole","iam:PutRolePolicy","iam:DeleteRolePolicy","iam:TagRole","iam:UntagRole","iam:UpdateAssumeRolePolicy","iam:PutRolePermissionsBoundary","iam:CreateInstanceProfile","iam:AddRoleToInstanceProfile","iam:TagInstanceProfile"],
+  "Resource":["arn:aws:iam::$ACCT:role/petedio-authentik-*","arn:aws:iam::$ACCT:instance-profile/petedio-authentik-*"]},
+ {"Sid":"SsmCoreOnly","Effect":"Allow","Action":["iam:AttachRolePolicy","iam:DetachRolePolicy"],"Resource":"arn:aws:iam::$ACCT:role/petedio-authentik-*","Condition":{"ArnEquals":{"iam:PolicyARN":"arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"}}},
+ {"Sid":"PassToEc2","Effect":"Allow","Action":"iam:PassRole","Resource":"arn:aws:iam::$ACCT:role/petedio-authentik-*","Condition":{"StringEquals":{"iam:PassedToService":"ec2.amazonaws.com"}}},
+ {"Sid":"BoundaryRequired","Effect":"Deny","Action":["iam:CreateRole","iam:PutRolePermissionsBoundary"],"Resource":"*","Condition":{"StringNotEquals":{"iam:PermissionsBoundary":"$ABND"}}},
+ {"Sid":"BoundaryStays","Effect":"Deny","Action":"iam:DeleteRolePermissionsBoundary","Resource":"*"},
+ {"Sid":"NoDeletes","Effect":"Deny","Action":["iam:DeleteRole","iam:DeleteInstanceProfile","s3:DeleteBucket","ec2:TerminateInstances","ec2:DeleteVpc","ec2:DeleteVolume","ec2:DeleteSnapshot"],"Resource":"*"}
+]}
+JSON
+
+step "Boundary policy petedio-authentik-boundary"
+if aws_ iam get-policy --policy-arn "$ABND" >/dev/null 2>&1; then
+  for v in $(aws_ iam list-policy-versions --policy-arn "$ABND" --query 'Versions[?!IsDefaultVersion].VersionId' --output text); do aws_ iam delete-policy-version --policy-arn "$ABND" --version-id "$v"; done
+  aws_ iam create-policy-version --policy-arn "$ABND" --policy-document "file://$TMP/authentik-boundary.json" --set-as-default >/dev/null
+  echo "  updated"
+else
+  aws_ iam create-policy --policy-name petedio-authentik-boundary --policy-document "file://$TMP/authentik-boundary.json" >/dev/null
+  echo "  created"
+fi
+
 step "Boundary policy petedio-dashboard-boundary"
 if aws_ iam get-policy --policy-arn "$BND" >/dev/null 2>&1; then
   for v in $(aws_ iam list-policy-versions --policy-arn "$BND" --query 'Versions[?!IsDefaultVersion].VersionId' --output text); do aws_ iam delete-policy-version --policy-arn "$BND" --version-id "$v"; done
@@ -197,8 +240,9 @@ mint(){ # $1 root, $2 kind (plan|apply)
   if [ -n "$oldm" ] && [ "$oldm" != "$macc" ]; then m admin user svcacct rm adm "$oldm" >/dev/null 2>&1 || echo "  could not remove the old MinIO service account $oldm; remove it by hand"; fi
   rm -f "$TMP/key.json" "$TMP/data.json" "$TMP/minio-key.json"
 }
-for root in dashboard portfolio; do mint "$root" plan; mint "$root" apply; done
+for root in dashboard portfolio authentik; do mint "$root" plan; mint "$root" apply; done
 
 step "Done"
-echo "  4 IAM users, 4 MinIO service accounts and the boundary policy exist, and Vault holds 4 entries under kv/services/aws-ci/."
+echo "  6 IAM users (plan and apply for dashboard, portfolio and authentik), their MinIO service accounts and"
+echo "  the petedio-dashboard-boundary and petedio-authentik-boundary policies exist. Vault holds an entry per user under kv/services/aws-ci/."
 echo "  Tell the thread: seed finished. No value was printed."

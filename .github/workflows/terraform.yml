@@ -158,6 +158,7 @@ jobs:
           scripts/test-lab-repo-vars.sh
           scripts/test-portfolio-plan.sh
           scripts/test-seed-aws-portfolio-plan.sh
+          scripts/test-authentik-sync.sh
 
       - name: Init (no backend — a hosted runner has no MinIO creds/LAN)
         run: terraform init -input=false -backend=false
@@ -190,6 +191,16 @@ jobs:
 
       - name: Validate dashboard root
         working-directory: environments/dashboard
+        run: terraform validate
+
+      # environments/authentik is the AWS root of Authentik's off-prem copy (PET-932). The same
+      # explicit, credential-free validate, because nothing else in CI reads that root.
+      - name: Init authentik root (no backend)
+        working-directory: environments/authentik
+        run: terraform init -input=false -backend=false
+
+      - name: Validate authentik root
+        working-directory: environments/authentik
         run: terraform validate
 
   # --- Privileged apply ---------------------------------------------------------------

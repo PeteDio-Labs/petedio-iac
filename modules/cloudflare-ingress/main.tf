@@ -30,8 +30,10 @@ locals {
   }]
 
   # One CNAME per hostname, keyed by the hostname. For a route with no `hostname`, that is
-  # its key, so every existing record keeps its address.
-  hostnames = toset(values(local.host_of))
+  # its key, so every existing record keeps its address. A route with dns = false keeps its
+  # ingress rule but no record, because its caller owns the record: auth.pdlab.dev points at
+  # either this tunnel or the authentik-aws one (PET-932).
+  hostnames = toset([for k, r in var.routes : local.host_of[k] if r.dns])
 
   # Required trailing catch-all. Same object shape as route_rules (nulls where N/A) so
   # the list element type unifies.

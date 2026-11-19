@@ -24,8 +24,11 @@ module "cloudflare_ingress" {
 
   # KEEP — live services. Everything else is dropped by the ingress rewrite.
   routes = {
-    "auth.pdlab.dev" = { service = "http://192.168.50.119:9000" } # Authentik
-    "seer.pdlab.dev" = { service = "http://192.168.50.33:5055" }  # Overseerr
+    # Authentik on LXC 119. The rule stays here so the lab copy answers whenever the record points
+    # at this tunnel. The record itself lives in cloudflare-authentik-aws.tf, which points it at
+    # this tunnel or at the authentik-aws one by var.authentik_side (PET-932).
+    "auth.pdlab.dev" = { service = "http://192.168.50.119:9000", dns = false }
+    "seer.pdlab.dev" = { service = "http://192.168.50.33:5055" } # Overseerr
 
     # docker.pdlab.dev / registry.pdlab.dev REMOVED from the tunnel — Nexus is
     # gone, replaced by zot on the same LXC. The registry is deliberately no
@@ -233,10 +236,6 @@ import {
 }
 
 # Adopt the existing keep CNAMEs (record IDs from the live pdlab.dev zone).
-import {
-  to = module.cloudflare_ingress.cloudflare_dns_record.route["auth.pdlab.dev"]
-  id = "${local.cloudflare_zone_id}/61c79a4269f9bd3113d1f306219009e9"
-}
 import {
   to = module.cloudflare_ingress.cloudflare_dns_record.route["seer.pdlab.dev"]
   id = "${local.cloudflare_zone_id}/553f672178651906b01c66cdca2c9de7"

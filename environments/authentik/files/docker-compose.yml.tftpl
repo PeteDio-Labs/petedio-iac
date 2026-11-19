@@ -1,0 +1,75 @@
+# Authentik on AWS (PET-932). Written by environments/authentik; the host syncs it from S3.
+# Service and volume names follow the upstream compose file, which LXC 119 also runs.
+# Nothing publishes a port. cloudflared reaches the server on the compose network.
+name: authentik
+
+services:
+  postgresql:
+    image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $$${POSTGRES_DB} -U $$${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - ./database:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: $${PG_PASS:?PG_PASS is required}
+      POSTGRES_USER: $${PG_USER:-authentik}
+      POSTGRES_DB: $${PG_DB:-authentik}
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    restart: unless-stopped
+    command: --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    volumes:
+      - ./redis:/data
+
+  server:
+    image: ghcr.io/goauthentik/server:${authentik_version}
+    restart: unless-stopped
+    command: server
+    environment: &authentik_env
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgresql
+      AUTHENTIK_POSTGRESQL__USER: $${PG_USER:-authentik}
+      AUTHENTIK_POSTGRESQL__NAME: $${PG_DB:-authentik}
+      AUTHENTIK_POSTGRESQL__PASSWORD: $${PG_PASS}
+    env_file: [.env]
+    volumes:
+      - ./media:/media
+      - ./custom-templates:/templates
+    depends_on:
+      postgresql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    image: ghcr.io/goauthentik/server:${authentik_version}
+    restart: unless-stopped
+    command: worker
+    environment: *authentik_env
+    env_file: [.env]
+    volumes:
+      - ./media:/media
+      - ./certs:/certs
+      - ./custom-templates:/templates
+    depends_on:
+      postgresql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  # The connector for the authentik-aws tunnel. Its ingress lives in Cloudflare
+  # (environments/homelab/cloudflare-authentik-aws.tf) and points at http://server:9000.
+  cloudflared:
+    image: docker.io/cloudflare/cloudflared:2025.10.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    env_file: [.tunnel.env]
+    depends_on: [server]
