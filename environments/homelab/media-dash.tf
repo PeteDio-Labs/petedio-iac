@@ -39,7 +39,7 @@ module "media_dash" {
   source = "../../modules/proxmox-lxc"
 
   vm_id        = 237
-  hostname     = "media-dash-237"
+  hostname     = "lab-ops-237"
   ipv4_address = "192.168.50.237/24"
 
   # ⚠ 1 GB FOR TWO PROCESSES, AND THE ASSERTION BELOW STILL APPLIES TO EACH.
