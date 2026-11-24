@@ -38,10 +38,11 @@ step "Compiling the binary"
 # ⚠ NAME THE TARGET. `bun build --compile` builds for the machine it runs on. From 247
 # that is Linux x86_64 and matches 237 by luck; from the Mac it is a Mach-O arm64
 # binary, which the playbook copied into place and systemd refused with
-# `Exec format error` (PET-521). The extra argument is appended to the package's
-# build script.
-( cd "$SRC" && bun install --frozen-lockfile >/dev/null && bun run build --target=bun-linux-x64 )
-[ -x "$SRC/dist/mtrace" ] || die "bun run build produced no dist/mtrace."
+# `Exec format error` (PET-521). The package's build:linux script names the target.
+# Don't append `--target` to `bun run build`: since the MED-12 rename that script ends
+# in `cp`, so the flag lands on `cp` and the build fails (PET-972).
+( cd "$SRC" && bun install --frozen-lockfile >/dev/null && bun run build:linux )
+[ -x "$SRC/dist/mtrace" ] || die "bun run build:linux produced no dist/mtrace."
 file -b "$SRC/dist/mtrace" | grep -q '^ELF 64-bit.*x86-64' \
   || die "dist/mtrace is not a Linux x86-64 binary: $(file -b "$SRC/dist/mtrace")"
 ls -lh "$SRC/dist/mtrace"
@@ -51,7 +52,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 umask 077
 vault kv get -format=json kv/services/media/dashboard \
   | python3 -c '
-import json, os, sys, yaml
+import json, os, sys
 d = json.load(sys.stdin)["data"]["data"]
 missing = [k for k in ("ssh_private_key", "ssh_public_key") if not d.get(k)]
 if missing:
@@ -80,7 +81,10 @@ if not cd_pub and os.environ.get("ALLOW_NO_CD_KEY") != "1":
              "scripts/seed-media-dash-cd-key.sh, then run this again. "
              "ALLOW_NO_CD_KEY=1 skips the key on purpose.")
 
-yaml.safe_dump({
+# JSON, not YAML: Ansible reads a JSON extra-vars file, and python3 on the Mac has no
+# PyYAML, so "import yaml" stopped this script before the play (PET-972).
+# No apostrophes in this block: it sits inside a single-quoted shell string.
+json.dump({
     "media_dash_ssh_private_key": d["ssh_private_key"],
     "media_dash_ssh_public_key": d["ssh_public_key"],
     "mtrace_caller_tokens": caller_tokens,
@@ -88,13 +92,13 @@ yaml.safe_dump({
     # scripts/seed-media-dash-cd-key.sh writes it.
     "media_dash_cd_public_key": cd_pub,
 }, open(sys.argv[1], "w"))
-' "$TMP/extra.yml"
+' "$TMP/extra.json"
 
 step "Running configure-media-dash.yml"
 cd "$REPO_ROOT/ansible"
 ansible-playbook playbooks/configure-media-dash.yml \
   -e media_dash_binary_src="$SRC/dist/mtrace" \
-  -e "@$TMP/extra.yml" \
+  -e "@$TMP/extra.json" \
   "$@"
 
 step "Confirming the LAN bind refuses this controller"
