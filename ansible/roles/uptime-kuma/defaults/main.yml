@@ -6,8 +6,8 @@
 # node. Pete-Pi is outside the cluster and dual-homed: eth0 on the .50 homelab
 # LAN (default route, metric 100) and wlan0 on the .86 home LAN (metric 600).
 # That second leg is not incidental: it is where the TVs live, and it is the only
-# vantage in this inventory that can prove a mesh path is real. plex-gpu 236 holds
-# one address, 192.168.86.236, on pve02's mesh adapter (PET-504), and Kuma probes it
+# vantage in this inventory that can prove a mesh path is real. plex-home 236 holds
+# one address, 192.168.86.253, on pve02's mesh adapter (PET-504), and Kuma probes it
 # there. plex 103 at 192.168.86.140 died with pve01 on 2026-09-03.
 #
 # WHY v1 AND NOT v2. The study reads raw heartbeats out of SQLite to compute a
@@ -208,18 +208,21 @@ uptime_kuma_monitors:
     # lands on the 200; verified end state is 200 after one hop.
     type: http
     url: "http://192.168.50.33:5055/"
-  # plex-gpu (236) holds one address, on the .86 mesh (PET-504): 192.168.86.253 since the
+  # plex-home (236) holds one address, on the .86 mesh (PET-504): 192.168.86.253 since the
   # MED-11 cutover moved 192.168.86.236 to pve03. The Kuma container reaches the mesh
   # address through the Pi, which sits on the mesh over wlan0.
-  - name: plex-gpu
+  # renamed_from keeps the heartbeat history across the rename (PET-971). Remove the key once
+  # a deploy has renamed the monitor.
+  - name: plex-home
+    renamed_from: plex-gpu
     # /identity is the unauthenticated liveness endpoint — the web root needs a
     # token and would answer 401.
     type: http
     url: "http://192.168.86.253:32400/identity"
-    description: "plex-gpu (236), the home Plex, at its own address. Reads the server this name says."
+    description: "plex-home (236), the home Plex (PeteDio Home), at its own address. Reads the server this name says."
   # plex-remote (244) is reached at 192.168.86.236, which pve03 holds on wlo1 and DNATs to
   # the guest on port 32400 only (MED-11). A pass here proves the forward and 244 together;
-  # a pass on plex-gpu proves 236. The two used to share one address, so one monitor could
+  # a pass on plex-home proves 236. The two used to share one address, so one monitor could
   # watch the wrong server and stay green.
   - name: plex-remote
     type: http
@@ -269,7 +272,10 @@ uptime_kuma_monitors:
   # nftables accepts 8237 only from lo and 192.168.50.4, which is this Pi.
   # pete-bot on the same host gets no monitor: its outage would alert through
   # pete-bot and reach nobody.
-  - name: mtrace
+  # renamed_from keeps the heartbeat history across the MED-12 rename (PET-971). Remove the key
+  # once a deploy has renamed the monitor.
+  - name: tracerr
+    renamed_from: mtrace
     type: http
     url: "http://192.168.50.237:8237/health"
     description: "Media triage API on 237. Liveness only; Muse is its caller."
@@ -282,7 +288,7 @@ uptime_kuma_monitors:
     type: keyword
     url: "http://192.168.50.237:8237/health/stack"
     # Kuma 2.0.2 stringifies a parsed JSON body before it matches the keyword, so it sees the
-    # compact form. mtrace pretty-prints, and the raw bytes read `"ok": true` with a space.
+    # compact form. tracerr pretty-prints, and the raw bytes read `"ok": true` with a space.
     # Match the compact form: a spaced keyword read DOWN against a healthy stack (MED-13).
     keyword: '"ok":true'
     interval: 300
@@ -426,7 +432,7 @@ uptime_kuma_maintenances:
       - vault          # 223, sealed until the Pi's watcher unseals it
       - postgres       # 231
       - plane          # 235
-      - mtrace         # 237
+      - tracerr        # 237
       - media-stack    # reads prowlarr and the arrs, which stop here
       - minio-data     # 245
   # 244 leaves the nightly job and has its own weekly job (MED-11): Sundays at 04:00 in

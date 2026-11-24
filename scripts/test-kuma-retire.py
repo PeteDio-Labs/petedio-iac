@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test provision_kuma.retire_monitors (PET-590) without a Kuma.
+"""Test provision_kuma.retire_monitors (PET-590) and rename_monitors (PET-971) without a Kuma.
 
 Retirement deletes a live monitor, so a regression must not go unnoticed. This drives the
 function against a fake API and checks the deletion target, the `retired` result, the rerun
@@ -43,7 +43,11 @@ spec.loader.exec_module(mod)
 class FakeApi:
     def __init__(self, fail_ids=()):
         self.deleted = []
+        self.edited = []
         self.fail_ids = set(fail_ids)
+
+    def edit_monitor(self, monitor_id, **kw):
+        self.edited.append((monitor_id, kw["name"]))
 
     def delete_monitor(self, monitor_id):
         if monitor_id in self.fail_ids:
@@ -93,6 +97,22 @@ check("delete failure: not reported retired", res["retired"] == [])
 api, res = FakeApi(), fresh()
 mod.retire_monitors(api, [], [], BY_NAME, res)
 check("empty list: no delete call", api.deleted == [])
+
+# 6. rename_monitors edits the old monitor in place and re-keys by_name (PET-971).
+CFG = {"interval": 60, "max_retries": 1, "retry_interval": 60}
+SPEC = {"name": "plex-home", "renamed_from": "plex-gpu", "type": "http", "url": "http://x"}
+api, res, by = FakeApi(), {"failed": [], "renamed": []}, {"plex-gpu": {"id": 7, "name": "plex-gpu"}}
+mod.rename_monitors(api, [SPEC], by, CFG, res)
+check("rename: edited old id 7 to the new name", api.edited == [(7, "plex-home")])
+check("rename: reported, by_name re-keyed", res["renamed"] == [{"from": "plex-gpu", "to": "plex-home"}] and "plex-home" in by and "plex-gpu" not in by)
+
+api, res, by = FakeApi(), {"failed": [], "renamed": []}, {"plex-home": {"id": 7}}
+mod.rename_monitors(api, [SPEC], by, CFG, res)
+check("rename rerun: no edit, no result", api.edited == [] and res == {"failed": [], "renamed": []})
+
+api, res, by = FakeApi(), {"failed": [], "renamed": []}, {"plex-home": {"id": 8}, "plex-gpu": {"id": 7}}
+mod.rename_monitors(api, [SPEC], by, CFG, res)
+check("rename conflict: no edit, reported failed", api.edited == [] and len(res["failed"]) == 1 and res["renamed"] == [])
 
 if failures:
     print(f"\n{len(failures)} check(s) failed")

@@ -182,11 +182,38 @@ def retire_monitors(api, declared_specs, retired, by_name, result):
             result["failed"].append({"name": name, "error": str(exc)})
 
 
+def rename_monitors(api, specs, by_name, cfg, result):
+    """Rename each monitor whose spec carries `renamed_from`, keeping its heartbeat history.
+
+    Monitors are keyed by name, so a plain rename would create a new monitor, and retiring the
+    old name would delete the history the PET-300 study reads. When the declared name is absent
+    and the old one exists, edit the old monitor in place and re-key `by_name`, so the monitor
+    loop, retirement and maintenance windows see the new name. When both names exist, report a
+    failure and change nothing. When only the new name exists, the rename already happened.
+    """
+    for spec in specs:
+        old, new = spec.get("renamed_from"), spec["name"]
+        if not old:
+            continue
+        if new in by_name and old in by_name:
+            result["failed"].append({"name": new, "error": f"both {old} and {new} exist; rename refused"})
+            continue
+        if new in by_name or old not in by_name:
+            continue
+        try:
+            api.edit_monitor(by_name[old]["id"], **build_kwargs(spec, cfg))
+            by_name[new] = by_name.pop(old)
+            by_name[new]["name"] = new
+            result["renamed"].append({"from": old, "to": new})
+        except (UptimeKumaException, Exception) as exc:  # noqa: BLE001
+            result["failed"].append({"name": new, "error": str(exc)})
+
+
 def main():
     cfg = json.load(open(sys.argv[1]))
     result = {
         "created": [], "updated": [], "unchanged": [],
-        "failed": [], "warnings": [], "retired": [],
+        "failed": [], "warnings": [], "retired": [], "renamed": [],
         "notifications_created": [], "notifications_updated": [],
         "notifications_attached": [],
         "maintenances_created": [], "maintenances_updated": [],
@@ -272,6 +299,7 @@ def main():
 
         # --- monitors ------------------------------------------------------
         by_name = {m["name"]: m for m in api.get_monitors()}
+        rename_monitors(api, cfg["monitors"], by_name, cfg, result)
         for spec in cfg["monitors"]:
             name = spec["name"]
             kw = build_kwargs(spec, cfg)
