@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+# petedio-iac roles/decoy-bridge (PET-954). An isolated bridge: no port, no address on the node.
+# The decoy gateway container, decoy-gw-214, holds 10.66.0.1 on it.
+
+auto {{ decoy_bridge_name }}
+iface {{ decoy_bridge_name }} inet manual
+        bridge-ports none
+        bridge-stp off
+        bridge-fd 0
+        # ifupdown2 gives a bridge an IPv6 link-local address, which would let a decoy address the node
+        # itself. The node holds no address on this bridge, and this keeps it that way.
+        post-up sysctl -w net.ipv6.conf.{{ decoy_bridge_name }}.disable_ipv6=1

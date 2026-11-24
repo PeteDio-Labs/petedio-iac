@@ -1,0 +1,18 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# petedio-iac roles/decoy-bridge (PET-954). One bridge-family table, loaded by
+# {{ decoy_bridge_nft_unit }}.service. The first two lines make a reload atomic.
+# Nothing outside this table is touched.
+
+table bridge villain_decoy_host
+delete table bridge villain_decoy_host
+
+table bridge villain_decoy_host {
+        # The input hook sees only frames the bridge delivers to the node itself. The node holds no
+        # address on this bridge, so it has nothing to say to a decoy, and a decoy must not use it as a
+        # router or a service host. ARP, IPv4 and IPv6 are all dropped.
+        chain input {
+                type filter hook input priority filter; policy accept;
+                meta ibrname "{{ decoy_bridge_name }}" counter drop
+        }
+}

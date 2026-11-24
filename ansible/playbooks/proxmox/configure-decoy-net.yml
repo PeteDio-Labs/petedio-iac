@@ -1,0 +1,20 @@
+---
+# configure-decoy-net.yml — the isolated bridge on pve03 for the Lab Villains decoys (PET-954).
+# roles/decoy-bridge/defaults has the design. The gateway container is playbooks/services/configure-decoy-gw.yml.
+#
+# RUN IT BEFORE THE MERGE THAT CREATES THE DECOYS. A merge to main applies Terraform, and each
+# container's NIC attaches to vmbr66, which only this play creates. A merge does not run Ansible.
+#
+#   cd ansible
+#   ansible-playbook playbooks/proxmox/configure-decoy-net.yml --check --diff
+#   ansible-playbook playbooks/proxmox/configure-decoy-net.yml
+#
+# A check run writes nothing and skips every command task. It touches only its own file and its own
+# bridge, and never runs `ifreload -a`. Not on scripts/lab-playbooks.txt: a Mac or 247 session runs it.
+
+- name: Declare the decoy bridge on pve03
+  hosts: pve03
+  become: true
+  gather_facts: false
+  roles:
+    - decoy-bridge

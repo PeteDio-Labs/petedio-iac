@@ -4,5 +4,13 @@
 # changes TIERS_ALLOWED in guard.py also gets Pedro's OK in plain words. guard.py
 # refuses a vmid on its denylist even when it is listed.
 #
-# The Gotham decoy containers join this file in the PR that creates them.
+# The decoys are the containers in environments/homelab/villain-decoys.tf.
 # group   vmid  name  node  tier
+dc      250  decoy-dc-250      pve03  decoy
+dc      251  decoy-dc-251      pve03  decoy
+dc      252  decoy-dc-252      pve03  decoy
+dc      253  decoy-dc-253      pve03  decoy
+marvel  210  decoy-marvel-210  pve03  decoy
+marvel  211  decoy-marvel-211  pve03  decoy
+marvel  212  decoy-marvel-212  pve03  decoy
+marvel  213  decoy-marvel-213  pve03  decoy

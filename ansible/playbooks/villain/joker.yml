@@ -1,0 +1,20 @@
+---
+# joker.yml — Joker: one random fault (stop, restart or kill sshd) on one decoy in group dc.
+#
+# Targets pve02 and delegates to the node that holds each decoy. Operator-run only: it is not on
+# scripts/lab-playbooks.txt, so lab-action cannot run it until a PR that Pedro approves in plain words.
+#
+#   ansible-playbook playbooks/villain/joker.yml --check                     # print the pick, touch nothing
+#   ansible-playbook playbooks/villain/joker.yml -e villain_enabled=true    # strike, after Pedro's go
+#   ansible-playbook playbooks/villain/joker.yml -e villain_undo=true        # put the decoys back now
+#
+# A strike arms a dead-man timer on the node first: the decoy comes back after villain_deadman_minutes
+# even if the runner dies. -e villain_seed=N replays a pick. See docs/lab-villains.md.
+- name: Run joker against the decoys
+  hosts: pve02
+  become: false
+  gather_facts: false
+  vars:
+    villain_name: joker
+  roles:
+    - villain

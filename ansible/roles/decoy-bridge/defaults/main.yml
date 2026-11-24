@@ -1,0 +1,17 @@
+---
+# decoy-bridge (PET-954): the isolated bridge on pve03 that the Lab Villains decoys and their
+# gateway (decoy-gw-214) attach to. It has no physical port and the node holds no address on
+# it, so pve03 routes and filters nothing for the decoys. The gateway container does that
+# (roles/decoy-gw). NetworkManager is told to leave the bridge alone.
+decoy_bridge_name: vmbr66
+decoy_bridge_interfaces_file: /etc/network/interfaces.d/villain-decoys
+decoy_bridge_nm_conf: /etc/NetworkManager/conf.d/16-unmanaged-villain-decoys.conf
+
+# The node itself must not answer a decoy. Linux owns IPv4 addresses per host, not per interface, so a
+# decoy could send a frame to the bridge's MAC with a LAN address as the destination and use the node
+# as a router, or reach its services, with no gateway in the path. A bridge-family table drops every
+# frame the bridge delivers to the node. Frames between a decoy and the gateway cross the bridge and
+# never reach this hook.
+decoy_bridge_nft_dir: /etc/villain-decoys
+decoy_bridge_nft_file: /etc/villain-decoys/host-isolation.nft
+decoy_bridge_nft_unit: villain-decoys-host-nft

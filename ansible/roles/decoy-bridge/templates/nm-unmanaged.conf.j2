@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# petedio-iac roles/decoy-bridge (PET-954). NetworkManager.conf sets [ifupdown] managed=true, so
+# NetworkManager would take any bridge it finds in /etc/network/interfaces*. ifupdown2 owns this one.
+[keyfile]
+unmanaged-devices+=interface-name:{{ decoy_bridge_name }}

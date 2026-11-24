@@ -1,0 +1,15 @@
+---
+# Which villain runs. The playbook sets it: joker or thanos.
+villain_name: joker
+# Run the undo instead of a strike: put every decoy back, then cancel the dead-man timers.
+villain_undo: false
+# Kill switch. A strike refuses unless this is true. Pass -e villain_enabled=true on purpose.
+villain_enabled: false
+# Replay a pick. Empty means a random seed. The run prints the seed it used.
+villain_seed: ""
+# Narrow Thanos to one group. Empty uses his own universe (marvel).
+villain_group: ""
+# The node puts the decoys back by itself after this many minutes, even if the runner dies.
+villain_deadman_minutes: 15
+villain_undo_script: /usr/local/sbin/villain-undo
+villain_log: /var/log/villain.log

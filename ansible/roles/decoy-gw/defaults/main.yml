@@ -1,0 +1,32 @@
+---
+# decoy-gw (PET-954): the gateway container, decoy-gw-214, for the Lab Villains decoys.
+#
+# THE SHAPE. The gateway has one leg on the LAN (eth0, 192.168.50.214) and one on the isolated
+# bridge vmbr66 (eth1, 10.66.0.1). Each decoy sits only on vmbr66, on 10.66.0.<vmid>, and uses the
+# gateway as its default route. The isolation lives here, in one place, and pve03 stays clean.
+#
+#     LAN client -> 192.168.50.214:10<vmid> -> DNAT -> 10.66.0.<vmid>:22
+#
+# A decoy runs only sshd, so TCP 22 is its health check. Uptime Kuma monitors the forwarded port.
+#
+# WHAT A DECOY MAY REACH. Nothing. The forward filter drops every new connection that starts on
+# eth1, and the input chain keeps a decoy off the gateway's own services, bar a ping. There is no
+# masquerade and no route out: a decoy has no internet, no LAN host, no Authentik and no Vault.
+#
+# FORWARDING IS TIED TO THE FILTER. The nft unit turns net.ipv4.ip_forward on after it loads the
+# default-drop table and off before it removes it, so the gateway never forwards unfiltered, at boot
+# or on a first, interrupted run.
+#
+# ADDRESSES ARE STATIC, set by Terraform, so a decoy never waits on this container to boot. The
+# gateway runs no DHCP: a dnsmasq on the decoy leg would add a boot-order dependency and, bound
+# wrongly, would hand out leases on the home LAN.
+decoy_gw_lan_if: eth0
+decoy_gw_decoy_if: eth1
+decoy_gw_lan_subnet: 192.168.50.0/24
+decoy_gw_ssh_port: 22
+# Forwarded port = base + vmid, for example 10250 for decoy 250.
+decoy_gw_port_base: 10000
+# Keep in step with environments/homelab/villain-decoys.tf and scripts/villain/targets.txt.
+decoy_gw_vmids: [210, 211, 212, 213, 250, 251, 252, 253]
+decoy_gw_nft_file: /etc/nftables-decoys.nft
+decoy_gw_nft_unit: villain-decoys-nft

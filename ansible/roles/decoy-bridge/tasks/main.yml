@@ -1,0 +1,134 @@
+---
+- name: Decoy bridge — read /etc/network/interfaces
+  ansible.builtin.slurp:
+    src: /etc/network/interfaces
+  register: decoy_bridge_interfaces
+  check_mode: false
+
+- name: Decoy bridge — assert it sources interfaces.d
+  ansible.builtin.assert:
+    that: >-
+      (decoy_bridge_interfaces.content | b64decode
+       | regex_findall('(?m)^source /etc/network/interfaces\.d/\*$')) | length > 0
+    fail_msg: >-
+      /etc/network/interfaces on {{ inventory_hostname }} does not source
+      /etc/network/interfaces.d/*, so {{ decoy_bridge_interfaces_file }} would never load.
+
+# The node's own isolation loads before the bridge exists, so no frame reaches the node unfiltered.
+- name: Decoy bridge — create the ruleset directory
+  ansible.builtin.file:
+    path: "{{ decoy_bridge_nft_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Decoy bridge — write the node isolation ruleset
+  ansible.builtin.template:
+    src: host-isolation.nft.j2
+    dest: "{{ decoy_bridge_nft_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: nft -c -f %s
+  notify: Reload the decoy host isolation table
+
+- name: Decoy bridge — write the unit that loads it
+  ansible.builtin.template:
+    src: host-nft.service.j2
+    dest: /etc/systemd/system/{{ decoy_bridge_nft_unit }}.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: decoy_bridge_unit
+
+# A check run never writes the unit, so systemd cannot find it yet.
+- name: Decoy bridge — enable and start the table
+  when: not (ansible_check_mode and decoy_bridge_unit is changed)
+  ansible.builtin.systemd_service:
+    name: "{{ decoy_bridge_nft_unit }}"
+    enabled: true
+    state: started
+    daemon_reload: "{{ decoy_bridge_unit is changed }}"
+
+- name: Decoy bridge — apply a changed ruleset now
+  ansible.builtin.meta: flush_handlers
+
+# NetworkManager hands off before the bridge exists.
+- name: Decoy bridge — keep NetworkManager off the bridge
+  ansible.builtin.template:
+    src: nm-unmanaged.conf.j2
+    dest: "{{ decoy_bridge_nm_conf }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload NetworkManager
+
+- name: Decoy bridge — apply the NetworkManager change before the bridge
+  ansible.builtin.meta: flush_handlers
+
+- name: Decoy bridge — declare the bridge
+  ansible.builtin.template:
+    src: interfaces.j2
+    dest: "{{ decoy_bridge_interfaces_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: decoy_bridge_stanza
+
+- name: Decoy bridge — read the bridge's state
+  ansible.builtin.command: ip -o link show dev {{ decoy_bridge_name }}
+  register: decoy_bridge_link
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# ifup only this bridge. `ifreload -a` would re-apply every interface on the node.
+- name: Decoy bridge — bring the bridge up
+  when: decoy_bridge_stanza is changed or decoy_bridge_link.rc != 0
+  ansible.builtin.command: ifup {{ decoy_bridge_name }}
+  changed_when: true
+
+# An empty bridge is up by flag but has no carrier until a guest attaches, so the check reads the
+# flag and the type, not the operational state.
+- name: Decoy bridge — read the bridge after
+  when: not ansible_check_mode
+  ansible.builtin.command: ip -d -o link show dev {{ decoy_bridge_name }}
+  register: decoy_bridge_after
+  changed_when: false
+
+- name: Decoy bridge — assert it is a bridge and administratively up
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - "' bridge ' in decoy_bridge_after.stdout"
+      - decoy_bridge_after.stdout is regex('<[^>]*\\bUP\\b[^>]*>')
+    fail_msg: "{{ decoy_bridge_name }} reads: {{ decoy_bridge_after.stdout }}"
+
+# The node must hold no address on the bridge, or a decoy could address the node and skip the gateway.
+- name: Decoy bridge — read the addresses on the bridge
+  when: not ansible_check_mode
+  ansible.builtin.command: ip -o addr show dev {{ decoy_bridge_name }}
+  register: decoy_bridge_addrs
+  changed_when: false
+
+- name: Decoy bridge — assert the node holds no address on it
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that: decoy_bridge_addrs.stdout | trim | length == 0
+    fail_msg: "{{ inventory_hostname }} holds an address on {{ decoy_bridge_name }}: {{ decoy_bridge_addrs.stdout }}"
+
+# Read the kernel's answer: the table is loaded and drops what the bridge delivers to the node.
+- name: Decoy bridge — read the loaded isolation table
+  when: not ansible_check_mode
+  ansible.builtin.command: nft list table bridge villain_decoy_host
+  register: decoy_bridge_nft_live
+  changed_when: false
+
+- name: Decoy bridge — assert the isolation table drops the bridge's input
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - "'ibrname \"' ~ decoy_bridge_name ~ '\"' in decoy_bridge_nft_live.stdout"
+      - "'drop' in decoy_bridge_nft_live.stdout"
+    fail_msg: "{{ decoy_bridge_nft_live.stdout }}"

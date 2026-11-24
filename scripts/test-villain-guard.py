@@ -51,6 +51,10 @@ class T(unittest.TestCase):
         rc, out = run(["core 223 vault pve03 decoy", "core 250 x pve03 prod"], "joker")
         self.assertEqual(rc, 1); self.assertIn("denied 2", out)
 
+    def test_gateway_214_is_denied_even_when_listed(self):
+        rc, out = run(["core 214 decoy-gw-214 pve03 decoy"], "joker")
+        self.assertEqual(rc, 1); self.assertIn("denied 1", out)
+
     def test_quiet_hours(self):
         rc, out = run(GOTHAM, "joker", now="2026-11-19T02:45:00-05:00")
         self.assertEqual(rc, 1); self.assertIn("quiet hours", out)
@@ -58,6 +62,16 @@ class T(unittest.TestCase):
     def test_dry_run_says_kill_switch_state(self):
         rc, out = run(GOTHAM, "joker", "--seed", "1")
         self.assertIn("would be refused", out); self.assertIn("nothing was touched", out)
+
+    def test_json_is_parseable_and_undo_list_covers_all(self):
+        import json
+        rc, out = run(GOTHAM + MARVEL, "joker", "--seed", "2", "--json")
+        d = json.loads(out); self.assertEqual(d["seed"], 2); self.assertEqual(len(d["victims"]), 1)
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("\n".join(GOTHAM + MARVEL) + "\n")
+        p = subprocess.run([sys.executable, str(G), "undo-list", "--json", "--targets", f.name,
+                            "--now", "2026-11-19T02:45:00-05:00"], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0); self.assertEqual(len(json.loads(p.stdout)["victims"]), 8)
 
     def test_malformed_line_refuses(self):
         self.assertEqual(run(["gotham x y"], "joker")[0], 1)

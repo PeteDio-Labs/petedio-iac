@@ -370,6 +370,51 @@ uptime_kuma_monitors:
     retry_interval: 60
     description: "House public IPv4. DOWN means the address changed or ipify failed."
 
+  # Lab Villains decoys (PET-954). They sit on a private network behind decoy-gw-214, which forwards
+  # 192.168.50.214:10<vmid> to a decoy's sshd, so that port is the health check,
+  # and a villain's `stop` or `kill-service` fault turns it red. They alert through pete-bot like
+  # every monitor, because that path is what a chaos test proves. Do not point a real service here.
+  - name: decoy-dc-250
+    type: port
+    hostname: "192.168.50.214"
+    port: 10250
+    description: "Lab Villains decoy (dc). Throwaway container that chaos tests may stop."
+  - name: decoy-dc-251
+    type: port
+    hostname: "192.168.50.214"
+    port: 10251
+    description: "Lab Villains decoy (dc). Throwaway container that chaos tests may stop."
+  - name: decoy-dc-252
+    type: port
+    hostname: "192.168.50.214"
+    port: 10252
+    description: "Lab Villains decoy (dc). Throwaway container that chaos tests may stop."
+  - name: decoy-dc-253
+    type: port
+    hostname: "192.168.50.214"
+    port: 10253
+    description: "Lab Villains decoy (dc). Throwaway container that chaos tests may stop."
+  - name: decoy-marvel-210
+    type: port
+    hostname: "192.168.50.214"
+    port: 10210
+    description: "Lab Villains decoy (marvel). Throwaway container that chaos tests may stop."
+  - name: decoy-marvel-211
+    type: port
+    hostname: "192.168.50.214"
+    port: 10211
+    description: "Lab Villains decoy (marvel). Throwaway container that chaos tests may stop."
+  - name: decoy-marvel-212
+    type: port
+    hostname: "192.168.50.214"
+    port: 10212
+    description: "Lab Villains decoy (marvel). Throwaway container that chaos tests may stop."
+  - name: decoy-marvel-213
+    type: port
+    hostname: "192.168.50.214"
+    port: 10213
+    description: "Lab Villains decoy (marvel). Throwaway container that chaos tests may stop."
+
 # ------------------------------------------------------ push monitors (PET-529) --
 # One push monitor per Proxmox node. roles/backup-store installs a daily check on each
 # node that pushes its verdict here: up when the night's archives landed, down with
@@ -435,6 +480,14 @@ uptime_kuma_maintenances:
       - tracerr        # 237
       - media-stack    # reads prowlarr and the arrs, which stop here
       - minio-data     # 245
+      - decoy-dc-250  # 250, a Lab Villains decoy
+      - decoy-dc-251  # 251, a Lab Villains decoy
+      - decoy-dc-252  # 252, a Lab Villains decoy
+      - decoy-dc-253  # 253, a Lab Villains decoy
+      - decoy-marvel-210  # 210, a Lab Villains decoy
+      - decoy-marvel-211  # 211, a Lab Villains decoy
+      - decoy-marvel-212  # 212, a Lab Villains decoy
+      - decoy-marvel-213  # 213, a Lab Villains decoy
   # 244 leaves the nightly job and has its own weekly job (MED-11): Sundays at 04:00 in
   # stop mode, declared as proxmox_backup_job.plex_remote_weekly in environments/homelab/backup.tf.
   # The window opens five minutes early and runs 30 minutes, the same margin as the nightly one.
